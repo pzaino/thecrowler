@@ -385,6 +385,12 @@ type PlatformInfo struct {
 /////////////////////////////////////////////////
 //// ---------- API Configuration ---------- ////
 
+// CORSConfig represents service-specific CORS configuration.
+type CORSConfig struct {
+	Enabled        bool     `json:"enabled" yaml:"enabled"`                 // Whether to enable CORS response headers.
+	AllowedOrigins []string `json:"allowed_origins" yaml:"allowed_origins"` // Exact origins allowed by CORS; use ["*"] to allow any origin.
+}
+
 // API represents the API configuration
 type API struct {
 	URL               string     `yaml:"url"`                                              // Base URL for the API (e.g., "http://localhost:8080/api")
@@ -405,7 +411,8 @@ type API struct {
 	ReadTimeout       int        `yaml:"read_timeout"`                                     // ReadTimeout is the maximum duration for reading the entire request
 	WriteTimeout      int        `yaml:"write_timeout"`                                    // WriteTimeout
 	Return404         bool       `yaml:"return_404"`                                       // Whether to return 404 for not found or not
-	AllowedIPs        []string   `yaml:"allowed_ips"`                                      // Allowed origins for CORS
+	AllowedIPs        []string   `yaml:"allowed_ips"`                                      // Allowed IP addresses and CIDRs for API access
+	CORS              CORSConfig `json:"cors" yaml:"cors"`                                 // Allowed origins for CORS
 	Plugins           APIPlugins `yaml:"plugins"`                                          // API plugins configuration
 	UseGoogleCloudRun bool       `json:"use_google_cloud_run" yaml:"use_google_cloud_run"` // Whether to use Google Cloud Run for the events handler or not
 }
@@ -465,28 +472,29 @@ type SysMngConfig struct {
 
 // EventsConfig represents the events handler service configuration
 type EventsConfig struct {
-	URL                      string `json:"url" yaml:"url"`                                                 // Base URL for the events handler API (e.g., "http://localhost:8080/api/events")
-	Host                     string `json:"host" yaml:"host"`                                               // Hostname of the events handler server
-	Port                     int    `json:"port" yaml:"port"`                                               // Port number of the events handler server
-	Timeout                  int    `json:"timeout" yaml:"timeout"`                                         // Timeout for events handler requests (in seconds)
-	IdleTimeout              int    `json:"idle_timeout" yaml:"idle_timeout"`                               // Idle timeout for events handler requests (in seconds)
-	SSLMode                  string `json:"sslmode" yaml:"sslmode"`                                         // SSL mode for events handler connection (e.g., "disable")
-	CertFile                 string `json:"cert_file" yaml:"cert_file"`                                     // Path to the SSL certificate file
-	KeyFile                  string `json:"key_file" yaml:"key_file"`                                       // Path to the SSL key file
-	RateLimit                string `json:"rate_limit" yaml:"rate_limit"`                                   // Rate limit values are tuples (for ex. "1,3") where 1 means allows 1 request per second with a burst of 3 requests
-	ReadHeaderTimeout        int    `json:"readheader_timeout" yaml:"readheader_timeout"`                   // ReadHeaderTimeout is the amount of time allowed to read request headers.
-	ReadTimeout              int    `json:"read_timeout" yaml:"read_timeout"`                               // ReadTimeout is the maximum duration for reading the entire request
-	WriteTimeout             int    `json:"write_timeout" yaml:"write_timeout"`                             // WriteTimeout
-	MasterEventsManager      string `json:"master_events_manager" yaml:"master_events_manager"`             // Master events manager's name (e.g., "crowler-events-0", "crowler-events-10")
-	EnableAPIDocs            bool   `json:"enable_api_docs" yaml:"enable_api_docs"`                         // Whether to enable API documentation or not
-	EventRemoval             string `json:"automatic_events_removal" yaml:"automatic_events_removal"`       // Automatic events removal from the database (always, fails, success, never or "")
-	HeartbeatEnabled         bool   `json:"heartbeat_enabled" yaml:"heartbeat_enabled"`                     // Whether to enable heartbeat or not
-	HeartbeatInterval        string `json:"heartbeat_interval" yaml:"heartbeat_interval"`                   // Heartbeat interval (in seconds)
-	HeartbeatTimeout         string `json:"heartbeat_timeout" yaml:"heartbeat_timeout"`                     // Heartbeat timeout (in seconds)
-	HeartbeatLog             bool   `json:"heartbeat_log" yaml:"heartbeat_log"`                             // Whether to log heartbeat or not
-	SysDBMaintenance         string `json:"sys_db_maintenance_schedule" yaml:"sys_db_maintenance_schedule"` // System database maintenance interval (in hours)
-	SysDBWebObjectsRetention string `json:"sys_db_webobjects_retention" yaml:"sys_db_webobjects_retention"` // System database web objects retention period (in hours/days/months/years)
-	UseGoogleCloudRun        bool   `json:"use_google_cloud_run" yaml:"use_google_cloud_run"`               // Whether to use Google Cloud Run for the events handler or not
+	URL                      string     `json:"url" yaml:"url"`                                                 // Base URL for the events handler API (e.g., "http://localhost:8080/api/events")
+	Host                     string     `json:"host" yaml:"host"`                                               // Hostname of the events handler server
+	Port                     int        `json:"port" yaml:"port"`                                               // Port number of the events handler server
+	Timeout                  int        `json:"timeout" yaml:"timeout"`                                         // Timeout for events handler requests (in seconds)
+	IdleTimeout              int        `json:"idle_timeout" yaml:"idle_timeout"`                               // Idle timeout for events handler requests (in seconds)
+	SSLMode                  string     `json:"sslmode" yaml:"sslmode"`                                         // SSL mode for events handler connection (e.g., "disable")
+	CertFile                 string     `json:"cert_file" yaml:"cert_file"`                                     // Path to the SSL certificate file
+	KeyFile                  string     `json:"key_file" yaml:"key_file"`                                       // Path to the SSL key file
+	RateLimit                string     `json:"rate_limit" yaml:"rate_limit"`                                   // Rate limit values are tuples (for ex. "1,3") where 1 means allows 1 request per second with a burst of 3 requests
+	ReadHeaderTimeout        int        `json:"readheader_timeout" yaml:"readheader_timeout"`                   // ReadHeaderTimeout is the amount of time allowed to read request headers.
+	ReadTimeout              int        `json:"read_timeout" yaml:"read_timeout"`                               // ReadTimeout is the maximum duration for reading the entire request
+	WriteTimeout             int        `json:"write_timeout" yaml:"write_timeout"`                             // WriteTimeout
+	MasterEventsManager      string     `json:"master_events_manager" yaml:"master_events_manager"`             // Master events manager's name (e.g., "crowler-events-0", "crowler-events-10")
+	EnableAPIDocs            bool       `json:"enable_api_docs" yaml:"enable_api_docs"`                         // Whether to enable API documentation or not
+	EventRemoval             string     `json:"automatic_events_removal" yaml:"automatic_events_removal"`       // Automatic events removal from the database (always, fails, success, never or "")
+	HeartbeatEnabled         bool       `json:"heartbeat_enabled" yaml:"heartbeat_enabled"`                     // Whether to enable heartbeat or not
+	HeartbeatInterval        string     `json:"heartbeat_interval" yaml:"heartbeat_interval"`                   // Heartbeat interval (in seconds)
+	HeartbeatTimeout         string     `json:"heartbeat_timeout" yaml:"heartbeat_timeout"`                     // Heartbeat timeout (in seconds)
+	HeartbeatLog             bool       `json:"heartbeat_log" yaml:"heartbeat_log"`                             // Whether to log heartbeat or not
+	SysDBMaintenance         string     `json:"sys_db_maintenance_schedule" yaml:"sys_db_maintenance_schedule"` // System database maintenance interval (in hours)
+	SysDBWebObjectsRetention string     `json:"sys_db_webobjects_retention" yaml:"sys_db_webobjects_retention"` // System database web objects retention period (in hours/days/months/years)
+	UseGoogleCloudRun        bool       `json:"use_google_cloud_run" yaml:"use_google_cloud_run"`               // Whether to use Google Cloud Run for the events handler or not
+	CORS                     CORSConfig `json:"cors" yaml:"cors"`                                               // CORS configuration for the Events Manager API
 }
 
 /////////////////////////////////////////////////

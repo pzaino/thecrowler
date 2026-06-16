@@ -781,22 +781,13 @@ func SecurityHeadersMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// CORSHeadersMiddleware enables CORS for requests
+// CORSHeadersMiddleware applies the Events service CORS policy from configuration.
 func CORSHeadersMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// You can restrict this to specific domains in production
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-
-		// For preflight requests
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	})
+	cors := config.Events.CORS
+	return cmn.CORSHeadersMiddleware(cmn.CORSOptions{
+		Enabled:        cors.Enabled,
+		AllowedOrigins: cors.AllowedOrigins,
+	})(next)
 }
 
 func healthCheckHandler(w http.ResponseWriter, _ *http.Request) {

@@ -348,6 +348,10 @@ api:
   write_timeout: 30
   # Enable built-in API console (dev only)
   enable_console: true
+  # Enable CORS headers for API responses
+  cors:
+    enabled: false
+    allowed_origins: [ "*" ]
   # Respond 404 for unknown endpoints when true
   return_404: false
   # Allow fulltext-like searches on collected content
@@ -553,6 +557,10 @@ events:
   cert_file: ""
   # If sslmode=enable
   key_file: ""
+    # Enable CORS headers for API responses
+  cors:
+    enabled: false
+    allowed_origins: [ "*" ]
   # Enable Google Cloud Run mode
   use_google_cloud_run: false
   # Name of master events manager in clustered mode

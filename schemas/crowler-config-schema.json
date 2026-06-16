@@ -1376,6 +1376,39 @@
             ]
           }
         },
+        "cors": {
+          "title": "CROWler General/Search API CORS Configuration",
+          "description": "Controls Cross-Origin Resource Sharing response headers for the General/Search API. Keep disabled unless browser clients need cross-origin access. Use explicit origins for production; use [\"*\"] only for public APIs that do not rely on browser credentials.",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "title": "CROWler General/Search API CORS Enabled",
+              "description": "Enables CORS headers and OPTIONS preflight handling for the General/Search API.",
+              "type": "boolean"
+            },
+            "allowed_origins": {
+              "title": "CROWler General/Search API CORS Allowed Origins",
+              "description": "Exact allowed Origin header values. Empty denies all browser origins. Use [\"*\"] to allow any origin.",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "examples": [
+                [
+                  "https://console.example.com"
+                ],
+                [
+                  "*"
+                ]
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "enabled"
+          ]
+        },
         "plugins": {
           "title": "CROWler General/Search API Plugins Configuration",
           "description": "This is the plugins configuration for the General/Search API. It is used to configure the plugins that the CROWler General API will use to extend its functionality.",
@@ -1673,6 +1706,39 @@
           "title": "CROWler Events Manager Use Google Cloud Run",
           "description": "This is a flag that tells the CROWler Events Manager to use Google Cloud Run to run the API. If enabled, the CROWler will deploy the Events Manager API on Google Cloud Run. This is useful to make the API scalable and highly available.",
           "type": "boolean"
+        },
+        "cors": {
+          "title": "CROWler Events Manager CORS Configuration",
+          "description": "Controls Cross-Origin Resource Sharing response headers for the Events Manager API. Keep disabled unless browser clients need cross-origin access. Use explicit origins for production; use [\"*\"] only for public APIs that do not rely on browser credentials.",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "title": "CROWler Events Manager CORS Enabled",
+              "description": "Enables CORS headers and OPTIONS preflight handling for the Events Manager API.",
+              "type": "boolean"
+            },
+            "allowed_origins": {
+              "title": "CROWler Events Manager CORS Allowed Origins",
+              "description": "Exact allowed Origin header values. Empty denies all browser origins. Use [\"*\"] to allow any origin.",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "examples": [
+                [
+                  "https://events-console.example.com"
+                ],
+                [
+                  "*"
+                ]
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "enabled"
+          ]
         },
         "master_events_manager": {
           "title": "CROWler Events Manager Master Events Manager's name",
