@@ -34,11 +34,11 @@ func CORSHeadersMiddleware(options CORSOptions) func(http.Handler) http.Handler 
 			origin := strings.TrimSpace(r.Header.Get("Origin"))
 			originAllowed := false
 
-			if origin != "" {
-				if allowAllOrigins {
-					w.Header().Set("Access-Control-Allow-Origin", "*")
-					originAllowed = true
-				} else if _, ok := allowedOrigins[origin]; ok {
+			if allowAllOrigins {
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+				originAllowed = true
+			} else if origin != "" {
+				if _, ok := allowedOrigins[origin]; ok {
 					w.Header().Set("Access-Control-Allow-Origin", origin)
 					appendVaryHeader(w.Header(), "Origin")
 					originAllowed = true
