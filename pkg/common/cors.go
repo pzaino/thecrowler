@@ -49,6 +49,10 @@ func CORSHeadersMiddleware(options CORSOptions) func(http.Handler) http.Handler 
 			w.Header().Set("Access-Control-Allow-Headers", corsAllowHeaders)
 			w.Header().Set("Access-Control-Max-Age", corsMaxAge)
 
+			if strings.EqualFold(r.Header.Get("Access-Control-Request-Private-Network"), "true") {
+				w.Header().Set("Access-Control-Allow-Private-Network", "true")
+			}
+
 			if r.Method == http.MethodOptions {
 				if origin != "" && !originAllowed {
 					http.Error(w, "CORS origin not allowed", http.StatusForbidden)
