@@ -1097,7 +1097,7 @@ func SecurityHeadersMiddleware(next http.Handler) http.Handler {
 		// Add various security headers here
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'")
+		//w.Header().Set("Content-Security-Policy", "default-src 'self'")
 
 		next.ServeHTTP(w, r)
 	})
