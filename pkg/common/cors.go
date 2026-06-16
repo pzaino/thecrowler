@@ -63,7 +63,8 @@ func normalizeAllowedOrigins(origins []string) (map[string]struct{}, bool) {
 			continue
 		}
 		if origin == "*" {
-			return nil, true
+			// User wants everything, so create a map with a single entry and return true for allowAllOrigins.
+			return map[string]struct{}{"*": {}}, true
 		}
 		allowedOrigins[origin] = struct{}{}
 	}
