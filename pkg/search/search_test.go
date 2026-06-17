@@ -130,6 +130,50 @@ func TestCorrelatedSitesQueryDoesNotAppendDanglingWhere(t *testing.T) {
 	}
 }
 
+func TestParseSelfContainedSearchInputUsesRawDomainAndPagination(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      string
+		wantDomain string
+		wantLimit  int
+		wantOffset int
+	}{
+		{name: "plain domain", input: "example.com", wantDomain: "example.com", wantLimit: 10, wantOffset: 0},
+		{name: "spaced modifiers", input: "example.com &limit:25 &offset:5", wantDomain: "example.com", wantLimit: 25, wantOffset: 5},
+		{name: "attached modifiers", input: "example.com&limit:30&offset:7", wantDomain: "example.com", wantLimit: 30, wantOffset: 7},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			gotDomain, gotLimit, gotOffset, err := parseSelfContainedSearchInput(test.input)
+			if err != nil {
+				t.Fatalf("parseSelfContainedSearchInput() error = %v", err)
+			}
+			if gotDomain != test.wantDomain || gotLimit != test.wantLimit || gotOffset != test.wantOffset {
+				t.Fatalf("parseSelfContainedSearchInput() = (%q, %d, %d), want (%q, %d, %d)", gotDomain, gotLimit, gotOffset, test.wantDomain, test.wantLimit, test.wantOffset)
+			}
+		})
+	}
+}
+
+func TestCorrelatedSitesDirectQueryUsesTypedPaginationParameters(t *testing.T) {
+	domain, limit, offset, err := parseSelfContainedSearchInput("example.com &limit:25 &offset:5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlQuery := sqlCorrelatedSitesBody + " ORDER BY created_at DESC LIMIT $2 OFFSET $3;"
+	params := []any{domain, limit, offset}
+	if params[0] != "example.com" {
+		t.Fatalf("domain parameter = %#v, want raw domain", params[0])
+	}
+	if !strings.Contains(sqlQuery, "find_correlated_sources_by_domain($1)") {
+		t.Fatalf("correlated-sites query does not pass the domain as $1: %q", sqlQuery)
+	}
+	if !strings.Contains(sqlQuery, "LIMIT $2 OFFSET $3") {
+		t.Fatalf("correlated-sites query does not use contiguous typed pagination placeholders: %q", sqlQuery)
+	}
+}
+
 func TestParsedQueryAccessorsReturnDefensiveParamsCopy(t *testing.T) {
 	engine := NewSearcher(nil, cfg.Config{})
 	parsed, err := engine.ParseAdvancedQuery("SELECT 1 WHERE ", "crowler", "")

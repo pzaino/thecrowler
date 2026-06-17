@@ -3,6 +3,9 @@ package search
 
 import (
 	"database/sql"
+	"errors"
+	"strconv"
+	"strings"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
@@ -86,7 +89,77 @@ func (s *Searcher) SearchScrapedData(query string) (*QueryResult, error) {
 
 // SearchCorrelatedSites searches correlated sites for a domain.
 func (s *Searcher) SearchCorrelatedSites(query string) (*QueryResult, error) {
-	return s.ExecuteOrdered(sqlCorrelatedSitesBody, query, "self-contained", "ORDER BY created_at DESC")
+	domain, limit, offset, err := parseSelfContainedSearchInput(query)
+	if err != nil {
+		return nil, err
+	}
+
+	sqlQuery := sqlCorrelatedSitesBody + " ORDER BY created_at DESC LIMIT $2 OFFSET $3;"
+	params := []any{domain, limit, offset}
+	rows, err := (*s.DB).ExecuteQuery(sqlQuery, params...)
+	if err != nil {
+		return nil, err
+	}
+	return &QueryResult{
+		Rows:   rows,
+		Limit:  limit,
+		Offset: offset,
+		SQL:    sqlQuery,
+		Params: params,
+	}, nil
+}
+
+func parseSelfContainedSearchInput(input string) (string, int, int, error) {
+	limit := 10
+	offset := 0
+	tokensData := tokenize(input)
+	terms := make([]string, 0, len(tokensData))
+
+	for i := 0; i < len(tokensData); i++ {
+		value := strings.TrimSpace(tokensData[i].tValue)
+		if value == "" {
+			continue
+		}
+
+		var parsed int
+		if value, parsed = extractControlModifier(value, "limit", limit); parsed != limit || strings.TrimSpace(value) != strings.TrimSpace(tokensData[i].tValue) {
+			limit = parsed
+		}
+		if value, parsed = extractControlModifier(value, "offset", offset); parsed != offset || strings.TrimSpace(value) != strings.TrimSpace(tokensData[i].tValue) {
+			offset = parsed
+		}
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+
+		switch value {
+		case "&limit:", "&limit=", "&offset:", "&offset=":
+			if i+1 >= len(tokensData) {
+				continue
+			}
+			nextValue := strings.TrimSpace(tokensData[i+1].tValue)
+			if nextValue == "" {
+				continue
+			}
+			if n, err := strconv.Atoi(nextValue); err == nil {
+				if strings.HasPrefix(value, "&limit") {
+					limit = n
+				} else {
+					offset = n
+				}
+				i++
+			}
+			continue
+		}
+		terms = append(terms, value)
+	}
+
+	domain := strings.TrimSpace(strings.Join(terms, " "))
+	if domain == "" {
+		return "", 0, 0, errors.New("no valid query provided")
+	}
+	return domain, limit, offset, nil
 }
 
 // SearchNetInfo searches collected network information.
