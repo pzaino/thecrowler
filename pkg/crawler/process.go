@@ -67,6 +67,7 @@ type ProcessContext struct {
 	VDIOperationMutex    sync.Mutex                // Mutex to protect the VDI operations
 	RefreshCrawlingTimer func()                    // Function to refresh the crawling timer
 	ruleCallState        *ruleCallRuntimeState     // Runtime guardrails for plugin/agent rule calls
+	crowlerMeta          CrowlerMeta               // Shared metadata document for the current source/link
 }
 
 // GetContextID returns a unique context ID for the ProcessContext

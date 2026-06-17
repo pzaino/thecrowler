@@ -160,14 +160,15 @@ type HostData struct {
 
 // NetInfo represents the structure of the network information you want to extract and store.
 type NetInfo struct {
-	URL          string            `json:"url,omitempty"`
-	Hosts        HostData          `json:"hosts,omitempty"`
-	IPs          IPData            `json:"ips,omitempty"`
-	WHOIS        []WHOISData       `json:"whois,omitempty"`
-	DNS          []DNSInfo         `json:"dns,omitempty"`
-	ServiceScout ServiceScoutInfo  `json:"service_scout,omitempty"`
-	Config       *cfg.NetworkInfo  `json:"Config,omitempty"`
-	Platform     *cfg.PlatformInfo `json:"platform,omitempty"`
+	CrowlerMeta  map[string]interface{} `json:"crowler_meta"`
+	URL          string                 `json:"url,omitempty"`
+	Hosts        HostData               `json:"hosts,omitempty"`
+	IPs          IPData                 `json:"ips,omitempty"`
+	WHOIS        []WHOISData            `json:"whois,omitempty"`
+	DNS          []DNSInfo              `json:"dns,omitempty"`
+	ServiceScout ServiceScoutInfo       `json:"service_scout,omitempty"`
+	Config       *cfg.NetworkInfo       `json:"Config,omitempty"`
+	Platform     *cfg.PlatformInfo      `json:"platform,omitempty"`
 }
 
 // ServiceScoutInfo contains the information about the Nmap scan

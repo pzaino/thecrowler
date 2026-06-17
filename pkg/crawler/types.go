@@ -138,7 +138,8 @@ type PageInfo struct {
 	DetectedTech            map[string]detect.DetectedEntity `json:"detected_tech"`              // The detected technologies of the web page.
 	ExtDetectionResults     []map[string]interface{}         `json:"external_detection_results"` // The results of the external detection tools.
 	CollectedSessionCookies map[string]interface{}           `json:"collected_session_cookies"`  // The session cookies collected from the web page.
-	Config                  *cfg.Config                      `json:"config"`                     // The configuration of the web page.
+	Config                  *cfg.Config                      `json:"config"`
+	CrowlerMeta             CrowlerMeta                      `json:"crowler_meta"` // The configuration of the web page.
 }
 
 // WebObjectDetails represents the details of a web object.

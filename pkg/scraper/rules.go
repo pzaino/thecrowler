@@ -308,6 +308,9 @@ func applyPostProcessingStep(ctx context.Context, runtime Runtime, ruleName stri
 	case "set_env":
 		result.Data = data
 		err = setEnvironment(ctx, runtime, step, data)
+	case "crowler_meta":
+		result.Data = data
+		err = applyCrowlerMetaStep(ctx, runtime, step)
 	case "plugin_call":
 		result.Data, err = runPluginStep(ctx, runtime, ruleName, index, step, data)
 	case "agent_call":
@@ -574,4 +577,29 @@ func unwrapDoubleObject(data []byte) []byte {
 		return trimmed[1 : len(trimmed)-1]
 	}
 	return data
+}
+
+func applyCrowlerMetaStep(ctx context.Context, runtime Runtime, step *rs.PostProcessingStep) error {
+	if runtime.CrowlerMeta == nil {
+		return fmt.Errorf("crowler_meta runtime is unavailable")
+	}
+	action, _ := stringDetail(step.Details, "action")
+	section, _ := stringDetail(step.Details, "section")
+	key, _ := stringDetail(step.Details, "key")
+	if action == "" {
+		action = "set_tag"
+	}
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "set_section", "upsert_section":
+		value, _ := step.Details["value"].(map[string]interface{})
+		return runtime.CrowlerMeta.SetCrowlerMetaSection(ctx, section, value)
+	case "set_tag", "upsert_tag":
+		return runtime.CrowlerMeta.SetCrowlerMetaTag(ctx, section, key, step.Details["value"])
+	case "delete_section":
+		return runtime.CrowlerMeta.DeleteCrowlerMetaSection(ctx, section)
+	case "delete_tag":
+		return runtime.CrowlerMeta.DeleteCrowlerMetaTag(ctx, section, key)
+	default:
+		return fmt.Errorf("unsupported crowler_meta action %q", action)
+	}
 }

@@ -108,6 +108,14 @@ type ConfigurationLookup interface {
 	LookupConfiguration(context.Context, string) (interface{}, bool)
 }
 
+// CrowlerMetaEditor lets rules enrich the crawler-owned crowler_meta document.
+type CrowlerMetaEditor interface {
+	SetCrowlerMetaSection(context.Context, string, map[string]interface{}) error
+	SetCrowlerMetaTag(context.Context, string, string, interface{}) error
+	DeleteCrowlerMetaSection(context.Context, string) error
+	DeleteCrowlerMetaTag(context.Context, string, string) error
+}
+
 // Failure identifies a failed rule or post-processing step without including data or secrets.
 type Failure struct {
 	RuleName string
@@ -146,6 +154,7 @@ type Runtime struct {
 	EnvSetter       EnvironmentSetter
 	EnvCleaner      EnvironmentCleaner
 	Configuration   ConfigurationLookup
+	CrowlerMeta     CrowlerMetaEditor
 	Failures        FailureReporter
 	BeforeRule      RuleHook
 	BeforeApply     RuleHook

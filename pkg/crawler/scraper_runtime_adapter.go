@@ -37,6 +37,7 @@ func newScraperRuntimeAdapter(ctx *ProcessContext, wd *vdi.WebDriver) *scraper.R
 		EnvSetter:     adapter,
 		EnvCleaner:    adapter,
 		Configuration: adapter,
+		CrowlerMeta:   adapter,
 		Failures:      adapter,
 		BeforeRule: func(context.Context, *rs.ScrapingRule) error {
 			if ctx != nil {
@@ -208,4 +209,39 @@ func (a *scraperRuntimeAdapter) LookupConfiguration(_ context.Context, key strin
 
 func (a *scraperRuntimeAdapter) ReportFailure(_ context.Context, failure scraper.Failure) {
 	cmn.DebugMsg(cmn.DbgLvlError, "scraper step failed rule=%s step=%d kind=%s name=%s err=%v", failure.RuleName, failure.Step, failure.Kind, failure.Name, failure.Err)
+}
+
+func (a *scraperRuntimeAdapter) currentCrowlerMeta() CrowlerMeta {
+	if a == nil || a.ctx == nil {
+		return NewCrowlerMeta(nil)
+	}
+	if a.ctx.crowlerMeta != nil {
+		return a.ctx.crowlerMeta
+	}
+	if a.ctx.ni != nil && a.ctx.ni.CrowlerMeta != nil {
+		a.ctx.crowlerMeta = CrowlerMeta(a.ctx.ni.CrowlerMeta)
+		return a.ctx.crowlerMeta
+	}
+	if a.ctx.hi != nil && a.ctx.hi.CrowlerMeta != nil {
+		a.ctx.crowlerMeta = CrowlerMeta(a.ctx.hi.CrowlerMeta)
+		return a.ctx.crowlerMeta
+	}
+	a.ctx.crowlerMeta = NewCrowlerMetaFromSource(a.ctx.source)
+	return a.ctx.crowlerMeta
+}
+
+func (a *scraperRuntimeAdapter) SetCrowlerMetaSection(_ context.Context, section string, value map[string]interface{}) error {
+	return a.currentCrowlerMeta().SetSection(section, value)
+}
+
+func (a *scraperRuntimeAdapter) SetCrowlerMetaTag(_ context.Context, section, key string, value interface{}) error {
+	return a.currentCrowlerMeta().SetTag(section, key, value)
+}
+
+func (a *scraperRuntimeAdapter) DeleteCrowlerMetaSection(_ context.Context, section string) error {
+	return a.currentCrowlerMeta().DeleteSection(section)
+}
+
+func (a *scraperRuntimeAdapter) DeleteCrowlerMetaTag(_ context.Context, section, key string) error {
+	return a.currentCrowlerMeta().DeleteTag(section, key)
 }
