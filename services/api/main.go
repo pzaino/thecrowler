@@ -627,35 +627,35 @@ func initAPIv1() {
 		http.Handle("/v1/search/collected_data", withPublicMiddlewares(webScrapedDataHandler))
 		cmn.RegisterAPIRoute("/v1/search/collected_data", []string{"GET"}, "Collected data search endpoint", tagsNone, false, false, 200, nil, cmn.StdAPIQuery{}, ScrapedDataResponse{})
 
-		registerSearchFunctionRoute("/v1/search/correlated_sources", searchCorrelatedSourcesByDomainHandler, "Typed PostgreSQL correlated-source search endpoint")
+		registerSearchFunctionRoute("/v1/search/correlated_sources", searchCorrelatedSourcesByDomainHandler, "Typed PostgreSQL correlated-source search endpoint", correlatedSourcesSearchQuery{})
 
-		registerSearchFunctionRoute("/v1/search/pages", searchPagesFunctionHandler, "Typed PostgreSQL page search endpoint")
+		registerSearchFunctionRoute("/v1/search/pages", searchPagesFunctionHandler, "Typed PostgreSQL page search endpoint", pagesSearchQuery{})
 
-		registerSearchFunctionRoute("/v1/search/webobjects_by_source", searchWebObjectsBySourceIDHandler, "Web objects collected for a source ID")
+		registerSearchFunctionRoute("/v1/search/webobjects_by_source", searchWebObjectsBySourceIDHandler, "Web objects collected for a source ID", webObjectsBySourceIDQuery{})
 
-		registerSearchFunctionRoute("/v1/search/webobjects_by_source_uid", searchWebObjectsBySourceUIDHandler, "Web objects collected for a source UID")
+		registerSearchFunctionRoute("/v1/search/webobjects_by_source_uid", searchWebObjectsBySourceUIDHandler, "Web objects collected for a source UID", sourceUIDQuery{})
 
-		registerSearchFunctionRoute("/v1/search/source_status_by_uid", searchSourceStatusByUIDHandler, "Source status lookup by source UID")
+		registerSearchFunctionRoute("/v1/search/source_status_by_uid", searchSourceStatusByUIDHandler, "Source status lookup by source UID", sourceUIDQuery{})
 
-		registerSearchFunctionRoute("/v1/search/source_uid_by_name", searchSourceUIDByNameHandler, "Source UID lookup by source name")
+		registerSearchFunctionRoute("/v1/search/source_uid_by_name", searchSourceUIDByNameHandler, "Source UID lookup by source name", sourceNameQuery{})
 
-		registerSearchFunctionRoute("/v1/search/source_uid_by_url", searchSourceUIDByURLHandler, "Source UID lookup by source URL")
+		registerSearchFunctionRoute("/v1/search/source_uid_by_url", searchSourceUIDByURLHandler, "Source UID lookup by source URL", sourceURLQuery{})
 
-		registerSearchFunctionRoute("/v1/search/scraped_data", searchScrapedDataFunctionHandler, "Typed PostgreSQL scraped-data search endpoint")
+		registerSearchFunctionRoute("/v1/search/scraped_data", searchScrapedDataFunctionHandler, "Typed PostgreSQL scraped-data search endpoint", qSearchFunctionQuery{})
 
-		registerSearchFunctionRoute("/v1/search/scraped_data_field", searchScrapedDataFieldFunctionHandler, "Typed PostgreSQL scraped-data field search endpoint")
+		registerSearchFunctionRoute("/v1/search/scraped_data_field", searchScrapedDataFieldFunctionHandler, "Typed PostgreSQL scraped-data field search endpoint", fieldSearchFunctionQuery{})
 
-		registerSearchFunctionRoute("/v1/search/artifacts", searchArtifactsFunctionHandler, "Typed PostgreSQL artifact search endpoint")
+		registerSearchFunctionRoute("/v1/search/artifacts", searchArtifactsFunctionHandler, "Typed PostgreSQL artifact search endpoint", qSearchFunctionQuery{})
 
-		registerSearchFunctionRoute("/v1/search/artifacts_field", searchArtifactsFieldFunctionHandler, "Typed PostgreSQL artifact field search endpoint")
+		registerSearchFunctionRoute("/v1/search/artifacts_field", searchArtifactsFieldFunctionHandler, "Typed PostgreSQL artifact field search endpoint", fieldSearchFunctionQuery{})
 
-		registerSearchFunctionRoute("/v1/search/artifacts_fields", searchArtifactsFieldsFunctionHandler, "Typed PostgreSQL artifact multi-field search endpoint")
+		registerSearchFunctionRoute("/v1/search/artifacts_fields", searchArtifactsFieldsFunctionHandler, "Typed PostgreSQL artifact multi-field search endpoint", filtersSearchFunctionQuery{})
 
-		registerSearchFunctionRoute("/v1/search/artifacts_attribute", searchArtifactsByAttributeFunctionHandler, "Typed PostgreSQL artifact attribute search endpoint")
+		registerSearchFunctionRoute("/v1/search/artifacts_attribute", searchArtifactsByAttributeFunctionHandler, "Typed PostgreSQL artifact attribute search endpoint", fieldSearchFunctionQuery{})
 
-		registerSearchFunctionRoute("/v1/search/objects_attribute", searchObjectsByAttributeFunctionHandler, "Typed PostgreSQL object attribute search endpoint")
+		registerSearchFunctionRoute("/v1/search/objects_attribute", searchObjectsByAttributeFunctionHandler, "Typed PostgreSQL object attribute search endpoint", fieldSearchFunctionQuery{})
 
-		registerSearchFunctionRoute("/v1/search/objects_attributes", searchObjectsByAttributesFunctionHandler, "Typed PostgreSQL object multi-attribute search endpoint")
+		registerSearchFunctionRoute("/v1/search/objects_attributes", searchObjectsByAttributesFunctionHandler, "Typed PostgreSQL object multi-attribute search endpoint", filtersSearchFunctionQuery{})
 	}
 
 	if config.API.EnableConsole {

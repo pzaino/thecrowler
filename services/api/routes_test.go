@@ -303,3 +303,55 @@ func TestInformationSeedPathActionsAppearAsPostInOpenAPI(t *testing.T) {
 		}
 	}
 }
+
+func TestSearchFunctionOpenAPIQueryParametersMatchDatabaseFunctions(t *testing.T) {
+	oldMux := http.DefaultServeMux
+	oldLimiter := limiter
+	oldConfig := config
+	http.DefaultServeMux = http.NewServeMux()
+	limiter = rate.NewLimiter(rate.Inf, 0)
+	config = cfg.Config{}
+	config.API.DisableDefault = false
+	config.API.EnableConsole = false
+	config.API.EnableAPIDocs = true
+	config.API.Plugins.Enabled = false
+	t.Cleanup(func() {
+		http.DefaultServeMux = oldMux
+		limiter = oldLimiter
+		config = oldConfig
+	})
+
+	initAPIv1()
+	spec := cmn.BuildOpenAPISpec(cmn.GetAPIRoutes(), cmn.OpenAPIOptions{Title: "test", Version: "v1"})
+
+	expected := map[string][]string{
+		"/v1/search/correlated_sources":       {"domain", "limit", "offset"},
+		"/v1/search/pages":                    {"q", "lang", "limit", "offset"},
+		"/v1/search/webobjects_by_source":     {"source_id"},
+		"/v1/search/webobjects_by_source_uid": {"source_uid"},
+		"/v1/search/source_status_by_uid":     {"source_uid"},
+		"/v1/search/source_uid_by_name":       {"source_name"},
+		"/v1/search/source_uid_by_url":        {"source_url"},
+		"/v1/search/scraped_data":             {"q", "limit", "offset"},
+		"/v1/search/scraped_data_field":       {"field_name", "field_value", "limit", "offset"},
+		"/v1/search/artifacts":                {"q", "limit", "offset"},
+		"/v1/search/artifacts_field":          {"field_name", "field_value", "limit", "offset"},
+		"/v1/search/artifacts_fields":         {"filters", "limit", "offset"},
+		"/v1/search/artifacts_attribute":      {"field_name", "field_value", "limit", "offset"},
+		"/v1/search/objects_attribute":        {"field_name", "field_value", "limit", "offset"},
+		"/v1/search/objects_attributes":       {"filters", "limit", "offset"},
+	}
+	for path, want := range expected {
+		operation, ok := spec.Paths[path]["get"]
+		if !ok {
+			t.Fatalf("OpenAPI specification is missing GET %s", path)
+		}
+		got := make([]string, 0, len(operation.Parameters))
+		for _, param := range operation.Parameters {
+			got = append(got, param.Name)
+		}
+		if strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Fatalf("GET %s parameters = %v, want %v", path, got, want)
+		}
+	}
+}

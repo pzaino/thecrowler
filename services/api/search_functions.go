@@ -32,21 +32,71 @@ import (
 
 const defaultSearchFunctionLanguage = "english"
 
-// SearchFunctionQuery documents the query parameters supported by the typed
-// PostgreSQL search-function endpoints under /v1/search/.
+// SearchFunctionQuery is the internal superset used to parse typed
+// PostgreSQL search-function endpoint requests. Do not use this struct for
+// OpenAPI route registration; each endpoint below has a dedicated public query
+// struct matching its backing database function signature.
 type SearchFunctionQuery struct {
-	Q          string `json:"q,omitempty" yaml:"q,omitempty" desc:"Full-text search query for endpoints backed by search_pages, search_scraped_data, or search_artifacts."`
-	Domain     string `json:"domain,omitempty" yaml:"domain,omitempty" desc:"Domain used by the correlated-source search endpoint."`
-	SourceID   int64  `json:"source_id,omitempty" yaml:"source_id,omitempty" desc:"BIGINT source identifier used to retrieve all associated web objects."`
-	SourceUID  string `json:"source_uid,omitempty" yaml:"source_uid,omitempty" desc:"Stable source identifier."`
-	SourceName string `json:"source_name,omitempty" yaml:"source_name,omitempty" desc:"Source name used to find its stable identifier."`
-	SourceURL  string `json:"source_url,omitempty" yaml:"source_url,omitempty" desc:"Source URL used to find its stable identifier."`
-	Lang       string `json:"lang,omitempty" yaml:"lang,omitempty" desc:"PostgreSQL text-search configuration for page search. Defaults to english."`
-	FieldName  string `json:"field_name,omitempty" yaml:"field_name,omitempty" desc:"Attribute or JSON field name used by field search endpoints."`
-	FieldValue string `json:"field_value,omitempty" yaml:"field_value,omitempty" desc:"Attribute or JSON field value used by field search endpoints."`
-	Filters    string `json:"filters,omitempty" yaml:"filters,omitempty" desc:"JSON object of field/value filters used by multi-field artifact and object search endpoints."`
+	Q          string `json:"q,omitempty" yaml:"q,omitempty"`
+	Domain     string `json:"domain,omitempty" yaml:"domain,omitempty"`
+	SourceID   int64  `json:"source_id,omitempty" yaml:"source_id,omitempty"`
+	SourceUID  string `json:"source_uid,omitempty" yaml:"source_uid,omitempty"`
+	SourceName string `json:"source_name,omitempty" yaml:"source_name,omitempty"`
+	SourceURL  string `json:"source_url,omitempty" yaml:"source_url,omitempty"`
+	Lang       string `json:"lang,omitempty" yaml:"lang,omitempty"`
+	FieldName  string `json:"field_name,omitempty" yaml:"field_name,omitempty"`
+	FieldValue string `json:"field_value,omitempty" yaml:"field_value,omitempty"`
+	Filters    string `json:"filters,omitempty" yaml:"filters,omitempty"`
+	Limit      int    `json:"limit,omitempty" yaml:"limit,omitempty"`
+	Offset     int    `json:"offset,omitempty" yaml:"offset,omitempty"`
+}
+
+type correlatedSourcesSearchQuery struct {
+	Domain string `json:"domain,omitempty" yaml:"domain,omitempty" desc:"Domain argument passed to find_correlated_sources_by_domain(domain TEXT)."`
+	Limit  int    `json:"limit,omitempty" yaml:"limit,omitempty" desc:"Maximum number of rows to return. Zero means no explicit limit."`
+	Offset int    `json:"offset,omitempty" yaml:"offset,omitempty" desc:"Number of rows to skip. Zero means no offset."`
+}
+
+type pagesSearchQuery struct {
+	Q      string `json:"q,omitempty" yaml:"q,omitempty" desc:"Query argument passed to search_pages(q TEXT, lang TEXT)."`
+	Lang   string `json:"lang,omitempty" yaml:"lang,omitempty" desc:"PostgreSQL text-search configuration passed to search_pages(q TEXT, lang TEXT). Defaults to english."`
+	Limit  int    `json:"limit,omitempty" yaml:"limit,omitempty" desc:"Maximum number of rows to return. Zero means no explicit limit."`
+	Offset int    `json:"offset,omitempty" yaml:"offset,omitempty" desc:"Number of rows to skip. Zero means no offset."`
+}
+
+type qSearchFunctionQuery struct {
+	Q      string `json:"q,omitempty" yaml:"q,omitempty" desc:"Query argument passed to the backing PostgreSQL search function."`
+	Limit  int    `json:"limit,omitempty" yaml:"limit,omitempty" desc:"Maximum number of rows to return. Zero means no explicit limit."`
+	Offset int    `json:"offset,omitempty" yaml:"offset,omitempty" desc:"Number of rows to skip. Zero means no offset."`
+}
+
+type fieldSearchFunctionQuery struct {
+	FieldName  string `json:"field_name,omitempty" yaml:"field_name,omitempty" desc:"field_name argument passed to the backing PostgreSQL search function."`
+	FieldValue string `json:"field_value,omitempty" yaml:"field_value,omitempty" desc:"field_value argument passed to the backing PostgreSQL search function."`
 	Limit      int    `json:"limit,omitempty" yaml:"limit,omitempty" desc:"Maximum number of rows to return. Zero means no explicit limit."`
 	Offset     int    `json:"offset,omitempty" yaml:"offset,omitempty" desc:"Number of rows to skip. Zero means no offset."`
+}
+
+type filtersSearchFunctionQuery struct {
+	Filters string `json:"filters,omitempty" yaml:"filters,omitempty" desc:"JSON object passed as the filters JSONB argument to the backing PostgreSQL search function."`
+	Limit   int    `json:"limit,omitempty" yaml:"limit,omitempty" desc:"Maximum number of rows to return. Zero means no explicit limit."`
+	Offset  int    `json:"offset,omitempty" yaml:"offset,omitempty" desc:"Number of rows to skip. Zero means no offset."`
+}
+
+type webObjectsBySourceIDQuery struct {
+	SourceID int64 `json:"source_id,omitempty" yaml:"source_id,omitempty" desc:"BIGINT source identifier used to retrieve all associated web objects."`
+}
+
+type sourceUIDQuery struct {
+	SourceUID string `json:"source_uid,omitempty" yaml:"source_uid,omitempty" desc:"Stable source identifier."`
+}
+
+type sourceNameQuery struct {
+	SourceName string `json:"source_name,omitempty" yaml:"source_name,omitempty" desc:"Source name used to find its stable identifier."`
+}
+
+type sourceURLQuery struct {
+	SourceURL string `json:"source_url,omitempty" yaml:"source_url,omitempty" desc:"Source URL used to find its stable identifier."`
 }
 
 // SearchFunctionResponse is the common response envelope for typed
@@ -735,8 +785,8 @@ func nullTimePtr(value sql.NullTime) *time.Time {
 	return &value.Time
 }
 
-func registerSearchFunctionRoute(path string, handler http.HandlerFunc, description string) {
+func registerSearchFunctionRoute(path string, handler http.HandlerFunc, description string, querySchema interface{}) {
 	tags_none := []string{}
 	http.Handle(path, withPublicMiddlewares(handler))
-	cmn.RegisterAPIRoute(path, []string{"GET"}, description, tags_none, false, false, 200, nil, SearchFunctionQuery{}, SearchFunctionResponse{})
+	cmn.RegisterAPIRoute(path, []string{"GET"}, description, tags_none, false, false, 200, nil, querySchema, SearchFunctionResponse{})
 }
