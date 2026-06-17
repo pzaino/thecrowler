@@ -809,7 +809,7 @@ func (ctx *ProcessContext) GetNetInfo(_ string) {
 	// Create a new NetInfo instance
 	ctx.ni = &neti.NetInfo{}
 	if ctx.crowlerMeta == nil {
-		ctx.crowlerMeta = NewCrowlerMetaFromSource(ctx.source)
+		ctx.crowlerMeta = NewCrowlerMetaFromSource(ctx.source, ctx.srcCfg)
 	}
 	ctx.ni.CrowlerMeta = map[string]interface{}(ctx.crowlerMeta)
 	c := ctx.config.NetworkInfo
@@ -851,7 +851,7 @@ func (ctx *ProcessContext) GetHTTPInfo(url string, htmlContent string) {
 	ctx.hi, err = httpi.ExtractHTTPInfo(c, ctx.re, htmlContent)
 	if ctx.hi != nil {
 		if ctx.crowlerMeta == nil {
-			ctx.crowlerMeta = NewCrowlerMetaFromSource(ctx.source)
+			ctx.crowlerMeta = NewCrowlerMetaFromSource(ctx.source, ctx.srcCfg)
 		}
 		ctx.hi.CrowlerMeta = map[string]interface{}(ctx.crowlerMeta)
 	}
@@ -870,7 +870,7 @@ func (ctx *ProcessContext) IndexPage(pageInfo *PageInfo) (uint64, error) {
 	(*pageInfo).sourceID = ctx.source.ID
 	(*pageInfo).Config = &ctx.config
 	if ctx.crowlerMeta == nil {
-		ctx.crowlerMeta = NewCrowlerMetaFromSource(ctx.source)
+		ctx.crowlerMeta = NewCrowlerMetaFromSource(ctx.source, ctx.srcCfg)
 	}
 	(*pageInfo).CrowlerMeta = ctx.crowlerMeta
 	return indexPage(ctx, ctx.source.URL, pageInfo)
@@ -883,10 +883,10 @@ func (ctx *ProcessContext) IndexNetInfo(flags int) (uint64, error) {
 	pageInfo.NetInfo = ctx.ni
 	pageInfo.sourceID = ctx.source.ID
 	if pageInfo.NetInfo != nil && pageInfo.NetInfo.CrowlerMeta == nil {
-		pageInfo.NetInfo.CrowlerMeta = map[string]interface{}(NewCrowlerMetaFromSource(ctx.source))
+		pageInfo.NetInfo.CrowlerMeta = map[string]interface{}(NewCrowlerMetaFromSource(ctx.source, ctx.srcCfg))
 	}
 	if pageInfo.HTTPInfo != nil && pageInfo.HTTPInfo.CrowlerMeta == nil {
-		pageInfo.HTTPInfo.CrowlerMeta = map[string]interface{}(NewCrowlerMetaFromSource(ctx.source))
+		pageInfo.HTTPInfo.CrowlerMeta = map[string]interface{}(NewCrowlerMetaFromSource(ctx.source, ctx.srcCfg))
 	}
 	return indexNetInfo(*ctx.db, ctx.source.URL, &pageInfo, flags)
 }
@@ -1380,7 +1380,7 @@ func insertOrUpdateWebObjects(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) (i
 	// Prepare the "Details" field for insertion
 	details := make(map[string]any)
 	if pageInfo.CrowlerMeta == nil {
-		pageInfo.CrowlerMeta = NewCrowlerMeta(nil)
+		pageInfo.CrowlerMeta = NewCrowlerMeta(nil, nil)
 	}
 	details[CrowlerMetaKey] = pageInfo.CrowlerMeta
 	details["performance"] = (*pageInfo).PerfInfo

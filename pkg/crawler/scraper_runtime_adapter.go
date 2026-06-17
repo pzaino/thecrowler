@@ -213,7 +213,7 @@ func (a *scraperRuntimeAdapter) ReportFailure(_ context.Context, failure scraper
 
 func (a *scraperRuntimeAdapter) currentCrowlerMeta() CrowlerMeta {
 	if a == nil || a.ctx == nil {
-		return NewCrowlerMeta(nil)
+		return NewCrowlerMeta(nil, nil)
 	}
 	if a.ctx.crowlerMeta != nil {
 		return a.ctx.crowlerMeta
@@ -226,7 +226,7 @@ func (a *scraperRuntimeAdapter) currentCrowlerMeta() CrowlerMeta {
 		a.ctx.crowlerMeta = CrowlerMeta(a.ctx.hi.CrowlerMeta)
 		return a.ctx.crowlerMeta
 	}
-	a.ctx.crowlerMeta = NewCrowlerMetaFromSource(a.ctx.source)
+	a.ctx.crowlerMeta = NewCrowlerMetaFromSource(a.ctx.source, a.ctx.srcCfg)
 	return a.ctx.crowlerMeta
 }
 

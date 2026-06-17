@@ -13,14 +13,34 @@ const CrowlerMetaDataKey = "meta_data"
 
 type CrowlerMeta map[string]interface{}
 
-func NewCrowlerMeta(metaData map[string]interface{}) CrowlerMeta {
+// NewCrowlerMeta creates a new CrowlerMeta structure, merging the provided metaData and srcCfg into a single map under the key "meta_data".
+func NewCrowlerMeta(metaData map[string]interface{}, srcCfg map[string]interface{}) CrowlerMeta {
 	cm := CrowlerMeta{}
-	cm[CrowlerMetaDataKey] = cloneMap(metaData)
+
+	// Start by creating a new map for the final meta_data:
+	finalMetaData := map[string]interface{}{}
+
+	// Then take the content of metaData and place it inside finalMetaData:
+	for k, v := range metaData {
+		finalMetaData[k] = v
+	}
+
+	// Then check if srcCfg has data in it and if so, try to extract `meta_data` from it, and merge it into finalMetaData:
+	if srcCfg != nil {
+		if md, ok := srcCfg[CrowlerMetaDataKey].(map[string]interface{}); ok {
+			for k, v := range md {
+				finalMetaData[k] = v
+			}
+		}
+	}
+
+	// Finally, we store the finalMetaData into the CrowlerMeta structure under the key "meta_data":
+	cm[CrowlerMetaDataKey] = cloneMap(finalMetaData)
 	return cm
 }
 
-func NewCrowlerMetaFromSource(source *cdb.Source) CrowlerMeta {
-	return NewCrowlerMeta(sourceMetaData(source))
+func NewCrowlerMetaFromSource(source *cdb.Source, srcCfg map[string]interface{}) CrowlerMeta {
+	return NewCrowlerMeta(sourceMetaData(source), srcCfg)
 }
 
 func (cm CrowlerMeta) SetTag(section, key string, value interface{}) error {
@@ -76,9 +96,9 @@ func (cm CrowlerMeta) DeleteSection(section string) error {
 	return nil
 }
 
-func EnsureCrowlerMeta(doc map[string]interface{}, source *cdb.Source) CrowlerMeta {
+func EnsureCrowlerMeta(doc map[string]interface{}, source *cdb.Source, srcCfg map[string]interface{}) CrowlerMeta {
 	if doc == nil {
-		return NewCrowlerMetaFromSource(source)
+		return NewCrowlerMetaFromSource(source, srcCfg)
 	}
 	if existing, ok := doc[CrowlerMetaKey].(map[string]interface{}); ok {
 		cm := CrowlerMeta(existing)
@@ -88,7 +108,7 @@ func EnsureCrowlerMeta(doc map[string]interface{}, source *cdb.Source) CrowlerMe
 		doc[CrowlerMetaKey] = cm
 		return cm
 	}
-	cm := NewCrowlerMetaFromSource(source)
+	cm := NewCrowlerMetaFromSource(source, srcCfg)
 	doc[CrowlerMetaKey] = cm
 	return cm
 }
