@@ -3,6 +3,7 @@ package crawler
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 
 	cdb "github.com/pzaino/thecrowler/pkg/database"
@@ -16,25 +17,9 @@ type CrowlerMeta map[string]interface{}
 // NewCrowlerMeta creates a new CrowlerMeta structure, merging the provided metaData and srcCfg into a single map under the key "meta_data".
 func NewCrowlerMeta(metaData map[string]interface{}, srcCfg map[string]interface{}) CrowlerMeta {
 	cm := CrowlerMeta{}
-
-	// Start by creating a new map for the final meta_data:
 	finalMetaData := map[string]interface{}{}
-
-	// Then take the content of metaData and place it inside finalMetaData:
-	for k, v := range metaData {
-		finalMetaData[k] = v
-	}
-
-	// Then check if srcCfg has data in it and if so, try to extract `meta_data` from it, and merge it into finalMetaData:
-	if srcCfg != nil {
-		if md, ok := srcCfg[CrowlerMetaDataKey].(map[string]interface{}); ok {
-			for k, v := range md {
-				finalMetaData[k] = v
-			}
-		}
-	}
-
-	// Finally, we store the finalMetaData into the CrowlerMeta structure under the key "meta_data":
+	mergeMap(finalMetaData, metaData)
+	mergeMap(finalMetaData, extractMetaData(srcCfg))
 	cm[CrowlerMetaDataKey] = cloneMap(finalMetaData)
 	return cm
 }
@@ -100,15 +85,16 @@ func EnsureCrowlerMeta(doc map[string]interface{}, source *cdb.Source, srcCfg ma
 	if doc == nil {
 		return NewCrowlerMetaFromSource(source, srcCfg)
 	}
+	fresh := NewCrowlerMetaFromSource(source, srcCfg)
 	if existing, ok := doc[CrowlerMetaKey].(map[string]interface{}); ok {
 		cm := CrowlerMeta(existing)
-		if _, ok := cm[CrowlerMetaDataKey]; !ok {
-			cm[CrowlerMetaDataKey] = sourceMetaData(source)
-		}
+		merged := cloneMap(fresh[CrowlerMetaDataKey].(map[string]interface{}))
+		mergeMap(merged, extractMetaData(cm))
+		cm[CrowlerMetaDataKey] = merged
 		doc[CrowlerMetaKey] = cm
 		return cm
 	}
-	cm := NewCrowlerMetaFromSource(source, srcCfg)
+	cm := fresh
 	doc[CrowlerMetaKey] = cm
 	return cm
 }
@@ -117,14 +103,89 @@ func sourceMetaData(source *cdb.Source) map[string]interface{} {
 	if source == nil || source.Config == nil || len(*source.Config) == 0 {
 		return map[string]interface{}{}
 	}
-	var cfg map[string]interface{}
-	if err := json.Unmarshal(*source.Config, &cfg); err != nil {
+	return extractMetaData(source.Config)
+}
+
+func extractMetaData(value interface{}) map[string]interface{} {
+	if value == nil {
 		return map[string]interface{}{}
 	}
-	if md, ok := cfg[CrowlerMetaDataKey].(map[string]interface{}); ok {
-		return cloneMap(md)
+	switch v := value.(type) {
+	case map[string]interface{}:
+		return extractMetaDataFromMap(v)
+	case json.RawMessage:
+		return extractMetaDataFromJSON(v)
+	case *json.RawMessage:
+		if v != nil {
+			return extractMetaDataFromJSON(*v)
+		}
+	case []byte:
+		return extractMetaDataFromJSON(v)
+	case string:
+		return extractMetaDataFromJSON([]byte(v))
+	}
+	rv := reflect.ValueOf(value)
+	if rv.Kind() == reflect.Map {
+		return extractMetaDataFromMap(normalizeMap(value))
+	}
+	return extractMetaDataFromStruct(value)
+}
+
+func extractMetaDataFromMap(cfg map[string]interface{}) map[string]interface{} {
+	if md, ok := cfg[CrowlerMetaDataKey]; ok {
+		return normalizeMap(md)
+	}
+	if nestedCfg, ok := cfg["config"]; ok {
+		return extractMetaData(nestedCfg)
 	}
 	return map[string]interface{}{}
+}
+
+func extractMetaDataFromJSON(raw []byte) map[string]interface{} {
+	var cfg map[string]interface{}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return map[string]interface{}{}
+	}
+	return extractMetaData(cfg)
+}
+
+func extractMetaDataFromStruct(value interface{}) map[string]interface{} {
+	rv := reflect.ValueOf(value)
+	if rv.Kind() == reflect.Pointer {
+		if rv.IsNil() {
+			return map[string]interface{}{}
+		}
+		rv = rv.Elem()
+	}
+	if rv.Kind() != reflect.Struct {
+		return map[string]interface{}{}
+	}
+	field := rv.FieldByName("MetaData")
+	if !field.IsValid() || field.IsNil() {
+		return map[string]interface{}{}
+	}
+	return normalizeMap(field.Interface())
+}
+
+func normalizeMap(value interface{}) map[string]interface{} {
+	if md, ok := value.(map[string]interface{}); ok {
+		return cloneMap(md)
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return map[string]interface{}{}
+	}
+	var out map[string]interface{}
+	if err := json.Unmarshal(encoded, &out); err != nil {
+		return map[string]interface{}{}
+	}
+	return out
+}
+
+func mergeMap(dst, src map[string]interface{}) {
+	for k, v := range src {
+		dst[k] = v
+	}
 }
 
 func cloneMap(in map[string]interface{}) map[string]interface{} {
