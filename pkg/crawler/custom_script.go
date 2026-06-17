@@ -144,12 +144,15 @@ func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]b
 	// Validate the plugin result
 	switch v := value.(type) {
 	case map[string]interface{}:
+		if len(v) == 0 {
+			return nil
+		}
 		// Serialize map to JSON and assign to *data
 		jsonResult, err := json.Marshal(v)
 		if err != nil {
 			return fmt.Errorf("marshalling plugin `%s` output to JSON: %v", pluginName, err)
 		}
-		if jsonResult != nil {
+		if jsonResult != nil && !isEmptyPluginJSONDocument(jsonResult) {
 			*data = jsonResult
 		}
 
@@ -159,7 +162,7 @@ func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]b
 			return fmt.Errorf("plugin `%s` returned an invalid JSON string", pluginName)
 		}
 		v = strings.TrimSpace(v)
-		if v != "" {
+		if !isEmptyPluginJSONDocument([]byte(v)) {
 			*data = []byte(v)
 		}
 
@@ -169,4 +172,16 @@ func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]b
 
 	//cmn.DebugMsg(cmn.DbgLvlDebug3, "Received data from custom JS plugin: %s", string(*data))
 	return nil
+}
+
+func isEmptyPluginJSONDocument(data []byte) bool {
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" || trimmed == "null" {
+		return true
+	}
+	var document map[string]interface{}
+	if err := json.Unmarshal([]byte(trimmed), &document); err == nil {
+		return len(document) == 0
+	}
+	return false
 }

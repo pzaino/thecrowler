@@ -20,6 +20,12 @@ func (r *recordedFailures) ReportFailure(_ context.Context, failure Failure) {
 	r.failures = append(r.failures, failure)
 }
 
+type staticPluginRunner struct{ value interface{} }
+
+func (r staticPluginRunner) RunPlugin(context.Context, PluginRequest) (interface{}, error) {
+	return r.value, nil
+}
+
 func TestApplyRulePureExtractionWithZeroRuntime(t *testing.T) {
 	driverImpl := &pageSourceDriver{source: `<html><body><h1>Reusable</h1></body></html>`}
 	var driver vdi.WebDriver = driverImpl
@@ -55,6 +61,46 @@ func TestPostProcessingFailureIdentifiesStepWithoutSensitiveData(t *testing.T) {
 	}
 	if len(recorder.failures) != 1 || recorder.failures[0].Name != "safe-name" {
 		t.Fatalf("reported failures = %#v", recorder.failures)
+	}
+}
+
+func TestPluginStepKeepsExistingDataWhenPluginReturnsEmptyDocument(t *testing.T) {
+	input := []byte(`{"title":"kept","count":1}`)
+	step := &rs.PostProcessingStep{Type: "plugin_call", Details: map[string]interface{}{"plugin_name": "buggy-plugin"}}
+	tests := []struct {
+		name  string
+		value interface{}
+	}{
+		{name: "empty map", value: map[string]interface{}{}},
+		{name: "empty object string", value: `{}`},
+		{name: "empty object bytes", value: []byte(` { } `)},
+		{name: "null string", value: `null`},
+		{name: "nil value", value: nil},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ApplyPostProcessingStep(context.Background(), &Runtime{Plugins: staticPluginRunner{value: tc.value}}, "rule", 0, step, input)
+			if err != nil {
+				t.Fatalf("ApplyPostProcessingStep() error = %v", err)
+			}
+			if string(got) != string(input) {
+				t.Fatalf("ApplyPostProcessingStep() = %s, want original %s", got, input)
+			}
+		})
+	}
+}
+
+func TestPluginStepUsesNonEmptyPluginDocument(t *testing.T) {
+	input := []byte(`{"title":"old"}`)
+	step := &rs.PostProcessingStep{Type: "plugin_call", Details: map[string]interface{}{"plugin_name": "enriching-plugin"}}
+
+	got, err := ApplyPostProcessingStep(context.Background(), &Runtime{Plugins: staticPluginRunner{value: map[string]interface{}{"title": "new", "extra": true}}}, "rule", 0, step, input)
+	if err != nil {
+		t.Fatalf("ApplyPostProcessingStep() error = %v", err)
+	}
+	if string(got) != `{"extra":true,"title":"new"}` {
+		t.Fatalf("ApplyPostProcessingStep() = %s", got)
 	}
 }
 

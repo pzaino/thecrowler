@@ -486,12 +486,15 @@ func processCCCustomJS(ctx *ProcessContext, pluginName string, params map[string
 	// Validate the plugin result
 	switch v := value.(type) {
 	case map[string]interface{}:
+		if len(v) == 0 {
+			return nil
+		}
 		// Serialize map to JSON and assign to *data
 		jsonResult, err := json.Marshal(v)
 		if err != nil {
 			return fmt.Errorf("error marshalling plugin '%s' output to JSON: %v", pluginName, err)
 		}
-		if jsonResult != nil {
+		if jsonResult != nil && !isEmptyPluginJSONDocument(jsonResult) {
 			*data = jsonResult
 		}
 
@@ -501,7 +504,7 @@ func processCCCustomJS(ctx *ProcessContext, pluginName string, params map[string
 			return fmt.Errorf("plugin '%s' returned an invalid JSON string", pluginName)
 		}
 		v = strings.TrimSpace(v)
-		if v != "" {
+		if !isEmptyPluginJSONDocument([]byte(v)) {
 			*data = []byte(v)
 		}
 

@@ -383,7 +383,14 @@ func runPluginStep(ctx context.Context, runtime Runtime, ruleName string, index 
 	if err != nil {
 		return nil, err
 	}
-	return marshalRuntimeResult(value)
+	result, err := marshalRuntimeResult(value)
+	if err != nil {
+		return nil, err
+	}
+	if isEmptyJSONDocument(result) {
+		return data, nil
+	}
+	return result, nil
 }
 
 func runAgentStep(ctx context.Context, runtime Runtime, ruleName string, index int, step *rs.PostProcessingStep, data []byte) ([]byte, error) {
@@ -440,6 +447,18 @@ func marshalRuntimeResult(value interface{}) ([]byte, error) {
 	default:
 		return json.Marshal(result)
 	}
+}
+
+func isEmptyJSONDocument(data []byte) bool {
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" || trimmed == "null" {
+		return true
+	}
+	var document map[string]interface{}
+	if err := json.Unmarshal([]byte(trimmed), &document); err == nil {
+		return len(document) == 0
+	}
+	return false
 }
 
 func runHTTPTransform(ctx context.Context, runtime Runtime, step *rs.PostProcessingStep, data []byte) ([]byte, error) {
