@@ -940,6 +940,7 @@ func indexPage(ctx *ProcessContext, url string, pageInfo *PageInfo) (uint64, err
 	}
 
 	pageInfo.URL = url
+	EnsurePageCrowlerMeta(pageInfo, ctx.source, ctx.srcCfg)
 
 	db := *ctx.db
 

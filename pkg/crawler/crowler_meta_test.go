@@ -81,3 +81,48 @@ func TestEnsureCrowlerMetaPreservesExistingMetaDataOverrides(t *testing.T) {
 		t.Fatalf("source metadata = %#v, want config", got)
 	}
 }
+
+func TestEnsureCrowlerMetaHandlesCrowlerMetaType(t *testing.T) {
+	raw := json.RawMessage(`{"meta_data":{"username":"from-source","source":"config"}}`)
+	source := &cdb.Source{Config: &raw}
+	doc := map[string]interface{}{
+		CrowlerMetaKey: CrowlerMeta{
+			CrowlerMetaDataKey: map[string]interface{}{"username": "from-rule"},
+			"custom":           map[string]interface{}{"keep": true},
+		},
+	}
+
+	cm := EnsureCrowlerMeta(doc, source, nil)
+	md, _ := cm.GetSection(CrowlerMetaDataKey)
+	if got := md["username"]; got != "from-rule" {
+		t.Fatalf("existing CrowlerMeta metadata override = %#v, want from-rule", got)
+	}
+	if got := md["source"]; got != "config" {
+		t.Fatalf("source metadata = %#v, want config", got)
+	}
+	if _, ok := cm["custom"]; !ok {
+		t.Fatalf("EnsureCrowlerMeta removed existing custom section from CrowlerMeta: %#v", cm)
+	}
+}
+
+func TestEnsurePageCrowlerMetaBackfillsWorkerPageInfo(t *testing.T) {
+	raw := json.RawMessage(`{"meta_data":{"username":"iamstevent"},"config":{"meta_data":{"ignored":"nested"}}}`)
+	source := &cdb.Source{Config: &raw}
+	srcCfg := map[string]interface{}{"meta_data": map[string]interface{}{"source": "runtime"}}
+	pageInfo := &PageInfo{}
+
+	cm := EnsurePageCrowlerMeta(pageInfo, source, srcCfg)
+	md, ok := cm.GetSection(CrowlerMetaDataKey)
+	if !ok {
+		t.Fatalf("worker pageInfo crowler_meta missing %q section: %#v", CrowlerMetaDataKey, cm)
+	}
+	if got := md["username"]; got != "iamstevent" {
+		t.Fatalf("worker pageInfo source metadata = %#v, want iamstevent; metadata=%#v", got, md)
+	}
+	if got := md["source"]; got != "runtime" {
+		t.Fatalf("worker pageInfo runtime config metadata = %#v, want runtime; metadata=%#v", got, md)
+	}
+	if pageInfo.CrowlerMeta == nil {
+		t.Fatalf("EnsurePageCrowlerMeta did not assign pageInfo.CrowlerMeta")
+	}
+}

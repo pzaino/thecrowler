@@ -86,8 +86,7 @@ func EnsureCrowlerMeta(doc map[string]interface{}, source *cdb.Source, srcCfg ma
 		return NewCrowlerMetaFromSource(source, srcCfg)
 	}
 	fresh := NewCrowlerMetaFromSource(source, srcCfg)
-	if existing, ok := doc[CrowlerMetaKey].(map[string]interface{}); ok {
-		cm := CrowlerMeta(existing)
+	if cm, ok := normalizeCrowlerMeta(doc[CrowlerMetaKey]); ok {
 		merged := cloneMap(fresh[CrowlerMetaDataKey].(map[string]interface{}))
 		mergeMap(merged, extractMetaData(cm))
 		cm[CrowlerMetaDataKey] = merged
@@ -97,6 +96,30 @@ func EnsureCrowlerMeta(doc map[string]interface{}, source *cdb.Source, srcCfg ma
 	cm := fresh
 	doc[CrowlerMetaKey] = cm
 	return cm
+}
+
+func EnsurePageCrowlerMeta(pageInfo *PageInfo, source *cdb.Source, srcCfg map[string]interface{}) CrowlerMeta {
+	if pageInfo == nil {
+		return NewCrowlerMetaFromSource(source, srcCfg)
+	}
+	doc := map[string]interface{}{}
+	if pageInfo.CrowlerMeta != nil {
+		doc[CrowlerMetaKey] = pageInfo.CrowlerMeta
+	}
+	cm := EnsureCrowlerMeta(doc, source, srcCfg)
+	pageInfo.CrowlerMeta = cm
+	return cm
+}
+
+func normalizeCrowlerMeta(value interface{}) (CrowlerMeta, bool) {
+	switch v := value.(type) {
+	case CrowlerMeta:
+		return v, true
+	case map[string]interface{}:
+		return CrowlerMeta(v), true
+	default:
+		return nil, false
+	}
 }
 
 func sourceMetaData(source *cdb.Source) map[string]interface{} {
