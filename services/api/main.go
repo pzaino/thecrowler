@@ -671,6 +671,8 @@ func initAPIv1() {
 		informationSeedSourcesHandlerWithMiddlewares := withPublicMiddlewares(informationSeedSourcesHandler)
 		informationSeedCandidatesHandlerWithMiddlewares := withPublicMiddlewares(informationSeedCandidateDecisionsHandler)
 		informationSeedRetryHandlerWithMiddlewares := withPublicMiddlewares(informationSeedRetryHandler)
+		informationSeedUpdateHandlerWithMiddlewares := withPublicMiddlewares(informationSeedUpdateHandler)
+		informationSeedRemoveHandlerWithMiddlewares := withPublicMiddlewares(informationSeedRemoveHandler)
 		informationSeedRerunHandlerWithMiddlewares := withPublicMiddlewares(informationSeedRerunHandler)
 		informationSeedDisableHandlerWithMiddlewares := withPublicMiddlewares(informationSeedDisableHandler)
 		informationSeedPathDisableHandlerWithMiddlewares := withPublicMiddlewares(informationSeedPathDisableHandler)
@@ -719,6 +721,12 @@ func initAPIv1() {
 
 		http.Handle("/v1/information_seed/disable", informationSeedDisableHandlerWithMiddlewares)
 		cmn.RegisterAPIRoute("/v1/information_seed/disable", []string{"POST"}, "Disable information seed endpoint (console)", tagsNone, true, false, 200, informationSeedIDRequest{}, nil, InformationSeedResponse{})
+
+		http.Handle("/v1/information_seed/update", informationSeedUpdateHandlerWithMiddlewares)
+		cmn.RegisterAPIRoute("/v1/information_seed/update", []string{"POST"}, "Update information seed endpoint (console)", tagsNone, true, false, 200, informationSeedUpdateRequest{}, nil, InformationSeedResponse{})
+
+		http.Handle("/v1/information_seed/remove", informationSeedRemoveHandlerWithMiddlewares)
+		cmn.RegisterAPIRoute("/v1/information_seed/remove", []string{"POST"}, "Remove information seed endpoint (console)", tagsNone, true, false, 200, informationSeedIDRequest{}, nil, ConsoleResponse{})
 
 		http.Handle("POST /v1/information_seed/{id}/rerun", informationSeedRerunHandlerWithMiddlewares)
 		cmn.RegisterAPIRoute("/v1/information_seed/{id}/rerun", []string{"POST"}, "Rerun information seed endpoint (console)", tagsNone, true, false, 200, nil, informationSeedIDGetRequest{}, InformationSeedResponse{})
@@ -1939,6 +1947,28 @@ func informationSeedDisableHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	handleRequestWithDB(w, r, http.StatusOK, func(query string, _ int, db *cdb.Handler) (interface{}, error) {
 		return performDisableInformationSeed(query, db)
+	})
+}
+
+func informationSeedUpdateHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		handleErrorAndRespond(w, fmt.Errorf("method not allowed"), nil, "Method not allowed", http.StatusMethodNotAllowed, http.StatusOK)
+		return
+	}
+	handleRequestWithDB(w, r, http.StatusOK, func(query string, qType int, db *cdb.Handler) (interface{}, error) {
+		return performUpdateInformationSeed(query, qType, db)
+	})
+}
+
+func informationSeedRemoveHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		handleErrorAndRespond(w, fmt.Errorf("method not allowed"), nil, "Method not allowed", http.StatusMethodNotAllowed, http.StatusOK)
+		return
+	}
+	handleRequestWithDB(w, r, http.StatusOK, func(query string, qType int, db *cdb.Handler) (interface{}, error) {
+		return performRemoveInformationSeed(query, qType, db)
 	})
 }
 

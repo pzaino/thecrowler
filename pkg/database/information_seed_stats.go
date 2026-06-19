@@ -35,6 +35,11 @@ func ListInformationSeeds(db *Handler, filter InformationSeedFilter) ([]Informat
 	query := fmt.Sprintf("SELECT %s FROM InformationSeed", informationSeedSelectColumns())
 	conditions := []string{}
 	args := []interface{}{}
+	if hasDeletedAt, err := tableColumnExists(db, "InformationSeed", "deleted_at"); err != nil {
+		return nil, err
+	} else if hasDeletedAt {
+		conditions = append(conditions, "deleted_at IS NULL")
+	}
 
 	if filter.ID != 0 {
 		conditions = append(conditions, "information_seed_id = "+placeholders.Next())
@@ -115,6 +120,11 @@ func ListInformationSeedsWithStats(db *Handler, filters ...InformationSeedFilter
 	placeholders := newInformationSeedPlaceholders(dbms)
 	conditions := []string{}
 	args := []interface{}{}
+	if hasDeletedAt, err := tableColumnExists(db, "InformationSeed", "deleted_at"); err != nil {
+		return nil, err
+	} else if hasDeletedAt {
+		conditions = append(conditions, "seed.deleted_at IS NULL")
+	}
 	if filter.ID != 0 {
 		conditions = append(conditions, "seed.information_seed_id = "+placeholders.Next())
 		args = append(args, filter.ID)

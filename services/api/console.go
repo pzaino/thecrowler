@@ -60,9 +60,14 @@ func performAddInformationSeed(query string, qType int, db *cdb.Handler) (Inform
 		if err := json.Unmarshal([]byte(query), &params); err != nil {
 			return InformationSeedResponse{Message: "Invalid information seed request"}, fmt.Errorf("invalid JSON: %w", err)
 		}
-		if err := validateInformationSeedConfig(params.Config); err != nil {
-			return InformationSeedResponse{Message: "Invalid information seed config"}, err
-		}
+	}
+
+	configRaw, err := marshalInformationSeedRequestConfig(params.Config)
+	if err != nil {
+		return InformationSeedResponse{Message: "Invalid information seed config"}, err
+	}
+	if err := validateInformationSeedConfig(configRaw); err != nil {
+		return InformationSeedResponse{Message: "Invalid information seed config"}, err
 	}
 
 	params.InformationSeed = strings.TrimSpace(params.InformationSeed)
@@ -84,7 +89,7 @@ func performAddInformationSeed(query string, qType int, db *cdb.Handler) (Inform
 		Priority:        params.Priority,
 		Engine:          params.Engine,
 		Disabled:        params.Disabled,
-		Config:          params.Config,
+		Config:          configRaw,
 	})
 	if err != nil {
 		return InformationSeedResponse{Message: "Failed to add information seed"}, err
@@ -97,21 +102,61 @@ func performAddInformationSeed(query string, qType int, db *cdb.Handler) (Inform
 	return InformationSeedResponse{Message: "Information seed added successfully", Item: row}, nil
 }
 
-func validateInformationSeedConfig(config *json.RawMessage) error {
-	if config == nil {
+func marshalInformationSeedRequestConfig(config *json.RawMessage) (*json.RawMessage, error) {
+	return config, nil
+}
+
+func validateInformationSeedConfig(rawConfig *json.RawMessage) error {
+	if rawConfig == nil {
 		return nil
 	}
-	if len(*config) == 0 || !json.Valid(*config) {
+	if len(*rawConfig) == 0 || !json.Valid(*rawConfig) {
 		return fmt.Errorf("information seed config must be valid JSON")
 	}
 	var object map[string]interface{}
-	if err := json.Unmarshal(*config, &object); err != nil {
+	if err := json.Unmarshal(*rawConfig, &object); err != nil {
 		return fmt.Errorf("information seed config must be a JSON object: %w", err)
 	}
 	if object == nil {
 		return fmt.Errorf("information seed config must be a JSON object")
 	}
+	var runConfig infoseeddiag.SeedRunConfig
+	if err := json.Unmarshal(*rawConfig, &runConfig); err != nil {
+		return fmt.Errorf("information seed config does not match runner schema: %w", err)
+	}
+	allowed := map[string]struct{}{}
+	for _, provider := range configProviderAllowList() {
+		allowed[strings.ToLower(strings.TrimSpace(provider))] = struct{}{}
+	}
+	configuredProviders := config.InformationSeed.Providers
+	for _, provider := range runConfig.Providers {
+		name := strings.ToLower(strings.TrimSpace(provider))
+		if name == "" {
+			return fmt.Errorf("information seed config providers must not contain empty names")
+		}
+		if len(allowed) > 0 {
+			if _, ok := allowed[name]; !ok {
+				return fmt.Errorf("information seed provider %q is not in the configured provider allow-list", name)
+			}
+		}
+		if len(configuredProviders) > 0 {
+			if _, ok := configuredProviders[name]; !ok {
+				return fmt.Errorf("information seed provider %q is not configured", name)
+			}
+		}
+	}
 	return nil
+}
+
+func configProviderAllowList() []string {
+	if len(config.InformationSeed.ProviderAllowList) > 0 {
+		return config.InformationSeed.ProviderAllowList
+	}
+	providers := make([]string, 0, len(config.InformationSeed.Providers))
+	for name := range config.InformationSeed.Providers {
+		providers = append(providers, name)
+	}
+	return providers
 }
 
 func rejectInformationSeedRequestCredentials(raw []byte) error {
@@ -1432,4 +1477,74 @@ func performRemoveCategory(query string, qType int, db *cdb.Handler) (ConsoleRes
 	}
 
 	return ConsoleResponse{Message: "Category removed successfully"}, nil
+}
+
+func performUpdateInformationSeed(query string, _ int, db *cdb.Handler) (InformationSeedResponse, error) {
+	if err := rejectInformationSeedRequestCredentials([]byte(query)); err != nil {
+		return InformationSeedResponse{Message: "Provider credentials are not accepted in information seed requests"}, err
+	}
+	var req informationSeedUpdateRequest
+	if err := json.Unmarshal([]byte(query), &req); err != nil {
+		return InformationSeedResponse{Message: "Invalid information seed update request"}, fmt.Errorf("invalid JSON: %w", err)
+	}
+	if req.InformationSeedID == 0 {
+		return InformationSeedResponse{Message: "Information seed ID is required"}, fmt.Errorf("information_seed_id is required")
+	}
+	existing, err := cdb.GetInformationSeedByID(db, req.InformationSeedID)
+	if err != nil {
+		return InformationSeedResponse{Message: "Failed to load information seed"}, err
+	}
+	if req.CategoryID != nil {
+		existing.CategoryID = *req.CategoryID
+	}
+	if req.UsrID != nil {
+		existing.UsrID = *req.UsrID
+	}
+	if req.UserID != nil {
+		existing.UsrID = *req.UserID
+	}
+	if req.InformationSeed != nil {
+		existing.InformationSeed = strings.TrimSpace(*req.InformationSeed)
+	}
+	if req.Status != nil {
+		existing.Status = strings.TrimSpace(*req.Status)
+	}
+	if req.Priority != nil {
+		existing.Priority = strings.TrimSpace(*req.Priority)
+	}
+	if req.Engine != nil {
+		existing.Engine = strings.TrimSpace(*req.Engine)
+	}
+	if req.Disabled != nil {
+		existing.Disabled = *req.Disabled
+	}
+	if req.Config != nil {
+		raw, err := marshalInformationSeedRequestConfig(req.Config)
+		if err != nil {
+			return InformationSeedResponse{Message: "Invalid information seed config"}, err
+		}
+		if err := validateInformationSeedConfig(raw); err != nil {
+			return InformationSeedResponse{Message: "Invalid information seed config"}, err
+		}
+		existing.Config = raw
+	}
+	if err := cdb.UpdateInformationSeed(db, existing); err != nil {
+		return InformationSeedResponse{Message: "Failed to update information seed"}, err
+	}
+	row, err := informationSeedRowByID(db, req.InformationSeedID)
+	if err != nil {
+		return InformationSeedResponse{Message: "Failed to load updated information seed"}, err
+	}
+	return InformationSeedResponse{Message: "Information seed updated successfully", Item: row}, nil
+}
+
+func performRemoveInformationSeed(query string, _ int, db *cdb.Handler) (ConsoleResponse, error) {
+	id, err := parseInformationSeedIDFromJSON(query)
+	if err != nil {
+		return ConsoleResponse{Message: "Invalid information seed remove request"}, err
+	}
+	if err := cdb.RemoveInformationSeed(db, id); err != nil {
+		return ConsoleResponse{Message: "Failed to remove information seed"}, err
+	}
+	return ConsoleResponse{Message: "Information seed removed successfully"}, nil
 }

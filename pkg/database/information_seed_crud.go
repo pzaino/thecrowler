@@ -195,3 +195,98 @@ func emitInformationSeedLifecycleObservationsTx(tx *sql.Tx, dbms string, seed In
 			"previous_value": previous, "current_value": current, "status": seed.Status, "disabled": seed.Disabled,
 			"attempts": seed.Attempts, "category_id": seed.CategoryID, "user_id": seed.UsrID}})
 }
+
+// UpdateInformationSeed replaces mutable fields for an existing information seed.
+func UpdateInformationSeed(db *Handler, seed *InformationSeed) error {
+	if db == nil || *db == nil {
+		return fmt.Errorf("database handler is nil")
+	}
+	if seed == nil || seed.ID == 0 {
+		return fmt.Errorf("information seed ID must be provided")
+	}
+	seedText := strings.TrimSpace(seed.InformationSeed)
+	if seedText == "" {
+		return fmt.Errorf("information seed text is required")
+	}
+	status := strings.TrimSpace(seed.Status)
+	if status == "" {
+		status = "new"
+	}
+	priority, engine := strings.TrimSpace(seed.Priority), strings.TrimSpace(seed.Engine)
+	config, err := informationSeedConfigString(seed.Config)
+	if err != nil {
+		return err
+	}
+	dbms := normalizeInformationSeedDBMS((*db).DBMS())
+	if !isSupportedInformationSeedDBMS(dbms) {
+		return fmt.Errorf("unsupported database type for information seed update: %s", (*db).DBMS())
+	}
+	tx, err := (*db).Begin()
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer rollbackIfUncommitted(tx, &committed)
+	p := newInformationSeedPlaceholders(dbms)
+	query := `UPDATE InformationSeed SET category_id = ` + p.Next() + `, usr_id = ` + p.Next() + `, information_seed = ` + p.Next() + `, status = ` + p.Next() + `, priority = ` + p.Next() + `, engine = ` + p.Next() + `, disabled = ` + p.Next() + `, config = ` + p.Next()
+	if dbms == DBPostgresStr {
+		query += `::jsonb`
+	}
+	query += `, last_updated_at = CURRENT_TIMESTAMP WHERE information_seed_id = ` + p.Next()
+	result, err := tx.Exec(query, seed.CategoryID, seed.UsrID, seedText, status, priority, engine, seed.Disabled, config, seed.ID)
+	if err != nil {
+		return fmt.Errorf("failed to update information seed %d: %w", seed.ID, err)
+	}
+	if rows, rowsErr := result.RowsAffected(); rowsErr == nil && rows == 0 {
+		return fmt.Errorf("no information seed found with ID %d", seed.ID)
+	}
+	persisted, err := getInformationSeedByIDTx(tx, dbms, seed.ID)
+	if err != nil {
+		return err
+	}
+	if err = emitInformationSeedLifecycleObservationsTx(tx, dbms, *persisted, "updated", "", status); err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
+// RemoveInformationSeed marks an information seed deleted when supported.
+func RemoveInformationSeed(db *Handler, id uint64) error {
+	if db == nil || *db == nil {
+		return fmt.Errorf("database handler is nil")
+	}
+	if id == 0 {
+		return fmt.Errorf("information seed ID must be provided")
+	}
+	dbms := normalizeInformationSeedDBMS((*db).DBMS())
+	if !isSupportedInformationSeedDBMS(dbms) {
+		return fmt.Errorf("unsupported database type for information seed removal: %s", (*db).DBMS())
+	}
+	hasDeletedAt, err := tableColumnExists(db, "InformationSeed", "deleted_at")
+	if err != nil {
+		return err
+	}
+	p := newInformationSeedPlaceholders(dbms)
+	query := `DELETE FROM InformationSeed WHERE information_seed_id = ` + p.Next()
+	if hasDeletedAt {
+		p = newInformationSeedPlaceholders(dbms)
+		query = `UPDATE InformationSeed SET deleted_at = CURRENT_TIMESTAMP, disabled = ` + p.Next() + ` WHERE information_seed_id = ` + p.Next()
+	}
+	var result sql.Result
+	if hasDeletedAt {
+		result, err = (*db).Exec(query, true, id)
+	} else {
+		result, err = (*db).Exec(query, id)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to remove information seed %d: %w", id, err)
+	}
+	if rows, rowsErr := result.RowsAffected(); rowsErr == nil && rows == 0 {
+		return fmt.Errorf("no information seed found with ID %d", id)
+	}
+	return nil
+}

@@ -184,6 +184,47 @@ type informationSeedAddRequest struct {
 	Config          *json.RawMessage `json:"config,omitempty"`
 }
 
+// InformationSeedRunConfigRequest is the per-seed JSONB configuration consumed by pkg/infoseed.
+type InformationSeedRunConfigRequest struct {
+	Queries                    []string         `json:"queries,omitempty"`
+	QueryTemplates             []string         `json:"query_templates,omitempty"`
+	Providers                  []string         `json:"providers,omitempty"`
+	TrackingParams             []string         `json:"tracking_params,omitempty"`
+	DeduplicateHost            bool             `json:"deduplicate_host,omitempty"`
+	MaxCandidates              int              `json:"max_candidates,omitempty"`
+	AllowedDomains             []string         `json:"allowed_domains,omitempty"`
+	DeniedDomains              []string         `json:"denied_domains,omitempty"`
+	RequiredURLSchemes         []string         `json:"required_url_schemes,omitempty"`
+	MinScore                   *float64         `json:"min_score,omitempty"`
+	MaxCandidatesPerHost       int              `json:"max_candidates_per_host,omitempty"`
+	MaxCandidatesPerDomain     int              `json:"max_candidates_per_domain,omitempty"`
+	SourceNameTemplate         string           `json:"source_name_template,omitempty"`
+	SourcePriority             string           `json:"source_priority,omitempty"`
+	CreateSources              bool             `json:"create_sources,omitempty"`
+	LinkExistingSources        bool             `json:"link_existing_sources,omitempty"`
+	UpdateExistingSourceConfig bool             `json:"update_existing_source_config,omitempty"`
+	Disabled                   bool             `json:"disabled,omitempty"`
+	Status                     string           `json:"status,omitempty"`
+	Restricted                 uint             `json:"restricted,omitempty"`
+	Flags                      uint             `json:"flags,omitempty"`
+	CandidatePlugins           []string         `json:"candidate_plugins,omitempty"`
+	SourceConfig               *json.RawMessage `json:"source_config,omitempty"`
+}
+
+// informationSeedUpdateRequest represents mutable InformationSeed fields.
+type informationSeedUpdateRequest struct {
+	InformationSeedID uint64           `json:"information_seed_id"`
+	CategoryID        *uint64          `json:"category_id,omitempty"`
+	UsrID             *uint64          `json:"usr_id,omitempty"`
+	UserID            *uint64          `json:"user_id,omitempty"`
+	InformationSeed   *string          `json:"information_seed,omitempty"`
+	Status            *string          `json:"status,omitempty"`
+	Priority          *string          `json:"priority,omitempty"`
+	Engine            *string          `json:"engine,omitempty"`
+	Disabled          *bool            `json:"disabled,omitempty"`
+	Config            *json.RawMessage `json:"config,omitempty"`
+}
+
 // informationSeedIDRequest represents a request targeting one information seed.
 type informationSeedIDRequest struct {
 	InformationSeedID uint64 `json:"information_seed_id"`
