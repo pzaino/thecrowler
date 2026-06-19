@@ -114,6 +114,7 @@ type CrowlerMetaEditor interface {
 	SetCrowlerMetaTag(context.Context, string, string, interface{}) error
 	DeleteCrowlerMetaSection(context.Context, string) error
 	DeleteCrowlerMetaTag(context.Context, string, string) error
+	AddCrowlerMetaObjectType(context.Context, ...string) error
 }
 
 // Failure identifies a failed rule or post-processing step without including data or secrets.

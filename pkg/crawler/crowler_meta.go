@@ -11,6 +11,7 @@ import (
 
 const CrowlerMetaKey = "crowler_meta"
 const CrowlerMetaDataKey = "meta_data"
+const CrowlerMetaObjectTypeKey = "object_type"
 
 type CrowlerMeta map[string]interface{}
 
@@ -21,6 +22,7 @@ func NewCrowlerMeta(metaData map[string]interface{}, srcCfg map[string]interface
 	mergeMap(finalMetaData, metaData)
 	mergeMap(finalMetaData, extractMetaData(srcCfg))
 	cm[CrowlerMetaDataKey] = cloneMap(finalMetaData)
+	cm[CrowlerMetaObjectTypeKey] = []string{}
 	return cm
 }
 
@@ -60,6 +62,50 @@ func (cm CrowlerMeta) GetSection(section string) (map[string]interface{}, bool) 
 	return m, ok
 }
 
+// AddObjectType appends normalized object type labels to crowler_meta.object_type.
+// Empty labels are ignored. Existing labels are preserved in insertion order and
+// duplicates are ignored after normalization.
+func (cm CrowlerMeta) AddObjectType(labels ...string) {
+	if cm == nil {
+		return
+	}
+	existing := cm.ObjectTypes()
+	seen := make(map[string]struct{}, len(existing)+len(labels))
+	for _, label := range existing {
+		seen[label] = struct{}{}
+	}
+	for _, label := range labels {
+		normalized := NormalizeObjectTypeLabel(label)
+		if normalized == "" {
+			continue
+		}
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		existing = append(existing, normalized)
+		seen[normalized] = struct{}{}
+	}
+	cm[CrowlerMetaObjectTypeKey] = existing
+}
+
+// ObjectTypes returns the normalized unique crowler_meta.object_type labels.
+func (cm CrowlerMeta) ObjectTypes() []string {
+	if cm == nil {
+		return nil
+	}
+	labels := normalizeObjectTypeValue(cm[CrowlerMetaObjectTypeKey])
+	if labels == nil {
+		labels = []string{}
+	}
+	cm[CrowlerMetaObjectTypeKey] = labels
+	return labels
+}
+
+// NormalizeObjectTypeLabel normalizes a user-provided object_type label.
+func NormalizeObjectTypeLabel(label string) string {
+	return strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(label)), "_"))
+}
+
 func (cm CrowlerMeta) DeleteTag(section, key string) error {
 	section = strings.TrimSpace(section)
 	key = strings.TrimSpace(key)
@@ -90,6 +136,7 @@ func EnsureCrowlerMeta(doc map[string]interface{}, source *cdb.Source, srcCfg ma
 		merged := cloneMap(fresh[CrowlerMetaDataKey].(map[string]interface{}))
 		mergeMap(merged, extractMetaData(cm))
 		cm[CrowlerMetaDataKey] = merged
+		cm.ObjectTypes()
 		doc[CrowlerMetaKey] = cm
 		return cm
 	}
@@ -217,4 +264,45 @@ func cloneMap(in map[string]interface{}) map[string]interface{} {
 		out[k] = v
 	}
 	return out
+}
+
+func normalizeObjectTypeValue(value interface{}) []string {
+	values := []string{}
+	seen := map[string]struct{}{}
+	add := func(raw string) {
+		label := NormalizeObjectTypeLabel(raw)
+		if label == "" {
+			return
+		}
+		if _, ok := seen[label]; ok {
+			return
+		}
+		seen[label] = struct{}{}
+		values = append(values, label)
+	}
+	switch v := value.(type) {
+	case []string:
+		for _, item := range v {
+			add(item)
+		}
+	case []interface{}:
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				add(s)
+			}
+		}
+	case string:
+		add(v)
+	}
+	return values
+}
+
+func currentCrowlerMeta(ctx *ProcessContext) CrowlerMeta {
+	if ctx == nil {
+		return NewCrowlerMeta(nil, nil)
+	}
+	if ctx.crowlerMeta == nil {
+		ctx.crowlerMeta = NewCrowlerMetaFromSource(ctx.source, ctx.srcCfg)
+	}
+	return ctx.crowlerMeta
 }

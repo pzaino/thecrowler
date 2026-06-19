@@ -245,3 +245,8 @@ func (a *scraperRuntimeAdapter) DeleteCrowlerMetaSection(_ context.Context, sect
 func (a *scraperRuntimeAdapter) DeleteCrowlerMetaTag(_ context.Context, section, key string) error {
 	return a.currentCrowlerMeta().DeleteTag(section, key)
 }
+
+func (a *scraperRuntimeAdapter) AddCrowlerMetaObjectType(_ context.Context, labels ...string) error {
+	a.currentCrowlerMeta().AddObjectType(labels...)
+	return nil
+}

@@ -94,6 +94,13 @@
                   "description": "A unique name identifying the scraping rule.",
                   "type": "string"
                 },
+                "object_type": {
+                  "title": "Object Type Labels",
+                  "description": "Optional labels to add to crowler_meta.object_type when this rule is called or matched. Labels are normalized and deduplicated.",
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "uniqueItems": true
+                },
                 "scope": {
                   "title": "Rule Scope",
                   "description": "Defines where this rule applies ('any', 'website', 'api', 'file', 'db', or 'data').",
@@ -395,6 +402,13 @@
                   "description": "A unique name identifying the action rule.",
                   "type": "string"
                 },
+                "object_type": {
+                  "title": "Object Type Labels",
+                  "description": "Optional labels to add to crowler_meta.object_type when this rule is called or matched. Labels are normalized and deduplicated.",
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "uniqueItems": true
+                },
                 "scope": {
                   "title": "Rule Scope",
                   "description": "Defines where this rule applies ('any', 'website', 'api', 'file', 'db', or 'data').",
@@ -625,6 +639,13 @@
                   "title": "Rule Name",
                   "description": "A unique name identifying the detection rule.",
                   "type": "string"
+                },
+                "object_type": {
+                  "title": "Object Type Labels",
+                  "description": "Optional labels to add to crowler_meta.object_type when this rule is called or matched. Labels are normalized and deduplicated.",
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "uniqueItems": true
                 },
                 "scope": {
                   "title": "Rule Scope",
@@ -996,6 +1017,13 @@
                 "rule_name": {
                   "type": "string",
                   "description": "A unique name identifying the crawling rule."
+                },
+                "object_type": {
+                  "title": "Object Type Labels",
+                  "description": "Optional labels to add to crowler_meta.object_type when this rule is called or matched. Labels are normalized and deduplicated.",
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "uniqueItems": true
                 },
                 "scope": {
                   "title": "Rule Scope",

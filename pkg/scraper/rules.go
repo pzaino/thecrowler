@@ -59,6 +59,11 @@ func ApplyRule(ctx context.Context, runtime *Runtime, rule *rs.ScrapingRule, web
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if len(rule.ObjectType) > 0 && rt.CrowlerMeta != nil {
+		if err := rt.CrowlerMeta.AddCrowlerMetaObjectType(ctx, rule.ObjectType...); err != nil {
+			return nil, err
+		}
+	}
 
 	extractor := Extractor{Driver: webPage, MatchValue: rt.MatchValue}
 	extractor.ExtractExternal = func(selector rs.Selector) ([]interface{}, error) {

@@ -2,6 +2,7 @@ package crawler
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 
 	cdb "github.com/pzaino/thecrowler/pkg/database"
@@ -124,5 +125,30 @@ func TestEnsurePageCrowlerMetaBackfillsWorkerPageInfo(t *testing.T) {
 	}
 	if pageInfo.CrowlerMeta == nil {
 		t.Fatalf("EnsurePageCrowlerMeta did not assign pageInfo.CrowlerMeta")
+	}
+}
+
+func TestCrowlerMetaAddObjectTypeNormalizesAndDeduplicates(t *testing.T) {
+	cm := NewCrowlerMeta(nil, nil)
+	cm.AddObjectType(" Product ", "product", "News Article", "", "news   article")
+
+	got := cm.ObjectTypes()
+	want := []string{"product", "news_article"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ObjectTypes() = %#v, want %#v", got, want)
+	}
+}
+
+func TestEnsureCrowlerMetaNormalizesExistingObjectTypes(t *testing.T) {
+	doc := map[string]interface{}{
+		CrowlerMetaKey: map[string]interface{}{
+			CrowlerMetaObjectTypeKey: []interface{}{" Product ", "product", 42, "News Article"},
+		},
+	}
+	cm := EnsureCrowlerMeta(doc, nil, nil)
+	got := cm.ObjectTypes()
+	want := []string{"product", "news_article"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ObjectTypes() = %#v, want %#v", got, want)
 	}
 }

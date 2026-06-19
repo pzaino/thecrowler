@@ -2146,3 +2146,49 @@ func TestAddJSAPIClient_GCPIDTokenMissingAudience(t *testing.T) {
 		t.Fatalf("expected undefined/nil result on auth failure, got %#v", exported)
 	}
 }
+
+func TestAddJSAPIAddObjectType(t *testing.T) {
+	vm := otto.New()
+	if err := addJSAPIAddObjectType(vm); err != nil {
+		t.Fatalf("addJSAPIAddObjectType returned error: %v", err)
+	}
+	params := map[string]interface{}{"crowler_meta": map[string]interface{}{"object_type": []interface{}{" Product "}}}
+	if err := vm.Set("params", params); err != nil {
+		t.Fatalf("setting params: %v", err)
+	}
+	if _, err := vm.Run(`addObjectType("product", "News Article", ["news article", "Profile"]);`); err != nil {
+		t.Fatalf("running addObjectType: %v", err)
+	}
+	value, err := vm.Run(`JSON.stringify(params.crowler_meta.object_type);`)
+	if err != nil {
+		t.Fatalf("reading object_type: %v", err)
+	}
+	got, _ := value.ToString()
+	want := `["product","news_article","profile"]`
+	if got != want {
+		t.Fatalf("object_type = %s, want %s", got, want)
+	}
+}
+
+func TestSyncVMParamsPersistsObjectTypeToGoParams(t *testing.T) {
+	vm := otto.New()
+	if err := addJSAPIAddObjectType(vm); err != nil {
+		t.Fatalf("addJSAPIAddObjectType returned error: %v", err)
+	}
+	params := map[string]interface{}{"crowler_meta": map[string]interface{}{}}
+	if err := vm.Set("params", params); err != nil {
+		t.Fatalf("setting params: %v", err)
+	}
+	if _, err := vm.Run(`addObjectType("Profile");`); err != nil {
+		t.Fatalf("running addObjectType: %v", err)
+	}
+	syncVMParams(vm, params)
+	cm, ok := params["crowler_meta"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("crowler_meta not synced: %#v", params["crowler_meta"])
+	}
+	labels, ok := cm["object_type"].([]string)
+	if !ok || len(labels) != 1 || labels[0] != "profile" {
+		t.Fatalf("synced object_type = %#v, want [profile]", cm["object_type"])
+	}
+}

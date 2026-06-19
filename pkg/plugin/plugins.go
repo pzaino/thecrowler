@@ -1028,6 +1028,7 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]any, db *cdb.H
 		// This includes the timeout path where we panicked via Interrupt
 		return result, err
 	}
+	syncVMParams(vm, params)
 
 	// Gather result
 	resultRaw, err := vm.Get("result")
@@ -1503,6 +1504,27 @@ func DiscoverTestsFromPlugins(reg *JSPluginRegister) []TestFile {
 	return tests
 }
 
+func syncVMParams(vm *otto.Otto, params map[string]interface{}) {
+	if vm == nil || params == nil {
+		return
+	}
+	value, err := vm.Get("params")
+	if err != nil || !value.IsObject() {
+		return
+	}
+	exported, err := value.Export()
+	if err != nil {
+		return
+	}
+	updated, ok := exported.(map[string]interface{})
+	if !ok {
+		return
+	}
+	for key, val := range updated {
+		params[key] = val
+	}
+}
+
 func normalizeVMExport(exported interface{}) (map[string]interface{}, error) {
 	result := make(map[string]interface{})
 
@@ -1618,6 +1640,9 @@ func setCrowlerJSAPI(ctx context.Context, vm *otto.Otto,
 		return err
 	}
 	if err := addJSAPIInclude(vm, rt); err != nil {
+		return err
+	}
+	if err := addJSAPIAddObjectType(vm); err != nil {
 		return err
 	}
 
@@ -1961,6 +1986,109 @@ let mathLib = lib("math");
 let result = mathLib.call("add", { "a": 1, "b": 2 });
 console.log(result);
 */
+func addJSAPIAddObjectType(vm *otto.Otto) error {
+	return vm.Set("addObjectType", func(call otto.FunctionCall) otto.Value {
+		params, err := call.Otto.Get("params")
+		if err != nil || !params.IsObject() || len(call.ArgumentList) == 0 {
+			return otto.FalseValue()
+		}
+		exported, err := params.Export()
+		if err != nil {
+			return otto.FalseValue()
+		}
+		paramsMap, ok := exported.(map[string]interface{})
+		if !ok {
+			return otto.FalseValue()
+		}
+		cm, _ := paramsMap["crowler_meta"].(map[string]interface{})
+		if cm == nil {
+			cm = map[string]interface{}{}
+			paramsMap["crowler_meta"] = cm
+		}
+		addPluginObjectTypeLabels(cm, call.ArgumentList...)
+		_ = call.Otto.Set("params", paramsMap)
+		return otto.TrueValue()
+	})
+}
+
+func addPluginObjectTypeLabels(cm map[string]interface{}, args ...otto.Value) {
+	existing := pluginObjectTypes(cm["object_type"])
+	seen := map[string]struct{}{}
+	for _, label := range existing {
+		seen[label] = struct{}{}
+	}
+	for _, arg := range args {
+		if arg.IsString() {
+			label := pluginNormalizeObjectType(arg.String())
+			if label != "" {
+				if _, ok := seen[label]; !ok {
+					existing = append(existing, label)
+					seen[label] = struct{}{}
+				}
+			}
+			continue
+		}
+		if arg.IsObject() {
+			obj := arg.Object()
+			if class := obj.Class(); class == "Array" {
+				lengthValue, _ := obj.Get("length")
+				length, _ := lengthValue.ToInteger()
+				for i := int64(0); i < length; i++ {
+					item, _ := obj.Get(fmt.Sprintf("%d", i))
+					if item.IsString() {
+						label := pluginNormalizeObjectType(item.String())
+						if label != "" {
+							if _, ok := seen[label]; !ok {
+								existing = append(existing, label)
+								seen[label] = struct{}{}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	cm["object_type"] = existing
+}
+
+func pluginObjectTypes(value interface{}) []string {
+	var out []string
+	seen := map[string]struct{}{}
+	add := func(raw string) {
+		label := pluginNormalizeObjectType(raw)
+		if label == "" {
+			return
+		}
+		if _, ok := seen[label]; ok {
+			return
+		}
+		seen[label] = struct{}{}
+		out = append(out, label)
+	}
+	switch v := value.(type) {
+	case []interface{}:
+		for _, item := range v {
+			if raw, ok := item.(string); ok {
+				add(raw)
+			}
+		}
+	case []string:
+		for _, item := range v {
+			add(item)
+		}
+	case string:
+		add(v)
+	}
+	if out == nil {
+		return []string{}
+	}
+	return out
+}
+
+func pluginNormalizeObjectType(label string) string {
+	return strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(label)), "_"))
+}
+
 func addJSAPILib(vm *otto.Otto) error {
 
 	return vm.Set("lib", func(call otto.FunctionCall) otto.Value {

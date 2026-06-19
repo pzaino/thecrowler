@@ -88,6 +88,7 @@ func processURLRules(wd *vdi.WebDriver, ctx *ProcessContext, url string) {
 func executeActionRules(ctx *ProcessContext, actionRules []rules.ActionRule, wd *vdi.WebDriver) {
 	runtime := newActionRuntime(ctx, wd)
 	for i := range actionRules {
+		currentCrowlerMeta(ctx).AddObjectType(actionRules[i].ObjectType...)
 		if err := browseractions.ExecuteRule(context.Background(), runtime, &actionRules[i]); err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "executing action rule: %v", err)
 		}

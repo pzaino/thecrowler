@@ -107,6 +107,7 @@ func cloneQueryValues(originalQuery url.Values) url.Values {
 }
 
 func FuzzURLWithLifecycle(ctx *ProcessContext, wd *vdi.WebDriver, state *lifecycleRuntimeState, baseURL string, rule rules.CrawlingRule, depth int) ([]string, error) {
+	currentCrowlerMeta(ctx).AddObjectType(rule.ObjectType...)
 	_ = executeCrawlingLifecycleHook(ctx, wd, state, rule, "pre_fuzz", map[string]interface{}{"url": baseURL, "depth": depth})
 	fuzzedURLs, err := FuzzURL(baseURL, rule)
 	if err != nil {
