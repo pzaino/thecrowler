@@ -36,6 +36,50 @@ type ConsoleResponse struct {
 	Message string `json:"message" yaml:"message"`
 }
 
+// InformationSeedConfigProvidersResponse represents configured information-seed provider names.
+type InformationSeedConfigProvidersResponse struct {
+	Message   string   `json:"message"`
+	Providers []string `json:"providers"`
+}
+
+// InformationSeedConfigProviderResponse represents one redacted configured information-seed provider.
+type InformationSeedConfigProviderResponse struct {
+	Message  string                            `json:"message"`
+	Name     string                            `json:"name"`
+	Provider cfg.InformationSeedProviderConfig `json:"provider"`
+}
+
+// VDIConfigListResponse represents configured VDI names.
+type VDIConfigListResponse struct {
+	Message string   `json:"message"`
+	VDIs    []string `json:"vdis"`
+}
+
+// VDIConfigResponse represents one configured VDI.
+type VDIConfigResponse struct {
+	Message string       `json:"message"`
+	Name    string       `json:"name"`
+	VDI     seleniumJSON `json:"vdi"`
+}
+
+type seleniumJSON struct {
+	Name        string           `json:"name"`
+	Location    string           `json:"location"`
+	Path        string           `json:"path"`
+	DriverPath  string           `json:"driver_path"`
+	Type        string           `json:"type"`
+	ServiceType string           `json:"service_type"`
+	Port        int              `json:"port"`
+	Host        string           `json:"host"`
+	Headless    bool             `json:"headless"`
+	UseService  bool             `json:"use_service"`
+	SSLMode     string           `json:"sslmode"`
+	ProxyURL    string           `json:"proxy_url,omitempty"`
+	DownloadDir string           `json:"download_dir"`
+	Language    string           `json:"language"`
+	SysMng      cfg.SysMngConfig `json:"sys_manager"`
+}
+
 // InformationSeedResponse represents a single information seed response.
 type InformationSeedResponse struct {
 	Message string             `json:"message"`

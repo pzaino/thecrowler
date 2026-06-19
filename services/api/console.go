@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -1547,4 +1548,105 @@ func performRemoveInformationSeed(query string, _ int, db *cdb.Handler) (Console
 		return ConsoleResponse{Message: "Failed to remove information seed"}, err
 	}
 	return ConsoleResponse{Message: "Information seed removed successfully"}, nil
+}
+
+func performListInformationSeedConfigProviders() InformationSeedConfigProvidersResponse {
+	providers := make([]string, 0, len(config.InformationSeed.Providers))
+	for name := range config.InformationSeed.Providers {
+		providers = append(providers, name)
+	}
+	sort.Strings(providers)
+	return InformationSeedConfigProvidersResponse{Message: "Configured information seed providers", Providers: providers}
+}
+
+func performGetInformationSeedConfigProvider(name string) (InformationSeedConfigProviderResponse, error) {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" {
+		return InformationSeedConfigProviderResponse{Message: "Information seed provider name is required"}, fmt.Errorf("information seed provider name is required")
+	}
+	provider, ok := config.InformationSeed.Providers[name]
+	if !ok {
+		return InformationSeedConfigProviderResponse{Message: "Information seed provider not found", Name: name}, fmt.Errorf("information seed provider %q not found", name)
+	}
+	return InformationSeedConfigProviderResponse{Message: "Configured information seed provider", Name: name, Provider: redactInformationSeedProviderConfig(provider)}, nil
+}
+
+func redactInformationSeedProviderConfig(provider cfg.InformationSeedProviderConfig) cfg.InformationSeedProviderConfig {
+	provider.APIKey = redactConfigSecret(provider.APIKey)
+	provider.APIID = redactConfigSecret(provider.APIID)
+	provider.APISecret = redactConfigSecret(provider.APISecret)
+	provider.APIToken = redactConfigSecret(provider.APIToken)
+	provider.Token = redactConfigSecret(provider.Token)
+	provider.Secret = redactConfigSecret(provider.Secret)
+	provider.Username = redactConfigSecret(provider.Username)
+	provider.Password = redactConfigSecret(provider.Password)
+	provider.Parameters = redactConfigStringMap(provider.Parameters)
+	provider.Headers = redactConfigStringMap(provider.Headers)
+	return provider
+}
+
+func redactConfigStringMap(values map[string]string) map[string]string {
+	if values == nil {
+		return nil
+	}
+	redacted := make(map[string]string, len(values))
+	for key, value := range values {
+		if isInformationSeedCredentialKey(key) {
+			redacted[key] = redactConfigSecret(value)
+			continue
+		}
+		redacted[key] = value
+	}
+	return redacted
+}
+
+func redactConfigSecret(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return ""
+	}
+	return "[REDACTED]"
+}
+
+func performListVDIConfig() VDIConfigListResponse {
+	vdis := make([]string, 0, len(config.Selenium))
+	for _, selenium := range config.Selenium {
+		if strings.TrimSpace(selenium.Name) != "" {
+			vdis = append(vdis, selenium.Name)
+		}
+	}
+	sort.Strings(vdis)
+	return VDIConfigListResponse{Message: "Configured VDIs", VDIs: vdis}
+}
+
+func performGetVDIConfig(name string) (VDIConfigResponse, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return VDIConfigResponse{Message: "VDI name is required"}, fmt.Errorf("vdi name is required")
+	}
+	for _, selenium := range config.Selenium {
+		if strings.EqualFold(strings.TrimSpace(selenium.Name), name) {
+			return VDIConfigResponse{Message: "Configured VDI", Name: selenium.Name, VDI: newSeleniumJSON(selenium)}, nil
+		}
+	}
+	return VDIConfigResponse{Message: "VDI not found", Name: name}, fmt.Errorf("vdi %q not found", name)
+}
+
+func newSeleniumJSON(selenium cfg.Selenium) seleniumJSON {
+	return seleniumJSON{
+		Name:        selenium.Name,
+		Location:    selenium.Location,
+		Path:        selenium.Path,
+		DriverPath:  selenium.DriverPath,
+		Type:        selenium.Type,
+		ServiceType: selenium.ServiceType,
+		Port:        selenium.Port,
+		Host:        selenium.Host,
+		Headless:    selenium.Headless,
+		UseService:  selenium.UseService,
+		SSLMode:     selenium.SSLMode,
+		ProxyURL:    selenium.ProxyURL,
+		DownloadDir: selenium.DownloadDir,
+		Language:    selenium.Language,
+		SysMng:      selenium.SysMng,
+	}
 }

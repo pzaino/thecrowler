@@ -565,6 +565,11 @@ type StdAPIIDQuery struct {
 	ID string `json:"id" yaml:"id" desc:"an uint64 number that express the ID of the Entity you want to use in the query, for example id=12345."`
 }
 
+// StdAPINameQuery is a standard query struct for API endpoints that require a name parameter.
+type StdAPINameQuery struct {
+	Name string `json:"name" yaml:"name" desc:"name of the configuration entry to inspect."`
+}
+
 // initAPIv1 initializes the API v1 handlers
 func initAPIv1() {
 	tagsNone := []string{}
@@ -678,6 +683,10 @@ func initAPIv1() {
 		informationSeedPathDisableHandlerWithMiddlewares := withPublicMiddlewares(informationSeedPathDisableHandler)
 		informationSeedEnableHandlerWithMiddlewares := withPublicMiddlewares(informationSeedEnableHandler)
 		informationSeedEventsHandlerWithMiddlewares := withPublicMiddlewares(informationSeedEventsHandler)
+		informationSeedConfigProvidersHandlerWithMiddlewares := withPublicMiddlewares(informationSeedConfigProvidersHandler)
+		informationSeedConfigProviderHandlerWithMiddlewares := withPublicMiddlewares(informationSeedConfigProviderHandler)
+		vdiConfigListHandlerWithMiddlewares := withPublicMiddlewares(vdiConfigListHandler)
+		vdiConfigHandlerWithMiddlewares := withPublicMiddlewares(vdiConfigHandler)
 
 		// Source management endpoints
 
@@ -698,6 +707,20 @@ func initAPIv1() {
 
 		http.Handle("/v1/source/statuses", allURLstatusHandlerWithMiddlewares)
 		cmn.RegisterAPIRoute("/v1/source/statuses", []string{"GET"}, "All URLs status endpoint (console)", tagsNone, true, false, 200, nil, nil, SourcesStatusResponse{})
+
+		// Configuration inspection endpoints
+
+		http.Handle("/v1/config/information_seed/providers", informationSeedConfigProvidersHandlerWithMiddlewares)
+		cmn.RegisterAPIRoute("/v1/config/information_seed/providers", []string{"GET"}, "List configured information seed providers endpoint (console)", tagsNone, true, false, 200, nil, nil, InformationSeedConfigProvidersResponse{})
+
+		http.Handle("GET /v1/config/information_seed/providers/{name}", informationSeedConfigProviderHandlerWithMiddlewares)
+		cmn.RegisterAPIRoute("/v1/config/information_seed/providers/{name}", []string{"GET"}, "Get configured information seed provider endpoint (console)", tagsNone, true, false, 200, nil, StdAPINameQuery{}, InformationSeedConfigProviderResponse{})
+
+		http.Handle("/v1/config/vdis", vdiConfigListHandlerWithMiddlewares)
+		cmn.RegisterAPIRoute("/v1/config/vdis", []string{"GET"}, "List configured VDI names endpoint (console)", tagsNone, true, false, 200, nil, nil, VDIConfigListResponse{})
+
+		http.Handle("GET /v1/config/vdis/{name}", vdiConfigHandlerWithMiddlewares)
+		cmn.RegisterAPIRoute("/v1/config/vdis/{name}", []string{"GET"}, "Get configured VDI endpoint (console)", tagsNone, true, false, 200, nil, StdAPINameQuery{}, VDIConfigResponse{})
 
 		// Information seed endpoints
 
@@ -2154,4 +2177,76 @@ func removeCategoryHandler(w http.ResponseWriter, r *http.Request) {
 	handleRequestWithDB(w, r, http.StatusNoContent, func(query string, qType int, db *cdb.Handler) (interface{}, error) {
 		return performRemoveCategory(query, qType, db)
 	})
+}
+
+func informationSeedConfigProvidersHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		handleErrorAndRespond(w, fmt.Errorf("method not allowed"), nil, "Method not allowed", http.StatusMethodNotAllowed, http.StatusOK)
+		return
+	}
+	totalSuccess.Add(1)
+	handleErrorAndRespond(w, nil, performListInformationSeedConfigProviders(), "", http.StatusInternalServerError, http.StatusOK)
+}
+
+func informationSeedConfigProviderHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		handleErrorAndRespond(w, fmt.Errorf("method not allowed"), nil, "Method not allowed", http.StatusMethodNotAllowed, http.StatusOK)
+		return
+	}
+	name := configNameFromRequest(r)
+	results, err := performGetInformationSeedConfigProvider(name)
+	if err != nil {
+		totalErrors.Add(1)
+		status := http.StatusNotFound
+		if strings.Contains(strings.ToLower(err.Error()), "required") {
+			status = http.StatusBadRequest
+		}
+		handleErrorAndRespond(w, err, results, "Error getting information seed provider config: %v", status, http.StatusOK)
+		return
+	}
+	totalSuccess.Add(1)
+	handleErrorAndRespond(w, nil, results, "", http.StatusInternalServerError, http.StatusOK)
+}
+
+func vdiConfigListHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		handleErrorAndRespond(w, fmt.Errorf("method not allowed"), nil, "Method not allowed", http.StatusMethodNotAllowed, http.StatusOK)
+		return
+	}
+	totalSuccess.Add(1)
+	handleErrorAndRespond(w, nil, performListVDIConfig(), "", http.StatusInternalServerError, http.StatusOK)
+}
+
+func vdiConfigHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		handleErrorAndRespond(w, fmt.Errorf("method not allowed"), nil, "Method not allowed", http.StatusMethodNotAllowed, http.StatusOK)
+		return
+	}
+	results, err := performGetVDIConfig(configNameFromRequest(r))
+	if err != nil {
+		totalErrors.Add(1)
+		status := http.StatusNotFound
+		if strings.Contains(strings.ToLower(err.Error()), "required") {
+			status = http.StatusBadRequest
+		}
+		handleErrorAndRespond(w, err, results, "Error getting VDI config: %v", status, http.StatusOK)
+		return
+	}
+	totalSuccess.Add(1)
+	handleErrorAndRespond(w, nil, results, "", http.StatusInternalServerError, http.StatusOK)
+}
+
+func configNameFromRequest(r *http.Request) string {
+	name := strings.TrimSpace(r.PathValue("name"))
+	if name == "" {
+		name = strings.TrimSpace(r.URL.Query().Get("name"))
+	}
+	if name == "" {
+		name = strings.TrimSpace(r.URL.Query().Get("q"))
+	}
+	return name
 }
