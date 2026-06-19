@@ -116,8 +116,9 @@ type SearchFunctionResponse struct {
 }
 
 type apiCorrelatedSourceSearchResult struct {
-	SourceID uint64 `json:"source_id"`
-	URL      string `json:"url"`
+	SourceID  uint64 `json:"source_id"`
+	SourceUID string `json:"source_uid"`
+	URL       string `json:"url"`
 }
 
 type apiSourceUIDResult struct {
@@ -128,6 +129,7 @@ type apiSourceUIDResult struct {
 
 type apiPageSearchResult struct {
 	IndexID       uint64     `json:"index_id"`
+	SourceUID     string     `json:"source_uid"`
 	PageURL       string     `json:"page_url"`
 	Title         *string    `json:"title,omitempty"`
 	Snippet       *string    `json:"snippet,omitempty"`
@@ -138,6 +140,7 @@ type apiPageSearchResult struct {
 
 type apiScrapedDataSearchResult struct {
 	IndexID       uint64     `json:"index_id"`
+	SourceUID     string     `json:"source_uid"`
 	PageURL       *string    `json:"page_url,omitempty"`
 	JSONField     *string    `json:"json_field,omitempty"`
 	JSONValue     *string    `json:"json_val,omitempty"`
@@ -149,6 +152,7 @@ type apiScrapedDataSearchResult struct {
 type apiArtifactSearchResult struct {
 	SourceType    string     `json:"source_type"`
 	ArtifactID    uint64     `json:"artifact_id"`
+	SourceUID     string     `json:"source_uid"`
 	PageURL       *string    `json:"page_url,omitempty"`
 	JSONField     *string    `json:"json_field,omitempty"`
 	JSONValue     *string    `json:"json_val,omitempty"`
@@ -160,6 +164,7 @@ type apiArtifactSearchResult struct {
 type apiArtifactFieldsSearchResult struct {
 	SourceType    string          `json:"source_type"`
 	ArtifactID    uint64          `json:"artifact_id"`
+	SourceUID     string          `json:"source_uid"`
 	PageURL       *string         `json:"page_url,omitempty"`
 	CreatedAt     *time.Time      `json:"created_at,omitempty"`
 	LastUpdatedAt *time.Time      `json:"last_updated_at,omitempty"`
@@ -170,6 +175,7 @@ type apiArtifactFieldsSearchResult struct {
 type apiArtifactAttributeSearchResult struct {
 	SourceType     string     `json:"source_type"`
 	ArtifactID     uint64     `json:"artifact_id"`
+	SourceUID      string     `json:"source_uid"`
 	PageURL        *string    `json:"page_url,omitempty"`
 	AttributeKey   *string    `json:"attribute_key,omitempty"`
 	AttributeValue *string    `json:"attribute_value,omitempty"`
@@ -182,6 +188,7 @@ type apiArtifactAttributeSearchResult struct {
 type apiObjectAttributeSearchResult struct {
 	SourceType    string          `json:"source_type"`
 	ObjectID      uint64          `json:"object_id"`
+	SourceUID     string          `json:"source_uid"`
 	PageURL       *string         `json:"page_url,omitempty"`
 	Details       json.RawMessage `json:"details,omitempty"`
 	Attributes    json.RawMessage `json:"attributes,omitempty"`
@@ -193,6 +200,7 @@ type apiObjectAttributeSearchResult struct {
 type apiObjectAttributesSearchResult struct {
 	SourceType    string          `json:"source_type"`
 	ObjectID      uint64          `json:"object_id"`
+	SourceUID     string          `json:"source_uid"`
 	PageURL       *string         `json:"page_url,omitempty"`
 	Details       json.RawMessage `json:"details,omitempty"`
 	Attributes    json.RawMessage `json:"attributes,omitempty"`
@@ -648,7 +656,7 @@ func mapSourceUIDResults(results []search.SourceUIDResult) []apiSourceUIDResult 
 func mapCorrelatedSourceResults(results []cdb.CorrelatedSourceSearchResult) []apiCorrelatedSourceSearchResult {
 	items := make([]apiCorrelatedSourceSearchResult, 0, len(results))
 	for _, result := range results {
-		items = append(items, apiCorrelatedSourceSearchResult{SourceID: result.SourceID, URL: result.URL})
+		items = append(items, apiCorrelatedSourceSearchResult{SourceID: result.SourceID, SourceUID: result.SourceUID, URL: result.URL})
 	}
 	return items
 }
@@ -658,6 +666,7 @@ func mapPageSearchResults(results []cdb.PageSearchResult) []apiPageSearchResult 
 	for _, result := range results {
 		items = append(items, apiPageSearchResult{
 			IndexID:       result.IndexID,
+			SourceUID:     result.SourceUID,
 			PageURL:       result.PageURL,
 			Title:         nullStringPtr(result.Title),
 			Snippet:       nullStringPtr(result.Snippet),
@@ -674,6 +683,7 @@ func mapScrapedDataSearchResults(results []cdb.ScrapedDataSearchResult) []apiScr
 	for _, result := range results {
 		items = append(items, apiScrapedDataSearchResult{
 			IndexID:       result.IndexID,
+			SourceUID:     result.SourceUID,
 			PageURL:       nullStringPtr(result.PageURL),
 			JSONField:     nullStringPtr(result.JSONField),
 			JSONValue:     nullStringPtr(result.JSONValue),
@@ -691,6 +701,7 @@ func mapArtifactSearchResults(results []cdb.ArtifactSearchResult) []apiArtifactS
 		items = append(items, apiArtifactSearchResult{
 			SourceType:    result.SourceType,
 			ArtifactID:    result.ArtifactID,
+			SourceUID:     result.SourceUID,
 			PageURL:       nullStringPtr(result.PageURL),
 			JSONField:     nullStringPtr(result.JSONField),
 			JSONValue:     nullStringPtr(result.JSONValue),
@@ -708,6 +719,7 @@ func mapArtifactFieldsSearchResults(results []cdb.ArtifactFieldsSearchResult) []
 		items = append(items, apiArtifactFieldsSearchResult{
 			SourceType:    result.SourceType,
 			ArtifactID:    result.ArtifactID,
+			SourceUID:     result.SourceUID,
 			PageURL:       nullStringPtr(result.PageURL),
 			CreatedAt:     nullTimePtr(result.CreatedAt),
 			LastUpdatedAt: nullTimePtr(result.LastUpdatedAt),
@@ -724,6 +736,7 @@ func mapArtifactAttributeSearchResults(results []cdb.ArtifactAttributeSearchResu
 		items = append(items, apiArtifactAttributeSearchResult{
 			SourceType:     result.SourceType,
 			ArtifactID:     result.ArtifactID,
+			SourceUID:      result.SourceUID,
 			PageURL:        nullStringPtr(result.PageURL),
 			AttributeKey:   nullStringPtr(result.AttributeKey),
 			AttributeValue: nullStringPtr(result.AttributeValue),
@@ -742,6 +755,7 @@ func mapObjectAttributeSearchResults(results []cdb.ObjectAttributeSearchResult) 
 		items = append(items, apiObjectAttributeSearchResult{
 			SourceType:    result.SourceType,
 			ObjectID:      result.ObjectID,
+			SourceUID:     result.SourceUID,
 			PageURL:       nullStringPtr(result.PageURL),
 			Details:       result.Details,
 			Attributes:    result.Attributes,
@@ -759,6 +773,7 @@ func mapObjectAttributesSearchResults(results []cdb.ObjectAttributesSearchResult
 		items = append(items, apiObjectAttributesSearchResult{
 			SourceType:    result.SourceType,
 			ObjectID:      result.ObjectID,
+			SourceUID:     result.SourceUID,
 			PageURL:       nullStringPtr(result.PageURL),
 			Details:       result.Details,
 			Attributes:    result.Attributes,

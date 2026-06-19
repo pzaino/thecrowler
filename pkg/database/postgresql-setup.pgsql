@@ -2784,9 +2784,11 @@ LANGUAGE plpgsql;
 -- Allows searching for correlated sources based on a specific domain appearing in the details of NetInfo, HTTPInfo, or WebObjects, returning the source_id and url of the correlated sources.
 -- SELECT *
 -- FROM find_correlated_sources_by_domain('example.com');
+DROP FUNCTION IF EXISTS find_correlated_sources_by_domain(TEXT);
 CREATE OR REPLACE FUNCTION find_correlated_sources_by_domain(domain TEXT)
 RETURNS TABLE (
     source_id BIGINT,
+    source_uid TEXT,
     url TEXT
 ) AS $$
 BEGIN
@@ -2820,7 +2822,7 @@ BEGIN
         SELECT pswo.source_id FROM PartnerSourcesFromWebObjects pswo
     )
 
-    SELECT DISTINCT s.source_id, s.url
+    SELECT DISTINCT s.source_id, COALESCE(s.source_uid, '')::TEXT AS source_uid, s.url
     FROM Sources s
     JOIN AllPartnerSources aps ON s.source_id = aps.source_id;
 END;
@@ -2829,9 +2831,11 @@ $$ LANGUAGE plpgsql;
 -- Allows searching for a specific query string across the page_url, title, summary, keywords, and metatags of the SearchIndex, returning results that match the query in any of those fields, along with a relevance ranking based on the full-text search score and similarity.
 -- SELECT *
 -- FROM search_pages('nginx', 'english');
+DROP FUNCTION IF EXISTS search_pages(TEXT, TEXT);
 CREATE OR REPLACE FUNCTION search_pages(q TEXT, lang TEXT)
 RETURNS TABLE(
     index_id BIGINT,
+    source_uid TEXT,
     page_url TEXT,
     title TEXT,
     snippet TEXT,
@@ -2843,6 +2847,7 @@ LANGUAGE SQL
 AS $$
 SELECT
     si.index_id,
+    COALESCE(s.source_uid, '')::TEXT AS source_uid,
     si.page_url::TEXT,
     si.title::TEXT,
 
@@ -2879,6 +2884,12 @@ LEFT JOIN MetaTagsIndex mti
 LEFT JOIN MetaTags mt
     ON mti.metatag_id = mt.metatag_id
 
+LEFT JOIN SourceSearchIndex ssi
+    ON si.index_id = ssi.index_id
+
+LEFT JOIN Sources s
+    ON ssi.source_id = s.source_id
+
 WHERE
     si.tsv @@ plainto_tsquery(lang::regconfig, q)
     OR similarity(si.title, q) > 0.3
@@ -2887,6 +2898,7 @@ WHERE
 
 GROUP BY
     si.index_id,
+    s.source_uid,
     si.page_url,
     si.title,
     si.summary,
@@ -2899,12 +2911,14 @@ ORDER BY rank DESC
 $$;
 
 -- This view aggregates all the relevant details from WebObjects, NetInfo, and HTTPInfo into a single unified view that can be easily queried for correlation and search purposes.
+DROP VIEW IF EXISTS Artifacts CASCADE;
 CREATE OR REPLACE VIEW Artifacts
 AS
 SELECT
     'webobject'::text AS object_type,
     wo.object_id AS object_id,
     si.index_id,
+    COALESCE(s.source_uid, '')::TEXT AS source_uid,
     si.page_url,
     wo.created_at,
     wo.last_updated_at
@@ -2913,6 +2927,10 @@ JOIN WebObjectsIndex woi
     ON wo.object_id = woi.object_id
 JOIN SearchIndex si
     ON woi.index_id = si.index_id
+LEFT JOIN SourceSearchIndex ssi
+    ON si.index_id = ssi.index_id
+LEFT JOIN Sources s
+    ON ssi.source_id = s.source_id
 
 UNION ALL
 
@@ -2920,10 +2938,17 @@ SELECT
     'netinfo',
     ni.netinfo_id,
     NULL,
+    COALESCE(s.source_uid, '')::TEXT,
     NULL,
     ni.created_at,
     ni.last_updated_at
 FROM NetInfo ni
+LEFT JOIN NetInfoIndex nii
+    ON ni.netinfo_id = nii.netinfo_id
+LEFT JOIN SourceSearchIndex ssi
+    ON nii.index_id = ssi.index_id
+LEFT JOIN Sources s
+    ON ssi.source_id = s.source_id
 
 UNION ALL
 
@@ -2931,17 +2956,26 @@ SELECT
     'httpinfo',
     hi.httpinfo_id,
     NULL,
+    COALESCE(s.source_uid, '')::TEXT,
     NULL,
     hi.created_at,
     hi.last_updated_at
-FROM HTTPInfo hi;
+FROM HTTPInfo hi
+LEFT JOIN HTTPInfoIndex hii
+    ON hi.httpinfo_id = hii.httpinfo_id
+LEFT JOIN SourceSearchIndex ssi
+    ON hii.index_id = ssi.index_id
+LEFT JOIN Sources s
+    ON ssi.source_id = s.source_id;
 
 -- Allows searching for a specific query string across all the scraped_data JSON fields, returning results that match the query in any of the field values.
 -- SELECT *
 -- FROM search_scraped_data('nginx');
+DROP FUNCTION IF EXISTS search_scraped_data(TEXT);
 CREATE OR REPLACE FUNCTION search_scraped_data(q TEXT)
 RETURNS TABLE(
     index_id BIGINT,
+    source_uid TEXT,
     page_url TEXT,
     json_field TEXT,
     json_val TEXT,
@@ -2953,6 +2987,7 @@ LANGUAGE SQL
 AS $$
 SELECT
     ar.index_id,
+    ar.source_uid,
     ar.page_url,
     oa.attribute_key,
     oa.attribute_value,
@@ -2980,12 +3015,14 @@ $$;
 -- Allows searching for a specific field and value within the scraped_data JSON, returning results that match the field name and have a value similar to the provided field_value.
 -- SELECT *
 -- FROM search_scraped_data_field('server', 'nginx');
+DROP FUNCTION IF EXISTS search_scraped_data_field(TEXT, TEXT);
 CREATE OR REPLACE FUNCTION search_scraped_data_field(
     field_name TEXT,
     field_value TEXT
 )
 RETURNS TABLE(
     index_id BIGINT,
+    source_uid TEXT,
     page_url TEXT,
     json_field TEXT,
     json_val TEXT,
@@ -2997,6 +3034,7 @@ LANGUAGE SQL
 AS $$
 SELECT
     ar.index_id,
+    ar.source_uid,
     ar.page_url,
     oa.attribute_key,
     oa.attribute_value,
@@ -3021,10 +3059,12 @@ $$;
 -- This function allows searching across all artifacts (WebObjects, NetInfo, HTTPInfo) for a given query string, returning the relevant details and a relevance rank based on the content of the JSON fields.
 -- SELECT *
 -- FROM search_artifacts('nginx');
+DROP FUNCTION IF EXISTS search_artifacts(TEXT);
 CREATE OR REPLACE FUNCTION search_artifacts(q TEXT)
 RETURNS TABLE(
     source_type TEXT,
     artifact_id BIGINT,
+    source_uid TEXT,
     page_url TEXT,
     json_field TEXT,
     json_val TEXT,
@@ -3037,6 +3077,7 @@ AS $$
 SELECT
     oa.object_type AS source_type,
     oa.object_id AS artifact_id,
+    ar.source_uid,
     ar.page_url,
     oa.attribute_key AS json_field,
     oa.attribute_value AS json_val,
@@ -3060,6 +3101,7 @@ WHERE
 ORDER BY rank DESC;
 $$;
 
+DROP FUNCTION IF EXISTS search_artifacts_field(TEXT, TEXT);
 CREATE OR REPLACE FUNCTION search_artifacts_field(
     field_name TEXT,
     field_value TEXT
@@ -3067,6 +3109,7 @@ CREATE OR REPLACE FUNCTION search_artifacts_field(
 RETURNS TABLE(
     source_type TEXT,
     artifact_id BIGINT,
+    source_uid TEXT,
     page_url TEXT,
     json_field TEXT,
     json_val TEXT,
@@ -3079,6 +3122,7 @@ AS $$
 SELECT
     oa.object_type AS source_type,
     oa.object_id AS artifact_id,
+    ar.source_uid,
     ar.page_url,
     oa.attribute_key AS json_field,
     oa.attribute_value AS json_val,
@@ -3104,10 +3148,12 @@ $$;
 -- FROM search_artifacts_fields(
 --  '{"server":"nginx","status":"200"}'
 -- );
+DROP FUNCTION IF EXISTS search_artifacts_fields(JSONB);
 CREATE OR REPLACE FUNCTION search_artifacts_fields(filters JSONB)
 RETURNS TABLE(
     source_type TEXT,
     artifact_id BIGINT,
+    source_uid TEXT,
     page_url TEXT,
     created_at TIMESTAMP,
     last_updated_at TIMESTAMP,
@@ -3125,6 +3171,7 @@ matches AS (
     SELECT
         oa.object_type,
         oa.object_id,
+        ar.source_uid,
         ar.page_url,
         ar.created_at,
         ar.last_updated_at,
@@ -3145,6 +3192,7 @@ matches AS (
 SELECT
     object_type AS source_type,
     object_id AS artifact_id,
+    source_uid,
     page_url,
     created_at,
     last_updated_at,
@@ -3156,6 +3204,7 @@ FROM matches
 GROUP BY
     object_type,
     object_id,
+    source_uid,
     page_url,
     created_at,
     last_updated_at
@@ -3167,6 +3216,7 @@ HAVING COUNT(*) = (
 ORDER BY rank DESC;
 $$;
 
+DROP FUNCTION IF EXISTS search_artifacts_by_attribute(TEXT, TEXT);
 CREATE OR REPLACE FUNCTION search_artifacts_by_attribute(
     field_name TEXT,
     field_value TEXT
@@ -3174,6 +3224,7 @@ CREATE OR REPLACE FUNCTION search_artifacts_by_attribute(
 RETURNS TABLE(
     source_type TEXT,
     artifact_id BIGINT,
+    source_uid TEXT,
     page_url TEXT,
     attribute_key TEXT,
     attribute_value TEXT,
@@ -3199,6 +3250,7 @@ WITH matched_objects AS (
 SELECT
     oa.object_type AS source_type,
     oa.object_id AS artifact_id,
+    ar.source_uid,
     ar.page_url,
     oa.attribute_key,
     oa.attribute_value,
@@ -3220,6 +3272,7 @@ JOIN Artifacts ar
 ORDER BY mo.rank DESC, oa.attribute_key;
 $$;
 
+DROP FUNCTION IF EXISTS search_objects_by_attribute(TEXT, TEXT);
 CREATE OR REPLACE FUNCTION search_objects_by_attribute(
     field_name TEXT,
     field_value TEXT
@@ -3227,6 +3280,7 @@ CREATE OR REPLACE FUNCTION search_objects_by_attribute(
 RETURNS TABLE(
     source_type TEXT,
     object_id BIGINT,
+    source_uid TEXT,
     page_url TEXT,
     details JSONB,
     attributes JSONB,
@@ -3251,6 +3305,7 @@ WITH matched_objects AS (
 SELECT
     mo.object_type AS source_type,
     mo.object_id,
+    ar.source_uid,
     ar.page_url,
 
     -- pick correct JSON source
@@ -3299,6 +3354,7 @@ LEFT JOIN HTTPInfo hi
 GROUP BY
     mo.object_type,
     mo.object_id,
+    ar.source_uid,
     ar.page_url,
     wo.details,
     ni.details,
@@ -3311,10 +3367,12 @@ ORDER BY mo.rank DESC;
 $$;
 
 
+DROP FUNCTION IF EXISTS search_objects_by_attributes(JSONB);
 CREATE OR REPLACE FUNCTION search_objects_by_attributes(filters JSONB)
 RETURNS TABLE(
     source_type TEXT,
     object_id BIGINT,
+    source_uid TEXT,
     page_url TEXT,
     details JSONB,
     attributes JSONB,
@@ -3334,6 +3392,7 @@ matches AS (
     SELECT
         oa.object_type,
         oa.object_id,
+        ar.source_uid,
         ar.page_url,
         ar.created_at,
         ar.last_updated_at,
@@ -3356,6 +3415,7 @@ matched_objects AS (
     SELECT
         object_type,
         object_id,
+        source_uid,
         page_url,
         created_at,
         last_updated_at,
@@ -3366,6 +3426,7 @@ matched_objects AS (
     GROUP BY
         object_type,
         object_id,
+        source_uid,
         page_url,
         created_at,
         last_updated_at
@@ -3375,6 +3436,7 @@ matched_objects AS (
 SELECT
     mo.object_type AS source_type,
     mo.object_id,
+    mo.source_uid,
     mo.page_url,
 
     -- polymorphic details selection
@@ -3424,6 +3486,7 @@ LEFT JOIN HTTPInfo hi
 GROUP BY
     mo.object_type,
     mo.object_id,
+    mo.source_uid,
     mo.page_url,
     wo.details,
     ni.details,

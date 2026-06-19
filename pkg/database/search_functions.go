@@ -33,13 +33,15 @@ type SearchFunctionOptions struct {
 // CorrelatedSourceSearchResult represents one row returned by
 // find_correlated_sources_by_domain(domain TEXT).
 type CorrelatedSourceSearchResult struct {
-	SourceID uint64
-	URL      string
+	SourceID  uint64
+	SourceUID string
+	URL       string
 }
 
 // PageSearchResult represents one row returned by search_pages(q TEXT, lang TEXT).
 type PageSearchResult struct {
 	IndexID       uint64
+	SourceUID     string
 	PageURL       string
 	Title         sql.NullString
 	Snippet       sql.NullString
@@ -52,6 +54,7 @@ type PageSearchResult struct {
 // search_scraped_data_field.
 type ScrapedDataSearchResult struct {
 	IndexID       uint64
+	SourceUID     string
 	PageURL       sql.NullString
 	JSONField     sql.NullString
 	JSONValue     sql.NullString
@@ -65,6 +68,7 @@ type ScrapedDataSearchResult struct {
 type ArtifactSearchResult struct {
 	SourceType    string
 	ArtifactID    uint64
+	SourceUID     string
 	PageURL       sql.NullString
 	JSONField     sql.NullString
 	JSONValue     sql.NullString
@@ -78,6 +82,7 @@ type ArtifactSearchResult struct {
 type ArtifactFieldsSearchResult struct {
 	SourceType    string
 	ArtifactID    uint64
+	SourceUID     string
 	PageURL       sql.NullString
 	CreatedAt     sql.NullTime
 	LastUpdatedAt sql.NullTime
@@ -90,6 +95,7 @@ type ArtifactFieldsSearchResult struct {
 type ArtifactAttributeSearchResult struct {
 	SourceType     string
 	ArtifactID     uint64
+	SourceUID      string
 	PageURL        sql.NullString
 	AttributeKey   sql.NullString
 	AttributeValue sql.NullString
@@ -104,6 +110,7 @@ type ArtifactAttributeSearchResult struct {
 type ObjectAttributeSearchResult struct {
 	SourceType    string
 	ObjectID      uint64
+	SourceUID     string
 	PageURL       sql.NullString
 	Details       json.RawMessage
 	Attributes    json.RawMessage
@@ -117,6 +124,7 @@ type ObjectAttributeSearchResult struct {
 type ObjectAttributesSearchResult struct {
 	SourceType    string
 	ObjectID      uint64
+	SourceUID     string
 	PageURL       sql.NullString
 	Details       json.RawMessage
 	Attributes    json.RawMessage
@@ -140,7 +148,7 @@ func FindCorrelatedSourcesByDomain(ctx context.Context, db *Handler, domain stri
 	var results []CorrelatedSourceSearchResult
 	for rows.Next() {
 		var row CorrelatedSourceSearchResult
-		if err := rows.Scan(&row.SourceID, &row.URL); err != nil {
+		if err := rows.Scan(&row.SourceID, &row.SourceUID, &row.URL); err != nil {
 			return nil, fmt.Errorf("scan correlated source search result: %w", err)
 		}
 		results = append(results, row)
@@ -162,7 +170,7 @@ func SearchPages(ctx context.Context, db *Handler, q, lang string, opts SearchFu
 	var results []PageSearchResult
 	for rows.Next() {
 		var row PageSearchResult
-		if err := rows.Scan(&row.IndexID, &row.PageURL, &row.Title, &row.Snippet, &row.CreatedAt, &row.LastUpdatedAt, &row.Rank); err != nil {
+		if err := rows.Scan(&row.IndexID, &row.SourceUID, &row.PageURL, &row.Title, &row.Snippet, &row.CreatedAt, &row.LastUpdatedAt, &row.Rank); err != nil {
 			return nil, fmt.Errorf("scan page search result: %w", err)
 		}
 		results = append(results, row)
@@ -229,7 +237,7 @@ func SearchArtifactsFields(ctx context.Context, db *Handler, filters map[string]
 	for rows.Next() {
 		var row ArtifactFieldsSearchResult
 		var matchedFields []byte
-		if err := rows.Scan(&row.SourceType, &row.ArtifactID, &row.PageURL, &row.CreatedAt, &row.LastUpdatedAt, &matchedFields, &row.Rank); err != nil {
+		if err := rows.Scan(&row.SourceType, &row.ArtifactID, &row.SourceUID, &row.PageURL, &row.CreatedAt, &row.LastUpdatedAt, &matchedFields, &row.Rank); err != nil {
 			return nil, fmt.Errorf("scan artifact fields search result: %w", err)
 		}
 		row.MatchedFields = json.RawMessage(matchedFields)
@@ -252,7 +260,7 @@ func SearchArtifactsByAttribute(ctx context.Context, db *Handler, fieldName, fie
 	var results []ArtifactAttributeSearchResult
 	for rows.Next() {
 		var row ArtifactAttributeSearchResult
-		if err := rows.Scan(&row.SourceType, &row.ArtifactID, &row.PageURL, &row.AttributeKey, &row.AttributeValue, &row.AttributeType, &row.CreatedAt, &row.LastUpdatedAt, &row.Rank); err != nil {
+		if err := rows.Scan(&row.SourceType, &row.ArtifactID, &row.SourceUID, &row.PageURL, &row.AttributeKey, &row.AttributeValue, &row.AttributeType, &row.CreatedAt, &row.LastUpdatedAt, &row.Rank); err != nil {
 			return nil, fmt.Errorf("scan artifact attribute search result: %w", err)
 		}
 		results = append(results, row)
@@ -275,7 +283,7 @@ func SearchObjectsByAttribute(ctx context.Context, db *Handler, fieldName, field
 	for rows.Next() {
 		var row ObjectAttributeSearchResult
 		var details, attributes sql.NullString
-		if err := rows.Scan(&row.SourceType, &row.ObjectID, &row.PageURL, &details, &attributes, &row.CreatedAt, &row.LastUpdatedAt, &row.Rank); err != nil {
+		if err := rows.Scan(&row.SourceType, &row.ObjectID, &row.SourceUID, &row.PageURL, &details, &attributes, &row.CreatedAt, &row.LastUpdatedAt, &row.Rank); err != nil {
 			return nil, fmt.Errorf("scan object attribute search result: %w", err)
 		}
 		row.Details = rawMessageFromNullString(details)
@@ -304,7 +312,7 @@ func SearchObjectsByAttributes(ctx context.Context, db *Handler, filters map[str
 	for rows.Next() {
 		var row ObjectAttributesSearchResult
 		var details, attributes, matchedFields sql.NullString
-		if err := rows.Scan(&row.SourceType, &row.ObjectID, &row.PageURL, &details, &attributes, &row.CreatedAt, &row.LastUpdatedAt, &matchedFields, &row.Rank); err != nil {
+		if err := rows.Scan(&row.SourceType, &row.ObjectID, &row.SourceUID, &row.PageURL, &details, &attributes, &row.CreatedAt, &row.LastUpdatedAt, &matchedFields, &row.Rank); err != nil {
 			return nil, fmt.Errorf("scan object attributes search result: %w", err)
 		}
 		row.Details = rawMessageFromNullString(details)
@@ -372,7 +380,7 @@ func scanScrapedDataSearchResults(rows *sql.Rows) ([]ScrapedDataSearchResult, er
 	var results []ScrapedDataSearchResult
 	for rows.Next() {
 		var row ScrapedDataSearchResult
-		if err := rows.Scan(&row.IndexID, &row.PageURL, &row.JSONField, &row.JSONValue, &row.CreatedAt, &row.LastUpdatedAt, &row.Rank); err != nil {
+		if err := rows.Scan(&row.IndexID, &row.SourceUID, &row.PageURL, &row.JSONField, &row.JSONValue, &row.CreatedAt, &row.LastUpdatedAt, &row.Rank); err != nil {
 			return nil, fmt.Errorf("scan scraped data search result: %w", err)
 		}
 		results = append(results, row)
@@ -387,7 +395,7 @@ func scanArtifactSearchResults(rows *sql.Rows) ([]ArtifactSearchResult, error) {
 	var results []ArtifactSearchResult
 	for rows.Next() {
 		var row ArtifactSearchResult
-		if err := rows.Scan(&row.SourceType, &row.ArtifactID, &row.PageURL, &row.JSONField, &row.JSONValue, &row.CreatedAt, &row.LastUpdatedAt, &row.Rank); err != nil {
+		if err := rows.Scan(&row.SourceType, &row.ArtifactID, &row.SourceUID, &row.PageURL, &row.JSONField, &row.JSONValue, &row.CreatedAt, &row.LastUpdatedAt, &row.Rank); err != nil {
 			return nil, fmt.Errorf("scan artifact search result: %w", err)
 		}
 		results = append(results, row)
