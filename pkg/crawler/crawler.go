@@ -810,8 +810,8 @@ func (ctx *ProcessContext) GetNetInfo(_ string) {
 	ctx.ni = &neti.NetInfo{}
 	if ctx.crowlerMeta == nil {
 		ctx.crowlerMeta = NewCrowlerMetaFromSource(ctx.source, ctx.srcCfg)
-		ctx.crowlerMeta.SetTag("", "source_uid", ctx.source.UID)
 	}
+	ctx.crowlerMeta.EnsureSourceUID(ctx.source)
 	ctx.ni.CrowlerMeta = map[string]interface{}(ctx.crowlerMeta)
 	c := ctx.config.NetworkInfo
 	ctx.ni.Config = &c
@@ -853,8 +853,8 @@ func (ctx *ProcessContext) GetHTTPInfo(url string, htmlContent string) {
 	if ctx.hi != nil {
 		if ctx.crowlerMeta == nil {
 			ctx.crowlerMeta = NewCrowlerMetaFromSource(ctx.source, ctx.srcCfg)
-			ctx.crowlerMeta.SetTag("", "source_uid", ctx.source.UID)
 		}
+		ctx.crowlerMeta.EnsureSourceUID(ctx.source)
 		ctx.hi.CrowlerMeta = map[string]interface{}(ctx.crowlerMeta)
 	}
 	ctx.Status.HTTPInfoRunning.Store(2)
@@ -873,8 +873,8 @@ func (ctx *ProcessContext) IndexPage(pageInfo *PageInfo) (uint64, error) {
 	(*pageInfo).Config = &ctx.config
 	if ctx.crowlerMeta == nil {
 		ctx.crowlerMeta = NewCrowlerMetaFromSource(ctx.source, ctx.srcCfg)
-		ctx.crowlerMeta.SetTag("", "source_uid", ctx.source.UID)
 	}
+	ctx.crowlerMeta.EnsureSourceUID(ctx.source)
 	(*pageInfo).CrowlerMeta = ctx.crowlerMeta
 	return indexPage(ctx, ctx.source.URL, pageInfo)
 }
@@ -885,15 +885,21 @@ func (ctx *ProcessContext) IndexNetInfo(flags int) (uint64, error) {
 	pageInfo.HTTPInfo = ctx.hi
 	pageInfo.NetInfo = ctx.ni
 	pageInfo.sourceID = ctx.source.ID
-	if pageInfo.NetInfo != nil && pageInfo.NetInfo.CrowlerMeta == nil {
-		newCrowlerMeta := NewCrowlerMetaFromSource(ctx.source, ctx.srcCfg)
-		newCrowlerMeta.SetTag("", "source_uid", ctx.source.UID)
-		pageInfo.NetInfo.CrowlerMeta = map[string]interface{}(newCrowlerMeta)
+	if pageInfo.NetInfo != nil {
+		if pageInfo.NetInfo.CrowlerMeta == nil {
+			newCrowlerMeta := NewCrowlerMetaFromSource(ctx.source, ctx.srcCfg)
+			pageInfo.NetInfo.CrowlerMeta = map[string]interface{}(newCrowlerMeta)
+		} else {
+			CrowlerMeta(pageInfo.NetInfo.CrowlerMeta).EnsureSourceUID(ctx.source)
+		}
 	}
-	if pageInfo.HTTPInfo != nil && pageInfo.HTTPInfo.CrowlerMeta == nil {
-		newCrowlerMeta := NewCrowlerMetaFromSource(ctx.source, ctx.srcCfg)
-		newCrowlerMeta.SetTag("", "source_uid", ctx.source.UID)
-		pageInfo.HTTPInfo.CrowlerMeta = map[string]interface{}(newCrowlerMeta)
+	if pageInfo.HTTPInfo != nil {
+		if pageInfo.HTTPInfo.CrowlerMeta == nil {
+			newCrowlerMeta := NewCrowlerMetaFromSource(ctx.source, ctx.srcCfg)
+			pageInfo.HTTPInfo.CrowlerMeta = map[string]interface{}(newCrowlerMeta)
+		} else {
+			CrowlerMeta(pageInfo.HTTPInfo.CrowlerMeta).EnsureSourceUID(ctx.source)
+		}
 	}
 	return indexNetInfo(*ctx.db, ctx.source.URL, &pageInfo, flags)
 }

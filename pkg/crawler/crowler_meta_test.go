@@ -152,3 +152,53 @@ func TestEnsureCrowlerMetaNormalizesExistingObjectTypes(t *testing.T) {
 		t.Fatalf("ObjectTypes() = %#v, want %#v", got, want)
 	}
 }
+
+func TestNewCrowlerMetaFromSourcePopulatesSourceUID(t *testing.T) {
+	source := &cdb.Source{UID: "source-uid-1", Name: "Example", URL: "https://example.test"}
+
+	cm := NewCrowlerMetaFromSource(source, nil)
+	if got := cm[CrowlerMetaSourceUIDKey]; got != "source-uid-1" {
+		t.Fatalf("source_uid = %#v, want source-uid-1; crowler_meta=%#v", got, cm)
+	}
+}
+
+func TestEnsureCrowlerMetaBackfillsMissingSourceUID(t *testing.T) {
+	source := &cdb.Source{UID: "source-uid-2", Name: "Example", URL: "https://example.test"}
+	doc := map[string]interface{}{
+		CrowlerMetaKey: map[string]interface{}{
+			CrowlerMetaDataKey: map[string]interface{}{"username": "from-rule"},
+		},
+	}
+
+	cm := EnsureCrowlerMeta(doc, source, nil)
+	if got := cm[CrowlerMetaSourceUIDKey]; got != "source-uid-2" {
+		t.Fatalf("backfilled source_uid = %#v, want source-uid-2; crowler_meta=%#v", got, cm)
+	}
+}
+
+func TestEnsureCrowlerMetaReplacesEmptySourceUID(t *testing.T) {
+	source := &cdb.Source{UID: "source-uid-3", Name: "Example", URL: "https://example.test"}
+	doc := map[string]interface{}{
+		CrowlerMetaKey: map[string]interface{}{
+			CrowlerMetaSourceUIDKey: " ",
+		},
+	}
+
+	cm := EnsureCrowlerMeta(doc, source, nil)
+	if got := cm[CrowlerMetaSourceUIDKey]; got != "source-uid-3" {
+		t.Fatalf("replaced source_uid = %#v, want source-uid-3; crowler_meta=%#v", got, cm)
+	}
+}
+
+func TestCrowlerMetaRejectsEmptySourceUIDOverride(t *testing.T) {
+	cm := CrowlerMeta{CrowlerMetaSourceUIDKey: "source-uid-4"}
+	if err := cm.SetTag("", CrowlerMetaSourceUIDKey, " "); err == nil {
+		t.Fatal("SetTag allowed empty source_uid override")
+	}
+	if got := cm[CrowlerMetaSourceUIDKey]; got != "source-uid-4" {
+		t.Fatalf("source_uid changed after rejected override: %#v", got)
+	}
+	if err := cm.DeleteTag(CrowlerMetaKey, CrowlerMetaSourceUIDKey); err == nil {
+		t.Fatal("DeleteTag allowed source_uid deletion")
+	}
+}

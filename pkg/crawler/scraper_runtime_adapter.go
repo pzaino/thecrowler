@@ -220,14 +220,16 @@ func (a *scraperRuntimeAdapter) currentCrowlerMeta() CrowlerMeta {
 	}
 	if a.ctx.ni != nil && a.ctx.ni.CrowlerMeta != nil {
 		a.ctx.crowlerMeta = CrowlerMeta(a.ctx.ni.CrowlerMeta)
+		a.ctx.crowlerMeta.EnsureSourceUID(a.ctx.source)
 		return a.ctx.crowlerMeta
 	}
 	if a.ctx.hi != nil && a.ctx.hi.CrowlerMeta != nil {
 		a.ctx.crowlerMeta = CrowlerMeta(a.ctx.hi.CrowlerMeta)
+		a.ctx.crowlerMeta.EnsureSourceUID(a.ctx.source)
 		return a.ctx.crowlerMeta
 	}
 	a.ctx.crowlerMeta = NewCrowlerMetaFromSource(a.ctx.source, a.ctx.srcCfg)
-	_ = a.ctx.crowlerMeta.SetTag("", "source_uid", a.ctx.source.UID)
+	a.ctx.crowlerMeta.EnsureSourceUID(a.ctx.source)
 	return a.ctx.crowlerMeta
 }
 

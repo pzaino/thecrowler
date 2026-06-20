@@ -12,6 +12,7 @@ import (
 const CrowlerMetaKey = "crowler_meta"
 const CrowlerMetaDataKey = "meta_data"
 const CrowlerMetaObjectTypeKey = "object_type"
+const CrowlerMetaSourceUIDKey = "source_uid"
 
 type CrowlerMeta map[string]interface{}
 
@@ -27,7 +28,9 @@ func NewCrowlerMeta(metaData map[string]interface{}, srcCfg map[string]interface
 }
 
 func NewCrowlerMetaFromSource(source *cdb.Source, srcCfg map[string]interface{}) CrowlerMeta {
-	return NewCrowlerMeta(sourceMetaData(source), srcCfg)
+	cm := NewCrowlerMeta(sourceMetaData(source), srcCfg)
+	cm.EnsureSourceUID(source)
+	return cm
 }
 
 func (cm CrowlerMeta) SetTag(section, key string, value interface{}) error {
@@ -39,6 +42,9 @@ func (cm CrowlerMeta) SetTag(section, key string, value interface{}) error {
 	}
 	if section == "" || section == CrowlerMetaKey {
 		// Tag is in the root of crowler_meta
+		if key == CrowlerMetaSourceUIDKey && isEmptyCrowlerMetaValue(value) {
+			return fmt.Errorf("crowler_meta %q cannot be empty", CrowlerMetaSourceUIDKey)
+		}
 		cm[key] = value
 		return nil
 	}
@@ -66,6 +72,23 @@ func (cm CrowlerMeta) SetSection(section string, value map[string]interface{}) e
 func (cm CrowlerMeta) GetSection(section string) (map[string]interface{}, bool) {
 	m, ok := cm[strings.TrimSpace(section)].(map[string]interface{})
 	return m, ok
+}
+
+// EnsureSourceUID guarantees that crowler_meta has a non-empty source_uid when
+// source identity is available. If Source.UID has not been hydrated yet, it
+// derives the same stable UID used by the database layer from source name/URL.
+func (cm CrowlerMeta) EnsureSourceUID(source *cdb.Source) {
+	if cm == nil {
+		return
+	}
+	if !isEmptyCrowlerMetaValue(cm[CrowlerMetaSourceUIDKey]) {
+		return
+	}
+	uid := sourceUID(source)
+	if uid == "" {
+		return
+	}
+	cm[CrowlerMetaSourceUIDKey] = uid
 }
 
 // AddObjectType appends normalized object type labels to crowler_meta.object_type.
@@ -115,7 +138,7 @@ func NormalizeObjectTypeLabel(label string) string {
 func (cm CrowlerMeta) DeleteTag(section, key string) error {
 	section = strings.TrimSpace(section)
 	key = strings.TrimSpace(key)
-	if section == "" || section == CrowlerMetaKey || key == "" || (section == CrowlerMetaDataKey && key == CrowlerMetaDataKey) {
+	if section == "" || section == CrowlerMetaKey || key == "" || key == CrowlerMetaSourceUIDKey || (section == CrowlerMetaDataKey && key == CrowlerMetaDataKey) {
 		return fmt.Errorf("invalid crowler_meta section or key")
 	}
 	if m, ok := cm[section].(map[string]interface{}); ok {
@@ -142,6 +165,7 @@ func EnsureCrowlerMeta(doc map[string]interface{}, source *cdb.Source, srcCfg ma
 		merged := cloneMap(fresh[CrowlerMetaDataKey].(map[string]interface{}))
 		mergeMap(merged, extractMetaData(cm))
 		cm[CrowlerMetaDataKey] = merged
+		cm.EnsureSourceUID(source)
 		cm.ObjectTypes()
 		doc[CrowlerMetaKey] = cm
 		return cm
@@ -310,5 +334,29 @@ func currentCrowlerMeta(ctx *ProcessContext) CrowlerMeta {
 	if ctx.crowlerMeta == nil {
 		ctx.crowlerMeta = NewCrowlerMetaFromSource(ctx.source, ctx.srcCfg)
 	}
+	ctx.crowlerMeta.EnsureSourceUID(ctx.source)
 	return ctx.crowlerMeta
+}
+
+func sourceUID(source *cdb.Source) string {
+	if source == nil {
+		return ""
+	}
+	if strings.TrimSpace(source.UID) != "" {
+		return strings.TrimSpace(source.UID)
+	}
+	if strings.TrimSpace(source.Name) == "" && strings.TrimSpace(source.URL) == "" {
+		return ""
+	}
+	return cdb.CalculateSourceUID(source.Name, source.URL)
+}
+
+func isEmptyCrowlerMetaValue(value interface{}) bool {
+	if value == nil {
+		return true
+	}
+	if s, ok := value.(string); ok {
+		return strings.TrimSpace(s) == ""
+	}
+	return false
 }
