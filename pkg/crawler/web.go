@@ -1023,6 +1023,7 @@ func collectLoadedWebPage(ctx *ProcessContext, wd vdi.WebDriver, pageURL string,
 	}
 	_ = vdi.Refresh(ctx)
 
+	// If enabled in the configuration, collect XHR/Fetch requests made by the page
 	if ctx.config.Crawler.CollectXHR {
 		collectXHR(ctx, pageInfo)
 	}
@@ -1031,6 +1032,7 @@ func collectLoadedWebPage(ctx *ProcessContext, wd vdi.WebDriver, pageURL string,
 	}
 	_ = vdi.Refresh(ctx)
 
+	// Collect page information such as title, meta tags, and other relevant data
 	if err := extractPageInfo(&wd, ctx, docType, pageInfo); err != nil {
 		if strings.Contains(err.Error(), errCriticalError) {
 			return pageInfo, currentURL, "", err
@@ -3309,7 +3311,9 @@ func extractPageInfo(webPage *vdi.WebDriver, ctx *ProcessContext, docType string
 	(*PageCache).MetaTags = metaTags
 	(*PageCache).DetectedLang = detectedLang
 	(*PageCache).DetectedType = objType
-	(*PageCache).ScrapedData = scrapedList
+	// ScrapedData is not empty, so we need to "merge" it with the existing ScrapedData in PageCache
+	//(*PageCache).ScrapedData = scrapedList
+	(*PageCache).ScrapedData = append((*PageCache).ScrapedData, scrapedList...)
 
 	return nil
 }
