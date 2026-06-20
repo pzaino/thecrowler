@@ -48,3 +48,46 @@ func TestExtractRegexReturnsCompileError(t *testing.T) {
 		t.Fatal("ExtractRegex() error = nil, want compile error")
 	}
 }
+
+func TestExtractorFallbackSupportsWebAnalysisJSPath(t *testing.T) {
+	driverImpl := &pageSourceDriver{source: `<html><body><div id="mount_0_0_iB"><div><span>creator</span></div></div></body></html>`}
+	var driver vdi.WebDriver = driverImpl
+	extractor := Extractor{Driver: &driver}
+
+	got, err := extractor.extractFallback(driverImpl.source, ExtractRequest{Selector: rs.Selector{SelectorType: "js_path", Selector: "mount_0_0_iB > div > span"}})
+	if err != nil {
+		t.Fatalf("extractFallback() error = %v", err)
+	}
+	want := []interface{}{"creator"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("extractFallback() = %#v, want %#v", got, want)
+	}
+}
+
+func TestExtractorXPathFallbackHonorsAttributeExtraction(t *testing.T) {
+	driverImpl := &pageSourceDriver{source: `<html><body><article><time class="xdwrcjd" datetime="2024-10-02T12:00:00.000Z">October 2</time></article></body></html>`}
+	var driver vdi.WebDriver = driverImpl
+	extractor := Extractor{Driver: &driver}
+
+	got, err := extractor.Extract(ExtractRequest{Selector: rs.Selector{SelectorType: "xpath", Selector: "//time[contains(@class, 'xdwrcjd')]", Extract: rs.ItemToExtract{Type: "attribute", Pattern: "datetime"}}})
+	if err != nil {
+		t.Fatalf("Extract() error = %v", err)
+	}
+	want := []interface{}{"2024-10-02T12:00:00.000Z"}
+	if !reflect.DeepEqual(got.Values, want) {
+		t.Fatalf("Extract() = %#v, want %#v", got.Values, want)
+	}
+}
+
+func TestNormalizeJSPathSelector(t *testing.T) {
+	tests := map[string]string{
+		"mount_0_0_iB > div > span":  "#mount_0_0_iB > div > span",
+		"#mount_0_0_iB > div > span": "#mount_0_0_iB > div > span",
+		"div.x9f619 > span":          "div.x9f619 > span",
+	}
+	for input, want := range tests {
+		if got := normalizeJSPathSelector(input); got != want {
+			t.Fatalf("normalizeJSPathSelector(%q) = %q, want %q", input, got, want)
+		}
+	}
+}

@@ -97,7 +97,7 @@ func (e Extractor) lookup(req LookupRequest) (LookupResult, error) {
 	case "class_name", "classname", "class":
 		elements, err = (*e.Driver).FindElements(vdi.ByClassName, selector.Selector)
 	case "js_path":
-		result, executeErr := (*e.Driver).ExecuteScript(fmt.Sprintf("return document.querySelector(%q);", selector.Selector), nil)
+		result, executeErr := (*e.Driver).ExecuteScript(fmt.Sprintf("return document.querySelector(%q);", normalizeJSPathSelector(selector.Selector)), nil)
 		if executeErr != nil {
 			return LookupResult{}, fmt.Errorf("execute JavaScript selector: %w", executeErr)
 		}
@@ -268,6 +268,10 @@ func (e Extractor) extractFallback(source string, req ExtractRequest) ([]interfa
 	switch selectorType {
 	case "css":
 		values, err = e.extractCSS(doc, req)
+	case "js_path":
+		normalized := req
+		normalized.Selector.Selector = normalizeJSPathSelector(req.Selector.Selector)
+		values, err = e.extractCSS(doc, normalized)
 	case "xpath":
 		values, err = e.extractXPath(doc, req)
 	default:
@@ -276,6 +280,22 @@ func (e Extractor) extractFallback(source string, req ExtractRequest) ([]interfa
 		}
 	}
 	return stringsToInterfaces(values), err
+}
+
+func normalizeJSPathSelector(selector string) string {
+	selector = strings.TrimSpace(selector)
+	if selector == "" || strings.HasPrefix(selector, "#") || strings.HasPrefix(selector, ".") || strings.HasPrefix(selector, "[") {
+		return selector
+	}
+	first, rest, found := strings.Cut(selector, ">")
+	if !found {
+		return selector
+	}
+	first = strings.TrimSpace(first)
+	if first == "" || strings.ContainsAny(first, " .#:[") {
+		return selector
+	}
+	return "#" + first + " >" + rest
 }
 
 func (e Extractor) extractCSS(doc *goquery.Document, req ExtractRequest) ([]string, error) {
@@ -307,6 +327,9 @@ func (e Extractor) extractCSS(doc *goquery.Document, req ExtractRequest) ([]stri
 }
 
 func (e Extractor) extractXPath(doc *goquery.Document, req ExtractRequest) ([]string, error) {
+	if len(doc.Nodes) == 0 {
+		return nil, nil
+	}
 	items, err := htmlquery.QueryAll(doc.Nodes[0], req.Selector.Selector)
 	if err != nil {
 		return nil, fmt.Errorf("query XPath: %w", err)
@@ -318,7 +341,11 @@ func (e Extractor) extractXPath(doc *goquery.Document, req ExtractRequest) ([]st
 			return nil, err
 		}
 		if matches {
-			values = append(values, htmlquery.InnerText(item))
+			extracted, err := ExtractElement(ElementRequest{Element: item, Selector: req.Selector})
+			if err != nil {
+				return nil, err
+			}
+			values = append(values, extracted.Values...)
 			if !req.All {
 				break
 			}
@@ -374,6 +401,17 @@ func ExtractElement(req ElementRequest) (ElementResult, error) {
 			pattern = ""
 		default:
 			data = element.Text()
+		}
+	case *html.Node:
+		switch extractType {
+		case "attribute":
+			data = htmlquery.SelectAttr(element, pattern)
+			if data == "" {
+				err = errors.New("attribute not found")
+			}
+			pattern = ""
+		default:
+			data = htmlquery.InnerText(element)
 		}
 	default:
 		return ElementResult{}, fmt.Errorf("unsupported element type %T", req.Element)
