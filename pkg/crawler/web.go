@@ -3312,7 +3312,6 @@ func extractPageInfo(webPage *vdi.WebDriver, ctx *ProcessContext, docType string
 	(*PageCache).DetectedLang = detectedLang
 	(*PageCache).DetectedType = objType
 	// ScrapedData is not empty, so we need to "merge" it with the existing ScrapedData in PageCache
-	//(*PageCache).ScrapedData = scrapedList
 	(*PageCache).ScrapedData = append((*PageCache).ScrapedData, scrapedList...)
 
 	return nil
