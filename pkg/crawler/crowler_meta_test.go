@@ -153,6 +153,23 @@ func TestEnsureCrowlerMetaNormalizesExistingObjectTypes(t *testing.T) {
 	}
 }
 
+func TestCrowlerMetaSetTagObjectTypeAppendsWithoutReset(t *testing.T) {
+	cm := NewCrowlerMeta(nil, nil)
+	cm.AddObjectType("product")
+	if err := cm.SetTag("", CrowlerMetaObjectTypeKey, []interface{}{" News Article ", "product"}); err != nil {
+		t.Fatalf("SetTag object_type returned error: %v", err)
+	}
+	if err := cm.SetTag(CrowlerMetaKey, CrowlerMetaObjectTypeKey, "Profile"); err != nil {
+		t.Fatalf("SetTag crowler_meta.object_type returned error: %v", err)
+	}
+
+	got := cm.ObjectTypes()
+	want := []string{"product", "news_article", "profile"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ObjectTypes() = %#v, want %#v", got, want)
+	}
+}
+
 func TestNewCrowlerMetaFromSourcePopulatesSourceUID(t *testing.T) {
 	source := &cdb.Source{UID: "source-uid-1", Name: "Example", URL: "https://example.test"}
 

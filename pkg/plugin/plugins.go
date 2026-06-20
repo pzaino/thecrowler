@@ -1521,8 +1521,47 @@ func syncVMParams(vm *otto.Otto, params map[string]interface{}) {
 		return
 	}
 	for key, val := range updated {
+		if key == "crowler_meta" {
+			params[key] = mergePluginCrowlerMeta(params[key], val)
+			continue
+		}
 		params[key] = val
 	}
+}
+
+func mergePluginCrowlerMeta(existing, updated interface{}) interface{} {
+	updatedMap, ok := updated.(map[string]interface{})
+	if !ok {
+		return updated
+	}
+	merged := map[string]interface{}{}
+	if existingMap, ok := existing.(map[string]interface{}); ok {
+		for key, val := range existingMap {
+			merged[key] = val
+		}
+	}
+	for key, val := range updatedMap {
+		if key == "object_type" {
+			existingLabels := pluginObjectTypes(merged[key])
+			updatedLabels := pluginObjectTypes(val)
+			labels := append([]string{}, existingLabels...)
+			seen := map[string]struct{}{}
+			for _, label := range labels {
+				seen[label] = struct{}{}
+			}
+			for _, label := range updatedLabels {
+				if _, ok := seen[label]; ok {
+					continue
+				}
+				labels = append(labels, label)
+				seen[label] = struct{}{}
+			}
+			merged[key] = labels
+			continue
+		}
+		merged[key] = val
+	}
+	return merged
 }
 
 func normalizeVMExport(exported interface{}) (map[string]interface{}, error) {

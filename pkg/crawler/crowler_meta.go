@@ -41,7 +41,13 @@ func (cm CrowlerMeta) SetTag(section, key string, value interface{}) error {
 		return fmt.Errorf("invalid crowler_meta key")
 	}
 	if section == "" || section == CrowlerMetaKey {
-		// Tag is in the root of crowler_meta
+		// Tag is in the root of crowler_meta. object_type is append-only so
+		// rule/post-processing writes cannot accidentally erase labels added by
+		// earlier rules or plugins.
+		if key == CrowlerMetaObjectTypeKey {
+			cm.AddObjectType(objectTypeLabelsFromValue(value)...)
+			return nil
+		}
 		if key == CrowlerMetaSourceUIDKey && isEmptyCrowlerMetaValue(value) {
 			return fmt.Errorf("crowler_meta %q cannot be empty", CrowlerMetaSourceUIDKey)
 		}
@@ -326,6 +332,10 @@ func normalizeObjectTypeValue(value interface{}) []string {
 		add(v)
 	}
 	return values
+}
+
+func objectTypeLabelsFromValue(value interface{}) []string {
+	return normalizeObjectTypeValue(value)
 }
 
 func currentCrowlerMeta(ctx *ProcessContext) CrowlerMeta {

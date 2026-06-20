@@ -2192,3 +2192,36 @@ func TestSyncVMParamsPersistsObjectTypeToGoParams(t *testing.T) {
 		t.Fatalf("synced object_type = %#v, want [profile]", cm["object_type"])
 	}
 }
+
+func TestSyncVMParamsMergesAssignedObjectType(t *testing.T) {
+	vm := otto.New()
+	params := map[string]interface{}{"crowler_meta": map[string]interface{}{"object_type": []interface{}{" Product "}, "source_uid": "src-1"}}
+	if err := vm.Set("params", params); err != nil {
+		t.Fatalf("setting params: %v", err)
+	}
+	if _, err := vm.Run(`params.crowler_meta = {object_type: ["News Article", "product"], extra: "value"};`); err != nil {
+		t.Fatalf("assigning object_type: %v", err)
+	}
+
+	syncVMParams(vm, params)
+	cm, ok := params["crowler_meta"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("crowler_meta not synced: %#v", params["crowler_meta"])
+	}
+	labels, ok := cm["object_type"].([]string)
+	if !ok {
+		t.Fatalf("synced object_type = %#v, want []string", cm["object_type"])
+	}
+	wantLabels := map[string]bool{"product": true, "news_article": true}
+	if len(labels) != len(wantLabels) {
+		t.Fatalf("synced object_type = %#v, want product and news_article", labels)
+	}
+	for _, label := range labels {
+		if !wantLabels[label] {
+			t.Fatalf("synced object_type = %#v, unexpected label %q", labels, label)
+		}
+	}
+	if got := cm["extra"]; got != "value" {
+		t.Fatalf("extra = %#v, want value", got)
+	}
+}
