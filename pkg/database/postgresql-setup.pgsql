@@ -2713,7 +2713,7 @@ CREATE OR REPLACE FUNCTION update_sources(
     p_regular_crawling VARCHAR,
     p_processing_timeout VARCHAR
 )
-RETURNS TABLE(source_id BIGINT, url TEXT, restricted INT, flags INT, config JSONB, last_updated_at TIMESTAMPTZ) AS
+RETURNS TABLE(source_id BIGINT, source_uid TEXT, url TEXT, restricted INT, flags INT, config JSONB, last_updated_at TIMESTAMPTZ) AS
 $$
 DECLARE
     priority_list TEXT[];
@@ -2773,7 +2773,7 @@ BEGIN
     SET status = 'processing',
         engine = p_engineID
     WHERE Sources.source_id IN (SELECT SelectedSources.source_id FROM SelectedSources)
-    RETURNING Sources.source_id, Sources.url, Sources.restricted, Sources.flags, Sources.config, Sources.last_updated_at;
+    RETURNING Sources.source_id, Sources.source_uid::TEXT, Sources.url, Sources.restricted, Sources.flags, Sources.config, Sources.last_updated_at;
 END;
 $$
 LANGUAGE plpgsql;

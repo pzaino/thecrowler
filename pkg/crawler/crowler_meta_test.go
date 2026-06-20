@@ -190,6 +190,20 @@ func TestEnsureCrowlerMetaReplacesEmptySourceUID(t *testing.T) {
 	}
 }
 
+func TestEnsureCrowlerMetaDoesNotRecalculateSourceUIDFromURL(t *testing.T) {
+	source := &cdb.Source{Name: "Example", URL: "https://example.test/current-page"}
+	doc := map[string]interface{}{
+		CrowlerMetaKey: map[string]interface{}{
+			CrowlerMetaDataKey: map[string]interface{}{"username": "from-rule"},
+		},
+	}
+
+	cm := EnsureCrowlerMeta(doc, source, nil)
+	if got := cm[CrowlerMetaSourceUIDKey]; got != nil {
+		t.Fatalf("source_uid = %#v, want nil when Sources.source_uid is not hydrated; crowler_meta=%#v", got, cm)
+	}
+}
+
 func TestCrowlerMetaRejectsEmptySourceUIDOverride(t *testing.T) {
 	cm := CrowlerMeta{CrowlerMetaSourceUIDKey: "source-uid-4"}
 	if err := cm.SetTag("", CrowlerMetaSourceUIDKey, " "); err == nil {

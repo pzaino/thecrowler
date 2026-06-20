@@ -221,6 +221,7 @@ func retrieveAvailableSources(db cdb.Handler, maxSources int) ([]cdb.Source, err
 	query := `
 	SELECT
 		l.source_id,
+		l.source_uid,
 		l.url,
 		l.restricted,
 		l.flags,
@@ -246,7 +247,7 @@ func retrieveAvailableSources(db cdb.Handler, maxSources int) ([]cdb.Source, err
 	var sourcesToCrawl []cdb.Source
 	for rows.Next() {
 		var src cdb.Source
-		if err := rows.Scan(&src.ID, &src.URL, &src.Restricted, &src.Flags, &src.Config); err != nil {
+		if err := rows.Scan(&src.ID, &src.UID, &src.URL, &src.Restricted, &src.Flags, &src.Config); err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "scanning rows: %v", err)
 			err2 := rows.Close()
 			if err2 != nil {

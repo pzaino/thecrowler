@@ -74,9 +74,10 @@ func (cm CrowlerMeta) GetSection(section string) (map[string]interface{}, bool) 
 	return m, ok
 }
 
-// EnsureSourceUID guarantees that crowler_meta has a non-empty source_uid when
-// source identity is available. If Source.UID has not been hydrated yet, it
-// derives the same stable UID used by the database layer from source name/URL.
+// EnsureSourceUID guarantees that crowler_meta has the source_uid stored on
+// the Sources row for the root URL currently being crawled. It deliberately
+// does not derive a UID from Source.Name/Source.URL because URL fields can
+// represent redirected or child pages during processing.
 func (cm CrowlerMeta) EnsureSourceUID(source *cdb.Source) {
 	if cm == nil {
 		return
@@ -342,13 +343,7 @@ func sourceUID(source *cdb.Source) string {
 	if source == nil {
 		return ""
 	}
-	if strings.TrimSpace(source.UID) != "" {
-		return strings.TrimSpace(source.UID)
-	}
-	if strings.TrimSpace(source.Name) == "" && strings.TrimSpace(source.URL) == "" {
-		return ""
-	}
-	return cdb.CalculateSourceUID(source.Name, source.URL)
+	return strings.TrimSpace(source.UID)
 }
 
 func isEmptyCrowlerMetaValue(value interface{}) bool {
