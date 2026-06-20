@@ -349,6 +349,23 @@ func currentCrowlerMeta(ctx *ProcessContext) CrowlerMeta {
 	return ctx.crowlerMeta
 }
 
+func beginPageCrowlerMeta(ctx *ProcessContext) CrowlerMeta {
+	if ctx == nil {
+		return NewCrowlerMeta(nil, nil)
+	}
+	ctx.crowlerMeta = NewCrowlerMetaFromSource(ctx.source, ctx.srcCfg)
+	ctx.crowlerMeta.EnsureSourceUID(ctx.source)
+	return ctx.crowlerMeta
+}
+
+func attachCurrentCrowlerMeta(ctx *ProcessContext, pageInfo *PageInfo) CrowlerMeta {
+	cm := currentCrowlerMeta(ctx)
+	if pageInfo != nil {
+		pageInfo.CrowlerMeta = cm
+	}
+	return cm
+}
+
 func sourceUID(source *cdb.Source) string {
 	if source == nil {
 		return ""

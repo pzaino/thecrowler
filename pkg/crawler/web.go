@@ -996,6 +996,8 @@ func collectLoadedWebPage(ctx *ProcessContext, wd vdi.WebDriver, pageURL string,
 	currentURL, _ := ctx.wd.CurrentURL()
 
 	pageInfo := &PageInfo{}
+	beginPageCrowlerMeta(ctx)
+	defer attachCurrentCrowlerMeta(ctx, pageInfo)
 
 	detectCtx := detect.DContext{
 		CtxID:        ctx.GetContextID(),
