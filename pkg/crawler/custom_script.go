@@ -81,6 +81,7 @@ func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]b
 	params["meta_data"] = metaData
 	if ctx.crowlerMeta == nil {
 		ctx.crowlerMeta = NewCrowlerMetaFromSource(ctx.source, ctx.srcCfg)
+		ctx.crowlerMeta.SetTag("", "source_uid", ctx.source.UID)
 	}
 	params["crowler_meta"] = ctx.crowlerMeta
 

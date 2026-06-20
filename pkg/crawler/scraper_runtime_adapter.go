@@ -227,6 +227,7 @@ func (a *scraperRuntimeAdapter) currentCrowlerMeta() CrowlerMeta {
 		return a.ctx.crowlerMeta
 	}
 	a.ctx.crowlerMeta = NewCrowlerMetaFromSource(a.ctx.source, a.ctx.srcCfg)
+	_ = a.ctx.crowlerMeta.SetTag("", "source_uid", a.ctx.source.UID)
 	return a.ctx.crowlerMeta
 }
 

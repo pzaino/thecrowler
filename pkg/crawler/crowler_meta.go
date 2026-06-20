@@ -33,8 +33,14 @@ func NewCrowlerMetaFromSource(source *cdb.Source, srcCfg map[string]interface{})
 func (cm CrowlerMeta) SetTag(section, key string, value interface{}) error {
 	section = strings.TrimSpace(section)
 	key = strings.TrimSpace(key)
-	if section == "" || section == CrowlerMetaKey || key == "" {
-		return fmt.Errorf("invalid crowler_meta section or key")
+	// Key cannot be empty
+	if key == "" {
+		return fmt.Errorf("invalid crowler_meta key")
+	}
+	if section == "" || section == CrowlerMetaKey {
+		// Tag is in the root of crowler_meta
+		cm[key] = value
+		return nil
 	}
 	m, _ := cm[section].(map[string]interface{})
 	if m == nil {
