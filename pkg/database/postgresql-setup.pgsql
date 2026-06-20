@@ -2572,25 +2572,6 @@ ALTER TABLE netinfoindex ADD CONSTRAINT netinfoindex_index_id_fkey FOREIGN KEY (
 ALTER TABLE httpinfoindex DROP CONSTRAINT IF EXISTS httpinfoindex_index_id_fkey;
 ALTER TABLE httpinfoindex ADD CONSTRAINT httpinfoindex_index_id_fkey FOREIGN KEY (index_id) REFERENCES SearchIndex(index_id) ON DELETE CASCADE;
 
--- Creates a function to fetch and update the sources as an atomic operation
--- this is required to be able to deploy multiple crawlers without the risk of
--- fetching the same source multiple times
-DO $$
-BEGIN
-    IF EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'update_sources') THEN
-        DROP FUNCTION IF EXISTS update_sources(
-                                                INTEGER,
-                                                VARCHAR,
-                                                VARCHAR,
-                                                VARCHAR,
-                                                VARCHAR,
-                                                VARCHAR,
-                                                VARCHAR
-                                            );
-    END IF;
-END
-$$;
-
 -- Atomically claims InformationSeed work for one crowler-engine replica. The
 -- row locks and lifecycle update happen in the same statement so concurrent
 -- engines cannot receive the same seed.
@@ -2703,6 +2684,25 @@ BEGIN
 END;
 $$
 LANGUAGE plpgsql;
+
+-- Creates a function to fetch and update the sources as an atomic operation
+-- this is required to be able to deploy multiple crawlers without the risk of
+-- fetching the same source multiple times
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'update_sources') THEN
+        DROP FUNCTION IF EXISTS update_sources(
+                                                INTEGER,
+                                                VARCHAR,
+                                                VARCHAR,
+                                                VARCHAR,
+                                                VARCHAR,
+                                                VARCHAR,
+                                                VARCHAR
+                                            );
+    END IF;
+END
+$$;
 
 CREATE OR REPLACE FUNCTION update_sources(
     limit_val INTEGER,
