@@ -1023,6 +1023,14 @@ func collectLoadedWebPage(ctx *ProcessContext, wd vdi.WebDriver, pageURL string,
 	}
 	_ = vdi.Refresh(ctx)
 
+	if ctx.config.Crawler.CollectXHR {
+		collectXHR(ctx, pageInfo)
+	}
+	if ctx.RefreshCrawlingTimer != nil {
+		ctx.RefreshCrawlingTimer()
+	}
+	_ = vdi.Refresh(ctx)
+
 	if err := extractPageInfo(&wd, ctx, docType, pageInfo); err != nil {
 		if strings.Contains(err.Error(), errCriticalError) {
 			return pageInfo, currentURL, "", err
@@ -1057,14 +1065,6 @@ func collectLoadedWebPage(ctx *ProcessContext, wd vdi.WebDriver, pageURL string,
 
 	if ctx.config.Crawler.CollectPageEvents {
 		collectPageLogs(&wd, pageInfo)
-	}
-	if ctx.RefreshCrawlingTimer != nil {
-		ctx.RefreshCrawlingTimer()
-	}
-	_ = vdi.Refresh(ctx)
-
-	if ctx.config.Crawler.CollectXHR {
-		collectXHR(ctx, pageInfo)
 	}
 	if ctx.RefreshCrawlingTimer != nil {
 		ctx.RefreshCrawlingTimer()
