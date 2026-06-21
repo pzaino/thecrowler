@@ -158,14 +158,12 @@ func (a *scraperRuntimeAdapter) RunAgent(ctx context.Context, req scraper.AgentR
 }
 
 func (a *scraperRuntimeAdapter) paramsWithPageInfo(parameters map[string]interface{}, data []byte) map[string]interface{} {
-	merged := make(map[string]interface{}, len(parameters)+3)
+	merged := make(map[string]interface{}, len(parameters)+1)
 	for k, v := range parameters {
 		merged[k] = v
 	}
-	if a == nil || a.pageInfo == nil {
-		return merged
-	}
 	jsonData := map[string]interface{}{}
+	mergeScrapedDataIntoJSONData(jsonData, a.currentScrapedData())
 	if existing, ok := merged["json_data"].(map[string]interface{}); ok {
 		for k, v := range existing {
 			jsonData[k] = v
@@ -179,32 +177,27 @@ func (a *scraperRuntimeAdapter) paramsWithPageInfo(parameters map[string]interfa
 			}
 		}
 	}
-	mergePageInfoIntoJSONData(jsonData, a.pageInfo)
-	merged["json_data"] = jsonData
-	merged["page_info"] = a.pageInfo
+	if len(jsonData) > 0 {
+		merged["json_data"] = jsonData
+	}
 	return merged
 }
 
-func mergePageInfoIntoJSONData(jsonData map[string]interface{}, pageInfo *PageInfo) {
-	if jsonData == nil || pageInfo == nil {
+func (a *scraperRuntimeAdapter) currentScrapedData() []ScrapedItem {
+	if a == nil || a.pageInfo == nil {
+		return nil
+	}
+	return a.pageInfo.ScrapedData
+}
+
+func mergeScrapedDataIntoJSONData(jsonData map[string]interface{}, scrapedData []ScrapedItem) {
+	if jsonData == nil {
 		return
 	}
-	if len(pageInfo.ScrapedData) > 0 {
-		if _, exists := jsonData["scraped_data"]; !exists {
-			jsonData["scraped_data"] = pageInfo.ScrapedData
-		}
-		var xhr []interface{}
-		for _, item := range pageInfo.ScrapedData {
-			if value, ok := item["xhr"]; ok {
-				xhr = append(xhr, value)
-			}
-		}
-		if len(xhr) > 0 {
-			if _, exists := jsonData["xhr"]; !exists {
-				jsonData["xhr"] = xhr
-			}
-			if _, exists := jsonData["XHR"]; !exists {
-				jsonData["XHR"] = xhr
+	for _, item := range scrapedData {
+		for k, v := range item {
+			if _, exists := jsonData[k]; !exists {
+				jsonData[k] = v
 			}
 		}
 	}

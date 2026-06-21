@@ -14,16 +14,10 @@ func TestScraperRuntimeAdapterParamsWithPageInfoAddsXHRToJSONData(t *testing.T) 
 	if jsonData["existing"] != true || jsonData["rule"] != "value" {
 		t.Fatalf("json_data did not preserve existing/rule values: %#v", jsonData)
 	}
-	if _, ok := jsonData["scraped_data"].([]ScrapedItem); !ok {
-		t.Fatalf("json_data scraped_data type = %T, want []ScrapedItem", jsonData["scraped_data"])
+	if xhr, ok := jsonData["xhr"].([]map[string]interface{}); !ok || len(xhr) != 1 {
+		t.Fatalf("json_data xhr = %#v, want original XHR entry", jsonData["xhr"])
 	}
-	if xhr, ok := jsonData["xhr"].([]interface{}); !ok || len(xhr) != 1 {
-		t.Fatalf("json_data xhr = %#v, want one XHR entry", jsonData["xhr"])
-	}
-	if xhr, ok := jsonData["XHR"].([]interface{}); !ok || len(xhr) != 1 {
-		t.Fatalf("json_data XHR = %#v, want one XHR entry", jsonData["XHR"])
-	}
-	if params["page_info"] != pageInfo {
-		t.Fatalf("page_info was not attached to params")
+	if _, exists := jsonData["XHR"]; exists {
+		t.Fatalf("json_data should not duplicate xhr into XHR: %#v", jsonData["XHR"])
 	}
 }
