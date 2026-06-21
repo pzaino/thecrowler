@@ -37,7 +37,7 @@ const (
 )
 
 // processScrapingRules processes the scraping rules
-func processScrapingRules(wd *vdi.WebDriver, ctx *ProcessContext, url string) (string, error) {
+func processScrapingRules(wd *vdi.WebDriver, ctx *ProcessContext, url string, pageCache *PageInfo) (string, error) {
 	cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ProcScrapingRules] Starting to search and process CROWler Scraping rules...")
 
 	scrapedDataDoc := ""
@@ -48,7 +48,7 @@ func processScrapingRules(wd *vdi.WebDriver, ctx *ProcessContext, url string) (s
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-ProcScrapingRules] Executing CROWler configured Scraping rules (if any)...")
 		// Execute the rules
 		if strings.TrimSpace(string((*ctx.source.Config))) == "{\"config\":\"default\"}" {
-			addScrapedDataToDocument(&scrapedDataDoc, runDefaultScrapingRules(wd, ctx))
+			addScrapedDataToDocument(&scrapedDataDoc, runDefaultScrapingRules(wd, ctx, pageCache))
 		} else {
 			configStr := string((*ctx.source.Config))
 			cmn.DebugMsg(cmn.DbgLvlDebug5, "[DEBUG-ProcScrapingRules] Source custom configuration detected: %v", configStr)
@@ -58,7 +58,7 @@ func processScrapingRules(wd *vdi.WebDriver, ctx *ProcessContext, url string) (s
 	// Check for rules based on the URL
 	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-ProcScrapingRules] Executing CROWler URL-based Scraping rules (if any)...")
 	// If the URL matches a rule, execute it
-	data, err := executeScrapingRulesByURL(wd, ctx, url)
+	data, err := executeScrapingRulesByURL(wd, ctx, url, pageCache)
 	addScrapedDataToDocument(&scrapedDataDoc, data)
 
 	// Check if scrapedDataDOc already has "{" and "}" at the beginning and end
@@ -81,7 +81,7 @@ func addScrapedDataToDocument(scrapedDataDoc *string, newScrapedData string) {
 	}
 }
 
-func executeScrapingRulesByURL(wd *vdi.WebDriver, ctx *ProcessContext, url string) (string, error) {
+func executeScrapingRulesByURL(wd *vdi.WebDriver, ctx *ProcessContext, url string, pageCache *PageInfo) (string, error) {
 	scrapedDataDoc := ""
 	var errList []error
 
@@ -92,7 +92,7 @@ func executeScrapingRulesByURL(wd *vdi.WebDriver, ctx *ProcessContext, url strin
 		for _, rg := range rgl {
 			// Execute all the rules in the rule group (the following function also set the Env and clears it)
 			var data string
-			data, err = executeScrapingRulesInRuleGroup(ctx, rg, wd)
+			data, err = executeScrapingRulesInRuleGroup(ctx, rg, wd, pageCache)
 			// Add the data to the document
 			data = strings.TrimSpace(data)
 			if data != "" && data != "{}" && data != strFalse && data != strTrue {
@@ -117,7 +117,7 @@ func executeScrapingRulesByURL(wd *vdi.WebDriver, ctx *ProcessContext, url strin
 		for _, rs := range rsl {
 			// Execute all the rules in the ruleset
 			var data string
-			data, err = executeScrapingRulesInRuleset(ctx, rs, wd)
+			data, err = executeScrapingRulesInRuleset(ctx, rs, wd, pageCache)
 			addScrapedDataToDocument(&scrapedDataDoc, data)
 		}
 	} else {
@@ -142,7 +142,7 @@ func executeScrapingRulesByURL(wd *vdi.WebDriver, ctx *ProcessContext, url strin
 	return scrapedDataDoc, nil
 }
 
-func executeScrapingRulesInRuleset(ctx *ProcessContext, rs *rules.Ruleset, wd *vdi.WebDriver) (string, error) {
+func executeScrapingRulesInRuleset(ctx *ProcessContext, rs *rules.Ruleset, wd *vdi.WebDriver, pageCache *PageInfo) (string, error) {
 	scrapedDataDoc := ""
 
 	// Setup the environment
@@ -151,7 +151,7 @@ func executeScrapingRulesInRuleset(ctx *ProcessContext, rs *rules.Ruleset, wd *v
 	for _, r := range rs.GetAllEnabledScrapingRules() {
 		// Execute the rule
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "Executing rule: %v", r.RuleName)
-		scrapedData, err := executeScrapingRule(ctx, &r, wd)
+		scrapedData, err := executeScrapingRule(ctx, &r, wd, pageCache)
 		if err != nil {
 			if strings.Contains(err.Error(), "Critical") {
 				return "", fmt.Errorf("%v", err)
@@ -167,7 +167,7 @@ func executeScrapingRulesInRuleset(ctx *ProcessContext, rs *rules.Ruleset, wd *v
 	return scrapedDataDoc, nil
 }
 
-func executeScrapingRulesInRuleGroup(ctx *ProcessContext, rg *rules.RuleGroup, wd *vdi.WebDriver) (string, error) {
+func executeScrapingRulesInRuleGroup(ctx *ProcessContext, rg *rules.RuleGroup, wd *vdi.WebDriver, pageCache *PageInfo) (string, error) {
 	scrapedDataDoc := ""
 
 	// Set the environment
@@ -178,7 +178,7 @@ func executeScrapingRulesInRuleGroup(ctx *ProcessContext, rg *rules.RuleGroup, w
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-FindRules] Executing Rule: %v", r.RuleName)
 		// Execute the rule
 		var scrapedData string
-		scrapedData, err = executeScrapingRule(ctx, &r, wd)
+		scrapedData, err = executeScrapingRule(ctx, &r, wd, pageCache)
 		addScrapedDataToDocument(&scrapedDataDoc, scrapedData)
 	}
 
@@ -196,7 +196,7 @@ func executeScrapingRulesInRuleGroup(ctx *ProcessContext, rg *rules.RuleGroup, w
 		// Convert the map to JSON
 		data := cmn.ConvertMapToJSON(extractedData)
 		for i := range rg.PostProcessing {
-			updated, stepErr := scraper.ApplyPostProcessingStep(context.Background(), newScraperRuntimeAdapter(ctx, nil), "", 0, &rg.PostProcessing[i], data)
+			updated, stepErr := scraper.ApplyPostProcessingStep(context.Background(), newScraperRuntimeAdapterWithPageInfo(ctx, nil, pageCache), "", 0, &rg.PostProcessing[i], data)
 			if stepErr == nil {
 				data = updated
 			}
@@ -224,8 +224,8 @@ func executeScrapingRulesInRuleGroup(ctx *ProcessContext, rg *rules.RuleGroup, w
 }
 
 // executeScrapingRule delegates the complete rule lifecycle to the shared scraper runtime.
-func executeScrapingRule(ctx *ProcessContext, rule *rules.ScrapingRule, wd *vdi.WebDriver) (string, error) {
-	return scraper.ExecuteRule(context.Background(), newScraperRuntimeAdapter(ctx, wd), rule, wd)
+func executeScrapingRule(ctx *ProcessContext, rule *rules.ScrapingRule, wd *vdi.WebDriver, pageCache *PageInfo) (string, error) {
+	return scraper.ExecuteRule(context.Background(), newScraperRuntimeAdapterWithPageInfo(ctx, wd, pageCache), rule, wd)
 }
 
 // DefaultCrawlingConfig returns a default configuration for crawling a page
@@ -251,7 +251,7 @@ func DefaultCrawlingConfig(url string) cfg.SourceConfig {
 	}
 }
 
-func runDefaultScrapingRules(wd *vdi.WebDriver, ctx *ProcessContext) string {
+func runDefaultScrapingRules(wd *vdi.WebDriver, ctx *ProcessContext, pageCache *PageInfo) string {
 	// Execute the default scraping rules
 	cmn.DebugMsg(cmn.DbgLvlDebug, "Executing default scraping rules...")
 
@@ -269,12 +269,12 @@ func runDefaultScrapingRules(wd *vdi.WebDriver, ctx *ProcessContext) string {
 		if !checkScrapingPreConditions(r.Conditions, url) {
 			continue
 		}
-		addScrapedDataToDocument(&scrapedDataDoc, executeRulesInExecutionPlan(r, wd, ctx))
+		addScrapedDataToDocument(&scrapedDataDoc, executeRulesInExecutionPlan(r, wd, ctx, pageCache))
 	}
 	return scrapedDataDoc
 }
 
-func executeRulesInExecutionPlan(epi cfg.ExecutionPlanItem, wd *vdi.WebDriver, ctx *ProcessContext) string {
+func executeRulesInExecutionPlan(epi cfg.ExecutionPlanItem, wd *vdi.WebDriver, ctx *ProcessContext, pageCache *PageInfo) string {
 	var scrapedDataDoc string
 	// Get the rule
 	for _, ruleName := range epi.Rules {
@@ -286,7 +286,7 @@ func executeRulesInExecutionPlan(epi cfg.ExecutionPlanItem, wd *vdi.WebDriver, c
 			cmn.DebugMsg(cmn.DbgLvlError, "getting scraping rule: %v", err)
 		} else {
 			// Execute the rule
-			scrapedData, err := executeScrapingRule(ctx, rule, wd)
+			scrapedData, err := executeScrapingRule(ctx, rule, wd, pageCache)
 			if err != nil {
 				cmn.DebugMsg(cmn.DbgLvlError, errExecutingScraping, err)
 			} else {

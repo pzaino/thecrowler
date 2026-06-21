@@ -17,12 +17,17 @@ import (
 )
 
 type scraperRuntimeAdapter struct {
-	ctx *ProcessContext
-	wd  *vdi.WebDriver
+	ctx      *ProcessContext
+	wd       *vdi.WebDriver
+	pageInfo *PageInfo
 }
 
 func newScraperRuntimeAdapter(ctx *ProcessContext, wd *vdi.WebDriver) *scraper.Runtime {
-	adapter := &scraperRuntimeAdapter{ctx: ctx, wd: wd}
+	return newScraperRuntimeAdapterWithPageInfo(ctx, wd, nil)
+}
+
+func newScraperRuntimeAdapterWithPageInfo(ctx *ProcessContext, wd *vdi.WebDriver, pageInfo *PageInfo) *scraper.Runtime {
+	adapter := &scraperRuntimeAdapter{ctx: ctx, wd: wd, pageInfo: pageInfo}
 	timeout := 15 * time.Second
 	if ctx != nil && ctx.config.Plugins.PluginsTimeout > 0 {
 		timeout = time.Duration(ctx.config.Plugins.PluginsTimeout) * time.Second
@@ -94,7 +99,7 @@ func (a *scraperRuntimeAdapter) CallRule(ctx context.Context, req scraper.RuleCa
 		wd = a.ctx.GetWebDriver()
 	}
 	kind := RuleCallKind(req.Kind)
-	crawlerReq := RuleCallRequest{Kind: kind, Params: req.Parameters, TimeoutSec: int(req.Timeout.Seconds()), OnError: "fail", Caller: req.Caller, RuleName: req.RuleName}
+	crawlerReq := RuleCallRequest{Kind: kind, Params: a.paramsWithPageInfo(req.Parameters, nil), TimeoutSec: int(req.Timeout.Seconds()), OnError: "fail", Caller: req.Caller, RuleName: req.RuleName}
 	if crawlerReq.TimeoutSec <= 0 {
 		crawlerReq.TimeoutSec = 30
 	}
@@ -132,7 +137,7 @@ func (a *scraperRuntimeAdapter) RunPlugin(ctx context.Context, req scraper.Plugi
 		result, err := a.CallRule(ctx, scraper.RuleCallRequest{Kind: string(RuleCallKindPlugin), Name: req.Name, Parameters: req.Parameters, Caller: req.Caller, RuleName: req.RuleName, Step: req.Step})
 		return result.Value, err
 	}
-	step := &rs.PostProcessingStep{Type: strPluginCall, Details: map[string]interface{}{"plugin_name": req.Name, "parameters": req.Parameters}}
+	step := &rs.PostProcessingStep{Type: strPluginCall, Details: map[string]interface{}{"plugin_name": req.Name, "parameters": a.paramsWithPageInfo(req.Parameters, req.Data)}}
 	data := append([]byte(nil), req.Data...)
 	done := make(chan error, 1)
 	go func() { done <- processCustomJS(a.ctx, step, &data) }()
@@ -148,8 +153,61 @@ func (a *scraperRuntimeAdapter) RunPlugin(ctx context.Context, req scraper.Plugi
 }
 
 func (a *scraperRuntimeAdapter) RunAgent(ctx context.Context, req scraper.AgentRequest) (interface{}, error) {
-	result, err := a.CallRule(ctx, scraper.RuleCallRequest{Kind: string(RuleCallKindAgent), Name: req.Name, Parameters: req.Parameters, Caller: req.Caller, RuleName: req.RuleName, Step: req.Step})
+	result, err := a.CallRule(ctx, scraper.RuleCallRequest{Kind: string(RuleCallKindAgent), Name: req.Name, Parameters: a.paramsWithPageInfo(req.Parameters, req.Data), Caller: req.Caller, RuleName: req.RuleName, Step: req.Step})
 	return result.Value, err
+}
+
+func (a *scraperRuntimeAdapter) paramsWithPageInfo(parameters map[string]interface{}, data []byte) map[string]interface{} {
+	merged := make(map[string]interface{}, len(parameters)+3)
+	for k, v := range parameters {
+		merged[k] = v
+	}
+	if a == nil || a.pageInfo == nil {
+		return merged
+	}
+	jsonData := map[string]interface{}{}
+	if existing, ok := merged["json_data"].(map[string]interface{}); ok {
+		for k, v := range existing {
+			jsonData[k] = v
+		}
+	}
+	if len(data) > 0 {
+		var dataMap map[string]interface{}
+		if err := json.Unmarshal(data, &dataMap); err == nil {
+			for k, v := range dataMap {
+				jsonData[k] = v
+			}
+		}
+	}
+	mergePageInfoIntoJSONData(jsonData, a.pageInfo)
+	merged["json_data"] = jsonData
+	merged["page_info"] = a.pageInfo
+	return merged
+}
+
+func mergePageInfoIntoJSONData(jsonData map[string]interface{}, pageInfo *PageInfo) {
+	if jsonData == nil || pageInfo == nil {
+		return
+	}
+	if len(pageInfo.ScrapedData) > 0 {
+		if _, exists := jsonData["scraped_data"]; !exists {
+			jsonData["scraped_data"] = pageInfo.ScrapedData
+		}
+		var xhr []interface{}
+		for _, item := range pageInfo.ScrapedData {
+			if value, ok := item["xhr"]; ok {
+				xhr = append(xhr, value)
+			}
+		}
+		if len(xhr) > 0 {
+			if _, exists := jsonData["xhr"]; !exists {
+				jsonData["xhr"] = xhr
+			}
+			if _, exists := jsonData["XHR"]; !exists {
+				jsonData["XHR"] = xhr
+			}
+		}
+	}
 }
 
 func (a *scraperRuntimeAdapter) LookupEnvironment(_ context.Context, key string) (interface{}, bool, error) {

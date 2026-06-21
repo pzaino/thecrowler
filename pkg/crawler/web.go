@@ -3170,7 +3170,7 @@ func extractPageInfo(webPage *vdi.WebDriver, ctx *ProcessContext, docType string
 		var url string
 		url, err = (*webPage).CurrentURL()
 		if err == nil {
-			scrapedData, err = processScrapingRules(&webPageCopy, ctx, url)
+			scrapedData, err = processScrapingRules(&webPageCopy, ctx, url, PageCache)
 			if err != nil {
 				if strings.Contains(err.Error(), errCriticalError) {
 					return err
