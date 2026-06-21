@@ -2,22 +2,36 @@ package crawler
 
 import "testing"
 
-func TestScraperRuntimeAdapterParamsWithPageInfoAddsXHRToJSONData(t *testing.T) {
-	pageInfo := &PageInfo{ScrapedData: []ScrapedItem{{"xhr": []map[string]interface{}{{"url": "https://example.test/api"}}}}}
+func TestScraperRuntimeAdapterParamsWithPageInfoSeparatesXHRFromJSONData(t *testing.T) {
+	pageInfo := &PageInfo{ScrapedData: []ScrapedItem{
+		{"title": "collected"},
+		{"xhr": []map[string]interface{}{{"url": "https://example.test/api"}}},
+	}}
 	adapter := &scraperRuntimeAdapter{pageInfo: pageInfo}
 
-	params := adapter.paramsWithPageInfo(map[string]interface{}{"json_data": map[string]interface{}{"existing": true}}, []byte(`{"rule":"value"}`))
+	params := adapter.paramsWithPageInfo(
+		map[string]interface{}{"json_data": map[string]interface{}{"existing": true, "xhr": []interface{}{map[string]interface{}{"url": "https://example.test/param"}}}},
+		[]byte(`{"rule":"value","xhr":[{"url":"https://example.test/rule"}]}`),
+	)
 	jsonData, ok := params["json_data"].(map[string]interface{})
 	if !ok {
 		t.Fatalf("json_data type = %T, want map[string]interface{}", params["json_data"])
 	}
-	if jsonData["existing"] != true || jsonData["rule"] != "value" {
-		t.Fatalf("json_data did not preserve existing/rule values: %#v", jsonData)
+	if jsonData["existing"] != true || jsonData["rule"] != "value" || jsonData["title"] != "collected" {
+		t.Fatalf("json_data did not preserve existing/rule/collected values: %#v", jsonData)
 	}
-	if xhr, ok := jsonData["xhr"].([]map[string]interface{}); !ok || len(xhr) != 1 {
-		t.Fatalf("json_data xhr = %#v, want original XHR entry", jsonData["xhr"])
+	if _, exists := jsonData["xhr"]; exists {
+		t.Fatalf("json_data should not contain xhr: %#v", jsonData["xhr"])
 	}
-	if _, exists := jsonData["XHR"]; exists {
-		t.Fatalf("json_data should not duplicate xhr into XHR: %#v", jsonData["XHR"])
+	xhr, ok := params["xhr"].([]interface{})
+	if !ok || len(xhr) != 3 {
+		t.Fatalf("xhr = %#v, want collected, parameter, and rule XHR entries", params["xhr"])
+	}
+	wantURLs := []string{"https://example.test/api", "https://example.test/param", "https://example.test/rule"}
+	for i, want := range wantURLs {
+		entry, ok := xhr[i].(map[string]interface{})
+		if !ok || entry["url"] != want {
+			t.Fatalf("xhr[%d] = %#v, want URL %q", i, xhr[i], want)
+		}
 	}
 }

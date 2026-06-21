@@ -163,9 +163,18 @@ func (a *scraperRuntimeAdapter) paramsWithPageInfo(parameters map[string]interfa
 		merged[k] = v
 	}
 	jsonData := map[string]interface{}{}
-	mergeScrapedDataIntoJSONData(jsonData, a.currentScrapedData())
+	scrapedData := a.currentScrapedData()
+	mergeScrapedDataIntoJSONData(jsonData, scrapedData)
+	if xhr, ok := extractXHRFromScrapedData(scrapedData); ok {
+		merged["xhr"] = xhr
+	}
+	var extraXHR []interface{}
 	if existing, ok := merged["json_data"].(map[string]interface{}); ok {
 		for k, v := range existing {
+			if strings.EqualFold(k, "xhr") {
+				extraXHR = appendXHRValue(extraXHR, v)
+				continue
+			}
 			jsonData[k] = v
 		}
 	}
@@ -173,9 +182,19 @@ func (a *scraperRuntimeAdapter) paramsWithPageInfo(parameters map[string]interfa
 		var dataMap map[string]interface{}
 		if err := json.Unmarshal(data, &dataMap); err == nil {
 			for k, v := range dataMap {
+				if strings.EqualFold(k, "xhr") {
+					extraXHR = appendXHRValue(extraXHR, v)
+					continue
+				}
 				jsonData[k] = v
 			}
 		}
+	}
+	if len(extraXHR) > 0 {
+		if existingXHR, ok := merged["xhr"]; ok {
+			extraXHR = appendXHRValue(appendXHRValue(nil, existingXHR), extraXHR)
+		}
+		merged["xhr"] = extraXHR
 	}
 	if len(jsonData) > 0 {
 		merged["json_data"] = jsonData
@@ -196,10 +215,45 @@ func mergeScrapedDataIntoJSONData(jsonData map[string]interface{}, scrapedData [
 	}
 	for _, item := range scrapedData {
 		for k, v := range item {
+			if strings.EqualFold(k, "xhr") {
+				continue
+			}
 			if _, exists := jsonData[k]; !exists {
 				jsonData[k] = v
 			}
 		}
+	}
+}
+
+func extractXHRFromScrapedData(scrapedData []ScrapedItem) (interface{}, bool) {
+	var xhrValues []interface{}
+	for _, item := range scrapedData {
+		for k, v := range item {
+			if !strings.EqualFold(k, "xhr") {
+				continue
+			}
+			xhrValues = appendXHRValue(xhrValues, v)
+		}
+	}
+	if len(xhrValues) == 0 {
+		return nil, false
+	}
+	return xhrValues, true
+}
+
+func appendXHRValue(values []interface{}, value interface{}) []interface{} {
+	switch typed := value.(type) {
+	case nil:
+		return values
+	case []interface{}:
+		return append(values, typed...)
+	case []map[string]interface{}:
+		for _, entry := range typed {
+			values = append(values, entry)
+		}
+		return values
+	default:
+		return append(values, typed)
 	}
 }
 

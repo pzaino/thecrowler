@@ -178,7 +178,7 @@ var url = params.url;
 var selector = params.selector;
 ```
 
-On top of that the current processed JSON document for the specific pipeline will be available in the `params` object as `json_data`. And if there are pre-defined metadata for the pipeline, it will be available in the `params` object as `meta_data`.
+On top of that the current processed JSON document for the specific pipeline will be available in the `params` object as `json_data`. Already-collected XHR entries are exposed separately as `params.xhr` rather than inside `params.json_data`, so engine plugins and agents can inspect those immutable captures without returning them as modified scraped data. And if there are pre-defined metadata for the pipeline, it will be available in the `params` object as `meta_data`.
 
 ### Example Plugin: Data Transformer
 
