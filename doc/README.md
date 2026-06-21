@@ -33,4 +33,5 @@ deployed in a containerized environment.
 
 ## Feature guides
 
+* [Information Seed discovery](information_seed.md) — configure providers, submit seeds, filter candidates, create or link Sources, and inspect diagnostics.
 * [Time-series observations and aggregates](timeseries.md) — metric definitions, emitters, scope/dedupe/change behavior, aggregation, API queries, retention, privacy, portability, and runnable examples.
