@@ -1,10 +1,34 @@
 # The CROWler API
 
-The CROWler Search API exposes public search endpoints, optional console
-administration endpoints, API documentation endpoints, and optional plugin
-routes. The tables below intentionally list only routes registered by
-`initAPIv1`; every route documented here is covered by a route/handler test so
-future documentation changes cannot describe endpoints that are not mounted.
+The CROWler API is a RESTful interface that allows users to interact with the CROWler system programmatically. It provides endpoints for searches, events, system information, and more.
+
+The API is self documented and can be explored using the OpenAPI specification available at `/v1/openapi.json`. The API is versioned, and the current version is `v1`.
+
+Alternatively the APIs can be accessed via WebSocket streams for real-time updates. See the [WebSocket API documentation](./api/websockets.md) for more details.
+
+There are 2 major types of API in the CROWLer:
+
+1) General API, which is offered by the crowler-api docket container, and is used for:
+- Searching for data
+- Retrieving system information
+- Managing system configuration
+- Add Sources, Information Seeds
+- Do Data Analysis via [Timeseries](./api/timeseries.md) and Searches
+- Use user's custom endpoints which can be added via the plugin system (check `api plugins` for more details)
+
+2) Event API, which is offered by the crowler-events docket container, and is used for:
+- Receiving real-time events about the system, such as new data being added, sources being updated
+- Creating real-time events on the CROWler system, such as adding new data, updating sources, etc.
+- Scheduling Events to be executed at a later time, such as running a search or a data analysis task
+- Trigger Agents via the event system, which can be used to automate tasks and workflows
+
+The General API is usually a Synchronous API and supports also `event-streaming` on the RESTful side (as well as the WebSockets side).
+
+The Event API is usually an Asynchronous API.
+
+As mentioned the General API can be customized via the plugin system, which allows users to add their own endpoints and functionality to the API.
+
+The Event API can also be customized via the plugin system, however, given that events are always events, the customization is more focused on allowing users to add their own event types and handlers. So, the API itself is always the same, but the events can be handled by custom plugins. Not only that but the event type is fundamentally a string and so the user can creates all types of event types and therefore all kinds of events handlers too.
 
 ## Operational and documentation endpoints
 
