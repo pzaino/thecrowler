@@ -100,7 +100,11 @@ func performAddInformationSeed(query string, qType int, db *cdb.Handler) (Inform
 	if err != nil {
 		return InformationSeedResponse{Message: "Failed to load added information seed"}, err
 	}
-	return InformationSeedResponse{Message: "Information seed added successfully", Item: row}, nil
+	resp := InformationSeedResponse{Message: "Information seed added successfully", Item: row}
+	if apiWSHub != nil {
+		apiWSHub.Broadcast("information_seed.added", resp)
+	}
+	return resp, nil
 }
 
 func marshalInformationSeedRequestConfig(config *json.RawMessage) (*json.RawMessage, error) {
@@ -762,7 +766,11 @@ func performAddSource(query string, qType int, db *cdb.Handler) (ConsoleResponse
 	}
 
 	msg := fmt.Sprintf("Website inserted successfully with ID: %d", sourceID)
-	return ConsoleResponse{Message: msg}, nil
+	resp := ConsoleResponse{Message: msg}
+	if apiWSHub != nil {
+		apiWSHub.Broadcast("source.added", map[string]any{"source_id": sourceID, "message": msg})
+	}
+	return resp, nil
 }
 
 func extractAddSourceParams(query string, params *addSourceRequest) {
@@ -1536,7 +1544,11 @@ func performUpdateInformationSeed(query string, _ int, db *cdb.Handler) (Informa
 	if err != nil {
 		return InformationSeedResponse{Message: "Failed to load updated information seed"}, err
 	}
-	return InformationSeedResponse{Message: "Information seed updated successfully", Item: row}, nil
+	resp := InformationSeedResponse{Message: "Information seed updated successfully", Item: row}
+	if apiWSHub != nil {
+		apiWSHub.Broadcast("information_seed.updated", resp)
+	}
+	return resp, nil
 }
 
 func performRemoveInformationSeed(query string, _ int, db *cdb.Handler) (ConsoleResponse, error) {

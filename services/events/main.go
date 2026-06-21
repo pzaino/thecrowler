@@ -34,6 +34,7 @@ import (
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 	plg "github.com/pzaino/thecrowler/pkg/plugin"
 	rset "github.com/pzaino/thecrowler/pkg/ruleset"
+	ws "github.com/pzaino/thecrowler/pkg/ws"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
@@ -84,6 +85,7 @@ var (
 	externalQ      = make(chan cdb.Event, 160_000) // buffered larger; JS+DB work
 
 	mainInstance = []string{"crowler-events", "crowler-events-0"}
+	eventsWSHub  *ws.Hub
 )
 
 func setSysReady(newStatus int) {
@@ -324,6 +326,11 @@ func shutdownEventsHTTPServer(sig os.Signal) {
 	eventsHTTPServerMtx.RLock()
 	srv := eventsHTTPServer
 	eventsHTTPServerMtx.RUnlock()
+	if eventsWSHub != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = eventsWSHub.Shutdown(ctx)
+		cancel()
+	}
 	if srv != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		if err := srv.Shutdown(ctx); err != nil {
@@ -575,6 +582,10 @@ func initAPIv1() {
 	removeEventWithMiddlewares := withAll(http.HandlerFunc(removeEventHandler))
 	removeEventsBeforeWithMiddlewares := withAll(http.HandlerFunc(removeEventsBeforeHandler))
 	listEventsWithMiddlewares := withAll(http.HandlerFunc(listEventsHandler))
+
+	eventsWSHub = ws.NewHub("events", ws.Config(config.Events.WebSocket))
+	http.Handle("/v1/event/ws", withAll(http.HandlerFunc(eventsWSHub.Handler)))
+	cmn.RegisterAPIRoute("/v1/event/ws", []string{"GET"}, "WebSocket live event updates endpoint", tagsNone, false, false, 101, nil, nil, nil)
 
 	baseAPI := "/v1/event/"
 
@@ -1141,6 +1152,9 @@ func handleNotification(payload string) {
 	var event cdb.Event
 	mEventsTotalReceived.With(prometheus.Labels{"engine": cmn.GetMicroServiceName()}).Inc()
 	if err := json.Unmarshal([]byte(payload), &event); err == nil {
+		if eventsWSHub != nil {
+			eventsWSHub.Broadcast("event", event)
+		}
 		// Put the event in the jobQueue
 		if !enqueueWithTimeout(jobQueue, event, 500*time.Millisecond) {
 			cmn.DebugMsg(cmn.DbgLvlWarn, "Job queue full; dropping event %s (type=%s)", event.ID, event.Type)
@@ -1166,6 +1180,9 @@ func startAPICreateWorkers(n int) {
 
 var createQueuedAPIEvent = func(ctx context.Context, event cdb.Event) error {
 	_, err := cdb.CreateEvent(ctx, &dbHandler, event)
+	if err == nil && eventsWSHub != nil {
+		eventsWSHub.Broadcast("event.created", event)
+	}
 	return err
 }
 
@@ -1302,6 +1319,9 @@ func processInternalEvent(event cdb.Event) {
 			_, err = cdb.CreateEvent(ctx, &dbHandler, event)
 			cancel() // Cancel the context to free resources
 			if err == nil {
+				if eventsWSHub != nil {
+					eventsWSHub.Broadcast("event.created", event)
+				}
 				return // success!
 			}
 

@@ -352,6 +352,12 @@ api:
   cors:
     enabled: false
     allowed_origins: [ "*" ]
+  websocket:
+    enabled: false
+    allowed_origins: [ "*" ]
+    heartbeat_interval: 30
+    write_queue_size: 64
+    write_timeout: 5
   # Respond 404 for unknown endpoints when true
   return_404: false
   # Allow fulltext-like searches on collected content
@@ -561,6 +567,12 @@ events:
   cors:
     enabled: false
     allowed_origins: [ "*" ]
+  websocket:
+    enabled: false
+    allowed_origins: [ "*" ]
+    heartbeat_interval: 30
+    write_queue_size: 64
+    write_timeout: 5
   # Enable Google Cloud Run mode
   use_google_cloud_run: false
   # Name of master events manager in clustered mode

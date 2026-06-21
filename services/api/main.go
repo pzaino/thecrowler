@@ -36,6 +36,7 @@ import (
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 	plg "github.com/pzaino/thecrowler/pkg/plugin"
+	ws "github.com/pzaino/thecrowler/pkg/ws"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
@@ -66,6 +67,7 @@ var (
 	apiPlugins         *plg.JSPluginRegister
 	allowedAPIPlugins  map[string]bool
 	allowedAPINetworks []*net.IPNet
+	apiWSHub           *ws.Hub
 )
 
 func setSysReady(newStatus int) {
@@ -387,6 +389,9 @@ func handleNotification(payload string) {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "API: Received event of type '%s'", eventType)
 		processHeartbeatEvent(event)
 	default:
+		if apiWSHub != nil {
+			apiWSHub.Broadcast("event", event)
+		}
 		// Ignore all other events
 		cmn.DebugMsg(cmn.DbgLvlDebug5, "API: Ignoring event type '%s'", eventType)
 	}
@@ -792,6 +797,10 @@ func initAPIv1() {
 		http.Handle("/v1/category/remove", withPublicMiddlewares(removeCategoryHandler))
 		cmn.RegisterAPIRoute("/v1/category/remove", []string{"POST"}, "Remove category endpoint (console)", tagsNone, true, false, 204, map[string]int64{}, nil, nil)
 	}
+
+	apiWSHub = ws.NewHub("api", ws.Config(config.API.WebSocket))
+	http.Handle("/v1/ws", withPublicMiddlewares(http.HandlerFunc(apiWSHub.Handler)))
+	cmn.RegisterAPIRoute("/v1/ws", []string{"GET"}, "WebSocket live API updates endpoint", tagsNone, false, false, 101, nil, nil, nil)
 
 	// Register API plugin routes
 	registeredPlugins := []string{}
