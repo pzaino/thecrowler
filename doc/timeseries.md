@@ -32,6 +32,69 @@ metric, err := database.UpsertTimeSeriesMetric(db, &database.TimeSeriesMetric{
 
 Registration does not itself emit data. A custom integration must persist its source fact and then write through the repository/emitter path; built-in source kinds emit at the durable points listed below.
 
+
+## End-user quick start
+
+A working deployment has three separate pieces:
+
+1. **Enable the time-series runtime in configuration.** Set `timeseries.enabled: true`, choose safe defaults, and enable aggregation if you want chart buckets to be maintained automatically by the events service.
+2. **Register metric definitions in the database.** The YAML `timeseries.metrics` entries are validated configuration and runtime overrides, but v1 does not automatically copy them into `TimeSeriesMetrics`. Provisioning code, migrations, or an operator integration must upsert the same metric keys with `database.UpsertTimeSeriesMetric`.
+3. **Crawl or persist supported facts.** Observations are emitted only after the underlying durable fact exists: a keyword/index row, metatag/index row, object attribute, web object, HTTPInfo, NetInfo, screenshot/file metadata, Information Seed transition, discovery link, entity membership, object correlation, correlation-rule result, or explicit custom integration.
+
+Minimal safe configuration:
+
+```yaml
+timeseries:
+  enabled: true
+  defaults:
+    value_type: integer
+    aggregates: [count]
+    bucket_interval: 1h
+    time_basis: observed_at
+    dedupe_scope: object
+    failure_policy: log_skip
+  aggregation:
+    enabled: true
+    schedule: 5m
+    batch_size: 1000
+    max_batches: 10
+    overlap: 15m
+  retention:
+    raw: 30d
+    aggregated: 365d
+  cardinality:
+    max_series_per_metric: 10000
+    max_dimensions: 4
+    max_values_per_dimension: 1000
+    overflow: drop
+  privacy:
+    hash_only: true
+    store_value_text: false
+    max_value_length: 256
+    redact_patterns:
+      - '(?i)(authorization|cookie|token|secret|password)'
+  metrics:
+    - key: example.product.price
+      enabled: true
+      description: Example price history from a persisted web-object attribute.
+      source_kind: object_attribute
+      object_type: webobject
+      selector:
+        attribute_key: price
+        from: normalized
+      value_type: decimal
+      unit: deployment_currency
+      aggregates: [average, min, max, first, last]
+      bucket_interval: 1d
+      dimensions:
+        - key: object_family
+          selector:
+            from: metric
+            path: object_type
+```
+
+After the metric is registered and matching crawls have produced observations, query definitions with `/v1/timeseries/metrics`, read charts with `/v1/timeseries`, and drill into bounded raw observations with `/v1/timeseries/drilldown` or `/v1/timeseries/observations`.
+
 ## Data model
 
 * **Metric definition** — stable key, source kind, value type, default aggregate, bucket, time basis, dedupe scope, selectors, dimensions, retention/cardinality/privacy flags, unit, and enabled state.
@@ -129,9 +192,8 @@ Indexed artifacts can select `from: value|content|raw_value|subject|subject_key|
 
 Information Seed/entity/correlation selectors may filter `event` or `transition`, apply exact `where` fields, and select a dotted `field`/`path` or fixed `value`. Dimension selectors use the same source-specific resolver.
 
-The eight complete, schema-valid examples are:
+The complete, schema-valid examples are:
 
-* [Music performer monitoring](../examples/timeseries/music-performer-monitoring.yaml)
 * [Brand/company monitoring](../examples/timeseries/brand-company-monitoring.yaml)
 * [Cybersecurity header tracking](../examples/timeseries/cybersecurity-header-tracking.yaml)
 * [Network intelligence](../examples/timeseries/network-intelligence.yaml)
@@ -141,6 +203,35 @@ The eight complete, schema-valid examples are:
 * [Entity-correlation confidence](../examples/timeseries/entity-correlation-confidence.yaml)
 
 Each defaults to bounded dimensions, `drop` overflow, hash-only value storage, no plaintext value storage, short maximum values, and redaction patterns. Replace example selectors only with fields your deployment actually persists.
+
+
+## Configuration reference
+
+The top-level `timeseries` object is optional and defaults to disabled. Durations use Go-style units plus `d` for 24-hour days and `w` for seven-day weeks. The schema rejects unknown fields, invalid enum values, empty metric keys, duplicate metric keys, invalid aggregate/value combinations, `event_at` or `source_timestamp` metrics without `timestamp_selector`, too many configured dimensions, duplicate dimension keys, and privacy settings that set both `hash_only: true` and `store_value_text: true`.
+
+| Field | Purpose | Default |
+| --- | --- | --- |
+| `enabled` | Enables emitter/runtime evaluation. When false, configured metrics do not emit observations. | `false` |
+| `defaults.value_type` | Value type inherited by metrics that omit `value_type`. | `integer` |
+| `defaults.aggregates` | Aggregates inherited by metrics that omit `aggregates`. Must be compatible with the value type. | `[count]` |
+| `defaults.bucket_interval` | Bucket inherited by metrics that omit `bucket_interval`. | `1h` |
+| `defaults.time_basis` | Timestamp basis inherited by metrics. | `observed_at` |
+| `defaults.dedupe_scope` | Duplicate-suppression scope inherited by metrics. | `none` |
+| `defaults.failure_policy` | Error handling inherited by metrics. | `log_skip` |
+| `retention.raw` | Administrative raw-observation retention horizon. Not scheduled automatically in v1. | `30d` |
+| `retention.aggregated` | Administrative aggregate retention horizon. Not scheduled automatically in v1. | `365d` |
+| `aggregation.enabled` | Lets the events service run incremental aggregation when the top-level feature is also enabled. | `false` |
+| `aggregation.schedule` | Events-service aggregation interval. | `5m` |
+| `aggregation.batch_size` / `max_batches` | Upper bound on observations processed per run. | `1000` / `10` |
+| `aggregation.overlap` | Rewind applied to the checkpoint so late observations can repair complete buckets. | `15m` |
+| `storage.backend` | Declarative storage/partitioning backend. Currently only `postgres`. | `postgres` |
+| `storage.table_prefix` | Validated prefix for deployment policy; shipped table names are fixed. | `timeseries` |
+| `storage.partitioning.*` | Optional PostgreSQL partitioning policy for external DBA/migration automation. | disabled, `1d`, `7` |
+| `cardinality.*` | Global limits and overflow behavior for series/dimension growth. | `100000`, `10`, `10000`, `drop` |
+| `privacy.*` | Global hash/text/truncation/redaction behavior. | no hash-only, no text storage, `2048`, `[]` |
+| `metrics[]` | Declarative metric entries and per-metric overrides. Registration still requires `TimeSeriesMetrics`. | `[]` |
+
+Each `metrics[]` item requires `key` and `source_kind`; `object_attribute` metrics also require `object_type` and `selector.attribute_key`, while `metatag` metrics require `selector.metatag_name`. Metric-level `cardinality` and `privacy` objects override global policy for that metric. `dimensions` must use stable, low-cardinality keys because API dimension comparison refuses high-cardinality output rather than silently truncating it.
 
 ## Scope resolution
 
