@@ -32,6 +32,7 @@ import (
 	"syscall"
 	"time"
 
+	auth "github.com/pzaino/thecrowler/pkg/auth"
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
@@ -581,6 +582,10 @@ func initAPIv1() {
 	tagsHealth := []string{"Health"}
 	tagsDocs := []string{"Documentation"}
 
+	// Auth endpoints
+	http.Handle("POST /v1/auth/login", withPublicMiddlewares(authLoginHandler))
+	cmn.RegisterAPIRoute("/v1/auth/login", []string{"POST"}, "Local authentication login endpoint", tagsNone, false, false, 200, authLoginRequest{}, nil, authLoginResponse{})
+
 	// Health check
 	healthCheckWithMiddlewares := withPublicMiddlewares(healthCheckHandler)
 	readyCheckWithMiddlewares := withPublicMiddlewares(readyCheckHandler)
@@ -799,7 +804,7 @@ func initAPIv1() {
 	}
 
 	apiWSHub = ws.NewHub("api", ws.Config(config.API.WebSocket))
-	http.Handle("/v1/ws", withPublicMiddlewares(http.HandlerFunc(apiWSHub.Handler)))
+	http.Handle("/v1/ws", withMiddlewares(http.HandlerFunc(apiWSHub.Handler)))
 	cmn.RegisterAPIRoute("/v1/ws", []string{"GET"}, "WebSocket live API updates endpoint", tagsNone, false, false, 101, nil, nil, nil)
 
 	// Register API plugin routes
@@ -818,6 +823,38 @@ func initAPIv1() {
 		http.Handle("/v1/docs", withPublicMiddlewares(http.HandlerFunc(openapiHandler)))
 		cmn.RegisterAPIRoute("/v1/docs", []string{"GET"}, "API documentation endpoint", tagsDocs, false, false, 200, nil, nil, nil)
 	}
+}
+
+type authLoginRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+type authLoginResponse struct {
+	AccessToken string `json:"access_token"`
+	TokenType   string `json:"token_type"`
+	ExpiresIn   int    `json:"expires_in"`
+}
+
+func authLoginHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req authLoginRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	tok, err := auth.Login(r.Context(), dbHandler, config.API.Auth, req.Username, req.Password)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlInfo, "auth login failed for user=%q remote=%q", req.Username, r.RemoteAddr)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	cmn.DebugMsg(cmn.DbgLvlInfo, "auth login succeeded for user=%q remote=%q", req.Username, r.RemoteAddr)
+	handleErrorAndRespond(w, nil, authLoginResponse{AccessToken: tok, TokenType: "Bearer", ExpiresIn: config.API.Auth.TokenTTL}, "", http.StatusInternalServerError, http.StatusOK)
 }
 
 func docsHandler(w http.ResponseWriter, _ *http.Request) {
@@ -1012,7 +1049,7 @@ func withAPIPluginMiddlewares(h http.HandlerFunc) http.Handler {
 			CORSHeadersMiddleware(
 				SecurityHeadersMiddleware(
 					KeepAliveHeadersMiddleware(
-						RateLimitMiddleware(h),
+						RateLimitMiddleware(auth.Middleware(config.API.Auth, dbHandler)(h)),
 					),
 				),
 			),
@@ -1063,7 +1100,7 @@ func withMiddlewares(h http.Handler) http.Handler {
 		CIDRFilterMiddleware(
 			SecurityHeadersMiddleware(
 				KeepAliveHeadersMiddleware(
-					RateLimitMiddleware(h),
+					RateLimitMiddleware(auth.Middleware(config.API.Auth, dbHandler)(h)),
 				),
 			),
 		),

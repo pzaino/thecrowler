@@ -385,6 +385,29 @@ type PlatformInfo struct {
 /////////////////////////////////////////////////
 //// ---------- API Configuration ---------- ////
 
+// AuthConfig represents shared authentication and authorization settings for API services.
+type AuthConfig struct {
+	Enabled    bool               `json:"enabled" yaml:"enabled"`
+	Mode       string             `json:"mode" yaml:"mode"`
+	Issuer     string             `json:"issuer" yaml:"issuer"`
+	Audience   string             `json:"audience" yaml:"audience"`
+	HMACSecret string             `json:"hmac_secret" yaml:"hmac_secret"`
+	TokenTTL   int                `json:"token_ttl" yaml:"token_ttl"`
+	Local      LocalAuthConfig    `json:"local" yaml:"local"`
+	External   ExternalAuthConfig `json:"external" yaml:"external"`
+}
+
+type LocalAuthConfig struct {
+	Enabled bool `json:"enabled" yaml:"enabled"`
+}
+
+type ExternalAuthConfig struct {
+	Enabled  bool   `json:"enabled" yaml:"enabled"`
+	Issuer   string `json:"issuer" yaml:"issuer"`
+	JWKSURL  string `json:"jwks_url" yaml:"jwks_url"`
+	Audience string `json:"audience" yaml:"audience"`
+}
+
 // CORSConfig represents service-specific CORS configuration.
 type CORSConfig struct {
 	Enabled        bool     `json:"enabled" yaml:"enabled"`                 // Whether to enable CORS response headers.
@@ -425,6 +448,7 @@ type API struct {
 	Plugins           APIPlugins      `yaml:"plugins"`                                          // API plugins configuration
 	UseGoogleCloudRun bool            `json:"use_google_cloud_run" yaml:"use_google_cloud_run"` // Whether to use Google Cloud Run for the events handler or not
 	WebSocket         WebSocketConfig `json:"websocket" yaml:"websocket"`                       // WebSocket live updates configuration
+	Auth              AuthConfig      `json:"auth" yaml:"auth"`                                 // Authentication and authorization configuration
 }
 
 // APIPlugins represents the API plugins configuration
@@ -506,6 +530,7 @@ type EventsConfig struct {
 	UseGoogleCloudRun        bool            `json:"use_google_cloud_run" yaml:"use_google_cloud_run"`               // Whether to use Google Cloud Run for the events handler or not
 	CORS                     CORSConfig      `json:"cors" yaml:"cors"`                                               // CORS configuration for the Events Manager API
 	WebSocket                WebSocketConfig `json:"websocket" yaml:"websocket"`                                     // WebSocket live updates configuration
+	Auth                     AuthConfig      `json:"auth" yaml:"auth"`                                               // Authentication and authorization configuration
 }
 
 /////////////////////////////////////////////////

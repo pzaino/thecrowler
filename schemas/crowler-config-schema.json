@@ -1555,6 +1555,66 @@
           "required": [
             "enabled"
           ]
+        },
+        "auth": {
+          "title": "Authentication and authorization",
+          "description": "Shared local/OIDC-compatible bearer token authentication. Set enabled false to preserve unauthenticated deployments.",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "disabled",
+                "local",
+                "oidc",
+                "hybrid"
+              ]
+            },
+            "issuer": {
+              "type": "string"
+            },
+            "audience": {
+              "type": "string"
+            },
+            "hmac_secret": {
+              "type": "string"
+            },
+            "token_ttl": {
+              "type": "integer",
+              "minimum": 60
+            },
+            "local": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            },
+            "external": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "issuer": {
+                  "type": "string"
+                },
+                "jwks_url": {
+                  "type": "string"
+                },
+                "audience": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false,
@@ -1951,6 +2011,66 @@
           "required": [
             "enabled"
           ]
+        },
+        "auth": {
+          "title": "Authentication and authorization",
+          "description": "Shared local/OIDC-compatible bearer token authentication. Set enabled false to preserve unauthenticated deployments.",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "disabled",
+                "local",
+                "oidc",
+                "hybrid"
+              ]
+            },
+            "issuer": {
+              "type": "string"
+            },
+            "audience": {
+              "type": "string"
+            },
+            "hmac_secret": {
+              "type": "string"
+            },
+            "token_ttl": {
+              "type": "integer",
+              "minimum": 60
+            },
+            "local": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            },
+            "external": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "issuer": {
+                  "type": "string"
+                },
+                "jwks_url": {
+                  "type": "string"
+                },
+                "audience": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false

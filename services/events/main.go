@@ -29,6 +29,7 @@ import (
 	"gopkg.in/yaml.v2"
 
 	agt "github.com/pzaino/thecrowler/pkg/agent"
+	auth "github.com/pzaino/thecrowler/pkg/auth"
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
@@ -734,7 +735,7 @@ func withAll(m http.Handler) http.Handler {
 		SecurityHeadersMiddleware(
 			KeepAliveHeadersMiddleware(
 				RateLimitMiddleware(
-					CORSHeadersMiddleware(m),
+					auth.Middleware(config.Events.Auth, dbHandler)(CORSHeadersMiddleware(m)),
 				),
 			),
 		),
