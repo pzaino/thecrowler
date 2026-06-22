@@ -1450,6 +1450,11 @@ func main() {
 					closeResources(db, &vdiInstances) // Release resources
 					cmn.DebugMsg(cmn.DbgLvlFatal, "connecting to the database: %v", err)
 				}
+				if err = cdb.SyncConfiguredTimeSeriesMetrics(&db, config.TimeSeries); err != nil {
+					configMutex.Unlock()
+					closeResources(db, &vdiInstances) // Release resources
+					cmn.DebugMsg(cmn.DbgLvlFatal, "synchronizing time-series metrics: %v", err)
+				}
 				cmn.DebugMsg(cmn.DbgLvlInfo, "Database connection re-established.")
 				configMutex.Unlock()
 				cmn.DebugMsg(cmn.DbgLvlInfo, "Configuration reloaded.")
@@ -1472,6 +1477,10 @@ func main() {
 	if err != nil {
 		closeResources(db, &vdiInstances) // Release resources
 		cmn.DebugMsg(cmn.DbgLvlFatal, "connecting to the database: %v", err)
+	}
+	if err = cdb.SyncConfiguredTimeSeriesMetrics(&db, config.TimeSeries); err != nil {
+		closeResources(db, &vdiInstances) // Release resources
+		cmn.DebugMsg(cmn.DbgLvlFatal, "synchronizing time-series metrics: %v", err)
 	}
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Database connection established.")
 	defer closeResources(db, &vdiInstances)

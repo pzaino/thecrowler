@@ -13,7 +13,7 @@ The feature deliberately excludes infrastructure telemetry. **Worker health, VDI
 Configuration and registration are separate in v1:
 
 1. YAML under `timeseries` validates extraction defaults and supplies runtime selector/privacy/cardinality overrides.
-2. An enabled definition must also exist in `TimeSeriesMetrics`. The shipped registration interface is `database.UpsertTimeSeriesMetric`; there is no public metric-creation HTTP route or automatic YAML-to-table synchronizer.
+2. An enabled definition must also exist in `TimeSeriesMetrics`. The shipped registration interface is `database.UpsertTimeSeriesMetric`; at crawler startup and configuration reload, `database.SyncConfiguredTimeSeriesMetrics` also upserts declarative YAML metrics into `TimeSeriesMetrics`.
 3. Emitters read enabled definitions from `TimeSeriesMetrics` when the corresponding durable fact is written.
 
 Changing a registered metric's `value_type` is rejected. Create a new metric key for a type change. A provisioning integration can register a definition as follows (error handling omitted here only for brevity):
@@ -37,7 +37,7 @@ Registration does not itself emit data. A custom integration must persist its so
 A working deployment has three separate pieces:
 
 1. **Enable the time-series runtime in configuration.** Set `timeseries.enabled: true`, choose safe defaults, and enable aggregation if you want chart buckets to be maintained automatically by the events service.
-2. **Register metric definitions in the database.** The YAML `timeseries.metrics` entries are validated configuration and runtime overrides, but v1 does not automatically copy them into `TimeSeriesMetrics`. Provisioning code, migrations, or an operator integration must upsert the same metric keys with `database.UpsertTimeSeriesMetric`.
+2. **Register metric definitions in the database.** The crawler now synchronizes YAML `timeseries.metrics` entries into `TimeSeriesMetrics` during startup and configuration reload. Provisioning code, migrations, or an operator integration may still call `database.UpsertTimeSeriesMetric` for custom metrics or preloading.
 3. **Crawl or persist supported facts.** Observations are emitted only after the underlying durable fact exists: a keyword/index row, metatag/index row, object attribute, web object, HTTPInfo, NetInfo, screenshot/file metadata, Information Seed transition, discovery link, entity membership, object correlation, correlation-rule result, or explicit custom integration.
 
 Minimal safe configuration:
@@ -261,7 +261,7 @@ Use this checklist when moving from examples to your own crawler data:
 6. **Choose dedupe and scope.** Most persisted object facts should use `object`; lifecycle transition metrics often rely on their stable transition identity; use `none` only for intentional event streams.
 7. **Add only bounded dimensions.** Dimensions should be useful filters with low cardinality. If a field can grow with every page, product, user, URL, or token, keep it in provenance/source data rather than as a dimension.
 8. **Set privacy before enabling.** Start with `hash_only: true`, `store_value_text: false`, short `max_value_length`, and redaction patterns. Loosen only when the value is safe and needed in API responses.
-9. **Register the metric.** Mirror the configuration into `TimeSeriesMetrics` with provisioning code, a migration, or an operator integration. YAML validation does not populate the table in v1.
+9. **Register the metric.** Start or reload the crawler so `SyncConfiguredTimeSeriesMetrics` mirrors the YAML entry into `TimeSeriesMetrics`, or upsert it explicitly from provisioning code, a migration, or an operator integration.
 10. **Verify with a small crawl.** Confirm the source fact exists, then query `/v1/timeseries/metrics`, `/v1/timeseries/observations`, and finally `/v1/timeseries` after aggregation runs.
 
 ### Common metric patterns
@@ -447,7 +447,7 @@ The top-level `timeseries` object is optional and defaults to disabled. Duration
 | `storage.partitioning.*` | Optional PostgreSQL partitioning policy for external DBA/migration automation. | disabled, `1d`, `7` |
 | `cardinality.*` | Global limits and overflow behavior for series/dimension growth. | `100000`, `10`, `10000`, `drop` |
 | `privacy.*` | Global hash/text/truncation/redaction behavior. | no hash-only, no text storage, `2048`, `[]` |
-| `metrics[]` | Declarative metric entries and per-metric overrides. Registration still requires `TimeSeriesMetrics`. | `[]` |
+| `metrics[]` | Declarative metric entries and per-metric overrides. The crawler synchronizes these entries into `TimeSeriesMetrics` on startup and reload. | `[]` |
 
 Each `metrics[]` item requires `key` and `source_kind`; `object_attribute` metrics also require `object_type` and `selector.attribute_key`, while `metatag` metrics require `selector.metatag_name`. Metric-level `cardinality` and `privacy` objects override global policy for that metric. `dimensions` must use stable, low-cardinality keys because API dimension comparison refuses high-cardinality output rather than silently truncating it.
 
