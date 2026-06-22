@@ -32,7 +32,6 @@ metric, err := database.UpsertTimeSeriesMetric(db, &database.TimeSeriesMetric{
 
 Registration does not itself emit data. A custom integration must persist its source fact and then write through the repository/emitter path; built-in source kinds emit at the durable points listed below.
 
-
 ## End-user quick start
 
 A working deployment has three separate pieces:
@@ -94,6 +93,226 @@ timeseries:
 ```
 
 After the metric is registered and matching crawls have produced observations, query definitions with `/v1/timeseries/metrics`, read charts with `/v1/timeseries`, and drill into bounded raw observations with `/v1/timeseries/drilldown` or `/v1/timeseries/observations`.
+
+## How time-series extraction works
+
+A time-series metric is a recipe for turning a durable crawler fact into one or more observations. The recipe answers four questions:
+
+1. **Which persisted fact should be watched?** `source_kind` chooses the emitter family, such as `object_attribute`, `keyword`, `httpinfo`, or `information_seed`.
+2. **Which value should be measured?** `selector` identifies the value inside that fact, and `value_type` tells the emitter how to coerce it.
+3. **When and where should the value be counted?** `time_basis`, `timestamp_selector`, `bucket_interval`, `dedupe_scope`, and the resolved scope columns decide the timestamp, chart bucket, and duplicate boundary.
+4. **How should chart groups be formed safely?** `dimensions`, `cardinality`, and `privacy` decide what labels are attached and how much value text can be stored or returned.
+
+The flow for an `object_attribute` metric is typical:
+
+```text
+crawler/parser/ruleset
+        │
+        ▼
+persisted object + normalized ObjectAttributes row
+        │       (for example: webobject 55 has normalized attribute price=42.50)
+        ▼
+time-series emitter evaluates enabled TimeSeriesMetrics with source_kind=object_attribute
+        │
+        ├─ selector.attribute_key chooses the persisted attribute (`price`)
+        ├─ value_type converts it (`decimal`)
+        ├─ timestamp rules choose observed/effective time
+        ├─ scope resolver attaches durable IDs (source/index/object/seed/entity when known)
+        ├─ dimension selectors attach low-cardinality labels
+        └─ privacy/cardinality guards hash, redact, drop, or overflow unsafe data
+        ▼
+TimeSeriesObservations raw row
+        │
+        ▼
+optional events-service aggregation into TimeSeriesAggregates buckets
+        │
+        ▼
+/v1/timeseries chart, /v1/timeseries/dimensions comparison, /v1/timeseries/drilldown raw context
+```
+
+The important operational consequence is that time-series configuration never invents data. If the crawler has not persisted the selected keyword, metatag, object attribute, HTTPInfo field, NetInfo field, seed transition, entity membership, or correlation result, no observation can be emitted for that metric. When you design a metric, first confirm where your crawler stores the source fact and what durable ID or attribute key references it.
+
+## Reading the YAML example field by field
+
+This section explains the quick-start example as a user guide rather than as a schema fragment.
+
+### Top-level switch
+
+```yaml
+timeseries:
+  enabled: true
+```
+
+`enabled` turns on runtime evaluation of registered metrics. Leave it `false` in shared templates or dry-run configurations. Set it to `true` only in deployments where the database contains the metric definitions you expect and where emitters should write observations as crawler facts are persisted.
+
+### Defaults inherited by each metric
+
+```yaml
+  defaults:
+    value_type: integer
+    aggregates: [count]
+    bucket_interval: 1h
+    time_basis: observed_at
+    dedupe_scope: object
+    failure_policy: log_skip
+```
+
+Defaults keep repetitive metric entries short. A metric-specific field always wins over the default.
+
+| Field | What it controls | Why you choose it |
+| --- | --- | --- |
+| `value_type` | How selected source values are coerced before storage and aggregation. | Use `integer`/`decimal`/`duration`/`count` for numeric charts, `string` for first/last or distinct tracking, `boolean` for yes/no presence, `timestamp` when the measured value is itself a time, and `json` only when you need structured value hashing/counting. |
+| `aggregates` | Which materialized calculations are maintained for each bucket. | Keep only aggregates you will query. Numeric metrics commonly use `[average, min, max, p95]`; event metrics usually use `[count]`; state metrics often use `[first, last]` or `[distinct_count]`. |
+| `bucket_interval` | The UTC chart grain for materialized buckets. | Choose the largest interval that answers the business question. High-frequency buckets multiply storage and cardinality. Use `none` only when you need raw observations without aggregate charts. |
+| `time_basis` | Which timestamp places the observation on the timeline. | `observed_at` is safest because it is the crawler/database observation time. Use `event_at` or `source_timestamp` only when a reliable timestamp is persisted in the source fact and provide `timestamp_selector`. |
+| `dedupe_scope` | The identity boundary for duplicate suppression. | `object` is a safe default for object facts because retries of the same object converge. `source` groups by source ownership, `global` suppresses equivalent values across all scopes, and `none` preserves every emitter invocation. |
+| `failure_policy` | Whether emitter errors are fatal to indexing. | Start with `log_skip` while designing metrics. Use `fail_indexing` only for metrics that are mandatory for your pipeline, because an extraction error can roll back the enclosing durable write. |
+
+### Aggregation scheduler
+
+```yaml
+  aggregation:
+    enabled: true
+    schedule: 5m
+    batch_size: 1000
+    max_batches: 10
+    overlap: 15m
+```
+
+Aggregation reads raw observations and materializes query-friendly buckets. The events service runs it only when both `timeseries.enabled` and `timeseries.aggregation.enabled` are true. `schedule` is how often the service wakes up. `batch_size * max_batches` is the maximum work per run, so the example processes at most 10,000 observations before yielding. `overlap` rewinds the checkpoint by 15 minutes so late observations can repair recently completed buckets.
+
+Use a short schedule for dashboards, a larger batch window for backfills, and enough overlap to cover normal crawl/indexing delay. If aggregation is disabled, raw observations can still exist, but aggregate-first chart routes have no new materialized buckets until you run aggregation manually.
+
+### Retention policy
+
+```yaml
+  retention:
+    raw: 30d
+    aggregated: 365d
+```
+
+Raw observations contain the most detailed lineage and are expensive to keep indefinitely. Aggregates are smaller and are normally kept longer for trend charts. In v1 these values are policy inputs for administrative pruning; they are not automatically scheduled by the time-series config alone. Run `PruneTimeSeriesRetention` from operational code or maintenance jobs when you want retention applied.
+
+### Cardinality guardrails
+
+```yaml
+  cardinality:
+    max_series_per_metric: 10000
+    max_dimensions: 4
+    max_values_per_dimension: 1000
+    overflow: drop
+```
+
+A time-series **series** is effectively a metric plus scope plus dimension set. Dimensions such as product category, HTTP status class, or source type are useful; dimensions such as full URL, raw product title, email address, or session token can create unbounded series and leak sensitive data. The example permits up to four dimensions, up to 1,000 distinct values per dimension, and drops observations that would exceed the guardrail.
+
+Choose `drop` for safety, `hash` when preserving a hashed observation is more important than retaining plain values, and `overflow_bucket` when you prefer to collapse excess groups into a single `{"overflow":"__overflow__"}` dimension set.
+
+### Privacy controls
+
+```yaml
+  privacy:
+    hash_only: true
+    store_value_text: false
+    max_value_length: 256
+    redact_patterns:
+      - '(?i)(authorization|cookie|token|secret|password)'
+```
+
+These settings protect values before they become long-lived analytical data. `hash_only: true` stores a deterministic hash and omits direct value storage. `store_value_text: false` prevents raw text values from being stored for API display. `max_value_length` limits accidental large values, and `redact_patterns` remove sensitive substrings from values/dimensions handled by the shared emitter. You cannot combine `hash_only: true` with `store_value_text: true`.
+
+### Metric definition
+
+```yaml
+  metrics:
+    - key: example.product.price
+      enabled: true
+      description: Example price history from a persisted web-object attribute.
+      source_kind: object_attribute
+      object_type: webobject
+      selector:
+        attribute_key: price
+        from: normalized
+      value_type: decimal
+      unit: deployment_currency
+      aggregates: [average, min, max, first, last]
+      bucket_interval: 1d
+      dimensions:
+        - key: object_family
+          selector:
+            from: metric
+            path: object_type
+```
+
+This metric says: whenever a persisted `webobject` has a normalized object attribute with key `price`, convert that attribute to a decimal observation, bucket it daily, and materialize average/min/max/first/last price values. `unit` is descriptive metadata for clients; use deployment-specific values such as `USD`, `EUR`, `ms`, `bytes`, or `deployment_currency`.
+
+The `selector` is the reference to the source data. For `object_attribute`, `attribute_key: price` points to the persisted normalized attribute key, not to an arbitrary YAML variable. `from: normalized` documents that the metric expects the normalized form of the attribute rather than a raw parser string. If your deployment stores the same concept under `sale_price`, `amount`, or `attributes.pricing.current`, use that persisted key/path instead.
+
+The dimension `object_family` is intentionally low cardinality: it reads `object_type` from metric context, which will normally be `webobject` for this example. In a real price-tracking deployment you might use dimensions such as `currency`, `seller_type`, `country`, or `availability_state` if those values are normalized to a small set. Avoid dimensions like SKU, URL, product title, or extracted free text unless you deliberately want one series per value and have raised limits accordingly.
+
+## Designing your own metric
+
+Use this checklist when moving from examples to your own crawler data:
+
+1. **Find the durable fact.** Decide whether the source is a keyword occurrence, metatag, normalized object attribute, web object field, HTTPInfo/NetInfo field, screenshot/file metadata, Information Seed transition, entity membership, correlation, or custom integration. The source must already be persisted.
+2. **Name the metric stably.** Use a namespaced key such as `commerce.product.price`, `security.http.hsts_present`, or `research.topic.mention_count`. Do not change the meaning or value type of an existing key; create a new key when semantics change.
+3. **Choose the selector.** Reference the persisted field, attribute key, event, or path. For object attributes, prefer normalized attribute keys. For lifecycle sources, filter by event/transition and select the field you want to measure.
+4. **Choose the value type and aggregates together.** Make sure the selected value can be converted to the configured type and that every aggregate is valid for that type.
+5. **Choose the time basis.** Use `observed_at` unless your source fact contains a trustworthy event/source timestamp. If using `event_at` or `source_timestamp`, configure `timestamp_selector`.
+6. **Choose dedupe and scope.** Most persisted object facts should use `object`; lifecycle transition metrics often rely on their stable transition identity; use `none` only for intentional event streams.
+7. **Add only bounded dimensions.** Dimensions should be useful filters with low cardinality. If a field can grow with every page, product, user, URL, or token, keep it in provenance/source data rather than as a dimension.
+8. **Set privacy before enabling.** Start with `hash_only: true`, `store_value_text: false`, short `max_value_length`, and redaction patterns. Loosen only when the value is safe and needed in API responses.
+9. **Register the metric.** Mirror the configuration into `TimeSeriesMetrics` with provisioning code, a migration, or an operator integration. YAML validation does not populate the table in v1.
+10. **Verify with a small crawl.** Confirm the source fact exists, then query `/v1/timeseries/metrics`, `/v1/timeseries/observations`, and finally `/v1/timeseries` after aggregation runs.
+
+### Common metric patterns
+
+```yaml
+# Count mentions of a normalized keyword per source.
+- key: research.topic.ai_mentions
+  source_kind: keyword
+  selector:
+    keyword: artificial intelligence
+  value_type: count
+  aggregates: [count, sum]
+  bucket_interval: 1d
+  dedupe_scope: source
+  dimensions:
+    - key: source_type
+      selector: {from: subject, path: type}
+```
+
+```yaml
+# Track whether a security header is present on persisted HTTPInfo attributes.
+- key: security.http.hsts_present
+  source_kind: object_attribute
+  object_type: httpinfo
+  selector:
+    attribute_key: strict_transport_security
+    derivation: presence
+  value_type: boolean
+  aggregates: [count, distinct_count]
+  bucket_interval: 1d
+  dimensions:
+    - key: status_class
+      selector: {path: status_class}
+```
+
+```yaml
+# Measure confidence emitted by persisted object correlations.
+- key: intelligence.correlation.confidence
+  source_kind: object_correlation
+  selector:
+    event: correlation_persisted
+    field: confidence
+  value_type: decimal
+  aggregates: [average, p50, p95, min, max]
+  bucket_interval: 1h
+  dimensions:
+    - key: rule_id
+      selector: {field: rule_id}
+```
+
+Treat these as patterns to adapt, not as built-in metrics. The selector keys must match what your deployment actually persists.
 
 ## Data model
 
@@ -203,7 +422,6 @@ The complete, schema-valid examples are:
 * [Entity-correlation confidence](../examples/timeseries/entity-correlation-confidence.yaml)
 
 Each defaults to bounded dimensions, `drop` overflow, hash-only value storage, no plaintext value storage, short maximum values, and redaction patterns. Replace example selectors only with fields your deployment actually persists.
-
 
 ## Configuration reference
 
