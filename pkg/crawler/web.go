@@ -1016,6 +1016,7 @@ func collectLoadedWebPage(ctx *ProcessContext, wd vdi.WebDriver, pageURL string,
 
 	if detectedTech := detect.DetectTechnologies(&detectCtx); detectedTech != nil {
 		pageInfo.DetectedTech = *detectedTech
+		addDetectionProducedByRules(currentCrowlerMeta(ctx), ctx.re, ctx.GetContextID(), *detectedTech)
 		publishDetectionResults(ctx, currentURL, detectedTech)
 	}
 	if ctx.RefreshCrawlingTimer != nil {
@@ -1538,6 +1539,7 @@ func rightClick(processCtx *ProcessContext, id string, url LinkItem) error {
 	detectedTech := detect.DetectTechnologies(&detectCtx)
 	if detectedTech != nil {
 		pageCache.DetectedTech = *detectedTech
+		addDetectionProducedByRules(currentCrowlerMeta(processCtx), processCtx.re, processCtx.GetContextID(), *detectedTech)
 		publishDetectionResults(processCtx, currentURL, detectedTech)
 	}
 	if processCtx.RefreshCrawlingTimer != nil {
@@ -1732,6 +1734,7 @@ func clickLink(processCtx *ProcessContext, id string, url LinkItem) error {
 	detectedTech := detect.DetectTechnologies(&detectCtx)
 	if detectedTech != nil {
 		pageCache.DetectedTech = *detectedTech
+		addDetectionProducedByRules(currentCrowlerMeta(processCtx), processCtx.re, processCtx.GetContextID(), *detectedTech)
 		publishDetectionResults(processCtx, currentURL, detectedTech)
 	}
 

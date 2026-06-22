@@ -358,3 +358,8 @@ func (a *scraperRuntimeAdapter) AddCrowlerMetaObjectType(_ context.Context, labe
 	a.currentCrowlerMeta().AddObjectType(labels...)
 	return nil
 }
+
+func (a *scraperRuntimeAdapter) AddCrowlerMetaProducedByRule(_ context.Context, names ...string) error {
+	a.currentCrowlerMeta().AddProducedByRule(names...)
+	return nil
+}

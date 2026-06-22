@@ -855,6 +855,7 @@ func (ctx *ProcessContext) GetHTTPInfo(url string, htmlContent string) {
 			ctx.crowlerMeta = NewCrowlerMetaFromSource(ctx.source, ctx.srcCfg)
 		}
 		ctx.crowlerMeta.EnsureSourceUID(ctx.source)
+		addDetectionProducedByRules(ctx.crowlerMeta, ctx.re, ctx.GetContextID(), ctx.hi.DetectedEntities)
 		ctx.hi.CrowlerMeta = map[string]interface{}(ctx.crowlerMeta)
 	}
 	ctx.Status.HTTPInfoRunning.Store(2)

@@ -13,6 +13,7 @@ const CrowlerMetaKey = "crowler_meta"
 const CrowlerMetaDataKey = "meta_data"
 const CrowlerMetaObjectTypeKey = "object_type"
 const CrowlerMetaSourceUIDKey = "source_uid"
+const CrowlerMetaProducedByRulesKey = "produced_by_rules"
 
 type CrowlerMeta map[string]interface{}
 
@@ -24,6 +25,7 @@ func NewCrowlerMeta(metaData map[string]interface{}, srcCfg map[string]interface
 	mergeMap(finalMetaData, extractMetaData(srcCfg))
 	cm[CrowlerMetaDataKey] = cloneMap(finalMetaData)
 	cm[CrowlerMetaObjectTypeKey] = []string{}
+	cm[CrowlerMetaProducedByRulesKey] = []string{}
 	return cm
 }
 
@@ -124,6 +126,45 @@ func (cm CrowlerMeta) AddObjectType(labels ...string) {
 	cm[CrowlerMetaObjectTypeKey] = existing
 }
 
+// AddProducedByRule appends normalized rule names to crowler_meta.produced_by_rules.
+// Empty names are ignored. Existing names are preserved in insertion order and
+// duplicates are ignored after trimming surrounding whitespace.
+func (cm CrowlerMeta) AddProducedByRule(names ...string) {
+	if cm == nil {
+		return
+	}
+	existing := cm.ProducedByRules()
+	seen := make(map[string]struct{}, len(existing)+len(names))
+	for _, name := range existing {
+		seen[name] = struct{}{}
+	}
+	for _, name := range names {
+		normalized := strings.TrimSpace(name)
+		if normalized == "" {
+			continue
+		}
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		existing = append(existing, normalized)
+		seen[normalized] = struct{}{}
+	}
+	cm[CrowlerMetaProducedByRulesKey] = existing
+}
+
+// ProducedByRules returns normalized unique crowler_meta.produced_by_rules entries.
+func (cm CrowlerMeta) ProducedByRules() []string {
+	if cm == nil {
+		return nil
+	}
+	names := normalizeStringListValue(cm[CrowlerMetaProducedByRulesKey], false)
+	if names == nil {
+		names = []string{}
+	}
+	cm[CrowlerMetaProducedByRulesKey] = names
+	return names
+}
+
 // ObjectTypes returns the normalized unique crowler_meta.object_type labels.
 func (cm CrowlerMeta) ObjectTypes() []string {
 	if cm == nil {
@@ -174,6 +215,7 @@ func EnsureCrowlerMeta(doc map[string]interface{}, source *cdb.Source, srcCfg ma
 		cm[CrowlerMetaDataKey] = merged
 		cm.EnsureSourceUID(source)
 		cm.ObjectTypes()
+		cm.ProducedByRules()
 		doc[CrowlerMetaKey] = cm
 		return cm
 	}
@@ -304,10 +346,17 @@ func cloneMap(in map[string]interface{}) map[string]interface{} {
 }
 
 func normalizeObjectTypeValue(value interface{}) []string {
+	return normalizeStringListValue(value, true)
+}
+
+func normalizeStringListValue(value interface{}, normalizeLabel bool) []string {
 	values := []string{}
 	seen := map[string]struct{}{}
 	add := func(raw string) {
-		label := NormalizeObjectTypeLabel(raw)
+		label := strings.TrimSpace(raw)
+		if normalizeLabel {
+			label = NormalizeObjectTypeLabel(label)
+		}
 		if label == "" {
 			return
 		}

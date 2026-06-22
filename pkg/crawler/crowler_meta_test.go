@@ -233,3 +233,28 @@ func TestCrowlerMetaRejectsEmptySourceUIDOverride(t *testing.T) {
 		t.Fatal("DeleteTag allowed source_uid deletion")
 	}
 }
+
+func TestCrowlerMetaAddProducedByRuleNormalizesAndDeduplicates(t *testing.T) {
+	cm := NewCrowlerMeta(nil, nil)
+	cm.AddProducedByRule(" Extract products ", "Extract products", "", "Detect CMS")
+
+	got := cm.ProducedByRules()
+	want := []string{"Extract products", "Detect CMS"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ProducedByRules() = %#v, want %#v", got, want)
+	}
+}
+
+func TestEnsureCrowlerMetaNormalizesExistingProducedByRules(t *testing.T) {
+	doc := map[string]interface{}{
+		CrowlerMetaKey: map[string]interface{}{
+			CrowlerMetaProducedByRulesKey: []interface{}{" Rule A ", "Rule A", 42, "Rule B"},
+		},
+	}
+	cm := EnsureCrowlerMeta(doc, nil, nil)
+	got := cm.ProducedByRules()
+	want := []string{"Rule A", "Rule B"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ProducedByRules() = %#v, want %#v", got, want)
+	}
+}

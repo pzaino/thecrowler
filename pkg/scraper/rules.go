@@ -120,6 +120,11 @@ func ApplyRule(ctx context.Context, runtime *Runtime, rule *rs.ScrapingRule, web
 			return extractedData, &RuleError{RuleName: rule.RuleName, Err: errors.New("post-processing returned a non-object result")}
 		}
 	}
+	if len(extractedData) > 0 && rt.CrowlerMeta != nil {
+		if err := rt.CrowlerMeta.AddCrowlerMetaProducedByRule(ctx, rule.RuleName); err != nil {
+			return extractedData, err
+		}
+	}
 	return extractedData, nil
 }
 

@@ -91,7 +91,9 @@ func executeActionRules(ctx *ProcessContext, actionRules []rules.ActionRule, wd 
 		currentCrowlerMeta(ctx).AddObjectType(actionRules[i].ObjectType...)
 		if err := browseractions.ExecuteRule(context.Background(), runtime, &actionRules[i]); err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "executing action rule: %v", err)
+			continue
 		}
+		currentCrowlerMeta(ctx).AddProducedByRule(actionRules[i].RuleName)
 		ctx.Status.TotalActions.Add(1)
 	}
 }

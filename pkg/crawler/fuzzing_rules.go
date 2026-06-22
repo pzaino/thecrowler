@@ -113,6 +113,9 @@ func FuzzURLWithLifecycle(ctx *ProcessContext, wd *vdi.WebDriver, state *lifecyc
 	if err != nil {
 		return nil, err
 	}
+	if len(fuzzedURLs) > 0 {
+		currentCrowlerMeta(ctx).AddProducedByRule(rule.RuleName)
+	}
 	for _, c := range fuzzedURLs {
 		_ = executeCrawlingLifecycleHook(ctx, wd, state, rule, "per_fuzz_candidate", map[string]interface{}{"url": baseURL, "depth": depth, "fuzz_candidate": c})
 	}
