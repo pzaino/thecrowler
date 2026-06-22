@@ -1026,12 +1026,15 @@ func collectLoadedWebPage(ctx *ProcessContext, wd vdi.WebDriver, pageURL string,
 
 	// If enabled in the configuration, collect XHR/Fetch requests made by the page
 	if ctx.config.Crawler.CollectXHR {
+		// Sleep 500 ms to allow any pending XHR requests to complete before collecting them
+		time.Sleep(500 * time.Millisecond)
 		collectXHR(ctx, pageInfo)
 	}
 	if ctx.RefreshCrawlingTimer != nil {
 		ctx.RefreshCrawlingTimer()
 	}
 	_ = vdi.Refresh(ctx)
+	_ = StopJavaScriptFetches(&ctx.wd) // Stop any ongoing JavaScript fetches to avoid unnecessary network activity
 
 	// Collect page information such as title, meta tags, and other relevant data
 	if err := extractPageInfo(&wd, ctx, docType, pageInfo); err != nil {
@@ -3439,4 +3442,125 @@ func extractMetaTags(doc *goquery.Document) []MetaTag {
 		}
 	})
 	return metaTags
+}
+
+// StopJavaScriptFetches prevents the current document from starting new
+// window.fetch() requests.
+//
+// It also aborts fetch requests that were started through a wrapper previously
+// installed by InstallFetchController.
+//
+// The change applies only to the current JavaScript browsing context. A page
+// navigation or reload creates a new document and removes the controller.
+func StopJavaScriptFetches(wd *vdi.WebDriver) error {
+	if wd == nil {
+		return nil
+	}
+	if *wd == nil {
+		return nil
+	}
+
+	const script = `
+return (() => {
+	"use strict";
+
+	const controllerKey = "__crowlerFetchController";
+
+	// Install the controller if it was not installed earlier.
+	if (!window[controllerKey]) {
+		const originalFetch = window.fetch.bind(window);
+		const activeControllers = new Set();
+
+		const state = {
+			stopped: false,
+			originalFetch,
+			activeControllers
+		};
+
+		window.fetch = function(input, init) {
+			if (state.stopped) {
+				return Promise.reject(
+					new DOMException(
+						"Fetch disabled by the CROWler",
+						"AbortError"
+					)
+				);
+			}
+
+			const requestInit = init ? { ...init } : {};
+			const internalController = new AbortController();
+			const callerSignal = requestInit.signal;
+
+			// Preserve cancellation requested by the original caller.
+			if (callerSignal) {
+				if (callerSignal.aborted) {
+					internalController.abort(callerSignal.reason);
+				} else {
+					callerSignal.addEventListener(
+						"abort",
+						() => internalController.abort(callerSignal.reason),
+						{ once: true }
+					);
+				}
+			}
+
+			requestInit.signal = internalController.signal;
+			activeControllers.add(internalController);
+
+			let result;
+			try {
+				result = originalFetch(input, requestInit);
+			} catch (error) {
+				activeControllers.delete(internalController);
+				throw error;
+			}
+
+			return Promise.resolve(result).finally(() => {
+				activeControllers.delete(internalController);
+			});
+		};
+
+		window[controllerKey] = {
+			stop() {
+				state.stopped = true;
+
+				for (const controller of activeControllers) {
+					try {
+						controller.abort("Fetch disabled by the CROWler");
+					} catch (_) {
+						// Continue aborting the remaining requests.
+					}
+				}
+
+				activeControllers.clear();
+			},
+
+			start() {
+				state.stopped = false;
+			},
+
+			isStopped() {
+				return state.stopped;
+			},
+
+			activeCount() {
+				return activeControllers.size;
+			}
+		};
+	}
+
+	window[controllerKey].stop();
+
+	return {
+		stopped: window[controllerKey].isStopped(),
+		activeFetches: window[controllerKey].activeCount()
+	};
+})();
+`
+
+	if _, err := (*wd).ExecuteScript(script, nil); err != nil {
+		return fmt.Errorf("stop JavaScript fetches: %w", err)
+	}
+
+	return nil
 }
