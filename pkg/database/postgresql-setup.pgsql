@@ -80,6 +80,34 @@ CREATE TABLE IF NOT EXISTS AuthRevokedTokens (
 CREATE INDEX IF NOT EXISTS idx_auth_revoked_tokens_expires_at ON AuthRevokedTokens(expires_at);
 CREATE INDEX IF NOT EXISTS idx_users_external_identity ON Users(external_issuer, external_subject);
 
+-- Default API authorization roles and scopes.
+INSERT INTO AuthRoles (name, description) VALUES
+    ('superadmin', 'Can administer all CROWler API, events, console, account, role, and scope endpoints.'),
+    ('admin', 'Can access all services/events endpoints, all services/api endpoints, and console endpoints except account administration.'),
+    ('superuser', 'Can access all services/events endpoints, all services/api non-console endpoints, and only the add-source console endpoint.'),
+    ('user', 'Can access services/api non-console endpoints only.')
+ON CONFLICT (name) DO UPDATE SET description = EXCLUDED.description;
+
+INSERT INTO AuthScopes (name, description) VALUES
+    ('api:*', 'Access all services/api endpoints.'),
+    ('api:read', 'Access non-console services/api endpoints.'),
+    ('api:console', 'Access services/api console endpoints.'),
+    ('api:console:source:add', 'Add new sources through the services/api console.'),
+    ('api:console:accounts', 'Administer local authentication and authorization records.'),
+    ('events:*', 'Access all services/events endpoints.')
+ON CONFLICT (name) DO UPDATE SET description = EXCLUDED.description;
+
+INSERT INTO RoleScopes (role_id, scope_id)
+SELECT r.role_id, s.scope_id
+FROM AuthRoles r
+JOIN AuthScopes s ON (
+    (r.name = 'superadmin' AND s.name IN ('api:*', 'api:console', 'api:console:accounts', 'api:console:source:add', 'events:*')) OR
+    (r.name = 'admin' AND s.name IN ('api:*', 'api:console', 'api:console:source:add', 'events:*')) OR
+    (r.name = 'superuser' AND s.name IN ('api:read', 'api:console:source:add', 'events:*')) OR
+    (r.name = 'user' AND s.name IN ('api:read'))
+)
+ON CONFLICT DO NOTHING;
+
 --------------------------------------------------------------------------------
 -- Database Tables setup
 

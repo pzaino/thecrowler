@@ -698,6 +698,8 @@ func initAPIv1() {
 		vdiConfigListHandlerWithMiddlewares := withPublicMiddlewares(vdiConfigListHandler)
 		vdiConfigHandlerWithMiddlewares := withPublicMiddlewares(vdiConfigHandler)
 
+		registerAuthConsoleRoutes(tagsNone)
+
 		// Source management endpoints
 
 		http.Handle("/v1/source/add", addSourceHandlerWithMiddlewares)

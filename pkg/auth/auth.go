@@ -35,6 +35,10 @@ type Store interface {
 	Exec(query string, args ...interface{}) (sql.Result, error)
 }
 
+type queryStore interface {
+	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
+}
+
 var ErrUnauthorized = errors.New("unauthorized")
 
 func ContextWithIdentity(ctx context.Context, id Identity) context.Context {
@@ -62,10 +66,40 @@ func Login(ctx context.Context, db Store, c cfg.AuthConfig, username, password s
 }
 
 func LoadGrants(db Store, userID string) ([]string, []string) {
-	// Minimal DB abstraction only exposes QueryRow; services still issue explicit
-	// role/scope claims by allowing configured bootstrap grants in future callers.
-	// Database schema stores grants for scalable replicas and external tooling.
-	return []string{}, []string{}
+	qs, ok := db.(queryStore)
+	if !ok || qs == nil {
+		return []string{}, []string{}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	roles := []string{}
+	if rows, err := qs.QueryContext(ctx, `SELECT r.name FROM AuthRoles r JOIN UserRoles ur ON ur.role_id = r.role_id WHERE ur.user_id = $1 ORDER BY r.name`, userID); err == nil {
+		for rows.Next() {
+			var role string
+			if rows.Scan(&role) == nil {
+				roles = append(roles, role)
+			}
+		}
+		_ = rows.Close()
+	}
+	scopes := []string{}
+	if rows, err := qs.QueryContext(ctx, `
+		SELECT DISTINCT s.name
+		FROM AuthScopes s
+		LEFT JOIN UserScopes us ON us.scope_id = s.scope_id AND us.user_id = $1
+		LEFT JOIN RoleScopes rs ON rs.scope_id = s.scope_id
+		LEFT JOIN UserRoles ur ON ur.role_id = rs.role_id AND ur.user_id = $1
+		WHERE us.user_id IS NOT NULL OR ur.user_id IS NOT NULL
+		ORDER BY s.name`, userID); err == nil {
+		for rows.Next() {
+			var scope string
+			if rows.Scan(&scope) == nil {
+				scopes = append(scopes, scope)
+			}
+		}
+		_ = rows.Close()
+	}
+	return roles, scopes
 }
 
 func IssueToken(c cfg.AuthConfig, id Identity, jti string) (string, error) {
