@@ -778,10 +778,6 @@ func initAPIv1() {
 		http.Handle("GET /v1/information_seed/{id}/diagnostics", withPublicMiddlewares(http.HandlerFunc(informationSeedDiagnosticsHandler)))
 		cmn.RegisterAPIRoute("/v1/information_seed/{id}/diagnostics", []string{"GET"}, "Get redacted information seed run diagnostics endpoint (console)", tagsNone, true, false, 200, nil, informationSeedIDGetRequest{}, InformationSeedDiagnosticsResponse{})
 
-		// Backward-compatible alias. /v1/information_seed is the canonical namespace.
-		//http.Handle("/v1/information-seed/list", informationSeedListHandlerWithMiddlewares)
-		//cmn.RegisterAPIRoute("/v1/information-seed/list", []string{"GET"}, "Deprecated alias for /v1/information_seed/list", tagsNone, true, false, 200, nil, nil, InformationSeedListResponse{})
-
 		// Owner endpoints
 
 		http.Handle("/v1/owner/add", withPublicMiddlewares(addOwnerHandler))
