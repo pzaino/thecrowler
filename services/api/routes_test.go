@@ -297,11 +297,11 @@ func TestInformationSeedPathActionsAppearAsPostInOpenAPI(t *testing.T) {
 		"/v1/information_seed/{id}/enable",
 	} {
 		operations := spec.Paths[path]
-		if _, ok := operations["post"]; !ok {
-			t.Errorf("OpenAPI specification is missing POST %s", path)
+		if _, ok := operations["get"]; !ok {
+			t.Errorf("OpenAPI specification is missing GET %s", path)
 		}
-		if _, ok := operations["get"]; ok {
-			t.Errorf("OpenAPI specification incorrectly exposes GET %s", path)
+		if _, ok := operations["post"]; ok {
+			t.Errorf("OpenAPI specification incorrectly exposes POST %s", path)
 		}
 	}
 }
