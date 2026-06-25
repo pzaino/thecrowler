@@ -22,6 +22,7 @@ const (
 )
 
 type authUserRequest struct {
+	ID       int64    `json:"id,omitempty"`
 	Username string   `json:"username"`
 	Email    string   `json:"email,omitempty"`
 	Password string   `json:"password,omitempty"`
@@ -40,10 +41,16 @@ type authUserResponse struct {
 }
 
 type authRoleRequest struct {
-	Name, Description string
-	Scopes            []string `json:"scopes,omitempty"`
+	ID          int64    `json:"id,omitempty"`
+	Name        string   `json:"name"`
+	Description string   `json:"description,omitempty"`
+	Scopes      []string `json:"scopes,omitempty"`
 }
-type authScopeRequest struct{ Name, Description string }
+type authScopeRequest struct {
+	ID          int64  `json:"id,omitempty"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+}
 type authRoleResponse struct {
 	ID          int64    `json:"id"`
 	Name        string   `json:"name"`
@@ -178,49 +185,75 @@ func authUserHandler(w http.ResponseWriter, r *http.Request) {
 		handleErrorAndRespond(w, err, nil, "invalid user id", http.StatusBadRequest, 0)
 		return
 	}
-	switch r.Method {
-	case http.MethodGet:
-		u, err := getAuthUser(r.Context(), id)
-		handleErrorAndRespond(w, err, u, "get user", http.StatusNotFound, http.StatusOK)
-	case http.MethodPut, http.MethodPatch:
-		var req authUserRequest
-		if err := decodeJSON(r, &req); err != nil {
-			handleErrorAndRespond(w, err, nil, "invalid user request", http.StatusBadRequest, 0)
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	u, err := getAuthUser(r.Context(), id)
+	handleErrorAndRespond(w, err, u, "get user", http.StatusNotFound, http.StatusOK)
+}
+
+func authUserUpdateHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req authUserRequest
+	if err := decodeJSON(r, &req); err != nil {
+		handleErrorAndRespond(w, err, nil, "invalid user request", http.StatusBadRequest, 0)
+		return
+	}
+	id := req.ID
+	if id <= 0 {
+		handleErrorAndRespond(w, errors.New("id is required"), nil, "invalid user id", http.StatusBadRequest, 0)
+		return
+	}
+	var err error
+	if req.Password != "" {
+		hash, _ := auth.HashPassword(req.Password)
+		_, err = dbHandler.ExecContext(r.Context(), `UPDATE Users SET password_hash=$1, credential_version=credential_version+1, last_updated_at=CURRENT_TIMESTAMP WHERE user_id=$2 AND deleted_at IS NULL`, hash, id)
+		if err != nil {
+			handleErrorAndRespond(w, err, nil, "update password", http.StatusInternalServerError, 0)
 			return
 		}
-		if req.Password != "" {
-			hash, _ := auth.HashPassword(req.Password)
-			_, err = dbHandler.ExecContext(r.Context(), `UPDATE Users SET password_hash=$1, credential_version=credential_version+1, last_updated_at=CURRENT_TIMESTAMP WHERE user_id=$2 AND deleted_at IS NULL`, hash, id)
-			if err != nil {
-				handleErrorAndRespond(w, err, nil, "update password", http.StatusInternalServerError, 0)
-				return
-			}
-		}
-		if req.Username != "" || req.Email != "" || req.Disabled != nil {
-			disabled := sql.NullBool{}
-			if req.Disabled != nil {
-				disabled = sql.NullBool{Bool: *req.Disabled, Valid: true}
-			}
-			_, err = dbHandler.ExecContext(r.Context(), `UPDATE Users SET username=COALESCE(NULLIF($1,''),username), email=COALESCE(NULLIF($2,''),email), disabled=COALESCE($3,disabled), last_updated_at=CURRENT_TIMESTAMP WHERE user_id=$4 AND deleted_at IS NULL`, req.Username, req.Email, disabled, id)
-			if err != nil {
-				handleErrorAndRespond(w, err, nil, "update user", http.StatusInternalServerError, 0)
-				return
-			}
-		}
-		if req.Roles != nil || req.Scopes != nil {
-			if err = replaceUserGrants(r.Context(), id, req.Roles, req.Scopes); err != nil {
-				handleErrorAndRespond(w, err, nil, "update user grants", http.StatusInternalServerError, 0)
-				return
-			}
-		}
-		u, err := getAuthUser(r.Context(), id)
-		handleErrorAndRespond(w, err, u, "get user", http.StatusInternalServerError, http.StatusOK)
-	case http.MethodDelete:
-		_, err := dbHandler.ExecContext(r.Context(), `UPDATE Users SET deleted_at=CURRENT_TIMESTAMP, disabled=TRUE WHERE user_id=$1 AND deleted_at IS NULL`, id)
-		handleErrorAndRespond(w, err, ConsoleResponse{Message: "user deleted"}, "delete user", http.StatusInternalServerError, http.StatusOK)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+	if req.Username != "" || req.Email != "" || req.Disabled != nil {
+		disabled := sql.NullBool{}
+		if req.Disabled != nil {
+			disabled = sql.NullBool{Bool: *req.Disabled, Valid: true}
+		}
+		_, err = dbHandler.ExecContext(r.Context(), `UPDATE Users SET username=COALESCE(NULLIF($1,''),username), email=COALESCE(NULLIF($2,''),email), disabled=COALESCE($3,disabled), last_updated_at=CURRENT_TIMESTAMP WHERE user_id=$4 AND deleted_at IS NULL`, req.Username, req.Email, disabled, id)
+		if err != nil {
+			handleErrorAndRespond(w, err, nil, "update user", http.StatusInternalServerError, 0)
+			return
+		}
+	}
+	if req.Roles != nil || req.Scopes != nil {
+		if err = replaceUserGrants(r.Context(), id, req.Roles, req.Scopes); err != nil {
+			handleErrorAndRespond(w, err, nil, "update user grants", http.StatusInternalServerError, 0)
+			return
+		}
+	}
+	u, err := getAuthUser(r.Context(), id)
+	handleErrorAndRespond(w, err, u, "get user", http.StatusInternalServerError, http.StatusOK)
+}
+
+func authUserDeleteHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req authUserRequest
+	if err := decodeJSON(r, &req); err != nil {
+		handleErrorAndRespond(w, err, nil, "invalid user request", http.StatusBadRequest, 0)
+		return
+	}
+	if req.ID <= 0 {
+		handleErrorAndRespond(w, errors.New("id is required"), nil, "invalid user id", http.StatusBadRequest, 0)
+		return
+	}
+	_, err := dbHandler.ExecContext(r.Context(), `UPDATE Users SET deleted_at=CURRENT_TIMESTAMP, disabled=TRUE WHERE user_id=$1 AND deleted_at IS NULL`, req.ID)
+	handleErrorAndRespond(w, err, ConsoleResponse{Message: "user deleted"}, "delete user", http.StatusInternalServerError, http.StatusOK)
 }
 
 func authRolesHandler(w http.ResponseWriter, r *http.Request) {
@@ -285,27 +318,96 @@ func authNamedItemHandler(w http.ResponseWriter, r *http.Request, table, idCol s
 		handleErrorAndRespond(w, err, nil, "invalid id", 400, 0)
 		return
 	}
-	switch r.Method {
-	case http.MethodPut, http.MethodPatch:
-		var req struct {
-			Name, Description string
-			Scopes            []string `json:"scopes,omitempty"`
-		}
-		if err := decodeJSON(r, &req); err != nil {
-			handleErrorAndRespond(w, err, nil, "invalid auth request", 400, 0)
-			return
-		}
-		_, err = dbHandler.ExecContext(r.Context(), fmt.Sprintf(`UPDATE %s SET name=COALESCE(NULLIF($1,''),name), description=COALESCE($2,description) WHERE %s=$3`, table, idCol), req.Name, req.Description, id)
-		if err == nil && role && req.Scopes != nil {
-			err = replaceRoleScopes(r.Context(), id, req.Scopes)
-		}
-		handleErrorAndRespond(w, err, ConsoleResponse{Message: "updated"}, "update auth record", 500, 200)
-	case http.MethodDelete:
-		_, err = dbHandler.ExecContext(r.Context(), fmt.Sprintf(`DELETE FROM %s WHERE %s=$1`, table, idCol), id)
-		handleErrorAndRespond(w, err, ConsoleResponse{Message: "deleted"}, "delete auth record", 500, 200)
-	default:
+	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", 405)
+		return
 	}
+
+	var item map[string]any
+	item, err = getAuthNamedItem(r.Context(), table, idCol, id, role)
+	handleErrorAndRespond(w, err, item, "get auth record", 404, 200)
+}
+
+func authRoleUpdateHandler(w http.ResponseWriter, r *http.Request) {
+	authNamedUpdateHandler[authRoleRequest](w, r, "AuthRoles", "role_id", true)
+}
+func authScopeUpdateHandler(w http.ResponseWriter, r *http.Request) {
+	authNamedUpdateHandler[authScopeRequest](w, r, "AuthScopes", "scope_id", false)
+}
+func authNamedUpdateHandler[Q interface {
+	authRoleRequest | authScopeRequest
+}](w http.ResponseWriter, r *http.Request, table, idCol string, role bool) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	var req Q
+	if err := decodeJSON(r, &req); err != nil {
+		handleErrorAndRespond(w, err, nil, "invalid auth request", 400, 0)
+		return
+	}
+	id, name, description, scopes := authNamedRequestFields(req)
+	if id <= 0 {
+		handleErrorAndRespond(w, errors.New("id is required"), nil, "invalid id", 400, 0)
+		return
+	}
+	_, err := dbHandler.ExecContext(r.Context(), fmt.Sprintf(`UPDATE %s SET name=COALESCE(NULLIF($1,''),name), description=COALESCE($2,description) WHERE %s=$3`, table, idCol), name, description, id)
+	if err == nil && role && scopes != nil {
+		err = replaceRoleScopes(r.Context(), id, scopes)
+	}
+	handleErrorAndRespond(w, err, ConsoleResponse{Message: "updated"}, "update auth record", 500, 200)
+}
+
+func authRoleDeleteHandler(w http.ResponseWriter, r *http.Request) {
+	authNamedDeleteHandler[authRoleRequest](w, r, "AuthRoles", "role_id")
+}
+func authScopeDeleteHandler(w http.ResponseWriter, r *http.Request) {
+	authNamedDeleteHandler[authScopeRequest](w, r, "AuthScopes", "scope_id")
+}
+func authNamedDeleteHandler[Q interface {
+	authRoleRequest | authScopeRequest
+}](w http.ResponseWriter, r *http.Request, table, idCol string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	var req Q
+	if err := decodeJSON(r, &req); err != nil {
+		handleErrorAndRespond(w, err, nil, "invalid auth request", 400, 0)
+		return
+	}
+	id, _, _, _ := authNamedRequestFields(req)
+	if id <= 0 {
+		handleErrorAndRespond(w, errors.New("id is required"), nil, "invalid id", 400, 0)
+		return
+	}
+	_, err := dbHandler.ExecContext(r.Context(), fmt.Sprintf(`DELETE FROM %s WHERE %s=$1`, table, idCol), id)
+	handleErrorAndRespond(w, err, ConsoleResponse{Message: "deleted"}, "delete auth record", 500, 200)
+}
+
+func authNamedRequestFields(req any) (int64, string, string, []string) {
+	switch v := req.(type) {
+	case authRoleRequest:
+		return v.ID, v.Name, v.Description, v.Scopes
+	case authScopeRequest:
+		return v.ID, v.Name, v.Description, nil
+	default:
+		return 0, "", "", nil
+	}
+}
+
+func getAuthNamedItem(ctx context.Context, table, idCol string, id int64, role bool) (map[string]any, error) {
+	var outID int64
+	var name, description string
+	err := dbHandler.QueryRow(fmt.Sprintf(`SELECT %s, name, COALESCE(description,'') FROM %s WHERE %s=$1`, idCol, table, idCol), id).Scan(&outID, &name, &description)
+	if err != nil {
+		return nil, err
+	}
+	item := map[string]any{"id": outID, "name": name, "description": description}
+	if role {
+		item["scopes"] = loadRoleScopes(ctx, id)
+	}
+	return item, nil
 }
 
 func getAuthUser(_ context.Context, id int64) (authUserResponse, error) {
@@ -378,22 +480,27 @@ func registerAuthConsoleRoutes(tags []string) {
 	cmn.RegisterAPIRoute("/v1/console/auth/users", []string{"GET", "POST"}, "List and create local authentication users (superadmin)", tags, true, false, 200, authUserRequest{}, nil, authListResponse[authUserResponse]{})
 
 	http.Handle("GET /v1/console/auth/users/{id}", withRoleMiddlewares(authUserHandler, roleSuperAdmin))
-	http.Handle("PUT /v1/console/auth/users/{id}", withRoleMiddlewares(authUserHandler, roleSuperAdmin))
-	http.Handle("PATCH /v1/console/auth/users/{id}", withRoleMiddlewares(authUserHandler, roleSuperAdmin))
-	http.Handle("DELETE /v1/console/auth/users/{id}", withRoleMiddlewares(authUserHandler, roleSuperAdmin))
-	cmn.RegisterAPIRoute("/v1/console/auth/users/{id}", []string{"GET", "PUT", "PATCH", "DELETE"}, "Read, update, and delete a local authentication user (superadmin)", tags, true, false, 200, authUserRequest{}, StdAPIIDQuery{}, authUserResponse{})
+	cmn.RegisterAPIRoute("/v1/console/auth/users/{id}", []string{"GET"}, "Read a local authentication user (superadmin)", tags, true, false, 200, nil, StdAPIIDQuery{}, authUserResponse{})
+	http.Handle("POST /v1/console/auth/users/update", withRoleMiddlewares(authUserUpdateHandler, roleSuperAdmin))
+	cmn.RegisterAPIRoute("/v1/console/auth/users/update", []string{"POST"}, "Update a local authentication user (superadmin)", tags, true, false, 200, authUserRequest{}, nil, authUserResponse{})
+	http.Handle("POST /v1/console/auth/users/delete", withRoleMiddlewares(authUserDeleteHandler, roleSuperAdmin))
+	cmn.RegisterAPIRoute("/v1/console/auth/users/delete", []string{"POST"}, "Delete a local authentication user (superadmin)", tags, true, false, 200, authUserRequest{}, nil, ConsoleResponse{})
 	http.Handle("/v1/console/auth/roles", withRoleMiddlewares(authRolesHandler, roleSuperAdmin))
 	cmn.RegisterAPIRoute("/v1/console/auth/roles", []string{"GET", "POST"}, "List and create authorization roles (superadmin)", tags, true, false, 200, authRoleRequest{}, nil, authListResponse[authRoleResponse]{})
 
-	http.Handle("PUT /v1/console/auth/roles/{id}", withRoleMiddlewares(authRoleHandler, roleSuperAdmin))
-	http.Handle("PATCH /v1/console/auth/roles/{id}", withRoleMiddlewares(authRoleHandler, roleSuperAdmin))
-	http.Handle("DELETE /v1/console/auth/roles/{id}", withRoleMiddlewares(authRoleHandler, roleSuperAdmin))
-	cmn.RegisterAPIRoute("/v1/console/auth/roles/{id}", []string{"PUT", "PATCH", "DELETE"}, "Update and delete an authorization role (superadmin)", tags, true, false, 200, authRoleRequest{}, StdAPIIDQuery{}, ConsoleResponse{})
+	http.Handle("GET /v1/console/auth/roles/{id}", withRoleMiddlewares(authRoleHandler, roleSuperAdmin))
+	cmn.RegisterAPIRoute("/v1/console/auth/roles/{id}", []string{"GET"}, "Read an authorization role (superadmin)", tags, true, false, 200, nil, StdAPIIDQuery{}, authRoleResponse{})
+	http.Handle("POST /v1/console/auth/roles/update", withRoleMiddlewares(authRoleUpdateHandler, roleSuperAdmin))
+	cmn.RegisterAPIRoute("/v1/console/auth/roles/update", []string{"POST"}, "Update an authorization role (superadmin)", tags, true, false, 200, authRoleRequest{}, nil, ConsoleResponse{})
+	http.Handle("POST /v1/console/auth/roles/delete", withRoleMiddlewares(authRoleDeleteHandler, roleSuperAdmin))
+	cmn.RegisterAPIRoute("/v1/console/auth/roles/delete", []string{"POST"}, "Delete an authorization role (superadmin)", tags, true, false, 200, authRoleRequest{}, nil, ConsoleResponse{})
 	http.Handle("/v1/console/auth/scopes", withRoleMiddlewares(authScopesHandler, roleSuperAdmin))
 	cmn.RegisterAPIRoute("/v1/console/auth/scopes", []string{"GET", "POST"}, "List and create authorization scopes (superadmin)", tags, true, false, 200, authScopeRequest{}, nil, authListResponse[authScopeResponse]{})
 
-	http.Handle("PUT /v1/console/auth/scopes/{id}", withRoleMiddlewares(authScopeHandler, roleSuperAdmin))
-	http.Handle("PATCH /v1/console/auth/scopes/{id}", withRoleMiddlewares(authScopeHandler, roleSuperAdmin))
-	http.Handle("DELETE /v1/console/auth/scopes/{id}", withRoleMiddlewares(authScopeHandler, roleSuperAdmin))
-	cmn.RegisterAPIRoute("/v1/console/auth/scopes/{id}", []string{"PUT", "PATCH", "DELETE"}, "Update and delete an authorization scope (superadmin)", tags, true, false, 200, authScopeRequest{}, StdAPIIDQuery{}, ConsoleResponse{})
+	http.Handle("GET /v1/console/auth/scopes/{id}", withRoleMiddlewares(authScopeHandler, roleSuperAdmin))
+	cmn.RegisterAPIRoute("/v1/console/auth/scopes/{id}", []string{"GET"}, "Read an authorization scope (superadmin)", tags, true, false, 200, nil, StdAPIIDQuery{}, authScopeResponse{})
+	http.Handle("POST /v1/console/auth/scopes/update", withRoleMiddlewares(authScopeUpdateHandler, roleSuperAdmin))
+	cmn.RegisterAPIRoute("/v1/console/auth/scopes/update", []string{"POST"}, "Update an authorization scope (superadmin)", tags, true, false, 200, authScopeRequest{}, nil, ConsoleResponse{})
+	http.Handle("POST /v1/console/auth/scopes/delete", withRoleMiddlewares(authScopeDeleteHandler, roleSuperAdmin))
+	cmn.RegisterAPIRoute("/v1/console/auth/scopes/delete", []string{"POST"}, "Delete an authorization scope (superadmin)", tags, true, false, 200, authScopeRequest{}, nil, ConsoleResponse{})
 }
