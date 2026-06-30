@@ -11,12 +11,12 @@ DBMS backends.
 Information Seed schema changes are represented in both fresh-install setup SQL
 and upgrade migration SQL for every supported DBMS:
 
-- PostgreSQL: `pkg/database/postgresql-setup.pgsql` and
-  `pkg/database/postgresql-migration-v1.8.pgsql`.
-- MySQL/MariaDB: `pkg/database/mysql-setup-v1.4.mysql` and
-  `pkg/database/mysql-migration-v1.8.mysql`.
-- SQLite: `pkg/database/sqlite-setup-v1.4.sqlite3`,
-  `pkg/database/sqlite-migration-v1.8.sqlite3`, and the guarded runtime
+- PostgreSQL: `pkg/database/db_migrations/postgresql-setup.pgsql` and
+  `pkg/database/db_migrations/postgresql-migration-v1.8.pgsql`.
+- MySQL/MariaDB: `pkg/database/db_migrations/mysql-setup-v1.4.mysql` and
+  `pkg/database/db_migrations/mysql-migration-v1.8.mysql`.
+- SQLite: `pkg/database/db_migrations/sqlite-setup-v1.4.sqlite3`,
+  `pkg/database/db_migrations/sqlite-migration-v1.8.sqlite3`, and the guarded runtime
   migrations in `pkg/database/sqlite_db.go` for SQLite versions that cannot run
   `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`.
 

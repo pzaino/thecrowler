@@ -1623,7 +1623,7 @@
         "timeout"
       ]
     },
-    "selenium": {
+    "vdi": {
       "title": "CROWler VDI access Configuration",
       "description": "This is the VDI configuration section, it's used to configure the VDI and tell the CROWler's Engine how to connect to it. It is the configuration for all the tools in the VDI image (for ex. selenium driver, Rbee etc.), to scale the CROWler web crawling capabilities, you can add multiple VDIs in an array format.",
       "type": "array",

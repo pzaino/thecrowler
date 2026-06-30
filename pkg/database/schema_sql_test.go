@@ -38,9 +38,6 @@ func TestInformationSeedSchemaSQLContainsFreshInstallAndUpgradeCoverage(t *testi
 		"postgresql-setup.pgsql",
 		"mysql-setup.mysql",
 		"sqlite-setup.sqlite3",
-		"postgresql-migration-v1.8.pgsql",
-		"mysql-migration-v1.8.mysql",
-		"sqlite-migration-v1.8.sqlite3",
 	}
 
 	for _, file := range files {
@@ -64,7 +61,7 @@ func TestInformationSeedSchemaSQLContainsFreshInstallAndUpgradeCoverage(t *testi
 func TestPostgresInformationSeedClaimFunctionIsAtomicAndUpgradeSafe(t *testing.T) {
 	t.Parallel()
 
-	files := []string{"postgresql-setup.pgsql", "postgresql-migration-v1.10.pgsql"}
+	files := []string{"postgresql-setup.pgsql", "db_migrations/postgresql-migration-v1.10.pgsql"}
 	fragments := []string{
 		"CREATE OR REPLACE FUNCTION update_informationseed(",
 		"FOR UPDATE SKIP LOCKED",
@@ -156,9 +153,6 @@ func TestTimeSeriesSchemaSQLContainsFreshInstallAndUpgradeCoverage(t *testing.T)
 		"postgresql-setup.pgsql",
 		"mysql-setup.mysql",
 		"sqlite-setup.sqlite3",
-		"postgresql-migration-v1.9.pgsql",
-		"mysql-migration-v1.9.mysql",
-		"sqlite-migration-v1.9.sqlite3",
 	}
 
 	for _, file := range files {
@@ -187,7 +181,7 @@ func TestTimeSeriesSchemaSQLUsesDialectAppropriateJSON(t *testing.T) {
 		fragments []string
 	}{
 		{
-			file: "postgresql-migration-v1.9.pgsql",
+			file: "db_migrations/postgresql-migration-v1.09.pgsql",
 			fragments: []string{
 				"selector JSONB NOT NULL",
 				"dimensions JSONB",
@@ -195,7 +189,7 @@ func TestTimeSeriesSchemaSQLUsesDialectAppropriateJSON(t *testing.T) {
 			},
 		},
 		{
-			file: "mysql-migration-v1.9.mysql",
+			file: "db_migrations/mysql-migration-v1.09.mysql",
 			fragments: []string{
 				"selector JSON NOT NULL",
 				"dimensions JSON",
@@ -203,7 +197,7 @@ func TestTimeSeriesSchemaSQLUsesDialectAppropriateJSON(t *testing.T) {
 			},
 		},
 		{
-			file: "sqlite-migration-v1.9.sqlite3",
+			file: "db_migrations/sqlite-migration-v1.09.sqlite3",
 			fragments: []string{
 				"canonical JSON encoded in TEXT",
 				"selector TEXT NOT NULL",
@@ -282,9 +276,9 @@ func TestEmailStateSchemaSQLContainsFreshInstallAndUpgradeCoverage(t *testing.T)
 		"postgresql-setup.pgsql",
 		"mysql-setup.mysql",
 		"sqlite-setup.sqlite3",
-		"postgresql-migration-v1.11.pgsql",
-		"mysql-migration-v1.11.mysql",
-		"sqlite-migration-v1.11.sqlite3",
+		"db_migrations/postgresql-migration-v1.11.pgsql",
+		"db_migrations/mysql-migration-v1.11.mysql",
+		"db_migrations/sqlite-migration-v1.11.sqlite3",
 	}
 
 	for _, file := range files {

@@ -63,7 +63,7 @@ func openMailStateStore(t *testing.T) (*DatabaseStateStore, *sql.DB) {
 	if _, err = database.Exec(`CREATE TABLE Sources (source_id INTEGER PRIMARY KEY); INSERT INTO Sources(source_id) VALUES (7);`); err != nil {
 		t.Fatalf("create source prerequisite: %v", err)
 	}
-	migration, err := os.ReadFile("../database/sqlite-migration-v1.11.sqlite3")
+	migration, err := os.ReadFile("../database/db_migrations/sqlite-migration-v1.11.sqlite3")
 	if err != nil {
 		t.Fatalf("read mail state migration: %v", err)
 	}

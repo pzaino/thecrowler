@@ -840,7 +840,7 @@ type Config struct {
 	API API `json:"api" yaml:"api"`
 
 	// VDIConfig configuration
-	Selenium []Selenium `json:"selenium" yaml:"selenium"`
+	Selenium []Selenium `json:"vdi" yaml:"vdi"`
 
 	// Prometheus configuration
 	Prometheus PrometheusConfig `json:"prometheus" yaml:"prometheus"`

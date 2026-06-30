@@ -241,7 +241,7 @@ func TestSQLiteTimeSeriesMigrationIsIdempotentAndEnforcesPortableKeys(t *testing
 		t.Fatalf("create time-series migration prerequisites: %v", err)
 	}
 
-	migration, err := os.ReadFile("sqlite-migration-v1.9.sqlite3")
+	migration, err := os.ReadFile("db_migrations/sqlite-migration-v1.09.sqlite3")
 	if err != nil {
 		t.Fatalf("read SQLite time-series migration: %v", err)
 	}

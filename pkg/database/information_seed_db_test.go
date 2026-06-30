@@ -672,7 +672,7 @@ func TestTimeSeriesInformationSeedLifecycleObservationsSQLite(t *testing.T) {
 	db := openSQLiteMemoryDB(t)
 	defer db.Close()
 	createInformationSeedTestSchema(t, db)
-	migration, err := os.ReadFile("sqlite-migration-v1.9.sqlite3")
+	migration, err := os.ReadFile("db_migrations/sqlite-migration-v1.09.sqlite3")
 	if err != nil {
 		t.Fatalf("read time-series migration: %v", err)
 	}

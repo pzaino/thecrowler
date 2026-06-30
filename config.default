@@ -380,7 +380,7 @@ api:
 # VDI pool
 # Provide 1+ entries; names should match docker-compose service names
 # --------------------------
-selenium:
+vdi:
   # chrome | chromium | firefox (depends on images available)
   - type: chrome
     # VDI host/container DNS name or IP (e.g., "crowler-vdi-1" if using docker-compose)

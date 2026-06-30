@@ -32,6 +32,8 @@ Please consider supporting this project! The CROWler is empowering thousands of 
 - Buying some official merchandise from the [CROWler Merch Store](https://www.redbubble.com/shop/ap/181179394)
 - Contacting the author for consultancies, paid support, or custom development.
 
+<b>Important note</b>: From release 2.0.0, the section `selenium` in the configuration file has been renamed to `vdi`. Please update your configuration file accordingly. The old `selenium` section is no longer supported.
+
 ## What is it?
 
 The CROWler is a self-hosted, event-driven Content Discovery and Intelligence development platform
