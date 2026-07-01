@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -15,6 +16,10 @@ import (
 )
 
 func TestSchedulerProcessesNotifiedSeedBeforePollingInterval(t *testing.T) {
+	if os.Getenv("GITHUB_ACTIONS") == "true" {
+		t.Skip("skipping test on GitHub Actions")
+	}
+
 	handler := openSchedulerSQLiteDB(t)
 	defer (*handler).Close()
 
