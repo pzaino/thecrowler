@@ -1720,6 +1720,60 @@ func TestJSPluginRegisterRemove(t *testing.T) {
 	}
 }
 
+func TestAddJSAPIIncludeReturnsLibPluginResult(t *testing.T) {
+	reg := NewJSPluginRegister()
+
+	caller := NewJSPlugin(`
+// name: caller
+// type: engine_plugin
+`)
+	caller.Name = "caller"
+	caller.PType = enginePlugin
+
+	lib := NewJSPlugin(`
+// name: utils
+// type: lib_plugin
+var utils = {
+	add: function(a, b) {
+		return a + b;
+	}
+};
+utils;
+`)
+	lib.Name = "utils"
+	lib.PType = libPlugin
+
+	reg.Register(caller.Name, *caller)
+	reg.Register(lib.Name, *lib)
+	registeredCaller, ok := reg.GetPlugin(caller.Name)
+	if !ok {
+		t.Fatalf("caller plugin should be registered")
+	}
+
+	vm := otto.New()
+	rt := &pluginRuntime{
+		current: &registeredCaller,
+		subs:    make(map[string]*pluginEventSub),
+	}
+
+	if err := addJSAPIInclude(vm, rt); err != nil {
+		t.Fatalf("addJSAPIInclude returned an error: %v", err)
+	}
+
+	value, err := vm.Run(`include("utils").add(2, 3);`)
+	if err != nil {
+		t.Fatalf("include returned an unusable library result: %v", err)
+	}
+
+	got, err := value.ToInteger()
+	if err != nil {
+		t.Fatalf("converting include result to integer: %v", err)
+	}
+	if got != 5 {
+		t.Fatalf("include result add(2, 3) = %d, want 5", got)
+	}
+}
+
 func TestNormalizeTimeoutMillis(t *testing.T) {
 	tests := []struct {
 		name    string

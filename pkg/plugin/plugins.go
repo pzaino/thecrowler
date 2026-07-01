@@ -2209,15 +2209,23 @@ func addJSAPIInclude(vm *otto.Otto, rt *pluginRuntime) error {
 		}
 
 		// only allow lib plugins
-		if callee.PType != "lib_plugin" {
+		if callee.PType != libPlugin {
 			v, _ := vm.ToValue(map[string]interface{}{
 				"error": "include() only supports lib_plugin",
 			})
 			return v
 		}
 
+		if err := rt.push(callee); err != nil {
+			v, _ := vm.ToValue(map[string]interface{}{
+				"error": err.Error(),
+			})
+			return v
+		}
+		defer rt.pop()
+
 		// execute script inside current VM
-		_, err = vm.Run(callee.Script)
+		result, err := vm.Run(callee.Script)
 		if err != nil {
 			v, _ := vm.ToValue(map[string]interface{}{
 				"error": err.Error(),
@@ -2225,8 +2233,7 @@ func addJSAPIInclude(vm *otto.Otto, rt *pluginRuntime) error {
 			return v
 		}
 
-		v, _ := vm.ToValue(true)
-		return v
+		return result
 	})
 }
 
