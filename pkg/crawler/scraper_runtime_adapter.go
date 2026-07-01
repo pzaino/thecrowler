@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"strings"
@@ -158,7 +159,15 @@ func (a *scraperRuntimeAdapter) RunAgent(ctx context.Context, req scraper.AgentR
 }
 
 func (a *scraperRuntimeAdapter) paramsWithPageInfo(parameters map[string]interface{}, data []byte) map[string]interface{} {
-	merged := make(map[string]interface{}, len(parameters)+1)
+	mergedCap := 1
+	if parameters != nil {
+		if len(parameters) >= math.MaxInt {
+			mergedCap = math.MaxInt
+		} else {
+			mergedCap += len(parameters)
+		}
+	}
+	merged := make(map[string]interface{}, mergedCap)
 	for k, v := range parameters {
 		merged[k] = v
 	}

@@ -140,7 +140,13 @@ func (cm CrowlerMeta) AddProducedByRule(names ...string) {
 		return
 	}
 	existing := cm.ProducedByRules()
-	seen := make(map[string]struct{}, len(existing)+len(names))
+	maxInt := int(^uint(0) >> 1)
+	var seen map[string]struct{}
+	if len(existing) > maxInt-len(names) {
+		seen = make(map[string]struct{})
+	} else {
+		seen = make(map[string]struct{}, len(existing)+len(names))
+	}
 	for _, name := range existing {
 		seen[name] = struct{}{}
 	}

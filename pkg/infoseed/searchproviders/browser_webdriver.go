@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"net/url"
 	"strconv"
@@ -572,7 +573,11 @@ func cloneMetadata(metadata map[string]interface{}) map[string]interface{} {
 	if metadata == nil {
 		return nil
 	}
-	clone := make(map[string]interface{}, len(metadata)+2)
+	capacity := len(metadata)
+	if capacity <= math.MaxInt-2 {
+		capacity += 2
+	}
+	clone := make(map[string]interface{}, capacity)
 	for key, value := range metadata {
 		clone[key] = value
 	}
