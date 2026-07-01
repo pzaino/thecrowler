@@ -113,8 +113,12 @@ func (cm CrowlerMeta) AddObjectType(labels ...string) {
 	if len(existing) > maxInt-len(labels) {
 		seen = make(map[string]struct{})
 	} else {
-		totalLen := len(existing) + len(labels) + 1
-		seen = make(map[string]struct{}, totalLen)
+		totalLen := len(existing) + len(labels)
+		if totalLen > maxInt-1 {
+			seen = make(map[string]struct{})
+		} else {
+			seen = make(map[string]struct{}, totalLen+1)
+		}
 	}
 	for _, label := range existing {
 		seen[label] = struct{}{}
