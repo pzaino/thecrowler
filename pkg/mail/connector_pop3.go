@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/textproto"
 	"net/url"
@@ -407,8 +408,13 @@ func (c *POP3Connector) ready(ctx context.Context) error {
 }
 
 func (c *POP3Connector) messageRef(mailbox Mailbox, message pop3Message) MessageRef {
+	var uid uint32
+	if (message.Number > 0) && (message.Number <= math.MaxUint32) {
+		uid = uint32(message.Number)
+	}
+
 	return MessageRef{Provider: pop3Provider, AccountID: c.config.AccountID, Mailbox: mailbox,
-		UID: uint32(message.Number), Version: pop3MessageVersion(message), Size: message.Size}
+		UID: uid, Version: pop3MessageVersion(message), Size: message.Size}
 }
 
 func isPOP3Mailbox(mailbox Mailbox) bool {
@@ -429,7 +435,7 @@ func findPOP3Message(messages []pop3Message, ref MessageRef) (pop3Message, bool)
 		return pop3Message{}, false
 	}
 	for _, message := range messages {
-		if message.Number > 0 && uint32(message.Number) == ref.UID {
+		if (message.Number > 0) && (message.Number <= math.MaxUint32) && (uint32(message.Number) == ref.UID) {
 			return message, true
 		}
 	}

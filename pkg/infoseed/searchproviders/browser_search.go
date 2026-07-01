@@ -182,10 +182,14 @@ func firstParameter(parameters map[string]string, fallback string, keys ...strin
 func parseBrowserSearchResults(doc *goquery.Document, selectors browserSearchSelectors, page, offset int) []Result {
 	containers := doc.Find(selectors.ResultContainer)
 	results := make([]Result, 0, containers.Length())
-	containers.Each(func(idx int, container *goquery.Selection) {
+	containers.Each(func(_ int, container *goquery.Selection) {
 		link := firstSelection(container, selectors.URL)
 		href := strings.TrimSpace(link.AttrOr("href", ""))
-		if href == "" || strings.HasPrefix(strings.ToLower(href), "javascript:") {
+		lowerHref := strings.ToLower(href)
+		if href == "" ||
+			strings.HasPrefix(lowerHref, "javascript:") ||
+			strings.HasPrefix(lowerHref, "data:") ||
+			strings.HasPrefix(lowerHref, "vbscript:") {
 			return
 		}
 		rank := offset + len(results) + 1

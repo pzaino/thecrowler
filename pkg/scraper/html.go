@@ -224,5 +224,11 @@ func ignoredAttribute(key string) bool {
 }
 
 func ignoredURL(url string) bool {
-	return url == "" || strings.HasPrefix(url, "data:") || strings.HasPrefix(url, "javascript:") || strings.HasPrefix(url, "mailto:") || strings.HasPrefix(url, "tel:")
+	normalizedURL := strings.ToLower(url)
+	return normalizedURL == "" ||
+		strings.HasPrefix(normalizedURL, "data:") ||
+		strings.HasPrefix(normalizedURL, "javascript:") ||
+		strings.HasPrefix(normalizedURL, "vbscript:") ||
+		strings.HasPrefix(normalizedURL, "mailto:") ||
+		strings.HasPrefix(normalizedURL, "tel:")
 }
