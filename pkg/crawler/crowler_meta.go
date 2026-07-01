@@ -108,18 +108,29 @@ func (cm CrowlerMeta) AddObjectType(labels ...string) {
 		return
 	}
 	existing := cm.ObjectTypes()
-	maxInt := int(^uint(0) >> 1)
+	const maxInt = int(^uint(0) >> 1)
 	existingLen := len(existing)
 	labelsLen := len(labels)
 	var seen map[string]struct{}
-	if existingLen >= maxInt || labelsLen >= maxInt-existingLen {
+	if existingLen >= maxInt {
 		seen = make(map[string]struct{})
 	} else {
-		capHint := existingLen + labelsLen
-		if capHint < maxInt {
+		if labelsLen >= 0 && existingLen <= maxInt-labelsLen {
+			capHint := existingLen + labelsLen
 			seen = make(map[string]struct{}, capHint+1)
 		} else {
-			seen = make(map[string]struct{})
+			remaining := maxInt - existingLen
+			if labelsLen >= remaining {
+				seen = make(map[string]struct{})
+			} else {
+				capHint := existingLen + labelsLen
+				if capHint < maxInt {
+					hint := capHint + 1
+					seen = make(map[string]struct{}, hint)
+				} else {
+					seen = make(map[string]struct{})
+				}
+			}
 		}
 	}
 	for _, label := range existing {
@@ -147,12 +158,25 @@ func (cm CrowlerMeta) AddProducedByRule(names ...string) {
 		return
 	}
 	existing := cm.ProducedByRules()
-	maxInt := int(^uint(0) >> 1)
+	const maxInt = int(^uint(0) >> 1)
+	existingLen := len(existing)
+	labelsLen := len(names)
 	var seen map[string]struct{}
-	if len(existing) > maxInt-len(names) {
+	if existingLen >= maxInt {
 		seen = make(map[string]struct{})
 	} else {
-		seen = make(map[string]struct{}, len(existing)+len(names))
+		remaining := maxInt - existingLen
+		if labelsLen >= remaining {
+			seen = make(map[string]struct{})
+		} else {
+			capHint := existingLen + labelsLen
+			if capHint < maxInt {
+				hint := capHint + 1
+				seen = make(map[string]struct{}, hint)
+			} else {
+				seen = make(map[string]struct{})
+			}
+		}
 	}
 	for _, name := range existing {
 		seen[name] = struct{}{}
