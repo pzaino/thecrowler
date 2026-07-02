@@ -2242,6 +2242,7 @@ func addJSAPIInclude(vm *otto.Otto, rt *pluginRuntime) error {
 			})
 			return v
 		}
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "plugin `%s` including lib plugin `%s`", caller.Name, callee.Name)
 
 		if err := rt.push(callee); err != nil {
 			v, _ := vm.ToValue(map[string]interface{}{
