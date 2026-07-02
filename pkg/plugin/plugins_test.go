@@ -1830,6 +1830,53 @@ lib && lib.normalizeParam("instagram-user");
 	}
 }
 
+func TestAddJSAPIIncludeCanResolveFromRegisteredPluginFallback(t *testing.T) {
+	reg := NewJSPluginRegister()
+
+	caller := NewJSPlugin(`
+// name: detached_api_caller
+// type: api_plugin
+`)
+	caller.Name = "detached_api_caller"
+	caller.PType = apiPlugin
+	caller.InRegisters = nil
+
+	lib := NewJSPlugin(`
+// name: fallback_lib_ig_common
+// type: lib_plugin
+var fallback_lib_ig_common = {
+	loaded: true
+};
+`)
+	lib.Name = "fallback_lib_ig_common"
+	lib.PType = libPlugin
+
+	reg.Register(lib.Name, *lib)
+
+	vm := otto.New()
+	rt := &pluginRuntime{
+		current: caller,
+		subs:    make(map[string]*pluginEventSub),
+	}
+
+	if err := addJSAPIInclude(vm, rt); err != nil {
+		t.Fatalf("addJSAPIInclude returned an error: %v", err)
+	}
+
+	value, err := vm.Run(`include("fallback_lib_ig_common").loaded;`)
+	if err != nil {
+		t.Fatalf("include could not resolve registered fallback library: %v", err)
+	}
+
+	got, err := value.ToBoolean()
+	if err != nil {
+		t.Fatalf("converting include result to boolean: %v", err)
+	}
+	if !got {
+		t.Fatalf("include fallback library loaded = false, want true")
+	}
+}
+
 func TestNormalizeTimeoutMillis(t *testing.T) {
 	tests := []struct {
 		name    string

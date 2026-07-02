@@ -72,6 +72,9 @@ const (
 var (
 	// TestMode indicates whether the system is running in test mode
 	TestMode = false
+
+	pluginRegistersMu sync.RWMutex
+	pluginRegisters   []*JSPluginRegister
 )
 
 var ErrPluginShuttingDown = fmt.Errorf("plugin is shutting down")
@@ -105,6 +108,20 @@ func (reg *JSPluginRegister) Register(name string, plugin JSPlugin) {
 
 	// Add the plugin name to the order list
 	reg.Order = append(reg.Order, name)
+
+	registerPluginRegister(reg)
+}
+
+func registerPluginRegister(reg *JSPluginRegister) {
+	if reg == nil {
+		return
+	}
+	pluginRegistersMu.Lock()
+	defer pluginRegistersMu.Unlock()
+	if slices.Contains(pluginRegisters, reg) {
+		return
+	}
+	pluginRegisters = append(pluginRegisters, reg)
 }
 
 // Remove removes a registered plugin from the registry
@@ -862,6 +879,16 @@ func (rt *pluginRuntime) depth() int {
 
 func resolvePluginFromCaller(caller *JSPlugin, name string) (*JSPlugin, bool) {
 	for _, reg := range caller.InRegisters {
+		if p, ok := reg.GetPlugin(name); ok {
+			return &p, true
+		}
+	}
+	pluginRegistersMu.RLock()
+	defer pluginRegistersMu.RUnlock()
+	for _, reg := range pluginRegisters {
+		if slices.Contains(caller.InRegisters, reg) {
+			continue
+		}
 		if p, ok := reg.GetPlugin(name); ok {
 			return &p, true
 		}
