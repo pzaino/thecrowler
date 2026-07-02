@@ -1774,6 +1774,62 @@ utils;
 	}
 }
 
+func TestAddJSAPIIncludeReturnsNamedLibWhenScriptResultUndefined(t *testing.T) {
+	reg := NewJSPluginRegister()
+
+	caller := NewJSPlugin(`
+// name: caller
+// type: api_plugin
+`)
+	caller.Name = "caller"
+	caller.PType = apiPlugin
+
+	lib := NewJSPlugin(`
+// name: lib_ig_common
+// type: lib_plugin
+var lib_ig_common = {
+	normalizeParam: function(value) {
+		return String(value);
+	}
+};
+`)
+	lib.Name = "lib_ig_common"
+	lib.PType = libPlugin
+
+	reg.Register(caller.Name, *caller)
+	reg.Register(lib.Name, *lib)
+	registeredCaller, ok := reg.GetPlugin(caller.Name)
+	if !ok {
+		t.Fatalf("caller plugin should be registered")
+	}
+
+	vm := otto.New()
+	rt := &pluginRuntime{
+		current: &registeredCaller,
+		subs:    make(map[string]*pluginEventSub),
+	}
+
+	if err := addJSAPIInclude(vm, rt); err != nil {
+		t.Fatalf("addJSAPIInclude returned an error: %v", err)
+	}
+
+	value, err := vm.Run(`
+var lib = include("lib_ig_common");
+lib && lib.normalizeParam("instagram-user");
+`)
+	if err != nil {
+		t.Fatalf("include returned an unusable named library: %v", err)
+	}
+
+	got, err := value.ToString()
+	if err != nil {
+		t.Fatalf("converting include result to string: %v", err)
+	}
+	if got != "instagram-user" {
+		t.Fatalf("include named lib normalizeParam() = %q, want instagram-user", got)
+	}
+}
+
 func TestNormalizeTimeoutMillis(t *testing.T) {
 	tests := []struct {
 		name    string

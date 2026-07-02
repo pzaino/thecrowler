@@ -2233,6 +2233,22 @@ func addJSAPIInclude(vm *otto.Otto, rt *pluginRuntime) error {
 			return v
 		}
 
+		if result.IsDefined() && !result.IsNull() {
+			return result
+		}
+
+		if callee.Name != "" {
+			if namedResult, err := vm.Get(callee.Name); err == nil && namedResult.IsDefined() && !namedResult.IsNull() {
+				return namedResult
+			}
+		}
+
+		if name != callee.Name {
+			if namedResult, err := vm.Get(name); err == nil && namedResult.IsDefined() && !namedResult.IsNull() {
+				return namedResult
+			}
+		}
+
 		return result
 	})
 }
