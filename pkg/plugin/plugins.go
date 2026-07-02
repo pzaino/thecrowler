@@ -264,7 +264,8 @@ func BulkLoadPlugins(config cfg.PluginConfig, pType string) ([]*JSPlugin, error)
 							pluginsSet = append(pluginsSet, plugin)
 						}
 					} else if pType == apiPlugin {
-						if plugin.PType == apiPlugin {
+						if plugin.PType == apiPlugin ||
+							plugin.PType == libPlugin {
 							pluginsSet = append(pluginsSet, plugin)
 						}
 					} else if pType == libPlugin {
