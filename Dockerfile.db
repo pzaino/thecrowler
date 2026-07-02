@@ -10,3 +10,15 @@ COPY ./pkg/database/postgresql-setup.pgsql /docker-entrypoint-initdb.d/postgresq
 
 # Make sure init script is executable
 RUN chmod +x /docker-entrypoint-initdb.d/init.sh
+
+# Copy database init scripts with safe ownership and permissions
+COPY --chown=postgres:postgres --chmod=0755 \
+  ./pkg/database/postgresql-setup.sh \
+  /docker-entrypoint-initdb.d/init.sh
+
+COPY --chown=postgres:postgres --chmod=0644 \
+  ./pkg/database/postgresql-setup.pgsql \
+  /docker-entrypoint-initdb.d/postgresql-setup.pgsql
+
+# Run as the postgres user instead of root
+USER postgres

@@ -52,7 +52,7 @@ A few important notes:
 
 ## 3. How agents fit into CROWler
 
-The CROWler is a web content discovery and data collection development platform. Its core features include crawling, scraping, action execution, technology detection, network information collection, file and image collection, API integration, rulesets, plugins, data storage, event-driven processing, and AI or traditional agents.
+The CROWler is a content discovery and data collection development platform. Its core features include crawling, scraping, action execution, technology detection, network information collection, file and image collection, API integration, rulesets, plugins, data storage, event-driven processing, and AI or traditional agents.
 
 Agents are the orchestration layer across those capabilities.
 
@@ -857,6 +857,34 @@ Authoring guidance:
 * Plugins must already be loaded by CROWler.
 * Plugins are JavaScript-based in the CROWler plugin model.
 * Use plugins for domain-specific transformations, enrichment, integration, or browser/runtime capabilities not directly represented by built-in actions.
+
+
+#### Information Seed candidate plugin contract
+
+Plugins registered with `event_type: information_seed_candidate` are used by
+Information Seed discovery as candidate policy gates. They receive `params.seed`,
+`params.candidate`, `params.metadata`, and `params.source_defaults`; they must
+return `accepted`, `score`, and `reason`, with optional `source_overrides`,
+`tags`, and `metadata`. Source overrides are intentionally limited to `name`,
+`priority`, `restricted`, `flags`, and `source_config` so plugins cannot change
+candidate URL, category, user ownership, or seed linkage. The seed-level default
+comes from `InformationSeed.config.source_config`; a plugin should return a
+complete replacement in `source_overrides.source_config` when the crawl config
+must use `params.candidate.url` or other candidate-specific values.
+
+The Information Seed runner enforces the configured plugin timeout, maximum JSON
+output size, output schema validation, and safe override validation before it
+applies either the plugin accept/reject decision or any source overrides. Empty
+plugin chains pass candidates through unchanged. `candidate_plugins` is both an
+ordered execution list and an allow-list: omitted means all registered candidate
+processors run in registration order; present means only matching named
+processors run, in the list order, with duplicate or unknown names ignored. Valid
+`accepted: false` output rejects only that candidate. Malformed output, timeout,
+oversize output, or unsafe overrides reject that candidate and are reported as
+processor errors; if no candidates remain, the seed is marked failed. See
+[`doc/plugins.md`](plugins.md#information-seed-candidate-plugins) and
+[`schemas/crowler-infoseed-candidate-plugin-schema.json`](../schemas/crowler-infoseed-candidate-plugin-schema.json)
+for the full contract.
 
 ### 11.6 `CreateEvent`
 

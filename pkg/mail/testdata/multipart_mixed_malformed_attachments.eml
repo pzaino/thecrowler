@@ -1,0 +1,24 @@
+From: sender@example.test
+To: recipient@example.test
+Subject: Malformed attachments
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="broken"
+
+--broken
+Content-Type: text/plain; charset=utf-8
+
+Readable body.
+--broken
+Content-Type: application/octet-stream; name="broken.bin"
+Content-Disposition: attachment; filename="broken.bin"
+Content-ID: <broken@example.test>
+Content-Transfer-Encoding: base64
+
+SGVsbG8=%%%
+--broken
+Content-Type: text/plain; name="notes.txt"
+Content-Disposition: attachment; filename
+Content-Transfer-Encoding: quoted-printable
+
+notes=ZZ
+--broken--

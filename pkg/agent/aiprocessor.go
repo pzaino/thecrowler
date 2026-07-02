@@ -22,6 +22,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 )

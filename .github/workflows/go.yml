@@ -29,14 +29,15 @@ jobs:
     - name: Test
       run: go test -v ./...
 
-    - name: Go report card
-      uses: creekorful/goreportcard-action@1f35ced8cdac2cba28c9a2f2288a16aacfd507f9 # v1.0
+    # Go report seems no longer working with GitHub Actions, so we are disabling it for now. See
+    #- name: Go report card
+    #  uses: creekorful/goreportcard-action@1f35ced8cdac2cba28c9a2f2288a16aacfd507f9 # v1.0
 
     - name: Harden-Runner
       uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
       with:
         disable-sudo: true
-        egress-policy: block
+        egress-policy: audit
         allowed-endpoints: >
           api.github.com:443
           dl.google.com:443

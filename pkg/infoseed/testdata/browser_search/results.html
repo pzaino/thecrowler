@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Hermetic Rendered Results</title>
+</head>
+<body>
+  <main id="results" aria-live="polite"></main>
+  <button id="next-page" type="button" hidden>Next page</button>
+  <script>
+    (() => {
+      const pages = [
+        [
+          {url: "https://alpha.example.test/article", title: "Alpha rendered result", snippet: "Rendered on fixture page one."},
+          {url: "https://beta.example.test/report", title: "Beta rendered result", snippet: "Second result on fixture page one."}
+        ],
+        [
+          {url: "https://gamma.example.test/news", title: "Gamma rendered result", snippet: "Rendered on fixture page two."},
+          {url: "https://delta.example.test/ignored-by-cap", title: "Delta capped result", snippet: "This result proves the candidate cap."}
+        ]
+      ];
+      const params = new URLSearchParams(location.search);
+      let page = Math.max(0, Math.min(pages.length - 1, Number(params.get("page") || "1") - 1));
+      const results = document.querySelector("#results");
+      const next = document.querySelector("#next-page");
+
+      function render() {
+        results.replaceChildren(...pages[page].map(item => {
+          const article = document.createElement("article");
+          article.className = "result";
+          const link = document.createElement("a");
+          link.className = "result-url";
+          link.href = item.url;
+          const title = document.createElement("h2");
+          title.className = "result-title";
+          title.textContent = item.title;
+          link.append(title);
+          const snippet = document.createElement("p");
+          snippet.className = "result-snippet";
+          snippet.textContent = item.snippet;
+          article.append(link, snippet);
+          return article;
+        }));
+        next.hidden = page + 1 >= pages.length;
+      }
+
+      next.addEventListener("click", () => {
+        page += 1;
+        params.set("page", String(page + 1));
+        history.pushState({}, "", `?${params.toString()}`);
+        render();
+      });
+      render();
+    })();
+  </script>
+</body>
+</html>

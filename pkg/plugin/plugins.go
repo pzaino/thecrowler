@@ -72,6 +72,9 @@ const (
 var (
 	// TestMode indicates whether the system is running in test mode
 	TestMode = false
+
+	pluginRegistersMu sync.RWMutex
+	pluginRegisters   []*JSPluginRegister
 )
 
 var ErrPluginShuttingDown = fmt.Errorf("plugin is shutting down")
@@ -105,6 +108,20 @@ func (reg *JSPluginRegister) Register(name string, plugin JSPlugin) {
 
 	// Add the plugin name to the order list
 	reg.Order = append(reg.Order, name)
+
+	registerPluginRegister(reg)
+}
+
+func registerPluginRegister(reg *JSPluginRegister) {
+	if reg == nil {
+		return
+	}
+	pluginRegistersMu.Lock()
+	defer pluginRegistersMu.Unlock()
+	if slices.Contains(pluginRegisters, reg) {
+		return
+	}
+	pluginRegisters = append(pluginRegisters, reg)
 }
 
 // Remove removes a registered plugin from the registry
@@ -247,7 +264,8 @@ func BulkLoadPlugins(config cfg.PluginConfig, pType string) ([]*JSPlugin, error)
 							pluginsSet = append(pluginsSet, plugin)
 						}
 					} else if pType == apiPlugin {
-						if plugin.PType == apiPlugin {
+						if plugin.PType == apiPlugin ||
+							plugin.PType == libPlugin {
 							pluginsSet = append(pluginsSet, plugin)
 						}
 					} else if pType == libPlugin {
@@ -444,6 +462,7 @@ func getPluginName(pluginBody, file string) string {
 
 // NewJSPlugin returns a new JS plugin
 func NewJSPlugin(script string) *JSPlugin {
+	const none = "none"
 	pName := ""
 	pDesc := ""
 	pType := vdiPlugin
@@ -453,7 +472,6 @@ func NewJSPlugin(script string) *JSPlugin {
 	apiEndPoint := ""
 	apiMethods := []string{}
 	apiAuth := ""
-	const none = "none"
 	apiAuthType := none
 	apiQueryJSON := ""
 	apiRequestJSON := ""
@@ -547,12 +565,12 @@ func NewJSPlugin(script string) *JSPlugin {
 			pDesc = strings.TrimSpace(value)
 		case "type":
 			pTypeStr := strings.ToLower(strings.TrimSpace(value))
-			if pTypeStr == vdiPlugin ||
-				pTypeStr == enginePlugin ||
-				pTypeStr == apiPlugin ||
-				pTypeStr == eventPlugin ||
-				pTypeStr == libPlugin ||
-				pTypeStr == testPlugin {
+			if (pTypeStr == vdiPlugin) ||
+				(pTypeStr == enginePlugin) ||
+				(pTypeStr == apiPlugin) ||
+				(pTypeStr == eventPlugin) ||
+				(pTypeStr == libPlugin) ||
+				(pTypeStr == testPlugin) {
 				pType = pTypeStr
 			} else {
 				cmn.DebugMsg(cmn.DbgLvlError, "Invalid plugin type '%s', defaulting to '%s'", pTypeStr, enginePlugin)
@@ -564,7 +582,7 @@ func NewJSPlugin(script string) *JSPlugin {
 			pVersion = strings.TrimSpace(value)
 		case "async":
 			asyncStr := strings.ToLower(strings.TrimSpace(value))
-			if asyncStr == "true" || asyncStr == "yes" || asyncStr == "1" {
+			if (asyncStr == "true") || (asyncStr == "yes") || (asyncStr == "1") {
 				pAsync = true
 			}
 		case "api_endpoint":
@@ -580,13 +598,13 @@ func NewJSPlugin(script string) *JSPlugin {
 					if method == "" {
 						continue
 					}
-					if method != httpMethodGet &&
-						method != "POST" &&
-						method != "PUT" &&
-						method != "DELETE" &&
-						method != "PATCH" &&
-						method != "HEAD" &&
-						method != "OPTIONS" {
+					if (method != httpMethodGet) &&
+						(method != "POST") &&
+						(method != "PUT") &&
+						(method != "DELETE") &&
+						(method != "PATCH") &&
+						(method != "HEAD") &&
+						(method != "OPTIONS") {
 						continue
 					}
 					apiMethods = append(apiMethods, method)
@@ -712,16 +730,16 @@ func parseMetadataKV(line string) (string, string, bool) {
 	}
 
 	for i, r := range keyPart {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r == '_' {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r == '_') {
 			continue
 		}
-		if i > 0 && r >= '0' && r <= '9' {
+		if (i > 0) && (r >= '0') && (r <= '9') {
 			continue
 		}
 		return "", "", false
 	}
 
-	key := strings.ToLower(keyPart)
+	key := strings.TrimSpace(strings.ToLower(keyPart))
 	if key == "" {
 		return "", "", false
 	}
@@ -768,6 +786,7 @@ func execVDIPlugin(p *JSPlugin, timeout int, params map[string]interface{}, wd *
 	// Run the script wd.ExecuteScript(script, args)
 	var result interface{}
 	var err error
+	/* TODO: I need to finish this part, but for now I will just call ExecuteScript directly, because the current VDI backend does not support calling POST /session/:id/execute/async directly.
 	if p.Async {
 		// Still call ExecuteScript for async scripts for now, because
 		// The current VDI backend still does not support calling
@@ -776,6 +795,8 @@ func execVDIPlugin(p *JSPlugin, timeout int, params map[string]interface{}, wd *
 	} else {
 		result, err = (*wd).ExecuteScript(p.Script, paramsArr)
 	}
+	*/
+	result, err = (*wd).ExecuteScript(p.Script, paramsArr)
 	if err != nil {
 		resultMap := cmn.ConvertInfToMap(result)
 		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, err)
@@ -859,6 +880,16 @@ func (rt *pluginRuntime) depth() int {
 
 func resolvePluginFromCaller(caller *JSPlugin, name string) (*JSPlugin, bool) {
 	for _, reg := range caller.InRegisters {
+		if p, ok := reg.GetPlugin(name); ok {
+			return &p, true
+		}
+	}
+	pluginRegistersMu.RLock()
+	defer pluginRegistersMu.RUnlock()
+	for _, reg := range pluginRegisters {
+		if slices.Contains(caller.InRegisters, reg) {
+			continue
+		}
 		if p, ok := reg.GetPlugin(name); ok {
 			return &p, true
 		}
@@ -1025,6 +1056,7 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]any, db *cdb.H
 		// This includes the timeout path where we panicked via Interrupt
 		return result, err
 	}
+	syncVMParams(vm, params)
 
 	// Gather result
 	resultRaw, err := vm.Get("result")
@@ -1500,6 +1532,66 @@ func DiscoverTestsFromPlugins(reg *JSPluginRegister) []TestFile {
 	return tests
 }
 
+func syncVMParams(vm *otto.Otto, params map[string]interface{}) {
+	if vm == nil || params == nil {
+		return
+	}
+	value, err := vm.Get("params")
+	if err != nil || !value.IsObject() {
+		return
+	}
+	exported, err := value.Export()
+	if err != nil {
+		return
+	}
+	updated, ok := exported.(map[string]interface{})
+	if !ok {
+		return
+	}
+	for key, val := range updated {
+		if key == "crowler_meta" {
+			params[key] = mergePluginCrowlerMeta(params[key], val)
+			continue
+		}
+		params[key] = val
+	}
+}
+
+func mergePluginCrowlerMeta(existing, updated interface{}) interface{} {
+	updatedMap, ok := updated.(map[string]interface{})
+	if !ok {
+		return updated
+	}
+	merged := map[string]interface{}{}
+	if existingMap, ok := existing.(map[string]interface{}); ok {
+		for key, val := range existingMap {
+			merged[key] = val
+		}
+	}
+	for key, val := range updatedMap {
+		if key == "object_type" {
+			existingLabels := pluginObjectTypes(merged[key])
+			updatedLabels := pluginObjectTypes(val)
+			labels := append([]string{}, existingLabels...)
+			seen := map[string]struct{}{}
+			for _, label := range labels {
+				seen[label] = struct{}{}
+			}
+			for _, label := range updatedLabels {
+				if _, ok := seen[label]; ok {
+					continue
+				}
+				labels = append(labels, label)
+				seen[label] = struct{}{}
+			}
+			merged[key] = labels
+			continue
+		}
+		merged[key] = val
+	}
+	return merged
+}
+
 func normalizeVMExport(exported interface{}) (map[string]interface{}, error) {
 	result := make(map[string]interface{})
 
@@ -1615,6 +1707,9 @@ func setCrowlerJSAPI(ctx context.Context, vm *otto.Otto,
 		return err
 	}
 	if err := addJSAPIInclude(vm, rt); err != nil {
+		return err
+	}
+	if err := addJSAPIAddObjectType(vm); err != nil {
 		return err
 	}
 
@@ -1958,6 +2053,109 @@ let mathLib = lib("math");
 let result = mathLib.call("add", { "a": 1, "b": 2 });
 console.log(result);
 */
+func addJSAPIAddObjectType(vm *otto.Otto) error {
+	return vm.Set("addObjectType", func(call otto.FunctionCall) otto.Value {
+		params, err := call.Otto.Get("params")
+		if err != nil || !params.IsObject() || len(call.ArgumentList) == 0 {
+			return otto.FalseValue()
+		}
+		exported, err := params.Export()
+		if err != nil {
+			return otto.FalseValue()
+		}
+		paramsMap, ok := exported.(map[string]interface{})
+		if !ok {
+			return otto.FalseValue()
+		}
+		cm, _ := paramsMap["crowler_meta"].(map[string]interface{})
+		if cm == nil {
+			cm = map[string]interface{}{}
+			paramsMap["crowler_meta"] = cm
+		}
+		addPluginObjectTypeLabels(cm, call.ArgumentList...)
+		_ = call.Otto.Set("params", paramsMap)
+		return otto.TrueValue()
+	})
+}
+
+func addPluginObjectTypeLabels(cm map[string]interface{}, args ...otto.Value) {
+	existing := pluginObjectTypes(cm["object_type"])
+	seen := map[string]struct{}{}
+	for _, label := range existing {
+		seen[label] = struct{}{}
+	}
+	for _, arg := range args {
+		if arg.IsString() {
+			label := pluginNormalizeObjectType(arg.String())
+			if label != "" {
+				if _, ok := seen[label]; !ok {
+					existing = append(existing, label)
+					seen[label] = struct{}{}
+				}
+			}
+			continue
+		}
+		if arg.IsObject() {
+			obj := arg.Object()
+			if class := obj.Class(); class == "Array" {
+				lengthValue, _ := obj.Get("length")
+				length, _ := lengthValue.ToInteger()
+				for i := int64(0); i < length; i++ {
+					item, _ := obj.Get(fmt.Sprintf("%d", i))
+					if item.IsString() {
+						label := pluginNormalizeObjectType(item.String())
+						if label != "" {
+							if _, ok := seen[label]; !ok {
+								existing = append(existing, label)
+								seen[label] = struct{}{}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	cm["object_type"] = existing
+}
+
+func pluginObjectTypes(value interface{}) []string {
+	var out []string
+	seen := map[string]struct{}{}
+	add := func(raw string) {
+		label := pluginNormalizeObjectType(raw)
+		if label == "" {
+			return
+		}
+		if _, ok := seen[label]; ok {
+			return
+		}
+		seen[label] = struct{}{}
+		out = append(out, label)
+	}
+	switch v := value.(type) {
+	case []interface{}:
+		for _, item := range v {
+			if raw, ok := item.(string); ok {
+				add(raw)
+			}
+		}
+	case []string:
+		for _, item := range v {
+			add(item)
+		}
+	case string:
+		add(v)
+	}
+	if out == nil {
+		return []string{}
+	}
+	return out
+}
+
+func pluginNormalizeObjectType(label string) string {
+	return strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(label)), "_"))
+}
+
 func addJSAPILib(vm *otto.Otto) error {
 
 	return vm.Set("lib", func(call otto.FunctionCall) otto.Value {
@@ -2039,15 +2237,24 @@ func addJSAPIInclude(vm *otto.Otto, rt *pluginRuntime) error {
 		}
 
 		// only allow lib plugins
-		if callee.PType != "lib_plugin" {
+		if callee.PType != libPlugin {
 			v, _ := vm.ToValue(map[string]interface{}{
 				"error": "include() only supports lib_plugin",
 			})
 			return v
 		}
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "plugin `%s` including lib plugin `%s`", caller.Name, callee.Name)
+
+		if err := rt.push(callee); err != nil {
+			v, _ := vm.ToValue(map[string]interface{}{
+				"error": err.Error(),
+			})
+			return v
+		}
+		defer rt.pop()
 
 		// execute script inside current VM
-		_, err = vm.Run(callee.Script)
+		result, err := vm.Run(callee.Script)
 		if err != nil {
 			v, _ := vm.ToValue(map[string]interface{}{
 				"error": err.Error(),
@@ -2055,8 +2262,23 @@ func addJSAPIInclude(vm *otto.Otto, rt *pluginRuntime) error {
 			return v
 		}
 
-		v, _ := vm.ToValue(true)
-		return v
+		if result.IsDefined() && !result.IsNull() {
+			return result
+		}
+
+		if callee.Name != "" {
+			if namedResult, err := vm.Get(callee.Name); err == nil && namedResult.IsDefined() && !namedResult.IsNull() {
+				return namedResult
+			}
+		}
+
+		if name != callee.Name {
+			if namedResult, err := vm.Get(name); err == nil && namedResult.IsDefined() && !namedResult.IsNull() {
+				return namedResult
+			}
+		}
+
+		return result
 	})
 }
 

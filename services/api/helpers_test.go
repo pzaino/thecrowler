@@ -136,6 +136,20 @@ func TestHandleErrorAndRespond(t *testing.T) {
 		// You can also read and check the response body if needed
 	})
 
+	t.Run("redacts mail authentication material", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		testErr := fmt.Errorf("password=hunter2 access_token=access-value refresh_token=refresh-value client_secret=client-value Authorization: Bearer bearer-value credential_ref=secret/mail/archive")
+
+		handleErrorAndRespond(rec, testErr, nil, "request failed: %v", http.StatusBadRequest, http.StatusOK)
+
+		body := rec.Body.String()
+		for _, secret := range []string{"hunter2", "access-value", "refresh-value", "client-value", "bearer-value", "secret/mail/archive"} {
+			if strings.Contains(body, secret) {
+				t.Fatalf("API error response leaked %q: %s", secret, body)
+			}
+		}
+	})
+
 	t.Run("success with results", func(t *testing.T) {
 		rec := httptest.NewRecorder()
 		results := ExampleResults{Message: "success"}
@@ -164,5 +178,82 @@ func TestHandleErrorAndRespond(t *testing.T) {
 		// Since json.Encoder does not expose direct control over the encoding process to trigger an error easily,
 		// this test scenario might be more challenging to implement directly without custom types or interfaces
 		// that can simulate an error during JSON encoding.
+	})
+}
+
+func TestExtractAPIPluginData(t *testing.T) {
+	t.Run("GET request uses declared plugin query parameters without requiring q", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/v1/plugin/ping?input=hello", nil)
+
+		data, httpCtx, err := extractAPIPluginData(req)
+		defer req.Body.Close() // nolint: errcheck // we don't care about this error code
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		object, ok := data.(map[string]interface{})
+		if !ok {
+			t.Fatalf("expected object data, got %T", data)
+		}
+		if object["input"] != "hello" {
+			t.Fatalf("expected input query value, got %#v", object["input"])
+		}
+		jsonHTTP, ok := object["http"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("expected jsonData.http to contain HTTP context, got %#v", object["http"])
+		}
+		if jsonHTTP["method"] != httpCtx["method"] || jsonHTTP["path"] != httpCtx["path"] || jsonHTTP["query"] != httpCtx["query"] {
+			t.Fatalf("expected jsonData.http to match HTTP context: %#v vs %#v", jsonHTTP, httpCtx)
+		}
+		if httpCtx["method"] != http.MethodGet || httpCtx["path"] != "/v1/plugin/ping" || httpCtx["query"] != "input=hello" {
+			t.Fatalf("unexpected HTTP context: %#v", httpCtx)
+		}
+	})
+
+	t.Run("GET request with repeated query values keeps all values", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/v1/plugin/ping?tag=a&tag=b", nil)
+
+		data, _, err := extractAPIPluginData(req)
+		defer req.Body.Close() // nolint: errcheck // we don't care about this error code
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		object, ok := data.(map[string]interface{})
+		if !ok {
+			t.Fatalf("expected object data, got %T", data)
+		}
+		values, ok := object["tag"].([]string)
+		if !ok {
+			t.Fatalf("expected repeated tag values, got %#v", object["tag"])
+		}
+		if len(values) != 2 || values[0] != "a" || values[1] != "b" {
+			t.Fatalf("unexpected tag values: %#v", values)
+		}
+	})
+
+	t.Run("POST request attaches HTTP context to JSON object body", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/v1/plugin/ping", strings.NewReader(`{"input":"hello"}`))
+
+		data, httpCtx, err := extractAPIPluginData(req)
+		defer req.Body.Close() // nolint: errcheck // we don't care about this error code
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		object, ok := data.(map[string]interface{})
+		if !ok {
+			t.Fatalf("expected object data, got %T", data)
+		}
+		if object["input"] != "hello" {
+			t.Fatalf("expected input body value, got %#v", object["input"])
+		}
+		jsonHTTP, ok := object["http"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("expected jsonData.http to contain HTTP context, got %#v", object["http"])
+		}
+		if jsonHTTP["method"] != httpCtx["method"] || jsonHTTP["path"] != httpCtx["path"] || jsonHTTP["query"] != httpCtx["query"] {
+			t.Fatalf("expected jsonData.http to match HTTP context: %#v vs %#v", jsonHTTP, httpCtx)
+		}
 	})
 }

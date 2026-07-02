@@ -22,12 +22,16 @@ deployed in a containerized environment.
 - [Usage](./usage.md)
   - [Configuration](./config.md)
   - [Environment Variables](./env_vars.md)
-  - [What are teh CROWler's "sources"?](./sources.md)
+  - [What are CROWler's "sources"?](./sources.md)
   - [Rulesets](./rulesets.md)
 - [API](./api.md)
 - [Plugins](./plugins.md)
-- [Traditional and modern Agents](./crowler_agents_reference.md)
-- [Agents YAML-first authoring guide](./agents_yaml_authoring.md)
+- [Traditional and modern Agents in the CROWler](./crowler_agents_reference.md)
 - [Contributing](../CONTRIBUTING.md)
 - [Test Policy](./test_policy.md)
 - [License](../LICENSE.md)
+
+## Feature guides
+
+* [Information Seed discovery](information_seed.md) — configure providers, submit seeds, filter candidates, create or link Sources, and inspect diagnostics.
+* [Time-series observations and aggregates](timeseries.md) — metric definitions, emitters, scope/dedupe/change behavior, aggregation, API queries, retention, privacy, portability, and runnable examples.

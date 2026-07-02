@@ -17,8 +17,10 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -28,7 +30,8 @@ import (
 )
 
 var (
-	config cfg.Config
+	config     cfg.Config
+	loadConfig = cfg.LoadConfig
 )
 
 // enum for the different types of services crowler, vdi and api
@@ -89,54 +92,66 @@ func genHealthURL(t serviceType, st string) string {
 	return rval
 }
 
-func main() {
-	configFile := flag.String("config", "config.yaml", "Path to the configuration file")
-	service := flag.String("service", "crowler", "Service to check (crowler, vdi, api)")
-	checkType := flag.String("type", healthEndpoint, "Type of check to perform (health, ready)")
-
-	cmn.InitLogger("healthCheck")
-
-	// Parse the command line arguments
-	flag.Parse()
-
-	// Load the configuration file
-	var err error
-	config, err = cfg.LoadConfig(*configFile)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, fmt.Sprintf("Health check failed to load config.yaml: %v", err))
-		os.Exit(1)
-	}
-
-	// Check the service
-	var serviceToCheck serviceType
-	switch *service {
+func parseService(service string) (serviceType, error) {
+	switch strings.ToLower(strings.TrimSpace(service)) {
 	case "crowler":
-		serviceToCheck = crowler
+		return crowler, nil
 	case "vdi":
-		serviceToCheck = vdi
+		return vdi, nil
 	case "api":
-		serviceToCheck = api
+		return api, nil
 	case "events":
-		serviceToCheck = events
+		return events, nil
 	default:
-		cmn.DebugMsg(cmn.DbgLvlError, "Unknown service: %s", *service)
-		os.Exit(1)
+		return crowler, fmt.Errorf("unknown service: %s", service)
+	}
+}
+
+func run(args []string, client *http.Client) error {
+	flags := flag.NewFlagSet("healthCheck", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	configFile := flags.String("config", "config.yaml", "Path to the configuration file")
+	service := flags.String("service", "crowler", "Service to check (crowler, vdi, api, events)")
+	checkType := flags.String("type", healthEndpoint, "Type of check to perform (health, ready)")
+
+	if err := flags.Parse(args); err != nil {
+		return err
 	}
 
-	// Define the health check endpoint
+	var err error
+	config, err = loadConfig(*configFile)
+	if err != nil {
+		return fmt.Errorf("load configuration: %w", err)
+	}
+
+	serviceToCheck, err := parseService(*service)
+	if err != nil {
+		return err
+	}
+
 	healthURL := genHealthURL(serviceToCheck, *checkType)
 	if healthURL == "" {
-		os.Exit(0)
+		return nil
 	}
 
-	// Perform the GET request
-	resp, err := http.Get(healthURL) //nolint:gosec // This is usually a localhost connection
-	if err != nil || resp.StatusCode != http.StatusOK {
-		cmn.DebugMsg(cmn.DbgLvlDebug, fmt.Sprintf("Health check failed for %s: %v", *service, err))
-		// If there's an error or the status is not 200, exit with a non-zero status
+	resp, err := client.Get(healthURL) //nolint:gosec // This is usually a localhost connection
+	if err != nil {
+		return fmt.Errorf("health check request for %s: %w", *service, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("health check for %s returned %s", *service, resp.Status)
+	}
+	return nil
+}
+
+func main() {
+	cmn.InitLogger("healthCheck")
+	if err := run(os.Args[1:], http.DefaultClient); err != nil {
+		if !errors.Is(err, flag.ErrHelp) {
+			cmn.DebugMsg(cmn.DbgLvlError, "Health check failed: %v", err)
+		}
 		os.Exit(1)
 	}
-
-	// If successful, exit with zero (healthy)
-	os.Exit(0)
 }

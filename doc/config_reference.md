@@ -43,6 +43,321 @@
   - **`collect_content`** *(boolean)*: This is a flag that tells the CROWler to collect the text content of a website. This is useful for AI datasets creation and knowledge bases.
   - **`collect_keywords`** *(boolean)*: This is a flag that tells the CROWler to collect the keywords of a website. This is useful for AI datasets creation and knowledge bases.
   - **`collect_metatags`** *(boolean)*: This is a flag that tells the CROWler to collect the metatags of a website. This is useful for AI datasets creation and knowledge bases.
+- **`information_seed`** *(object)*: Bounded information seed discovery configuration. The section is disabled by default and is designed to keep seed expansion constrained by explicit concurrency, query, candidate, timeout, provider allow-list, plugin timeout, and plugin output-size limits. The scheduler treats `infoseed.Runner` as the built-in Information Seed Agent (`system.infoseed.runner`), so every seed-run event includes a system-agent identity and a phase catalog that distinguishes built-in platform phases from user/plugin phases.
+  Per-seed `InformationSeed.config` may also control Source persistence with safe defaults: `create_sources: true`, `link_existing_sources: true`, `update_existing_source_config: true`, `disabled: false`, and `status: "new"`. Put default post-discovery crawler instructions in `InformationSeed.config.source_config`; candidate plugins can replace that complete object for one result through `source_overrides.source_config`. These policy fields are documented in the [Information seed lifecycle](information_seed_lifecycle.md#informationseedconfig-example).
+  - **`enabled`** *(boolean)*: Enables or disables information seed discovery.
+  - **`query_timer`** *(integer)*: Seconds between seed discovery cycles. Values are clamped to the safe range `1..86400`; invalid or missing values default to `300`.
+  - **`max_concurrent_seeds`** *(integer)*: Maximum seed discovery jobs processed concurrently. Values are clamped to `1..32`; invalid or missing values default to `2`.
+  - **`max_queries_per_seed`** *(integer)*: Maximum provider queries generated from each seed. Values are clamped to `1..100`; invalid or missing values default to `5`.
+  - **`max_candidates_per_seed`** *(integer)*: Maximum candidate Sources accepted from each seed. Values are clamped to `1..1000`; invalid or missing values default to `50`.
+  - **`retry_interval`** *(integer)*: Seconds to wait before retrying failed seed discovery work. Values are clamped to `1..86400`; invalid or missing values default to `60`.
+  - **`processing_timeout`** *(string)*: Maximum wall-clock time to process one seed. Uses duration strings such as `30 minutes` or `1 hour`; empty values default to `30 minutes`.
+  - **`providers`** *(object)*: Provider settings and credentials keyed by provider name. Each provider may define `provider`, `transport`, `browser`, `host`, `endpoint`, `api_key_label`, `api_key`, `api_id`, `api_secret`, `api_token`, `token`, `secret`, `username`, `password`, `timeout`, `rate_limit`, `max_requests`, `parameters`, `headers`, `page_size`, and `max_pages`. Provider `timeout` is clamped to `1..300`; provider `max_requests` is capped by `max_queries_per_seed`; `page_size` is clamped to `1..100`; and `max_pages` is clamped to `1..10` and cannot exceed `max_requests`. Use placeholders for sensitive values, list free/public provider blocks before paid/API-key integrations, and label commercial providers clearly. The `rss_feed` provider reads RSS/Atom documents, `common_crawl_index` reads Common Crawl CDX index JSON/JSONL responses, and `http_json` can front custom gateways or trusted CROWler federation peers.
+    - **`transport`** *(string)*: Provider transport. It defaults to `http`; `webdriver` must be selected explicitly. Any other value fails configuration validation. A non-empty `browser` block is rejected unless `transport: webdriver` is selected.
+    - **`browser_search` with `transport: http`**: Performs bounded HTML GET requests without JavaScript execution. CSS selectors come from `parameters`: `result_container_selector`, `url_selector`, `title_selector`, `snippet_selector`, `next_page_selector`, and `consent_page_selector`. The adapter adds the query as `q` when needed, follows links selected by `next_page_selector`, and returns an error rather than attempting to interact when `consent_page_selector` matches. Runtime caps are 10 seconds, 3 requests, 2 pages, and 20 results per page, even if normalized provider values are higher.
+    - **`browser_search` with `transport: webdriver`**: Leases an application-owned VDI session, executes referenced rules, and extracts candidates from rendered pages. The `browser` object accepts only the bounded, non-privileged fields below; browser type, driver paths, download directories, proxies, GPU/browser-reinforcement switches, and WebDriver capabilities cannot be overridden by an Information Seed provider.
+      - **`vdi_allow_list`** *(array of strings)*: Optional normalized VDI names eligible for the lease. Capacity remains shared with normal crawling; each active provider/query needs one lease, and waiting for a matching lease consumes the provider timeout.
+      - **`navigation_timeout`** *(integer)*: Per-navigation timeout in seconds, default `45`, clamped to `1..300`, and reduced at runtime when it exceeds the provider `timeout`.
+      - **`page_readiness_timeout`** *(integer)*: VDI/session readiness timeout in seconds, default `5`, clamped to `1..60`, and reduced at runtime when it exceeds the provider `timeout`.
+      - **`hbs_enabled`** *(boolean)*: Requests Human Behavior Simulation through the browser action runtime/Rbee path for each non-empty action phase. The built-in Information Seed action adapter does not configure a provider-specific Rbee URL, so leave this disabled unless an HBS-capable action dependency is injected.
+      - **`selenium_fallback`** *(boolean)*: If HBS/Rbee execution fails, retries that complete action phase once with Selenium. The retry consumes another browser operation. It has no effect when HBS is disabled; with the built-in adapter it must be enabled if HBS is selected and execution should continue after the unavailable Rbee path.
+      - **`initial_actions`**, **`consent_actions`**, **`query_actions`**, **`pagination_actions`** *(arrays of strings)*: Read-only action-rule references resolved from the loaded rules engine and run in that order. Each non-empty phase consumes one operation, regardless of the number of rules in the phase.
+      - **`scraping_rules`** *(array of strings)*: Required read-only scraping-rule references. Every result page scrape consumes one operation; extracted records must contain `url`, and may contain `title`, `snippet`, `rank`, `score`, and `metadata`.
+      - **`allowed_navigation_hosts`** *(array of strings)*: Exact DNS hosts or leading-wildcard patterns such as `*.example.invalid`. IP literals, `*`, URL strings, paths, and unsafe patterns fail validation. Initial and post-action navigation must remain on these hosts.
+      - **`max_pages`** *(integer)*: Browser result-page cap. It is bounded by provider `max_pages` and `max_requests`; runtime imposes a hard cap of `2`.
+      - **`max_requests`** *(integer)*: Shared WebDriver operation budget across initial navigation, action phases, each scrape, pagination, and HBS fallback. It is bounded by provider `max_requests` and global `max_queries_per_seed`; runtime imposes a hard cap of `64`.
+      - **`max_candidates`** *(integer)*: Returned browser-candidate cap, bounded by global `max_candidates_per_seed`; runtime imposes a hard cap of `40`.
+      - **`screenshot_on_error`** *(boolean)*: Validated and included only as redacted configuration metadata. Information Seed browser diagnostics remain count-and-duration only and do not persist screenshots, page HTML, URLs, headers, credentials, or error text.
+
+    Scraping public search result pages requires site-specific review of provider terms, robots directives, consent flows, anti-abuse controls, rate limits, privacy obligations, access controls, and applicable law. Prefer official APIs, never bypass controls, and keep automated tests credential-free and pointed only at controlled fixtures. The disabled companion files [`examples/information-seed-browser-search-fixture.yaml`](../examples/information-seed-browser-search-fixture.yaml) and [`examples/information-seed-browser-search-fixture-ruleset.yaml`](../examples/information-seed-browser-search-fixture-ruleset.yaml) use validated field names and the reserved `.test` namespace.
+  - **`provider_allow_list`** *(array of strings)*: Explicit provider allow-list. Entries are trimmed, lower-cased, and de-duplicated; configured providers are ignored unless their normalized key is present in the allow-list, so an empty allow-list prevents provider execution.
+  - **`plugin_limits`** *(object)*: Hard limits for plugins used by seed discovery.
+    - **`timeout`** *(integer)*: Plugin execution timeout in seconds. Values are clamped to `1..300`; invalid or missing values default to `30`.
+    - **`max_output_size_bytes`** *(integer)*: Maximum plugin output size in bytes. Values are clamped to `1..10485760`; invalid or missing values default to `1048576`.
+
+  Example global provider configuration with placeholder credentials:
+
+  ```yaml
+  information_seed:
+    enabled: true
+    query_timer: 300
+    max_concurrent_seeds: 2
+    max_queries_per_seed: 5
+    max_candidates_per_seed: 50
+    retry_interval: 60
+    processing_timeout: 30 minutes
+    provider_allow_list:
+      - rss_public_news
+      - common_crawl_latest
+      - public_json
+      # Paid/API-key providers; enable only with valid subscriptions.
+      # - brave_search
+      # - bing_web_search
+      # CROWler federation peers are templates requiring operator validation.
+      # - crowler_federation_peer
+      # Add browser_search only after explicit policy review; otherwise the
+      # configured browser_search block below remains disabled.
+      # - browser_search
+    providers:
+      # Free/public RSS or Atom feed adapter.
+      rss_public_news:
+        provider: rss_feed
+        host: https://www.cisa.gov
+        endpoint: /news.xml
+        timeout: 10
+        rate_limit: 30s
+        max_requests: 1
+        page_size: 10
+        max_pages: 1
+
+      # Free/public Common Crawl index adapter.
+      common_crawl_latest:
+        provider: common_crawl_index
+        host: https://index.commoncrawl.org
+        endpoint: /CC-MAIN-2026-18-index
+        parameters:
+          output: json
+          filter: status:200
+          collapse: urlkey
+        timeout: 15
+        rate_limit: 10s
+        max_requests: 1
+        page_size: 10
+        max_pages: 1
+
+      # Generic JSON adapter support is preserved for custom search gateways.
+      # Fixture-backed adapter shape; live host is a template requiring operator validation.
+      public_json:
+        provider: http_json
+        host: https://search-adapter.example.invalid
+        endpoint: /v1/search
+        api_key_label: api_key
+        api_key: ${INFORMATION_SEED_PUBLIC_JSON_API_KEY}
+        parameters:
+          locale: ${INFORMATION_SEED_SEARCH_LOCALE}
+          safe_search: ${INFORMATION_SEED_SAFE_SEARCH}
+        headers:
+          X-Request-ID: ${INFORMATION_SEED_REQUEST_ID}
+          X-Client-Token: ${INFORMATION_SEED_PUBLIC_JSON_CLIENT_TOKEN}
+        timeout: 30
+        rate_limit: "1"
+        max_requests: 5
+        page_size: 10
+        max_pages: 1
+
+      # Paid/API-key Brave Search API adapter. The adapter sends q=<query> and
+      # X-Subscription-Token: <api_key>. Host and endpoint are optional when
+      # using the public Brave API defaults shown here.
+      # Paid/API-key provider; template requiring operator validation.
+      brave_search:
+        provider: brave_search
+        host: https://api.search.brave.com
+        endpoint: /res/v1/web/search
+        api_key: ${INFORMATION_SEED_BRAVE_SEARCH_API_KEY}
+        parameters:
+          country: ${INFORMATION_SEED_BRAVE_COUNTRY}
+        timeout: 30
+        rate_limit: "1"
+        max_requests: 5
+        page_size: 10
+        max_pages: 1
+
+      # Paid/API-key Bing Web Search API adapter. The adapter sends q=<query> and
+      # Ocp-Apim-Subscription-Key: <api_key>. Host and endpoint are optional
+      # when using the public Bing Web Search API defaults shown here.
+      # Paid/API-key provider; template requiring operator validation.
+      bing_web_search:
+        provider: bing_web_search
+        host: https://api.bing.microsoft.com
+        endpoint: /v7.0/search
+        api_key: ${INFORMATION_SEED_BING_WEB_SEARCH_API_KEY}
+        headers:
+          X-Search-Trace: ${INFORMATION_SEED_BING_TRACE_ID}
+        timeout: 30
+        rate_limit: "1"
+        max_requests: 5
+        page_size: 10
+        max_pages: 1
+
+      # CROWler federation provider. The generic http_json parser shape is
+      # fixture-backed against CROWler SearchResult JSON, but the peer trust
+      # boundary, authentication token, data-sharing scope, and retention policy
+      # are templates requiring operator validation before enabling.
+      crowler_federation_peer:
+        provider: http_json
+        host: https://peer-crowler.example.invalid
+        endpoint: /v1/search/general
+        token: ${INFORMATION_SEED_CROWLER_FEDERATION_TOKEN}
+        headers:
+          User-Agent: CROWler federation information-seed example (+https://example.invalid/contact)
+        parameters:
+          federation_scope: public-index
+        timeout: 15
+        rate_limit: "0.2"
+        max_requests: 2
+        page_size: 10
+        max_pages: 1
+
+      # Explicit opt-in browser_search HTML adapter. Prefer Brave, Bing, or a
+      # custom http_json API gateway for production. Enable this only after a
+      # site-specific robots.txt, terms-of-service, consent, and rate-limit
+      # review. It is intended for controlled fixtures or policy-approved pages,
+      # not for bypassing search-engine access rules. Credentials are ignored by
+      # this adapter, sensitive headers/parameters are stripped, screenshots and
+      # debug output stay disabled, and runtime caps are stricter than generic
+      # providers (defaults: max_pages=1, max_requests=1, timeout=5s; hard caps:
+      # max_pages=2, max_requests=3, timeout=10s, page_size=20).
+      browser_search:
+        provider: browser_search
+        transport: http
+        host: https://search.example.invalid
+        endpoint: /search
+        parameters:
+          result_container_selector: article.result
+          url_selector: a.result-url
+          title_selector: h2.result-title
+          snippet_selector: p.result-snippet
+          next_page_selector: a[rel='next']
+          consent_page_selector: '#consent-wall'
+          safe_search: strict
+        timeout: 5
+        rate_limit: 1s
+        max_requests: 1
+        page_size: 10
+        max_pages: 1
+    plugin_limits:
+      timeout: 30
+      max_output_size_bytes: 1048576
+  ```
+
+  Per-seed query templates, selected provider names, Source persistence defaults,
+  default `source_config`, and `candidate_plugins` live in
+  `InformationSeed.config`; see
+  [Information seed lifecycle](information_seed_lifecycle.md#informationseedconfig-example)
+  for the complete seed-level contract.
+  Supported production provider adapters are selected by the provider block's
+  `provider` value. The runner currently recognizes `http_json` (also `json` or
+  `generic_json`), `rss_feed`, `common_crawl_index`, `brave_search`
+  (including Brave aliases), `bing_web_search` (including Bing aliases), and the
+  explicit opt-in `browser_search` HTML adapter. Unknown provider values intentionally fall back
+  to the generic JSON adapter so deployments can front additional search systems
+  with an internal gateway. Keep request limits conservative in production: set
+  `max_requests` no higher than the global `max_queries_per_seed`, keep
+  `max_pages` at `1` unless the provider quota has been reviewed, and prefer
+  `rate_limit: "1"` (one request per second), duration-based limits such as
+  `rate_limit: 30s`, or slower values for external APIs.
+
+  Minimal snippets for each supported provider, using placeholder credentials,
+  are shown below. Copy only the provider blocks you intend to enable and add the
+  corresponding provider names to `provider_allow_list`.
+
+  ```yaml
+  information_seed:
+    enabled: true
+    max_queries_per_seed: 5
+    max_candidates_per_seed: 50
+    provider_allow_list:
+      - rss_public_news
+      - common_crawl_latest
+      - public_json
+      # Paid/API-key providers; enable only with valid subscriptions.
+      # - brave_search
+      # - bing_web_search
+      # CROWler federation peers are templates requiring operator validation.
+      # - crowler_federation_peer
+      # browser_search requires an explicit site policy review before enabling.
+      # - approved_fixture_search
+    providers:
+      rss_public_news:
+        provider: rss_feed
+        host: https://www.cisa.gov
+        endpoint: /news.xml
+        timeout: 10
+        rate_limit: 30s
+        max_requests: 1
+        page_size: 10
+        max_pages: 1
+
+      common_crawl_latest:
+        provider: common_crawl_index
+        host: https://index.commoncrawl.org
+        endpoint: /CC-MAIN-2026-18-index
+        parameters:
+          output: json
+          filter: status:200
+        timeout: 15
+        rate_limit: 10s
+        max_requests: 1
+        page_size: 10
+        max_pages: 1
+
+      public_json:
+        provider: http_json
+        host: https://search-adapter.example.invalid
+        endpoint: /v1/search
+        api_key_label: api_key
+        api_key: ${INFORMATION_SEED_PUBLIC_JSON_API_KEY}
+        timeout: 30
+        rate_limit: "1"
+        max_requests: 5
+        page_size: 10
+        max_pages: 1
+
+      # Paid/API-key provider; template requiring operator validation.
+      brave_search:
+        provider: brave_search
+        host: https://api.search.brave.com
+        endpoint: /res/v1/web/search
+        api_key: ${INFORMATION_SEED_BRAVE_SEARCH_API_KEY}
+        timeout: 30
+        rate_limit: "1"
+        max_requests: 5
+        page_size: 10
+        max_pages: 1
+
+      # Paid/API-key provider; template requiring operator validation.
+      bing_web_search:
+        provider: bing_web_search
+        host: https://api.bing.microsoft.com
+        endpoint: /v7.0/search
+        api_key: ${INFORMATION_SEED_BING_WEB_SEARCH_API_KEY}
+        timeout: 30
+        rate_limit: "1"
+        max_requests: 5
+        page_size: 10
+        max_pages: 1
+
+      crowler_federation_peer:
+        provider: http_json
+        host: https://peer-crowler.example.invalid
+        endpoint: /v1/search/general
+        token: ${INFORMATION_SEED_CROWLER_FEDERATION_TOKEN}
+        timeout: 15
+        rate_limit: "0.2"
+        max_requests: 2
+        page_size: 10
+        max_pages: 1
+
+      approved_fixture_search:
+        provider: browser_search
+        transport: http
+        host: https://search.example.invalid
+        endpoint: /search
+        parameters:
+          result_container_selector: article.result
+          url_selector: a.result-url
+          title_selector: h2.result-title
+          snippet_selector: p.result-snippet
+          next_page_selector: a[rel='next']
+          consent_page_selector: '#consent-wall'
+          safe_search: strict
+        timeout: 5
+        rate_limit: 1s
+        max_requests: 1
+        page_size: 10
+        max_pages: 1
+  ```
+
 - **`api`** *(object)*: This is the configuration for the API (has no effect on the engine). It is the configuration for the API that the CROWler will use to communicate with the outside world.
   - **`host`** *(string)*: This is the host that the API will use to communicate with the outside world. Use 0.0.0.0 to make the API accessible from any IP address.
   - **`port`** *(integer)*: This is the port that the API will use to communicate with the outside world.
@@ -161,3 +476,75 @@
     - **`refresh`** *(integer)*
 
 - **`debug_level`** *(integer)*
+
+## `timeseries`
+
+The optional top-level `timeseries` section declares metric extraction, retention,
+aggregation, storage, cardinality, and privacy policy. It is disabled by default;
+configuration alone does **not** install or invoke a database/crawler emitter.
+Configurations that omit the section continue to receive the safe defaults below.
+
+```yaml
+timeseries:
+  enabled: false
+  defaults:
+    value_type: integer          # integer|decimal|duration|count|timestamp|boolean|string|json
+    aggregates: [count]          # count|sum|average|min|max|distinct_count|first|last|p50|p75|p90|p95|p99
+    bucket_interval: 1h          # none|1m|5m|15m|1h|1d|1w|1mo
+    time_basis: observed_at      # observed_at|event_at|source_timestamp
+    dedupe_scope: none           # none|source|object|global
+    failure_policy: log_skip     # log_skip|log|skip|retry|fail_indexing
+  retention:
+    raw: 30d
+    aggregated: 365d
+  aggregation:
+    enabled: false
+    schedule: 5m
+    batch_size: 1000
+    max_batches: 10
+    overlap: 15m
+  storage:
+    backend: postgres
+    table_prefix: timeseries
+    partitioning:
+      enabled: false
+      interval: 1d
+      precreate: 7
+  cardinality:
+    max_series_per_metric: 100000
+    max_dimensions: 10
+    max_values_per_dimension: 10000
+    overflow: drop              # drop|hash|overflow_bucket
+  privacy:
+    hash_only: false
+    store_value_text: false
+    max_value_length: 2048
+    redact_patterns: []         # Go-compatible regular expressions
+  metrics: []
+```
+
+Metric `source_kind` accepts `keyword`, `metatag`, `object_attribute`,
+`webobject`, `httpinfo`, `netinfo`, `screenshot`, `file`, `information_seed`,
+`information_seed_candidate`, `source_discovery`, `entity_membership`,
+`object_correlation`, `correlation_rule`, or `custom`. A metatag selector must
+contain `metatag_name`. An `object_attribute` selector must contain
+`attribute_key` and its `object_type` must be `webobject`, `httpinfo`, or
+`netinfo`; `object_type` is rejected for other source kinds.
+
+Selectors, timestamp selectors, and dimension selectors are open JSON/YAML
+objects. This keeps extraction paths declarative rather than embedding crawler
+domain fields in the configuration model. Every dimension requires a unique,
+non-empty `key` and a non-empty `selector`.
+
+A metric may override any default. `event_at` and `source_timestamp` metrics
+must provide `timestamp_selector`. Numeric aggregates (`sum`, `average`, `min`,
+`max`, and percentiles) require `integer`, `decimal`, `duration`, or `count` values.
+Boolean and JSON values support counting/distinct counting only; strings also
+support first/last. Metric keys must be non-empty and unique.
+
+Privacy and cardinality can be overridden per metric. `hash_only: true` cannot
+be combined with `store_value_text: true`; regular expressions are compiled at
+configuration validation time. Limits are bounded to prevent unbounded series,
+dimension, or value growth.
+
+The aggregation `overlap` duration controls how far an incremental run rewinds its durable checkpoint to include late observations. The events scheduler runs only when both top-level time-series and aggregation switches are enabled. Configuration metrics are declarative runtime input; registration uses `database.UpsertTimeSeriesMetric`, and the crawler startup/reload path calls `database.SyncConfiguredTimeSeriesMetrics` to synchronize YAML metrics into `TimeSeriesMetrics`. See [Time-series observations and aggregates](timeseries.md) for the complete delivered workflow and schema-valid examples.

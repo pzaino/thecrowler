@@ -8,6 +8,8 @@ import (
 	"strings"
 	"unicode"
 
+	"golang.org/x/text/unicode/norm"
+
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 )
 
@@ -20,6 +22,18 @@ type ParsedQuery struct {
 	offset    int
 	details   Details
 }
+
+// SQL returns the generated SQL statement.
+func (p ParsedQuery) SQL() string { return p.sqlQuery }
+
+// Params returns a copy of the generated SQL parameters.
+func (p ParsedQuery) Params() []any { return append([]any(nil), p.sqlParams...) }
+
+// Limit returns the requested result limit.
+func (p ParsedQuery) Limit() int { return p.limit }
+
+// Offset returns the requested result offset.
+func (p ParsedQuery) Offset() int { return p.offset }
 
 // tokens is a slice of tokens
 type tokens []token
@@ -99,7 +113,16 @@ func tokenize(input string) tokens {
 				continue
 			}
 
-			// Otherwise, treat as control specifier (e.g. &limit:10)
+			// Only reserved search modifiers start a control token. Other
+			// ampersands commonly occur in URL query strings and must remain
+			// part of the search value.
+			remainder := string(runes[i:])
+			if !hasControlModifierPrefix(remainder) {
+				currentToken.WriteRune(r)
+				continue
+			}
+
+			// Treat reserved modifiers as control specifiers (e.g. &limit:10).
 			handleRemainingToken(&tokens, &currentToken, specType)
 			currentToken.Reset()
 			currentToken.WriteRune(r)
@@ -129,6 +152,15 @@ func tokenize(input string) tokens {
 	handleRemainingToken(&tokens, &currentToken, specType)
 
 	return tokens
+}
+
+func hasControlModifierPrefix(value string) bool {
+	for _, name := range []string{"limit", "offset", "details"} {
+		if strings.HasPrefix(value, "&"+name+":") || strings.HasPrefix(value, "&"+name+"=") {
+			return true
+		}
+	}
+	return false
 }
 
 // toggleQuotes toggles the inQuotes flag and appends the current token to the tokens slice.
@@ -270,6 +302,7 @@ func (s *Searcher) ParseAdvancedQuery(queryBody string, input string, parsingTyp
 	// Parse the tokens and generate the query parts and query params:
 	var queryParts [][]string
 	var queryParams []interface{}
+	var queryEqParams []interface{}
 	var generalParamCounter = 1 // For general fields like example
 	const jObjAccOp = "->"
 	const jObjTxtAccOp = "->>"
@@ -289,49 +322,12 @@ func (s *Searcher) ParseAdvancedQuery(queryBody string, input string, parsingTyp
 			continue
 		}
 
-		// Normalize combined tokens like "term&limit:20"
-		if strings.Contains(tokenData.tValue, "&limit:") || strings.Contains(tokenData.tValue, "&offset=") {
-			var parts []string
-			if strings.Contains(tokenData.tValue, "&limit=") {
-				parts = strings.SplitN(tokenData.tValue, "&limit=", 2)
-			} else {
-				parts = strings.SplitN(tokenData.tValue, "&limit:", 2)
-			}
-			tokenData.tValue = parts[0] // update the real slice element
-			if len(parts) == 2 {
-				if n, err := strconv.Atoi(parts[1]); err == nil {
-					limit = n
-				}
-			}
-		}
-
-		if strings.Contains(tokenData.tValue, "&offset:") || strings.Contains(tokenData.tValue, "&offset=") {
-			var parts []string
-			if strings.Contains(tokenData.tValue, "&offset=") {
-				parts = strings.SplitN(tokenData.tValue, "&offset=", 2)
-			} else {
-				parts = strings.SplitN(tokenData.tValue, "&offset:", 2)
-			}
-			tokenData.tValue = parts[0]
-			if len(parts) == 2 {
-				if n, err := strconv.Atoi(parts[1]); err == nil {
-					offset = n
-				}
-			}
-		}
-
-		// Split numeric+specifier combos like "3&limit:5"
-		if strings.Contains(tokenData.tValue, "&") && !strings.HasPrefix(tokenData.tValue, "&") {
-			parts := strings.SplitN(tokenData.tValue, "&", 2)
-			tokenData.tValue = parts[0]
-			if len(parts) > 1 {
-				newToken := token{tValue: "&" + parts[1]}
-				// Safe insert: extend slice with the new token
-				tokensData = append(tokensData[:i+1], append([]token{newToken}, tokensData[i+1:]...)...)
-				// Re-run loop for the new token
-				continue
-			}
-		}
+		// Extract control modifiers before treating the remainder as search
+		// text. The tokenizer emits both spaced ("term &offset:2") and
+		// attached ("term&offset=2") forms as a token containing the complete
+		// modifier.
+		tokenData.tValue, limit = extractControlModifier(tokenData.tValue, "limit", limit)
+		tokenData.tValue, offset = extractControlModifier(tokenData.tValue, "offset", offset)
 
 		// Process the token
 		switch {
@@ -488,6 +484,10 @@ func (s *Searcher) ParseAdvancedQuery(queryBody string, input string, parsingTyp
 					queryGroup = 0
 					queryParts = append(queryParts, []string{condition})
 				} else {
+					group := queryParts[queryGroup]
+					if len(group) > 0 && !isLogicalOperator(group[len(group)-1]) {
+						queryParts[queryGroup] = append(group, "AND")
+					}
 					queryParts[queryGroup] = append(queryParts[queryGroup], condition)
 				}
 			}
@@ -496,7 +496,9 @@ func (s *Searcher) ParseAdvancedQuery(queryBody string, input string, parsingTyp
 				// Handle JSON field value (use a separate jsonParamCounter)
 				condition := fmt.Sprintf("%s LIKE $%d", currentField, generalParamCounter)
 				addCondition(condition)
-				queryParams = append(queryParams, "%"+tokenData.tValue+"%")
+				normalized := strings.ToLower(norm.NFC.String(tokenData.tValue))
+				queryParams = append(queryParams, "%"+normalized+"%")
+				queryEqParams = append(queryEqParams, normalized)
 				generalParamCounter++ // Increase the JSON parameter counter
 			} else {
 				// Handle non-JSON field value
@@ -507,7 +509,9 @@ func (s *Searcher) ParseAdvancedQuery(queryBody string, input string, parsingTyp
 				}
 				combinedCondition := "(" + strings.Join(conditions, " OR ") + ")"
 				addCondition(combinedCondition)
-				queryParams = append(queryParams, "%"+strings.ToLower(tokenData.tValue)+"%")
+				normalized := strings.ToLower(norm.NFC.String(tokenData.tValue))
+				queryParams = append(queryParams, "%"+normalized+"%")
+				queryEqParams = append(queryEqParams, normalized)
 				generalParamCounter++ // Increase the parameter counter for general fields
 			}
 		}
@@ -516,7 +520,8 @@ func (s *Searcher) ParseAdvancedQuery(queryBody string, input string, parsingTyp
 	// Add a separate group for keyword conditions (only use the first parameter set for keywords)
 	var keywordConditions []string
 	for i := 1; i < generalParamCounter; i++ {
-		keywordCondition := fmt.Sprintf("k.keyword LIKE $%d", i)
+		queryParams = append(queryParams, queryEqParams[i-1])
+		keywordCondition := fmt.Sprintf("k.keyword = $%d", len(queryParams))
 		keywordConditions = append(keywordConditions, keywordCondition)
 	}
 
@@ -551,6 +556,21 @@ func (s *Searcher) ParseAdvancedQuery(queryBody string, input string, parsingTyp
 	SQLQuery.details = details
 
 	return SQLQuery, nil
+}
+
+func extractControlModifier(value, name string, current int) (string, int) {
+	for _, separator := range []string{":", "="} {
+		marker := "&" + name + separator
+		if index := strings.Index(value, marker); index >= 0 {
+			modifierValue := value[index+len(marker):]
+			if parsed, err := strconv.Atoi(modifierValue); err == nil {
+				current = parsed
+				value = value[:index]
+			}
+			break
+		}
+	}
+	return value, current
 }
 
 func buildCombinedQuery(queryBody string, queryParts [][]string) string {

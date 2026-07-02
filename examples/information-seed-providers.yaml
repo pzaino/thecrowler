@@ -1,0 +1,189 @@
+information_seed:
+  enabled: true
+  query_timer: 300
+  max_concurrent_seeds: 2
+  max_queries_per_seed: 3
+  max_candidates_per_seed: 20
+  retry_interval: 300
+  processing_timeout: 30 minutes
+
+  # Free/public providers are listed first. Keep HTML result-page providers
+  # disabled until legal/policy review confirms the target search engine allows
+  # automated access for your use case.
+  provider_allow_list:
+    - rss_public_news
+    - common_crawl_latest
+    - public_json_adapter
+    # Enable only after explicit policy review and conservative rate limits.
+    # - duckduckgo_html_search
+    # - bing_html_search
+    # Paid/API-key providers; enable only with valid subscriptions and contracts.
+    # - brave_search_api
+    # - bing_web_search_api
+    # - google_cse_api
+    # - shodan_api
+    # CROWler federation peer; template requiring operator validation.
+    # - crowler_federation_peer
+
+  providers:
+    # --- Free/public providers -------------------------------------------------
+    rss_public_news:
+      provider: rss_feed
+      host: https://www.cisa.gov
+      endpoint: /news.xml
+      timeout: 10
+      rate_limit: 30s
+      max_requests: 1
+      page_size: 10
+      max_pages: 1
+
+    common_crawl_latest:
+      provider: common_crawl_index
+      host: https://index.commoncrawl.org
+      # Update the collection ID when Common Crawl publishes a newer index.
+      endpoint: /CC-MAIN-2026-18-index
+      parameters:
+        output: json
+        filter: status:200
+        collapse: urlkey
+      timeout: 15
+      rate_limit: 10s
+      max_requests: 1
+      page_size: 10
+      max_pages: 1
+
+    # Fixture-backed adapter shape; live host is a template requiring operator validation.
+    public_json_adapter:
+      provider: http_json
+      host: https://search-adapter.example.invalid
+      endpoint: /v1/search
+      timeout: 30
+      rate_limit: "1"
+      max_requests: 3
+      page_size: 10
+      max_pages: 1
+
+    # Public HTML search result page examples. These are intentionally omitted
+    # from the allow-list above until policy review confirms automated access is
+    # permitted, robots/terms/consent expectations are satisfied, and the rate
+    # limits below are appropriate for the deployment.
+    # Template requiring operator validation; do not enable from this example alone.
+    duckduckgo_html_search:
+      provider: browser_search
+      host: https://duckduckgo.com
+      endpoint: /html/
+      parameters:
+        result_container_selector: .result
+        url_selector: a.result__a
+        title_selector: a.result__a
+        snippet_selector: .result__snippet
+        next_page_selector: .result--more a.result--more__btn
+        consent_page_selector: '#consent, .modal--popout'
+        kl: us-en
+        kp: "1"
+      headers:
+        User-Agent: CROWler information-seed compliance-reviewed example (+https://example.invalid/contact)
+      timeout: 5
+      rate_limit: 30s
+      max_requests: 1
+      page_size: 10
+      max_pages: 1
+
+    # Template requiring operator validation; do not enable from this example alone.
+    bing_html_search:
+      provider: browser_search
+      host: https://www.bing.com
+      endpoint: /search
+      parameters:
+        result_container_selector: li.b_algo
+        url_selector: h2 a
+        title_selector: h2
+        snippet_selector: .b_caption p
+        next_page_selector: a.sb_pagN
+        consent_page_selector: '#bnp_container, #bnp_ttc_div'
+        mkt: en-US
+        safeSearch: Strict
+      headers:
+        User-Agent: CROWler information-seed compliance-reviewed example (+https://example.invalid/contact)
+      timeout: 5
+      rate_limit: 30s
+      max_requests: 1
+      page_size: 10
+      max_pages: 1
+
+    # --- Paid/API-key or commercial integrations ------------------------------
+    # Fixture-backed adapter shape; live API subscription is a template requiring operator validation.
+    brave_search_api:
+      provider: brave_search
+      host: https://api.search.brave.com
+      endpoint: /res/v1/web/search
+      api_key: ${INFORMATION_SEED_BRAVE_SEARCH_API_KEY}
+      timeout: 30
+      rate_limit: "1"
+      max_requests: 3
+      page_size: 10
+      max_pages: 1
+
+    # Fixture-backed adapter shape; live API subscription is a template requiring operator validation.
+    bing_web_search_api:
+      provider: bing_web_search
+      host: https://api.bing.microsoft.com
+      endpoint: /v7.0/search
+      api_key: ${INFORMATION_SEED_BING_WEB_SEARCH_API_KEY}
+      timeout: 30
+      rate_limit: "1"
+      max_requests: 3
+      page_size: 10
+      max_pages: 1
+
+    # Generic HTTP JSON template requiring operator validation.
+    google_cse_api:
+      provider: http_json
+      host: https://www.googleapis.com
+      endpoint: /customsearch/v1
+      api_key_label: key
+      api_key: ${INFORMATION_SEED_GOOGLE_CSE_API_KEY}
+      parameters:
+        cx: ${INFORMATION_SEED_GOOGLE_CSE_ID}
+        safe: active
+      timeout: 30
+      rate_limit: "1"
+      max_requests: 3
+      page_size: 10
+      max_pages: 1
+
+    # Generic HTTP JSON template requiring operator validation.
+    shodan_api:
+      provider: http_json
+      host: https://api.shodan.io
+      endpoint: /shodan/host/search
+      api_key_label: key
+      api_key: ${INFORMATION_SEED_SHODAN_API_KEY}
+      timeout: 30
+      rate_limit: "1"
+      max_requests: 3
+      page_size: 10
+      max_pages: 1
+
+    # CROWler federation peer. The generic http_json parser shape is
+    # fixture-backed against CROWler-style SearchResult JSON, but this live peer,
+    # trust boundary, token, data-sharing scope, and retention policy are a
+    # template requiring operator validation before enabling.
+    crowler_federation_peer:
+      provider: http_json
+      host: https://peer-crowler.example.invalid
+      endpoint: /v1/search/general
+      token: ${INFORMATION_SEED_CROWLER_FEDERATION_TOKEN}
+      headers:
+        User-Agent: CROWler federation information-seed example (+https://example.invalid/contact)
+      parameters:
+        federation_scope: public-index
+      timeout: 15
+      rate_limit: "0.2"
+      max_requests: 2
+      page_size: 10
+      max_pages: 1
+
+  plugin_limits:
+    timeout: 30
+    max_output_size_bytes: 1048576

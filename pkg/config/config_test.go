@@ -20,6 +20,7 @@ import (
 	"os"
 	"reflect"
 	"runtime"
+	"strings"
 	"testing"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
@@ -1222,7 +1223,7 @@ func TestConfigString(t *testing.T) {
 	}
 
 	// Define the expected string representation of the config
-	expected := "Config{Remote: {https://example.com /api 8080 us-west-1 mytoken  0  }, Database: {  0 testuser testpassword  0 0   0 0}, Crawler: {0 0 []  false false <nil>     0 0 false false 0 0 0 0 0 0  0  0 0 0  false  false     false false false false false false false false false false false false false false false false [] false 0 false false { 0 0     0 0 0}}, API: {  0 0 0 false false false false     false 0 0 0 false [] {false 0 []} false}, Selenium: [{    chrome  4444  false false     {0 0     0 0 0}}], RulesetsSchemaPath: path/to/schema, Rulesets: [], ImageStorageAPI: {  0    0  }, FileStorageAPI: {  0    0  }, HTTPHeaders: {false 0 false {false false false false false false false false false false false false false false false false} []}, NetworkInfo: {{false 0 } {false 0 } {false 0 } {false 0 { 0} false false false false false false  false false [] [] []    0 0 0   false 0  false  false 0 [] []} {false    0 } {  }}, OS: linux, DebugLevel: 1}"
+	expected := "Config{Remote: {https://example.com /api 8080 us-west-1 mytoken  0  }, Database: {  0 testuser testpassword  0 0   0 0}, Crawler: {0 0 []  false false <nil>     0 0 false false 0 0 0 0 0 0  0  0 0 0  false  false     false false false false false false false false false false false false false false false false [] false 0 false false { 0 0     0 0 0}}, API: {  0 0 0 false false false false     false 0 0 0 false [] {false []} {false 0 []} false {false [] 0 0 0} {false     0 {false} {false   }}}, Selenium: [{    chrome  4444  false false     {0 0     0 0 0}}], RulesetsSchemaPath: path/to/schema, Rulesets: [], ImageStorageAPI: {  0    0  }, FileStorageAPI: {  0    0  }, HTTPHeaders: {false 0 false {false false false false false false false false false false false false false false false false} []}, NetworkInfo: {{false 0 } {false 0 } {false 0 } {false 0 { 0} false false false false false false  false false [] [] []    0 0 0   false 0  false  false 0 [] []} {false    0 } {  }}, OS: linux, DebugLevel: 1}"
 
 	// Call the String method on the config
 	result := config.String()
@@ -1866,5 +1867,519 @@ func TestGeoLookupConfigIsEmpty(t *testing.T) {
 	// Check if the IsEmpty function returns true for an empty config
 	if !isEmpty {
 		t.Errorf("Expected IsEmpty to return true for an empty GeoLookupConfig")
+	}
+}
+
+func TestInformationSeedDefaultsAndValidation(t *testing.T) {
+	cfg := NewConfig()
+	if cfg == nil {
+		t.Fatal("expected NewConfig to return non-nil config")
+	}
+	if cfg.InformationSeed.Enabled {
+		t.Fatal("expected information_seed.enabled default to false")
+	}
+	if cfg.InformationSeed.QueryTimer != informationSeedDefaultQueryTimer {
+		t.Errorf(errExpected, informationSeedDefaultQueryTimer, cfg.InformationSeed.QueryTimer)
+	}
+	if cfg.InformationSeed.PluginLimits.MaxOutputSizeBytes != informationSeedDefaultPluginOutputSize {
+		t.Errorf(errExpected, informationSeedDefaultPluginOutputSize, cfg.InformationSeed.PluginLimits.MaxOutputSizeBytes)
+	}
+
+	cfg.InformationSeed = InformationSeedConfig{
+		Enabled:              true,
+		QueryTimer:           -1,
+		MaxConcurrentSeeds:   1000,
+		MaxQueriesPerSeed:    2,
+		MaxCandidatesPerSeed: 0,
+		RetryInterval:        999999,
+		ProcessingTimeout:    " 1 hour ",
+		ProviderAllowList:    []string{" Example ", "example", " plugin "},
+		Providers: map[string]InformationSeedProviderConfig{
+			" Example ": {
+				Host:        " https://api.example.com ",
+				Endpoint:    " /v1/search ",
+				APIKeyLabel: " X-API-Key ",
+				Timeout:     999,
+				MaxRequests: 999,
+				Parameters:  map[string]string{" api_key ": " ${INFORMATION_SEED_API_KEY} ", "": "ignored"},
+				Headers:     map[string]string{" Authorization ": " Bearer ${INFORMATION_SEED_TOKEN} ", " ": "ignored"},
+				PageSize:    999,
+				MaxPages:    999,
+			},
+			"blocked": {
+				Timeout:     10,
+				MaxRequests: 1,
+			},
+		},
+		PluginLimits: InformationSeedPluginLimitsConfig{
+			Timeout:            0,
+			MaxOutputSizeBytes: 99999999,
+		},
+	}
+
+	cfg.validateInformationSeed()
+
+	if cfg.InformationSeed.QueryTimer != informationSeedDefaultQueryTimer {
+		t.Errorf(errExpected, informationSeedDefaultQueryTimer, cfg.InformationSeed.QueryTimer)
+	}
+	if cfg.InformationSeed.MaxConcurrentSeeds != informationSeedMaxConcurrentSeeds {
+		t.Errorf(errExpected, informationSeedMaxConcurrentSeeds, cfg.InformationSeed.MaxConcurrentSeeds)
+	}
+	if cfg.InformationSeed.MaxQueriesPerSeed != 2 {
+		t.Errorf(errExpected, 2, cfg.InformationSeed.MaxQueriesPerSeed)
+	}
+	if cfg.InformationSeed.MaxCandidatesPerSeed != informationSeedDefaultMaxCandidatesPerSeed {
+		t.Errorf(errExpected, informationSeedDefaultMaxCandidatesPerSeed, cfg.InformationSeed.MaxCandidatesPerSeed)
+	}
+	if cfg.InformationSeed.RetryInterval != informationSeedMaxRetryInterval {
+		t.Errorf(errExpected, informationSeedMaxRetryInterval, cfg.InformationSeed.RetryInterval)
+	}
+	if cfg.InformationSeed.ProcessingTimeout != "1 hour" {
+		t.Errorf(errExpected, "1 hour", cfg.InformationSeed.ProcessingTimeout)
+	}
+	if !reflect.DeepEqual(cfg.InformationSeed.ProviderAllowList, []string{"example", "plugin"}) {
+		t.Errorf(errExpected, []string{"example", "plugin"}, cfg.InformationSeed.ProviderAllowList)
+	}
+	if _, exists := cfg.InformationSeed.Providers["blocked"]; exists {
+		t.Fatal("expected provider outside allow-list to be removed")
+	}
+	provider, exists := cfg.InformationSeed.Providers["example"]
+	if !exists {
+		t.Fatal("expected normalized example provider to remain")
+	}
+	if provider.Provider != "example" {
+		t.Errorf(errExpected, "example", provider.Provider)
+	}
+	if provider.Timeout != informationSeedMaxPluginTimeout {
+		t.Errorf(errExpected, informationSeedMaxPluginTimeout, provider.Timeout)
+	}
+	if provider.MaxRequests != cfg.InformationSeed.MaxQueriesPerSeed {
+		t.Errorf(errExpected, cfg.InformationSeed.MaxQueriesPerSeed, provider.MaxRequests)
+	}
+	if provider.PageSize != informationSeedMaxProviderPageSize {
+		t.Errorf(errExpected, informationSeedMaxProviderPageSize, provider.PageSize)
+	}
+	if provider.MaxPages != provider.MaxRequests {
+		t.Errorf(errExpected, provider.MaxRequests, provider.MaxPages)
+	}
+	if !reflect.DeepEqual(provider.Parameters, map[string]string{"api_key": "${INFORMATION_SEED_API_KEY}"}) {
+		t.Errorf(errExpected, map[string]string{"api_key": "${INFORMATION_SEED_API_KEY}"}, provider.Parameters)
+	}
+	if !reflect.DeepEqual(provider.Headers, map[string]string{"Authorization": "Bearer ${INFORMATION_SEED_TOKEN}"}) {
+		t.Errorf(errExpected, map[string]string{"Authorization": "Bearer ${INFORMATION_SEED_TOKEN}"}, provider.Headers)
+	}
+	if cfg.InformationSeed.PluginLimits.Timeout != informationSeedDefaultPluginTimeout {
+		t.Errorf(errExpected, informationSeedDefaultPluginTimeout, cfg.InformationSeed.PluginLimits.Timeout)
+	}
+	if cfg.InformationSeed.PluginLimits.MaxOutputSizeBytes != informationSeedMaxPluginOutputSize {
+		t.Errorf(errExpected, informationSeedMaxPluginOutputSize, cfg.InformationSeed.PluginLimits.MaxOutputSizeBytes)
+	}
+
+	cfg.InformationSeed.ProviderAllowList = nil
+	cfg.InformationSeed.Providers = map[string]InformationSeedProviderConfig{
+		"example": {Timeout: 10, MaxRequests: 1},
+	}
+	cfg.validateInformationSeed()
+	if len(cfg.InformationSeed.Providers) != 0 {
+		t.Fatalf("expected empty information_seed.provider_allow_list to remove configured providers, got %v", cfg.InformationSeed.Providers)
+	}
+}
+
+func TestInformationSeedProviderMapCopyIsolation(t *testing.T) {
+	original := NewConfig()
+	original.InformationSeed.ProviderAllowList = []string{"example"}
+	original.InformationSeed.Providers = map[string]InformationSeedProviderConfig{
+		"example": {
+			Parameters: map[string]string{"api_key": "${INFORMATION_SEED_API_KEY}"},
+			Headers:    map[string]string{"Authorization": "Bearer ${INFORMATION_SEED_TOKEN}"},
+			Browser: InformationSeedBrowserConfig{
+				VDIAllowList:           []string{"primary"},
+				InitialActions:         []string{"init"},
+				ConsentActions:         []string{"consent"},
+				QueryActions:           []string{"query"},
+				PaginationActions:      []string{"next"},
+				ScrapingRules:          []string{"extract"},
+				AllowedNavigationHosts: []string{"example.com"},
+			},
+		},
+	}
+
+	clone := DeepCopyConfig(original)
+	clone.InformationSeed.Providers["example"].Parameters["api_key"] = "changed"
+	clone.InformationSeed.Providers["example"].Headers["Authorization"] = "changed"
+	cloneProvider := clone.InformationSeed.Providers["example"]
+	cloneProvider.Browser.VDIAllowList[0] = "changed"
+	cloneProvider.Browser.InitialActions[0] = "changed"
+	cloneProvider.Browser.ConsentActions[0] = "changed"
+	cloneProvider.Browser.QueryActions[0] = "changed"
+	cloneProvider.Browser.PaginationActions[0] = "changed"
+	cloneProvider.Browser.ScrapingRules[0] = "changed"
+	cloneProvider.Browser.AllowedNavigationHosts[0] = "changed"
+
+	if got := original.InformationSeed.Providers["example"].Parameters["api_key"]; got != "${INFORMATION_SEED_API_KEY}" {
+		t.Fatalf("parameters map was aliased, got %q", got)
+	}
+	if got := original.InformationSeed.Providers["example"].Headers["Authorization"]; got != "Bearer ${INFORMATION_SEED_TOKEN}" {
+		t.Fatalf("headers map was aliased, got %q", got)
+	}
+	originalBrowser := original.InformationSeed.Providers["example"].Browser
+	if originalBrowser.VDIAllowList[0] != "primary" || originalBrowser.InitialActions[0] != "init" || originalBrowser.ConsentActions[0] != "consent" || originalBrowser.QueryActions[0] != "query" || originalBrowser.PaginationActions[0] != "next" || originalBrowser.ScrapingRules[0] != "extract" || originalBrowser.AllowedNavigationHosts[0] != "example.com" {
+		t.Fatalf("browser config slices were aliased: %#v", originalBrowser)
+	}
+
+	// Remove the browser-only fixture before checking legacy HTTP validation isolation.
+	provider := original.InformationSeed.Providers["example"]
+	provider.Browser = InformationSeedBrowserConfig{}
+	original.InformationSeed.Providers["example"] = provider
+	sourceParams := original.InformationSeed.Providers["example"].Parameters
+	sourceHeaders := original.InformationSeed.Providers["example"].Headers
+	original.validateInformationSeed()
+	sourceParams["api_key"] = "changed after validation"
+	sourceHeaders["Authorization"] = "changed after validation"
+	if got := original.InformationSeed.Providers["example"].Parameters["api_key"]; got != "${INFORMATION_SEED_API_KEY}" {
+		t.Fatalf("validated parameters map should be isolated from input map, got %q", got)
+	}
+	if got := original.InformationSeed.Providers["example"].Headers["Authorization"]; got != "Bearer ${INFORMATION_SEED_TOKEN}" {
+		t.Fatalf("validated headers map should be isolated from input map, got %q", got)
+	}
+}
+
+func TestTimeSeriesDefaultsAndBackwardCompatibility(t *testing.T) {
+	cfg, err := ParseConfig([]byte("crawler:\n  workers: 1\n"))
+	if err != nil {
+		t.Fatalf("configuration without timeseries must remain valid: %v", err)
+	}
+	if cfg.TimeSeries.Enabled {
+		t.Fatal("timeseries must be disabled by default")
+	}
+	if cfg.TimeSeries.Defaults.FailurePolicy != TimeSeriesFailureLogSkip {
+		t.Fatalf("expected safe failure policy %q, got %q", TimeSeriesFailureLogSkip, cfg.TimeSeries.Defaults.FailurePolicy)
+	}
+	if cfg.TimeSeries.Cardinality.MaxSeriesPerMetric < 1 || cfg.TimeSeries.Privacy.MaxValueLength < 1 {
+		t.Fatal("expected explicit bounded cardinality and privacy defaults")
+	}
+}
+
+func TestTimeSeriesYAMLAndJSONDeserializeEquivalently(t *testing.T) {
+	yamlConfig := []byte(`timeseries:
+  enabled: true
+  metrics:
+    - key: response_time
+      enabled: true
+      source_kind: object_attribute
+      object_type: httpinfo
+      selector:
+        attribute_key: response_time_ms
+      value_type: duration
+      aggregates: [count, average, p95]
+      time_basis: source_timestamp
+      timestamp_selector:
+        path: captured_at
+      dimensions:
+        - key: status
+          selector:
+            path: status_code
+`)
+	jsonConfig := []byte(`{"timeseries":{"enabled":true,"metrics":[{"key":"response_time","enabled":true,"source_kind":"object_attribute","object_type":"httpinfo","selector":{"attribute_key":"response_time_ms"},"value_type":"duration","aggregates":["count","average","p95"],"time_basis":"source_timestamp","timestamp_selector":{"path":"captured_at"},"dimensions":[{"key":"status","selector":{"path":"status_code"}}]}]}}`)
+	yamlParsed, err := ParseConfig(yamlConfig)
+	if err != nil {
+		t.Fatalf("parse YAML: %v", err)
+	}
+	jsonParsed, err := ParseConfig(jsonConfig)
+	if err != nil {
+		t.Fatalf("parse JSON: %v", err)
+	}
+	if !reflect.DeepEqual(yamlParsed.TimeSeries, jsonParsed.TimeSeries) {
+		t.Fatalf("YAML and JSON differ:\nYAML: %#v\nJSON: %#v", yamlParsed.TimeSeries, jsonParsed.TimeSeries)
+	}
+}
+
+func TestTimeSeriesFailIndexingPolicyAccepted(t *testing.T) {
+	data := []byte("timeseries:\n  metrics:\n    - {key: sample, source_kind: keyword, failure_policy: fail_indexing}\n")
+	if _, err := ParseConfig(data); err != nil {
+		t.Fatalf("fail_indexing should be available to production emitters: %v", err)
+	}
+}
+
+func TestTimeSeriesValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		metric  string
+		wantErr string
+	}{
+		{"duplicate keys", `- {key: same, source_kind: keyword}
+    - {key: same, source_kind: keyword}`, "duplicate key"},
+		{"empty key", `- {key: "", source_kind: keyword}`, "key: must not be empty"},
+		{"source enum", `- {key: sample, source_kind: invalid}`, "source_kind: invalid value"},
+		{"metatag selector", `- {key: sample, source_kind: metatag}`, "selector.metatag_name"},
+		{"attribute selector", `- {key: sample, source_kind: object_attribute, object_type: webobject}`, "selector.attribute_key"},
+		{"object type required", `- {key: sample, source_kind: object_attribute, selector: {attribute_key: score}}`, "object_type: invalid value"},
+		{"object type inapplicable", `- {key: sample, source_kind: keyword, object_type: webobject}`, "object_type: only applies"},
+		{"timestamp selector", `- {key: sample, source_kind: keyword, time_basis: event_at}`, "timestamp_selector"},
+		{"aggregate compatibility", `- {key: sample, source_kind: keyword, value_type: string, aggregates: [sum]}`, "requires integer, decimal, or duration"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			data := []byte("timeseries:\n  metrics:\n    " + tc.metric + "\n")
+			_, err := ParseConfig(data)
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestTimeSeriesInvalidEnums(t *testing.T) {
+	tests := map[string]string{
+		"value_type":      "invalid",
+		"bucket_interval": "invalid",
+		"time_basis":      "invalid",
+		"dedupe_scope":    "invalid",
+		"failure_policy":  "invalid",
+	}
+	for field, value := range tests {
+		t.Run(field, func(t *testing.T) {
+			data := []byte(fmt.Sprintf("timeseries:\n  metrics:\n    - key: sample\n      source_kind: keyword\n      %s: %s\n", field, value))
+			_, err := ParseConfig(data)
+			if err == nil || !strings.Contains(err.Error(), "timeseries.metrics[0]."+field) {
+				t.Fatalf("expected field-specific enum error, got %v", err)
+			}
+		})
+	}
+}
+
+func TestTimeSeriesPrivacyAndCardinalityValidation(t *testing.T) {
+	data := []byte(`timeseries:
+  cardinality:
+    max_series_per_metric: 10000001
+    overflow: invalid
+  privacy:
+    hash_only: true
+    store_value_text: true
+    max_value_length: 1048577
+    redact_patterns: ["["]
+`)
+	_, err := ParseConfig(data)
+	if err == nil {
+		t.Fatal("expected invalid privacy/cardinality configuration to fail")
+	}
+	for _, want := range []string{"max_series_per_metric", "overflow", "max_value_length", "hash_only", "redact_patterns[0]"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("expected error to contain %q: %v", want, err)
+		}
+	}
+}
+
+func TestInformationSeedWebDriverProviderConfigYAMLAndJSON(t *testing.T) {
+	yamlConfig := []byte(`
+information_seed:
+  enabled: true
+  max_queries_per_seed: 3
+  max_candidates_per_seed: 20
+  provider_allow_list: [browser]
+  providers:
+    browser:
+      provider: browser_search
+      transport: webdriver
+      host: https://search.example.invalid
+      page_size: 30
+      max_pages: 99
+      max_requests: 99
+      browser:
+        vdi_allow_list: [Primary, primary, Secondary]
+        navigation_timeout: 999
+        page_readiness_timeout: 999
+        hbs_enabled: true
+        selenium_fallback: true
+        initial_actions: [init, " init "]
+        consent_actions: [consent]
+        query_actions: [query]
+        pagination_actions: [next]
+        scraping_rules: [extract, " extract "]
+        allowed_navigation_hosts: [Example.COM, "*.Example.COM"]
+        max_pages: 99
+        max_requests: 99
+        max_candidates: 99
+        screenshot_on_error: true
+`)
+	jsonConfig := []byte(`{
+  "information_seed": {
+    "enabled": true,
+    "max_queries_per_seed": 3,
+    "max_candidates_per_seed": 20,
+    "provider_allow_list": ["browser"],
+    "providers": {
+      "browser": {
+        "provider": "browser_search",
+        "transport": "webdriver",
+        "host": "https://search.example.invalid",
+        "page_size": 30,
+        "max_pages": 99,
+        "max_requests": 99,
+        "browser": {
+          "vdi_allow_list": ["Primary", "primary", "Secondary"],
+          "navigation_timeout": 999,
+          "page_readiness_timeout": 999,
+          "hbs_enabled": true,
+          "selenium_fallback": true,
+          "initial_actions": ["init", " init "],
+          "consent_actions": ["consent"],
+          "query_actions": ["query"],
+          "pagination_actions": ["next"],
+          "scraping_rules": ["extract", " extract "],
+          "allowed_navigation_hosts": ["Example.COM", "*.Example.COM"],
+          "max_pages": 99,
+          "max_requests": 99,
+          "max_candidates": 99,
+          "screenshot_on_error": true
+        }
+      }
+    }
+  }
+}`)
+
+	yamlParsed, err := ParseConfig(yamlConfig)
+	if err != nil {
+		t.Fatalf("parse yaml webdriver config: %v", err)
+	}
+	jsonParsed, err := ParseConfig(jsonConfig)
+	if err != nil {
+		t.Fatalf("parse json webdriver config: %v", err)
+	}
+
+	yamlProvider := yamlParsed.InformationSeed.Providers["browser"]
+	jsonProvider := jsonParsed.InformationSeed.Providers["browser"]
+	if !reflect.DeepEqual(yamlProvider, jsonProvider) {
+		t.Fatalf("YAML and JSON provider configs differ:\nYAML: %#v\nJSON: %#v", yamlProvider, jsonProvider)
+	}
+	if yamlProvider.Transport != "webdriver" {
+		t.Fatalf("expected webdriver transport, got %q", yamlProvider.Transport)
+	}
+	if yamlProvider.MaxRequests != 3 || yamlProvider.MaxPages != 3 {
+		t.Fatalf("expected provider caps clamped to global query cap, got requests=%d pages=%d", yamlProvider.MaxRequests, yamlProvider.MaxPages)
+	}
+	browser := yamlProvider.Browser
+	if browser.NavigationTimeout != informationSeedMaxBrowserNavigationTimeout || browser.PageReadinessTimeout != informationSeedMaxBrowserReadinessTimeout {
+		t.Fatalf("expected timeout caps, got %#v", browser)
+	}
+	if browser.MaxRequests != 3 || browser.MaxPages != 3 || browser.MaxCandidates != 20 {
+		t.Fatalf("expected browser caps clamped to global caps, got %#v", browser)
+	}
+	if !reflect.DeepEqual(browser.VDIAllowList, []string{"primary", "secondary"}) {
+		t.Fatalf("unexpected VDI allow list normalization: %#v", browser.VDIAllowList)
+	}
+	if !reflect.DeepEqual(browser.ScrapingRules, []string{"extract"}) || !reflect.DeepEqual(browser.AllowedNavigationHosts, []string{"example.com", "*.example.com"}) {
+		t.Fatalf("unexpected rule/host normalization: rules=%#v hosts=%#v", browser.ScrapingRules, browser.AllowedNavigationHosts)
+	}
+}
+
+func TestInformationSeedProviderTransportValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  string
+		wantErr string
+	}{
+		{
+			name: "unknown transport",
+			config: `
+information_seed:
+  provider_allow_list: [bad]
+  providers:
+    bad:
+      transport: browser
+`,
+			wantErr: "unknown transport",
+		},
+		{
+			name: "webdriver requires scraping rules",
+			config: `
+information_seed:
+  provider_allow_list: [bad]
+  providers:
+    bad:
+      transport: webdriver
+`,
+			wantErr: "requires at least one scraping rule",
+		},
+		{
+			name: "unsafe navigation host",
+			config: `
+information_seed:
+  provider_allow_list: [bad]
+  providers:
+    bad:
+      transport: webdriver
+      browser:
+        scraping_rules: [extract]
+        allowed_navigation_hosts: ["*"]
+`,
+			wantErr: "unsafe allowed navigation host pattern",
+		},
+		{
+			name: "privileged override",
+			config: `
+information_seed:
+  provider_allow_list: [bad]
+  providers:
+    bad:
+      transport: webdriver
+      parameters:
+        set_vdi_gpu_patch: true
+      browser:
+        scraping_rules: [extract]
+`,
+			wantErr: "privileged browser override",
+		},
+		{
+			name: "typed privileged override",
+			config: `
+information_seed:
+  provider_allow_list: [bad]
+  providers:
+    bad:
+      transport: webdriver
+      browser:
+        scraping_rules: [extract]
+        browser_type: 1
+`,
+			wantErr: "privileged browser overrides",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseConfig([]byte(tc.config))
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestInformationSeedHTTPTransportDefaultAndWebDriverOptIn(t *testing.T) {
+	cfg, err := ParseConfig([]byte(`
+information_seed:
+  provider_allow_list: [legacy]
+  providers:
+    legacy:
+      provider: http_json
+`))
+	if err != nil {
+		t.Fatalf("parse legacy provider: %v", err)
+	}
+	provider := cfg.InformationSeed.Providers["legacy"]
+	if provider.Transport != "http" {
+		t.Fatalf("expected default http transport, got %q", provider.Transport)
+	}
+
+	_, err = ParseConfig([]byte(`
+information_seed:
+  provider_allow_list: [implicit]
+  providers:
+    implicit:
+      browser:
+        scraping_rules: [extract]
+`))
+	if err == nil || !strings.Contains(err.Error(), "requires explicit transport") {
+		t.Fatalf("expected browser config without webdriver opt-in to fail, got %v", err)
 	}
 }

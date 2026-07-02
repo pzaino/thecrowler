@@ -15,7 +15,10 @@
 // Package common provides common utilities and functions used across the application.
 package common
 
-import "strings"
+import (
+	"net/url"
+	"strings"
+)
 
 // NormalizeURL normalizes a URL by trimming trailing slashes and converting it to lowercase.
 func NormalizeURL(url string) string {
@@ -29,33 +32,37 @@ func NormalizeURL(url string) string {
 }
 
 // IsURLValid checks if a URL is valid.
-func IsURLValid(url string) bool {
-	// Check if the URL is empty
-	if url == "" {
-		return false
-	}
-	tURL := strings.ToLower(strings.TrimSpace(url))
-
-	// Check if the URL starts with http:// or https://
-	if !strings.HasPrefix(tURL, "http://") &&
-		!strings.HasPrefix(tURL, "https://") &&
-		!strings.HasPrefix(tURL, "ws://") &&
-		!strings.HasPrefix(tURL, "wss://") &&
-		!strings.HasPrefix(tURL, "ftp://") &&
-		!strings.HasPrefix(tURL, "ftps://") {
+func IsURLValid(rawURL string) bool {
+	if rawURL == "" {
 		return false
 	}
 
-	// Check if the URL has a valid domain
-	if strings.Contains(tURL, " ") || strings.Contains(tURL, "\n") || strings.Contains(tURL, "\t") {
+	trimmedURL := strings.TrimSpace(rawURL)
+	lowerURL := strings.ToLower(trimmedURL)
+	if strings.ContainsAny(lowerURL, " \n\t") {
 		return false
 	}
 
-	// Check if the URL has a valid TLD
-	if !strings.Contains(tURL, ".") {
+	for _, scheme := range []string{"http", "https", "ws", "wss", "ftp", "ftps"} {
+		if strings.HasPrefix(lowerURL, scheme+"://") {
+			// Preserve the existing domain/TLD requirement for network URLs.
+			return strings.Contains(lowerURL, ".")
+		}
+	}
+
+	parsedURL, err := url.Parse(trimmedURL)
+	if err != nil {
 		return false
 	}
 
-	// Looks like a valid URL
-	return true
+	scheme := strings.ToLower(parsedURL.Scheme)
+	switch scheme {
+	case "email", "imap", "imaps", "pop3", "pop3s", "gmail", "graph-mail":
+		return strings.HasPrefix(lowerURL, scheme+"://") && parsedURL.Host != ""
+	case "maildir", "mbox":
+		return strings.HasPrefix(lowerURL, scheme+"://") &&
+			parsedURL.Host == "" && strings.HasPrefix(parsedURL.Path, "/") && parsedURL.Path != "/"
+	default:
+		return false
+	}
 }

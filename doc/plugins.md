@@ -178,7 +178,7 @@ var url = params.url;
 var selector = params.selector;
 ```
 
-On top of that the current processed JSON document for the specific pipeline will be available in the `params` object as `json_data`. And if there are pre-defined metadata for the pipeline, it will be available in the `params` object as `meta_data`.
+On top of that the current processed JSON document for the specific pipeline will be available in the `params` object as `json_data`. Already-collected XHR entries (if XHR collection has been enabled in the global configuration) are exposed separately as `params.xhr` rather than inside `params.json_data`, so engine plugins and agents can inspect those immutable captures without returning them as modified scraped data. And if there are pre-defined metadata for the pipeline, it will be available in the `params` object as `meta_data`.
 
 ### Example Plugin: Data Transformer
 
@@ -219,6 +219,139 @@ result = {
 
 ---
 
+
+### Information Seed discovery metadata
+
+Plugins that discover candidate sources for an Information Seed should keep
+configuration and provenance separate. Put source-wide crawling behavior in
+`Sources.config`: rulesets, execution-plan options, restrictions, scheduling,
+and plugin parameters that should apply every time the source is crawled. Put
+per-seed discovery evidence on the `SourceInformationSeedIndex` relationship:
+`discovery_provider`, `discovery_query`, `discovery_rank`, `candidate_score`,
+`candidate_reason`, and any provider-specific `discovery_metadata` JSON.
+
+This separation is important because the same URL can be discovered by multiple
+seeds. Updating relationship metadata for one `(source_id, information_seed_id)`
+pair must not rewrite `Sources.config` or any other source/seed relationship.
+When using database helpers or `dbQuery`, prefer an idempotent link for plain
+associations and the richer metadata upsert only when the plugin has discovery
+evidence to record.
+
+### Information Seed candidate plugins
+
+Information Seed candidate plugins are engine plugins registered with
+`event_type: information_seed_candidate`. They run after provider discovery,
+URL normalization, de-duplication, and candidate limiting, and before Sources
+are persisted. An empty candidate plugin chain is a pass-through: normalized
+candidates are persisted with the proposed source defaults.
+
+Each plugin receives a strict JSON input through `params`:
+
+* `seed`: the seed object (`id`, `information_seed`, `category_id`, `usr_id`,
+  `status`, and `priority`).
+* `candidate`: the normalized candidate object (`url`, `host`, `title`,
+  `provider`, `query`, `rank`, `score`, `reason`, and provider metadata).
+* `metadata`: provider/query/rank metadata copied from the candidate for easy
+  policy checks.
+* `source_defaults`: the Source values the runner proposes to create when the
+  candidate is accepted (`name`, `priority`, `category_id`, `usr_id`,
+  `restricted`, `flags`, and optional `source_config`).
+
+The plugin output is schema validated and must be an object with:
+
+* `accepted` *(boolean, required)*: `false` rejects the candidate without
+  failing the whole seed when the output is otherwise valid.
+* `score` *(number, required)*: the final candidate score persisted in
+  discovery metadata.
+* `reason` *(string, required)*: the explanation persisted as the candidate
+  reason.
+* `source_overrides` *(object, optional)*: safe per-candidate overrides. Only
+  `name`, `priority`, `restricted`, `flags`, and `source_config` are accepted;
+  plugins cannot override URL, category, user ownership, or seed linkage.
+* `tags` *(array of strings, optional)* and `metadata` *(object, optional)*:
+  custom metadata persisted with discovery metadata under `tags` and
+  `plugin_metadata`.
+
+```js
+// @name: seed_candidate_quality_gate
+// @description: Accepts or rejects information-seed candidates.
+// @type: engine_plugin
+// @event_type: information_seed_candidate
+// @version: 1.0.0
+
+var candidate = params.candidate;
+var defaults = params.source_defaults;
+var trusted = candidate.host.endsWith(".example.com");
+
+result = {
+  accepted: trusted,
+  score: trusted ? 0.92 : 0.1,
+  reason: trusted ? "trusted example.com host" : "host outside trusted scope",
+  source_overrides: trusted ? {
+    name: defaults.name || candidate.title || candidate.host,
+    priority: "normal",
+    restricted: 1,
+    source_config: {
+      version: "1.0",
+      format_version: "1.0",
+      source_name: "information-seed-candidate",
+      crawling_config: {
+        site: candidate.url,
+        source_type: "website"
+      },
+      custom: {
+        configured_by: "seed_candidate_quality_gate"
+      }
+    }
+  } : undefined,
+  tags: trusted ? ["trusted-host"] : [],
+  metadata: { provider_rank: params.metadata.rank }
+};
+```
+
+
+There are two supported places to provide source crawler configuration:
+
+1. Put a default `SourceConfig` in the seed request at
+   `config.source_config`. Every accepted candidate inherits that object unless
+   a plugin overrides it.
+2. Put a complete candidate-specific `SourceConfig` in plugin output at
+   `source_overrides.source_config`, as shown above. Use this form when
+   `crawling_config.site`, rules, execution plans, or custom values depend on
+   `params.candidate`.
+
+The override is a full replacement, not a deep merge. Both forms are validated
+with the normal Source configuration validator before `Sources.config` is
+created or updated.
+
+Information Seed plugin execution is bounded by `information_seed.plugin_limits`:
+`timeout` enforces per-plugin runtime and `max_output_size_bytes` rejects overly
+large JSON output. Malformed output, timeouts, oversize output, and unsafe
+`source_overrides` reject the current candidate and are collected as candidate
+processor errors. If every candidate is rejected by such processor errors, the
+seed run ends in error; otherwise the runner persists the remaining accepted
+candidates and returns the processor error for observability. The payload
+contract is also captured in
+[`schemas/crowler-infoseed-candidate-plugin-schema.json`](../schemas/crowler-infoseed-candidate-plugin-schema.json).
+
+
+### Built-in phases versus custom plugin/agent phases
+
+Information Seed plugins are intentionally scoped to user/plugin phases. The
+platform-owned phases are provider discovery, URL normalization,
+URL/host/domain de-duplication, built-in allow/deny/scheme/score/cardinality
+filters, source configuration validation, source persistence/linking, lifecycle
+finalization, and event/diagnostic redaction. Candidate plugins run after the
+built-in filters and before persistence; they may reject a candidate, adjust the
+final score/reason, and provide only the documented safe source overrides.
+
+Do not use plugins or agents to bypass provider policy, robots.txt, consent
+flows, or terms-of-service restrictions. A plugin can enforce stricter local
+policy (for example, reject hosts outside an approved domain or lower scores for
+untrusted providers), but it cannot make a disallowed provider compliant. Keep
+plugin output small, deterministic, and free of secrets because selected
+metadata may be persisted in candidate evidence and redacted run diagnostics.
+
 ## Best Practices
 
 - **Modularity:**
@@ -240,3 +373,7 @@ result = {
   Test your plugin in isolation with sample JSON data to ensure it behaves as expected before deploying in production.
 
 ---
+
+## Time-series integration
+
+Plugins do not receive an implicit telemetry channel. A plugin can rely on the normal emitter for a supported artifact it causes to be persisted, or application code can register and emit a `custom` metric through the shipped repository/emitter interfaces after durable persistence. Use bounded cardinality/privacy settings and stable dedupe identity. See [Time-series observations and aggregates](timeseries.md#source-kinds-and-emission-timing).

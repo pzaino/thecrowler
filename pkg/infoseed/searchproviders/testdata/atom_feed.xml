@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Example Atom Feed</title>
+  <entry>
+    <title>Beta public research note</title>
+    <link href="/research/beta" rel="alternate" />
+    <summary>Beta snippet from an Atom fixture.</summary>
+    <content>Long Beta content from an Atom fixture.</content>
+    <published>2026-06-05T00:00:00Z</published>
+    <updated>2026-06-05T01:00:00Z</updated>
+    <id>tag:example.com,2026:beta</id>
+    <category term="atom-threat" label="Atom Threat" />
+    <author>
+      <name>Atom Analyst</name>
+      <email>atom@example.com</email>
+    </author>
+  </entry>
+</feed>

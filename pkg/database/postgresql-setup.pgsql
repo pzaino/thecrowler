@@ -23,6 +23,92 @@ $$ LANGUAGE plpgsql;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 --------------------------------------------------------------------------------
+-- Authentication and authorization tables
+-- CROWler authentication and authorization schema.
+CREATE TABLE IF NOT EXISTS Users (
+    user_id BIGSERIAL PRIMARY KEY,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMPTZ,
+    username TEXT NOT NULL UNIQUE,
+    email TEXT UNIQUE,
+    password_hash TEXT,
+    external_subject TEXT,
+    external_issuer TEXT,
+    disabled BOOLEAN NOT NULL DEFAULT FALSE,
+    credential_version BIGINT NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS AuthRoles (
+    role_id BIGSERIAL PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    description TEXT
+);
+
+CREATE TABLE IF NOT EXISTS AuthScopes (
+    scope_id BIGSERIAL PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    description TEXT
+);
+
+CREATE TABLE IF NOT EXISTS UserRoles (
+    user_id BIGINT NOT NULL REFERENCES Users(user_id) ON DELETE CASCADE,
+    role_id BIGINT NOT NULL REFERENCES AuthRoles(role_id) ON DELETE CASCADE,
+    PRIMARY KEY (user_id, role_id)
+);
+
+CREATE TABLE IF NOT EXISTS UserScopes (
+    user_id BIGINT NOT NULL REFERENCES Users(user_id) ON DELETE CASCADE,
+    scope_id BIGINT NOT NULL REFERENCES AuthScopes(scope_id) ON DELETE CASCADE,
+    PRIMARY KEY (user_id, scope_id)
+);
+
+CREATE TABLE IF NOT EXISTS RoleScopes (
+    role_id BIGINT NOT NULL REFERENCES AuthRoles(role_id) ON DELETE CASCADE,
+    scope_id BIGINT NOT NULL REFERENCES AuthScopes(scope_id) ON DELETE CASCADE,
+    PRIMARY KEY (role_id, scope_id)
+);
+
+CREATE TABLE IF NOT EXISTS AuthRevokedTokens (
+    token_id TEXT PRIMARY KEY,
+    user_id BIGINT REFERENCES Users(user_id) ON DELETE SET NULL,
+    revoked_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMPTZ NOT NULL,
+    reason TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_revoked_tokens_expires_at ON AuthRevokedTokens(expires_at);
+CREATE INDEX IF NOT EXISTS idx_users_external_identity ON Users(external_issuer, external_subject);
+
+-- Default API authorization roles and scopes.
+INSERT INTO AuthRoles (name, description) VALUES
+    ('superadmin', 'Can administer all CROWler API, events, console, account, role, and scope endpoints.'),
+    ('admin', 'Can access all services/events endpoints, all services/api endpoints, and console endpoints except account administration.'),
+    ('superuser', 'Can access all services/events endpoints, all services/api non-console endpoints, and only the add-source console endpoint.'),
+    ('user', 'Can access services/api non-console endpoints only.')
+ON CONFLICT (name) DO UPDATE SET description = EXCLUDED.description;
+
+INSERT INTO AuthScopes (name, description) VALUES
+    ('api:*', 'Access all services/api endpoints.'),
+    ('api:read', 'Access non-console services/api endpoints.'),
+    ('api:console', 'Access services/api console endpoints.'),
+    ('api:console:source:add', 'Add new sources through the services/api console.'),
+    ('api:console:accounts', 'Administer local authentication and authorization records.'),
+    ('events:*', 'Access all services/events endpoints.')
+ON CONFLICT (name) DO UPDATE SET description = EXCLUDED.description;
+
+INSERT INTO RoleScopes (role_id, scope_id)
+SELECT r.role_id, s.scope_id
+FROM AuthRoles r
+JOIN AuthScopes s ON (
+    (r.name = 'superadmin' AND s.name IN ('api:*', 'api:console', 'api:console:accounts', 'api:console:source:add', 'events:*')) OR
+    (r.name = 'admin' AND s.name IN ('api:*', 'api:console', 'api:console:source:add', 'events:*')) OR
+    (r.name = 'superuser' AND s.name IN ('api:read', 'api:console:source:add', 'events:*')) OR
+    (r.name = 'user' AND s.name IN ('api:read'))
+)
+ON CONFLICT DO NOTHING;
+
+--------------------------------------------------------------------------------
 -- Database Tables setup
 
 -- Database Schema Versioning table to keep track of the schema versions and changes
@@ -41,10 +127,10 @@ CREATE TABLE IF NOT EXISTS DBSchemaVersion (
 DO $$
 BEGIN
     IF NOT EXISTS (
-        SELECT 1 FROM DBSchemaVersion WHERE version = '1.6'
+        SELECT 1 FROM DBSchemaVersion WHERE version = '1.8'
     ) THEN
         INSERT INTO DBSchemaVersion (version, description)
-        VALUES ('1.6', 'CROWler DB schema version 1.6');
+        VALUES ('1.8', 'CROWler DB schema version 1.8');
     END IF;
 END
 $$;
@@ -134,6 +220,50 @@ CREATE TABLE IF NOT EXISTS InformationSeed (
     config JSONB                                -- Stores JSON document with all details about
                                                 -- the information seed configuration for the crawler
 );
+
+-- Lifecycle columns are added with guarded ALTER statements so existing
+-- InformationSeed tables are upgraded in place without dropping seed data.
+ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'new' NOT NULL;
+ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS priority VARCHAR(64) DEFAULT '' NOT NULL;
+ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS engine VARCHAR(256) DEFAULT '' NOT NULL;
+ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS last_processed_at TIMESTAMPTZ;
+ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS last_error TEXT;
+ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS last_error_at TIMESTAMPTZ;
+ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS disabled BOOLEAN DEFAULT FALSE;
+ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS attempts INTEGER DEFAULT 0 NOT NULL;
+
+-- InformationSeedCandidate stores durable audit evidence for every accepted or
+-- rejected candidate decision. Rejected rows are intentionally persisted here
+-- instead of Sources so rejected candidates never enter the crawl frontier.
+CREATE TABLE IF NOT EXISTS InformationSeedCandidate (
+    information_seed_candidate_id BIGSERIAL PRIMARY KEY,
+    information_seed_id BIGINT NOT NULL REFERENCES InformationSeed(information_seed_id) ON DELETE CASCADE,
+    normalized_url VARCHAR(2048) NOT NULL,
+    host VARCHAR(255),
+    provider VARCHAR(255),
+    query TEXT,
+    rank INTEGER DEFAULT 0 NOT NULL,
+    score DOUBLE PRECISION DEFAULT 0 NOT NULL,
+    decision_status VARCHAR(32) NOT NULL CHECK (decision_status IN ('accepted', 'rejected')),
+    rejection_reason TEXT DEFAULT '' NOT NULL,
+    metadata JSONB,
+    run_attempt INTEGER DEFAULT 0 NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    last_updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (information_seed_id, normalized_url, provider, query, rank, run_attempt)
+);
+CREATE INDEX IF NOT EXISTS idx_informationseedcandidate_seed
+ON InformationSeedCandidate(information_seed_id, run_attempt DESC, last_updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_informationseedcandidate_decision
+ON InformationSeedCandidate(decision_status);
+CREATE INDEX IF NOT EXISTS idx_informationseedcandidate_seed_decision
+ON InformationSeedCandidate(information_seed_id, decision_status, run_attempt DESC);
+CREATE INDEX IF NOT EXISTS idx_informationseedcandidate_host
+ON InformationSeedCandidate(host);
+CREATE INDEX IF NOT EXISTS idx_informationseedcandidate_provider
+ON InformationSeedCandidate(provider);
+CREATE INDEX IF NOT EXISTS idx_informationseedcandidate_normalized_url
+ON InformationSeedCandidate(normalized_url);
 ----------------------------------------------------------------
 
 
@@ -141,7 +271,7 @@ CREATE TABLE IF NOT EXISTS InformationSeed (
 -- Sources table stores the URLs or the information's seed to be crawled
 CREATE TABLE IF NOT EXISTS Sources (
     source_id BIGSERIAL PRIMARY KEY,
-    --source_uid VARCHAR(64) UNIQUE NOT NULL,   -- Unique identifier for the source
+    source_uid VARCHAR(64) NOT NULL,            -- SHA-256 identifier derived from source name and URL.
     name VARCHAR(255),                          -- The name of the source.
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
     deleted_at TIMESTAMPTZ,
@@ -152,9 +282,9 @@ CREATE TABLE IF NOT EXISTS Sources (
     priority VARCHAR(64) DEFAULT '' NOT NULL,   -- The priority of the source (e.g., 'low', 'medium', 'high', or even custom strings).
     status VARCHAR(50) DEFAULT 'new' NOT NULL,  -- All new sources are set to 'new' by default.
     engine VARCHAR(256) DEFAULT '' NOT NULL,    -- The engine crawling the source.
-    last_crawled_at TIMESTAMPTZ,                  -- The last time the source was crawled.
+    last_crawled_at TIMESTAMPTZ,                -- The last time the source was crawled.
     last_error TEXT,                            -- Last error message that occurred during crawling.
-    last_error_at TIMESTAMPTZ,                    -- The date/time of the last error occurred.
+    last_error_at TIMESTAMPTZ,                  -- The date/time of the last error occurred.
     restricted INTEGER DEFAULT 0 NOT NULL,      -- 0 = fully restricted (just this URL - default)
                                                 -- 1 = l3 domain restricted (everything within this
                                                 --     URL l3 domain)
@@ -165,14 +295,86 @@ CREATE TABLE IF NOT EXISTS Sources (
                                                 -- source is disabled.
     flags INTEGER DEFAULT 0 NOT NULL,           -- Bitwise flags for the source (used for various
                                                 -- purposes, included but not limited to the Rules).
-    config JSONB,                               -- Stores JSON document with all details about
-                                                -- the source configuration for the crawler.
-    details JSONB                               -- Stores JSON document with all details about
-                                                -- the source. This is different than the config!
+    config JSONB,                               -- Source config payload, stores JSON document with
+                                                -- all details about the source configuration for
+                                                -- the crawling process.
+    details JSONB                               -- Source payload, stores JSON document with
+                                                -- all details about the source state.
+                                                -- This is different than the config!
                                                 -- For instance, in here the CROWler itself stores
-                                                -- data like the stage of the crawling for multi-stage
-                                                -- crawls etc.
+                                                -- data like the stage of the crawling for
+                                                -- multi-stage crawls etc.
 );
+--------------------------------------------------------------------------------
+-- Durable email ingestion checkpoints and bounded message reconciliation state.
+CREATE TABLE IF NOT EXISTS EmailMailboxState (
+    source_id BIGINT NOT NULL,
+    provider VARCHAR(64) NOT NULL,
+    account_key VARCHAR(191) NOT NULL,
+    mailbox_key VARCHAR(191) NOT NULL,
+    cursor_token TEXT NOT NULL DEFAULT '',
+    cursor_history_id VARCHAR(20) NOT NULL DEFAULT '0',
+    cursor_uid BIGINT NOT NULL DEFAULT 0 CHECK (cursor_uid BETWEEN 0 AND 4294967295),
+    cursor_uid_validity BIGINT NOT NULL DEFAULT 0 CHECK (cursor_uid_validity BETWEEN 0 AND 4294967295),
+    checkpoint_schema_version INTEGER NOT NULL DEFAULT 1 CHECK (checkpoint_schema_version > 0),
+    config_fingerprint VARCHAR(128) NOT NULL DEFAULT '',
+    message_status VARCHAR(32) CHECK (message_status IS NULL OR message_status IN ('discovered', 'fetched', 'parsed', 'normalized', 'attachments_processed', 'links_enqueued', 'completed', 'retryable_failure', 'permanent_failure')),
+    content_hash VARCHAR(255) NOT NULL DEFAULT '',
+    error_count BIGINT NOT NULL DEFAULT 0 CHECK (error_count >= 0),
+    last_error VARCHAR(2048) NOT NULL DEFAULT '',
+    watch_subscription_id VARCHAR(191) NOT NULL DEFAULT '',
+    watch_resource_path VARCHAR(2048) NOT NULL DEFAULT '',
+    watch_renewal_status VARCHAR(16) NOT NULL DEFAULT '' CHECK (watch_renewal_status IN ('', 'healthy', 'due', 'expired', 'failed')),
+    watch_last_renewed_at TIMESTAMPTZ,
+    watch_expires_at TIMESTAMPTZ,
+    watch_last_attempt_at TIMESTAMPTZ,
+    watch_renewal_failure_count BIGINT NOT NULL DEFAULT 0 CHECK (watch_renewal_failure_count >= 0),
+    watch_renewal_last_error VARCHAR(2048) NOT NULL DEFAULT '',
+    version BIGINT NOT NULL DEFAULT 0 CHECK (version >= 0),
+    lease_owner VARCHAR(191),
+    lease_expires_at TIMESTAMPTZ,
+    fencing_token BIGINT NOT NULL DEFAULT 0 CHECK (fencing_token >= 0),
+    last_reconciled_at TIMESTAMPTZ,
+    listener_healthy_at TIMESTAMPTZ,
+    reset_reason VARCHAR(255),
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (source_id, provider, account_key, mailbox_key),
+    CONSTRAINT fk_emailmailboxstate_source FOREIGN KEY (source_id) REFERENCES Sources(source_id) ON DELETE CASCADE,
+    CONSTRAINT chk_emailmailboxstate_lease CHECK ((lease_owner IS NULL AND lease_expires_at IS NULL) OR (lease_owner IS NOT NULL AND lease_expires_at IS NOT NULL))
+);
+
+CREATE TABLE IF NOT EXISTS EmailMessageState (
+    source_id BIGINT NOT NULL,
+    provider VARCHAR(64) NOT NULL,
+    account_key VARCHAR(191) NOT NULL,
+    mailbox_key VARCHAR(191) NOT NULL,
+    provider_message_key VARCHAR(191) NOT NULL,
+    document_id VARCHAR(191) NOT NULL UNIQUE,
+    provider_version VARCHAR(255) NOT NULL DEFAULT '',
+    content_hash VARCHAR(255) NOT NULL DEFAULT '',
+    disposition VARCHAR(16) NOT NULL CHECK (disposition IN ('indexed', 'deleted', 'skipped', 'quarantined')),
+    failure_count BIGINT NOT NULL DEFAULT 0 CHECK (failure_count >= 0),
+    last_error VARCHAR(2048) NOT NULL DEFAULT '',
+    last_observed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMPTZ,
+    quarantined_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (source_id, provider, account_key, mailbox_key, provider_message_key),
+    CONSTRAINT fk_emailmessagestate_mailbox FOREIGN KEY (source_id, provider, account_key, mailbox_key)
+        REFERENCES EmailMailboxState(source_id, provider, account_key, mailbox_key) ON DELETE CASCADE,
+    CONSTRAINT chk_emailmessagestate_deleted CHECK (disposition <> 'deleted' OR deleted_at IS NOT NULL),
+    CONSTRAINT chk_emailmessagestate_quarantined CHECK (disposition <> 'quarantined' OR quarantined_at IS NOT NULL)
+);
+
+CREATE INDEX IF NOT EXISTS idx_emailmailboxstate_lease ON EmailMailboxState(lease_expires_at, lease_owner);
+CREATE INDEX IF NOT EXISTS idx_emailmailboxstate_active ON EmailMailboxState(source_id, active);
+CREATE INDEX IF NOT EXISTS idx_emailmailboxstate_watch_expiration ON EmailMailboxState(watch_expires_at);
+CREATE INDEX IF NOT EXISTS idx_emailmessagestate_observed ON EmailMessageState(source_id, last_observed_at);
+CREATE INDEX IF NOT EXISTS idx_emailmessagestate_disposition ON EmailMessageState(source_id, disposition, last_observed_at);
+
 ----------------------------------------------------------------
 
 
@@ -426,6 +628,8 @@ CREATE TABLE IF NOT EXISTS EntityMemberships (
     object_type TEXT NOT NULL DEFAULT 'webobject',
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     confidence NUMERIC CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1)),
+    membership_role TEXT,
+    membership_type TEXT,
     evidence JSONB,
     CONSTRAINT chk_entitymembership_object_type
         CHECK (object_type IN ('webobject','netinfo','httpinfo')),
@@ -434,6 +638,9 @@ CREATE TABLE IF NOT EXISTS EntityMemberships (
 
 CREATE INDEX IF NOT EXISTS idx_entitymemberships_object
 ON EntityMemberships(object_type, object_id);
+
+ALTER TABLE EntityMemberships ADD COLUMN IF NOT EXISTS membership_role TEXT;
+ALTER TABLE EntityMemberships ADD COLUMN IF NOT EXISTS membership_type TEXT;
 
 -- CorrelationRules table stores the correlation rules that are applied to
 -- the indexed pages and the web objects to find relationships between them
@@ -470,7 +677,9 @@ CREATE TABLE IF NOT EXISTS ObjectCorrelations (
     object_id_1 BIGINT NOT NULL,
     object_id_2 BIGINT NOT NULL,
     rule_id BIGINT NOT NULL REFERENCES CorrelationRules(rule_id) ON DELETE CASCADE,
+    entity_id BIGINT REFERENCES Entities(entity_id) ON DELETE SET NULL,
     score NUMERIC CHECK (score IS NULL OR (score >= 0 AND score <= 1)),
+    confidence NUMERIC CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1)),
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT chk_objectcorrelations_order
@@ -492,6 +701,9 @@ CREATE TABLE IF NOT EXISTS ObjectCorrelations (
     )
 );
 
+ALTER TABLE ObjectCorrelations ADD COLUMN IF NOT EXISTS entity_id BIGINT REFERENCES Entities(entity_id) ON DELETE SET NULL;
+ALTER TABLE ObjectCorrelations ADD COLUMN IF NOT EXISTS confidence NUMERIC CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1));
+
 CREATE INDEX IF NOT EXISTS idx_objectcorrelations_obj1
     ON ObjectCorrelations(object_type_1, object_id_1);
 
@@ -500,6 +712,9 @@ CREATE INDEX IF NOT EXISTS idx_objectcorrelations_obj2
 
 CREATE INDEX IF NOT EXISTS idx_objectcorrelations_rule_score
     ON ObjectCorrelations(rule_id, score DESC);
+
+CREATE INDEX IF NOT EXISTS idx_objectcorrelations_entity
+    ON ObjectCorrelations(entity_id);
 
 CREATE OR REPLACE FUNCTION cleanup_artifact_data()
 RETURNS trigger AS $$
@@ -537,6 +752,8 @@ BEGIN
     END IF;
 END
 $$;
+
+CREATE INDEX IF NOT EXISTS idx_sources_source_uid ON Sources(source_uid);
 
 DO $$
 BEGIN
@@ -625,7 +842,7 @@ CREATE TABLE IF NOT EXISTS Events (
     event_timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
     event_recurrence VARCHAR(64),
     expires_at TIMESTAMPTZ,
-    details JSONB NOT NULL
+    details JSONB NOT NULL -- Events payload (data-model agnostic), for everything, from system events to agent observations, decisions, errors, email events, crawl events, etc.
 );
 
 -- EventSchedules table stores the schedules for the events
@@ -705,11 +922,25 @@ CREATE TABLE IF NOT EXISTS SourceInformationSeedIndex (
     source_information_seed_id BIGSERIAL PRIMARY KEY,
     source_id BIGINT NOT NULL REFERENCES Sources(source_id) ON DELETE CASCADE,
     information_seed_id BIGINT NOT NULL REFERENCES InformationSeed(information_seed_id) ON DELETE CASCADE,
+    discovery_provider VARCHAR(255),          -- Provider that discovered this source for this seed.
+    discovery_query TEXT,                     -- Query/dork/prompt used for this discovery.
+    discovery_rank INTEGER,                   -- Rank returned by the discovery provider.
+    candidate_score DOUBLE PRECISION,         -- Score assigned before promotion to Sources.
+    candidate_reason TEXT,                    -- Human/model-readable reason for the candidate.
+    discovery_metadata JSONB,                 -- Additional per-discovery metadata for this source/seed pair.
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
     deleted_at TIMESTAMPTZ,
     last_updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (source_id, information_seed_id)
 );
+
+-- Add per-discovery provenance columns to existing relationship tables without dropping data.
+ALTER TABLE SourceInformationSeedIndex ADD COLUMN IF NOT EXISTS discovery_provider VARCHAR(255);
+ALTER TABLE SourceInformationSeedIndex ADD COLUMN IF NOT EXISTS discovery_query TEXT;
+ALTER TABLE SourceInformationSeedIndex ADD COLUMN IF NOT EXISTS discovery_rank INTEGER;
+ALTER TABLE SourceInformationSeedIndex ADD COLUMN IF NOT EXISTS candidate_score DOUBLE PRECISION;
+ALTER TABLE SourceInformationSeedIndex ADD COLUMN IF NOT EXISTS candidate_reason TEXT;
+ALTER TABLE SourceInformationSeedIndex ADD COLUMN IF NOT EXISTS discovery_metadata JSONB;
 
 -- SourceOwnerIndex table stores the relationship between sources and their owners
 CREATE TABLE IF NOT EXISTS SourceOwnerIndex (
@@ -923,6 +1154,19 @@ BEGIN
 END
 $$;
 
+CREATE INDEX IF NOT EXISTS idx_informationseed_status ON InformationSeed(status);
+CREATE INDEX IF NOT EXISTS idx_informationseed_priority ON InformationSeed(priority);
+CREATE INDEX IF NOT EXISTS idx_informationseed_disabled ON InformationSeed(disabled);
+CREATE INDEX IF NOT EXISTS idx_informationseed_last_processed_at ON InformationSeed(last_processed_at);
+CREATE INDEX IF NOT EXISTS idx_informationseed_last_error_at ON InformationSeed(last_error_at);
+CREATE INDEX IF NOT EXISTS idx_informationseed_processing_stale
+    ON InformationSeed(status, disabled, last_processed_at)
+    WHERE status = 'processing' AND disabled = FALSE;
+CREATE INDEX IF NOT EXISTS idx_informationseed_claim_queue
+    ON InformationSeed(disabled, status, priority, created_at, information_seed_id);
+CREATE INDEX IF NOT EXISTS idx_informationseed_engine_status
+    ON InformationSeed(engine, status, last_processed_at);
+
 
 -- Indexes for the Sources table -----------------------------------------------
 
@@ -1083,6 +1327,11 @@ BEGIN
     END IF;
 END
 $$;
+
+CREATE INDEX IF NOT EXISTS idx_sourceinformationseedindex_seed_source
+ON SourceInformationSeedIndex(information_seed_id, source_id);
+CREATE INDEX IF NOT EXISTS idx_sourceinformationseedindex_provider_rank
+ON SourceInformationSeedIndex(information_seed_id, discovery_provider, discovery_rank);
 
 -- Indexes for SourceCategoryIndex table ---------------------------------------
 DO $$
@@ -1868,6 +2117,185 @@ END
 $$;
 
 --------------------------------------------------------------------------------
+-- Foundational time-series schema (v1.9).
+-- Metric definitions are configuration only; observations are append-only facts.
+CREATE TABLE IF NOT EXISTS TimeSeriesMetrics (
+    metric_id BIGSERIAL PRIMARY KEY,
+    metric_key VARCHAR(255) NOT NULL UNIQUE,
+    display_name VARCHAR(255) NOT NULL,
+    description TEXT,
+    source_kind VARCHAR(64) NOT NULL,
+    value_type VARCHAR(32) NOT NULL,
+    aggregate VARCHAR(32) NOT NULL,
+    bucket VARCHAR(32) NOT NULL,
+    time_basis VARCHAR(32) NOT NULL,
+    dedupe_scope VARCHAR(64) NOT NULL,
+    object_type VARCHAR(64) NOT NULL,
+    failure_policy VARCHAR(64) NOT NULL,
+    selector JSONB NOT NULL,
+    dimensions JSONB,
+    retention_policy JSONB,
+    cardinality_policy JSONB,
+    unit VARCHAR(64),
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    store_value_text BOOLEAN NOT NULL DEFAULT FALSE,
+    hash_only BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMPTZ,
+    last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- TimeSeriesObservations is append-only history. Optional references are nulled
+-- when operational records are removed so historical measurements survive.
+CREATE TABLE IF NOT EXISTS TimeSeriesObservations (
+    observation_id BIGSERIAL PRIMARY KEY,
+    metric_id BIGINT NOT NULL REFERENCES TimeSeriesMetrics(metric_id) ON DELETE RESTRICT,
+    observed_at TIMESTAMPTZ NOT NULL,
+    effective_at TIMESTAMPTZ,
+    collected_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    source_updated_at TIMESTAMPTZ,
+    bucket_start TIMESTAMPTZ NOT NULL,
+    bucket_end TIMESTAMPTZ NOT NULL,
+    information_seed_id BIGINT REFERENCES InformationSeed(information_seed_id) ON DELETE SET NULL,
+    information_seed_candidate_id BIGINT REFERENCES InformationSeedCandidate(information_seed_candidate_id) ON DELETE SET NULL,
+    source_id BIGINT REFERENCES Sources(source_id) ON DELETE SET NULL,
+    source_information_seed_id BIGINT REFERENCES SourceInformationSeedIndex(source_information_seed_id) ON DELETE SET NULL,
+    index_id BIGINT REFERENCES SearchIndex(index_id) ON DELETE SET NULL,
+    entity_id BIGINT REFERENCES Entities(entity_id) ON DELETE SET NULL,
+    subject_type VARCHAR(64),
+    subject_id BIGINT,
+    object_type VARCHAR(64),
+    object_id BIGINT,
+    correlation_rule_id BIGINT REFERENCES CorrelationRules(rule_id) ON DELETE SET NULL,
+    correlation_object_type_1 VARCHAR(64),
+    correlation_object_id_1 BIGINT,
+    correlation_object_type_2 VARCHAR(64),
+    correlation_object_id_2 BIGINT,
+    value_numeric NUMERIC,
+    value_integer BIGINT,
+    value_boolean BOOLEAN,
+    value_text TEXT,
+    value_json JSONB,
+    value_timestamp TIMESTAMPTZ,
+    value_hash VARCHAR(64) NOT NULL,
+    previous_observation_id BIGINT REFERENCES TimeSeriesObservations(observation_id) ON DELETE SET NULL,
+    previous_value_hash VARCHAR(64),
+    is_changed BOOLEAN NOT NULL DEFAULT FALSE,
+    change_type VARCHAR(32),
+    change_delta_numeric NUMERIC,
+    change_detected_at TIMESTAMPTZ,
+    dedupe_key VARCHAR(64) NOT NULL UNIQUE,
+    dimensions JSONB,
+    provenance JSONB,
+    provenance_hash VARCHAR(64),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMPTZ,
+    last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS TimeSeriesAggregates (
+    aggregate_id BIGSERIAL PRIMARY KEY,
+    metric_id BIGINT NOT NULL REFERENCES TimeSeriesMetrics(metric_id) ON DELETE RESTRICT,
+    bucket_start TIMESTAMPTZ NOT NULL,
+    bucket_end TIMESTAMPTZ NOT NULL,
+    information_seed_id BIGINT REFERENCES InformationSeed(information_seed_id) ON DELETE SET NULL,
+    information_seed_candidate_id BIGINT REFERENCES InformationSeedCandidate(information_seed_candidate_id) ON DELETE SET NULL,
+    source_id BIGINT REFERENCES Sources(source_id) ON DELETE SET NULL,
+    source_information_seed_id BIGINT REFERENCES SourceInformationSeedIndex(source_information_seed_id) ON DELETE SET NULL,
+    index_id BIGINT REFERENCES SearchIndex(index_id) ON DELETE SET NULL,
+    entity_id BIGINT REFERENCES Entities(entity_id) ON DELETE SET NULL,
+    subject_type VARCHAR(64),
+    subject_id BIGINT,
+    object_type VARCHAR(64),
+    object_id BIGINT,
+    correlation_rule_id BIGINT REFERENCES CorrelationRules(rule_id) ON DELETE SET NULL,
+    correlation_object_type_1 VARCHAR(64),
+    correlation_object_id_1 BIGINT,
+    correlation_object_type_2 VARCHAR(64),
+    correlation_object_id_2 BIGINT,
+    dimensions JSONB,
+    value_count BIGINT NOT NULL DEFAULT 0,
+    occurrence_total NUMERIC NOT NULL DEFAULT 0,
+    distinct_value_count BIGINT NOT NULL DEFAULT 0,
+    numeric_count BIGINT NOT NULL DEFAULT 0,
+    numeric_sum NUMERIC,
+    numeric_min NUMERIC,
+    numeric_max NUMERIC,
+    numeric_avg NUMERIC,
+    percentile_50 NUMERIC,
+    percentile_75 NUMERIC,
+    percentile_90 NUMERIC,
+    percentile_95 NUMERIC,
+    percentile_99 NUMERIC,
+    first_observation_id BIGINT REFERENCES TimeSeriesObservations(observation_id) ON DELETE SET NULL,
+    first_observed_at TIMESTAMPTZ,
+    first_value_numeric NUMERIC,
+    first_value_text TEXT,
+    first_value_hash VARCHAR(64),
+    last_observation_id BIGINT REFERENCES TimeSeriesObservations(observation_id) ON DELETE SET NULL,
+    last_observed_at TIMESTAMPTZ,
+    last_value_numeric NUMERIC,
+    last_value_text TEXT,
+    last_value_hash VARCHAR(64),
+    last_value_boolean BOOLEAN,
+    last_value_json JSONB,
+    first_seen_at TIMESTAMPTZ,
+    last_seen_at TIMESTAMPTZ,
+    change_count BIGINT NOT NULL DEFAULT 0,
+    aggregate_hash VARCHAR(64) NOT NULL UNIQUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMPTZ,
+    last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS TimeSeriesAggregationRuns (
+    run_key VARCHAR(255) PRIMARY KEY,
+    status VARCHAR(32) NOT NULL,
+    checkpoint_at TIMESTAMPTZ,
+    range_start TIMESTAMPTZ,
+    range_end TIMESTAMPTZ,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMPTZ,
+    last_error TEXT,
+    last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS EntityObservationBackfillCheckpoints (
+    job_name VARCHAR(255) PRIMARY KEY,
+    last_observation_id BIGINT NOT NULL DEFAULT 0,
+    affected_start TIMESTAMPTZ,
+    affected_end TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_timeseriesmetrics_enabled ON TimeSeriesMetrics(enabled, deleted_at);
+CREATE INDEX IF NOT EXISTS idx_timeseriesmetrics_dimensions_gin ON TimeSeriesMetrics USING GIN(dimensions);
+CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_metric_bucket ON TimeSeriesObservations(metric_id, bucket_start);
+CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_seed ON TimeSeriesObservations(information_seed_id, observed_at);
+CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_seed_candidate ON TimeSeriesObservations(information_seed_candidate_id, observed_at);
+CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_source ON TimeSeriesObservations(source_id, observed_at);
+CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_index ON TimeSeriesObservations(index_id, observed_at);
+CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_entity ON TimeSeriesObservations(entity_id, observed_at);
+CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_subject ON TimeSeriesObservations(subject_type, subject_id, observed_at);
+CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_object ON TimeSeriesObservations(object_type, object_id, observed_at);
+CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_correlation_rule ON TimeSeriesObservations(correlation_rule_id, observed_at);
+CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_dedupe_key ON TimeSeriesObservations(dedupe_key);
+CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_dimensions_gin ON TimeSeriesObservations USING GIN(dimensions);
+CREATE INDEX IF NOT EXISTS idx_timeseriesaggregates_metric_bucket ON TimeSeriesAggregates(metric_id, bucket_start);
+CREATE INDEX IF NOT EXISTS idx_timeseriesaggregates_seed ON TimeSeriesAggregates(information_seed_id, bucket_start);
+CREATE INDEX IF NOT EXISTS idx_timeseriesaggregates_seed_candidate ON TimeSeriesAggregates(information_seed_candidate_id, bucket_start);
+CREATE INDEX IF NOT EXISTS idx_timeseriesaggregates_source ON TimeSeriesAggregates(source_id, bucket_start);
+CREATE INDEX IF NOT EXISTS idx_timeseriesaggregates_index ON TimeSeriesAggregates(index_id, bucket_start);
+CREATE INDEX IF NOT EXISTS idx_timeseriesaggregates_entity ON TimeSeriesAggregates(entity_id, bucket_start);
+CREATE INDEX IF NOT EXISTS idx_timeseriesaggregates_subject ON TimeSeriesAggregates(subject_type, subject_id, bucket_start);
+CREATE INDEX IF NOT EXISTS idx_timeseriesaggregates_object ON TimeSeriesAggregates(object_type, object_id, bucket_start);
+CREATE INDEX IF NOT EXISTS idx_timeseriesaggregates_correlation_rule ON TimeSeriesAggregates(correlation_rule_id, bucket_start);
+CREATE INDEX IF NOT EXISTS idx_timeseriesaggregates_aggregate_hash ON TimeSeriesAggregates(aggregate_hash);
+CREATE INDEX IF NOT EXISTS idx_timeseriesaggregates_dimensions_gin ON TimeSeriesAggregates USING GIN(dimensions);
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
 -- Functions and Triggers setup
 
 -- Trigger function to send notifications for new events
@@ -2230,6 +2658,119 @@ ALTER TABLE netinfoindex ADD CONSTRAINT netinfoindex_index_id_fkey FOREIGN KEY (
 ALTER TABLE httpinfoindex DROP CONSTRAINT IF EXISTS httpinfoindex_index_id_fkey;
 ALTER TABLE httpinfoindex ADD CONSTRAINT httpinfoindex_index_id_fkey FOREIGN KEY (index_id) REFERENCES SearchIndex(index_id) ON DELETE CASCADE;
 
+-- Atomically claims InformationSeed work for one crowler-engine replica. The
+-- row locks and lifecycle update happen in the same statement so concurrent
+-- engines cannot receive the same seed.
+CREATE OR REPLACE FUNCTION update_informationseed(
+    limit_val INTEGER,
+    p_priority VARCHAR,
+    p_engineID VARCHAR,
+    p_processing_timeout VARCHAR,
+    p_retry_after VARCHAR
+)
+RETURNS TABLE(
+    information_seed_id BIGINT,
+    created_at TIMESTAMPTZ,
+    last_updated_at TIMESTAMPTZ,
+    category_id BIGINT,
+    usr_id BIGINT,
+    information_seed VARCHAR,
+    status VARCHAR,
+    priority VARCHAR,
+    engine VARCHAR,
+    last_processed_at TIMESTAMPTZ,
+    last_error TEXT,
+    last_error_at TIMESTAMPTZ,
+    disabled BOOLEAN,
+    attempts INTEGER,
+    config JSONB
+) AS
+$$
+DECLARE
+    priority_list TEXT[];
+    use_priority_filter BOOLEAN := FALSE;
+BEGIN
+    limit_val := GREATEST(COALESCE(limit_val, 0), 0);
+    p_priority := COALESCE(TRIM(p_priority), '');
+    p_engineID := COALESCE(TRIM(p_engineID), '');
+    p_processing_timeout := COALESCE(TRIM(p_processing_timeout), '');
+    p_retry_after := COALESCE(TRIM(p_retry_after), '');
+
+    IF p_engineID = '' THEN
+        RAISE EXCEPTION 'engine ID is required to claim information seeds';
+    END IF;
+    IF p_processing_timeout = '' THEN
+        p_processing_timeout := '30 minutes';
+    END IF;
+    IF p_retry_after = '' THEN
+        p_retry_after := '1 minute';
+    END IF;
+
+    IF p_priority <> '' THEN
+        priority_list := ARRAY(
+            SELECT TRIM(LOWER(value))
+            FROM unnest(string_to_array(p_priority, ',')) AS value
+            WHERE TRIM(value) <> ''
+        );
+        use_priority_filter := COALESCE(array_length(priority_list, 1), 0) > 0;
+    END IF;
+
+    RETURN QUERY
+    WITH selected_seeds AS (
+        SELECT seed.information_seed_id
+        FROM InformationSeed AS seed
+        WHERE COALESCE(seed.disabled, FALSE) = FALSE
+          AND (
+                NOT use_priority_filter
+                OR LOWER(TRIM(seed.priority)) = ANY(priority_list)
+              )
+          AND (
+                LOWER(TRIM(seed.status)) IN ('new', 'pending')
+                OR (
+                    LOWER(TRIM(seed.status)) = 'processing'
+                    AND (
+                        seed.last_processed_at IS NULL
+                        OR seed.last_processed_at < NOW() - p_processing_timeout::INTERVAL
+                    )
+                )
+                OR (
+                    LOWER(TRIM(seed.status)) = 'error'
+                    AND (
+                        seed.last_error_at IS NULL
+                        OR seed.last_error_at < NOW() - p_retry_after::INTERVAL
+                    )
+                )
+              )
+        ORDER BY seed.created_at ASC, seed.information_seed_id ASC
+        FOR UPDATE SKIP LOCKED
+        LIMIT limit_val
+    )
+    UPDATE InformationSeed AS claimed_seed
+    SET status = 'processing',
+        engine = p_engineID,
+        last_processed_at = NOW(),
+        attempts = COALESCE(claimed_seed.attempts, 0) + 1
+    FROM selected_seeds
+    WHERE claimed_seed.information_seed_id = selected_seeds.information_seed_id
+    RETURNING claimed_seed.information_seed_id,
+              claimed_seed.created_at,
+              claimed_seed.last_updated_at,
+              claimed_seed.category_id,
+              claimed_seed.usr_id,
+              claimed_seed.information_seed,
+              claimed_seed.status,
+              claimed_seed.priority,
+              claimed_seed.engine,
+              claimed_seed.last_processed_at,
+              claimed_seed.last_error,
+              claimed_seed.last_error_at,
+              claimed_seed.disabled,
+              claimed_seed.attempts,
+              claimed_seed.config;
+END;
+$$
+LANGUAGE plpgsql;
+
 -- Creates a function to fetch and update the sources as an atomic operation
 -- this is required to be able to deploy multiple crawlers without the risk of
 -- fetching the same source multiple times
@@ -2258,7 +2799,7 @@ CREATE OR REPLACE FUNCTION update_sources(
     p_regular_crawling VARCHAR,
     p_processing_timeout VARCHAR
 )
-RETURNS TABLE(source_id BIGINT, url TEXT, restricted INT, flags INT, config JSONB, last_updated_at TIMESTAMPTZ) AS
+RETURNS TABLE(source_id BIGINT, source_uid TEXT, url TEXT, restricted INT, flags INT, config JSONB, last_updated_at TIMESTAMPTZ) AS
 $$
 DECLARE
     priority_list TEXT[];
@@ -2318,7 +2859,7 @@ BEGIN
     SET status = 'processing',
         engine = p_engineID
     WHERE Sources.source_id IN (SELECT SelectedSources.source_id FROM SelectedSources)
-    RETURNING Sources.source_id, Sources.url, Sources.restricted, Sources.flags, Sources.config, Sources.last_updated_at;
+    RETURNING Sources.source_id, Sources.source_uid::TEXT, Sources.url, Sources.restricted, Sources.flags, Sources.config, Sources.last_updated_at;
 END;
 $$
 LANGUAGE plpgsql;
@@ -2329,9 +2870,11 @@ LANGUAGE plpgsql;
 -- Allows searching for correlated sources based on a specific domain appearing in the details of NetInfo, HTTPInfo, or WebObjects, returning the source_id and url of the correlated sources.
 -- SELECT *
 -- FROM find_correlated_sources_by_domain('example.com');
+DROP FUNCTION IF EXISTS find_correlated_sources_by_domain(TEXT);
 CREATE OR REPLACE FUNCTION find_correlated_sources_by_domain(domain TEXT)
 RETURNS TABLE (
     source_id BIGINT,
+    source_uid TEXT,
     url TEXT
 ) AS $$
 BEGIN
@@ -2365,7 +2908,7 @@ BEGIN
         SELECT pswo.source_id FROM PartnerSourcesFromWebObjects pswo
     )
 
-    SELECT DISTINCT s.source_id, s.url
+    SELECT DISTINCT s.source_id, COALESCE(s.source_uid, '')::TEXT AS source_uid, s.url
     FROM Sources s
     JOIN AllPartnerSources aps ON s.source_id = aps.source_id;
 END;
@@ -2374,9 +2917,11 @@ $$ LANGUAGE plpgsql;
 -- Allows searching for a specific query string across the page_url, title, summary, keywords, and metatags of the SearchIndex, returning results that match the query in any of those fields, along with a relevance ranking based on the full-text search score and similarity.
 -- SELECT *
 -- FROM search_pages('nginx', 'english');
+DROP FUNCTION IF EXISTS search_pages(TEXT, TEXT);
 CREATE OR REPLACE FUNCTION search_pages(q TEXT, lang TEXT)
 RETURNS TABLE(
     index_id BIGINT,
+    source_uid TEXT,
     page_url TEXT,
     title TEXT,
     snippet TEXT,
@@ -2388,6 +2933,7 @@ LANGUAGE SQL
 AS $$
 SELECT
     si.index_id,
+    COALESCE(s.source_uid, '')::TEXT AS source_uid,
     si.page_url::TEXT,
     si.title::TEXT,
 
@@ -2424,6 +2970,12 @@ LEFT JOIN MetaTagsIndex mti
 LEFT JOIN MetaTags mt
     ON mti.metatag_id = mt.metatag_id
 
+LEFT JOIN SourceSearchIndex ssi
+    ON si.index_id = ssi.index_id
+
+LEFT JOIN Sources s
+    ON ssi.source_id = s.source_id
+
 WHERE
     si.tsv @@ plainto_tsquery(lang::regconfig, q)
     OR similarity(si.title, q) > 0.3
@@ -2432,6 +2984,7 @@ WHERE
 
 GROUP BY
     si.index_id,
+    s.source_uid,
     si.page_url,
     si.title,
     si.summary,
@@ -2444,12 +2997,14 @@ ORDER BY rank DESC
 $$;
 
 -- This view aggregates all the relevant details from WebObjects, NetInfo, and HTTPInfo into a single unified view that can be easily queried for correlation and search purposes.
+DROP VIEW IF EXISTS Artifacts CASCADE;
 CREATE OR REPLACE VIEW Artifacts
 AS
 SELECT
     'webobject'::text AS object_type,
     wo.object_id AS object_id,
     si.index_id,
+    COALESCE(s.source_uid, '')::TEXT AS source_uid,
     si.page_url,
     wo.created_at,
     wo.last_updated_at
@@ -2458,6 +3013,10 @@ JOIN WebObjectsIndex woi
     ON wo.object_id = woi.object_id
 JOIN SearchIndex si
     ON woi.index_id = si.index_id
+LEFT JOIN SourceSearchIndex ssi
+    ON si.index_id = ssi.index_id
+LEFT JOIN Sources s
+    ON ssi.source_id = s.source_id
 
 UNION ALL
 
@@ -2465,10 +3024,17 @@ SELECT
     'netinfo',
     ni.netinfo_id,
     NULL,
+    COALESCE(s.source_uid, '')::TEXT,
     NULL,
     ni.created_at,
     ni.last_updated_at
 FROM NetInfo ni
+LEFT JOIN NetInfoIndex nii
+    ON ni.netinfo_id = nii.netinfo_id
+LEFT JOIN SourceSearchIndex ssi
+    ON nii.index_id = ssi.index_id
+LEFT JOIN Sources s
+    ON ssi.source_id = s.source_id
 
 UNION ALL
 
@@ -2476,17 +3042,26 @@ SELECT
     'httpinfo',
     hi.httpinfo_id,
     NULL,
+    COALESCE(s.source_uid, '')::TEXT,
     NULL,
     hi.created_at,
     hi.last_updated_at
-FROM HTTPInfo hi;
+FROM HTTPInfo hi
+LEFT JOIN HTTPInfoIndex hii
+    ON hi.httpinfo_id = hii.httpinfo_id
+LEFT JOIN SourceSearchIndex ssi
+    ON hii.index_id = ssi.index_id
+LEFT JOIN Sources s
+    ON ssi.source_id = s.source_id;
 
 -- Allows searching for a specific query string across all the scraped_data JSON fields, returning results that match the query in any of the field values.
 -- SELECT *
 -- FROM search_scraped_data('nginx');
+DROP FUNCTION IF EXISTS search_scraped_data(TEXT);
 CREATE OR REPLACE FUNCTION search_scraped_data(q TEXT)
 RETURNS TABLE(
     index_id BIGINT,
+    source_uid TEXT,
     page_url TEXT,
     json_field TEXT,
     json_val TEXT,
@@ -2498,6 +3073,7 @@ LANGUAGE SQL
 AS $$
 SELECT
     ar.index_id,
+    ar.source_uid,
     ar.page_url,
     oa.attribute_key,
     oa.attribute_value,
@@ -2525,12 +3101,14 @@ $$;
 -- Allows searching for a specific field and value within the scraped_data JSON, returning results that match the field name and have a value similar to the provided field_value.
 -- SELECT *
 -- FROM search_scraped_data_field('server', 'nginx');
+DROP FUNCTION IF EXISTS search_scraped_data_field(TEXT, TEXT);
 CREATE OR REPLACE FUNCTION search_scraped_data_field(
     field_name TEXT,
     field_value TEXT
 )
 RETURNS TABLE(
     index_id BIGINT,
+    source_uid TEXT,
     page_url TEXT,
     json_field TEXT,
     json_val TEXT,
@@ -2542,6 +3120,7 @@ LANGUAGE SQL
 AS $$
 SELECT
     ar.index_id,
+    ar.source_uid,
     ar.page_url,
     oa.attribute_key,
     oa.attribute_value,
@@ -2566,10 +3145,12 @@ $$;
 -- This function allows searching across all artifacts (WebObjects, NetInfo, HTTPInfo) for a given query string, returning the relevant details and a relevance rank based on the content of the JSON fields.
 -- SELECT *
 -- FROM search_artifacts('nginx');
+DROP FUNCTION IF EXISTS search_artifacts(TEXT);
 CREATE OR REPLACE FUNCTION search_artifacts(q TEXT)
 RETURNS TABLE(
     source_type TEXT,
     artifact_id BIGINT,
+    source_uid TEXT,
     page_url TEXT,
     json_field TEXT,
     json_val TEXT,
@@ -2582,6 +3163,7 @@ AS $$
 SELECT
     oa.object_type AS source_type,
     oa.object_id AS artifact_id,
+    ar.source_uid,
     ar.page_url,
     oa.attribute_key AS json_field,
     oa.attribute_value AS json_val,
@@ -2605,6 +3187,7 @@ WHERE
 ORDER BY rank DESC;
 $$;
 
+DROP FUNCTION IF EXISTS search_artifacts_field(TEXT, TEXT);
 CREATE OR REPLACE FUNCTION search_artifacts_field(
     field_name TEXT,
     field_value TEXT
@@ -2612,6 +3195,7 @@ CREATE OR REPLACE FUNCTION search_artifacts_field(
 RETURNS TABLE(
     source_type TEXT,
     artifact_id BIGINT,
+    source_uid TEXT,
     page_url TEXT,
     json_field TEXT,
     json_val TEXT,
@@ -2624,6 +3208,7 @@ AS $$
 SELECT
     oa.object_type AS source_type,
     oa.object_id AS artifact_id,
+    ar.source_uid,
     ar.page_url,
     oa.attribute_key AS json_field,
     oa.attribute_value AS json_val,
@@ -2649,10 +3234,12 @@ $$;
 -- FROM search_artifacts_fields(
 --  '{"server":"nginx","status":"200"}'
 -- );
+DROP FUNCTION IF EXISTS search_artifacts_fields(JSONB);
 CREATE OR REPLACE FUNCTION search_artifacts_fields(filters JSONB)
 RETURNS TABLE(
     source_type TEXT,
     artifact_id BIGINT,
+    source_uid TEXT,
     page_url TEXT,
     created_at TIMESTAMP,
     last_updated_at TIMESTAMP,
@@ -2670,6 +3257,7 @@ matches AS (
     SELECT
         oa.object_type,
         oa.object_id,
+        ar.source_uid,
         ar.page_url,
         ar.created_at,
         ar.last_updated_at,
@@ -2690,6 +3278,7 @@ matches AS (
 SELECT
     object_type AS source_type,
     object_id AS artifact_id,
+    source_uid,
     page_url,
     created_at,
     last_updated_at,
@@ -2701,6 +3290,7 @@ FROM matches
 GROUP BY
     object_type,
     object_id,
+    source_uid,
     page_url,
     created_at,
     last_updated_at
@@ -2712,6 +3302,7 @@ HAVING COUNT(*) = (
 ORDER BY rank DESC;
 $$;
 
+DROP FUNCTION IF EXISTS search_artifacts_by_attribute(TEXT, TEXT);
 CREATE OR REPLACE FUNCTION search_artifacts_by_attribute(
     field_name TEXT,
     field_value TEXT
@@ -2719,6 +3310,7 @@ CREATE OR REPLACE FUNCTION search_artifacts_by_attribute(
 RETURNS TABLE(
     source_type TEXT,
     artifact_id BIGINT,
+    source_uid TEXT,
     page_url TEXT,
     attribute_key TEXT,
     attribute_value TEXT,
@@ -2744,6 +3336,7 @@ WITH matched_objects AS (
 SELECT
     oa.object_type AS source_type,
     oa.object_id AS artifact_id,
+    ar.source_uid,
     ar.page_url,
     oa.attribute_key,
     oa.attribute_value,
@@ -2765,6 +3358,7 @@ JOIN Artifacts ar
 ORDER BY mo.rank DESC, oa.attribute_key;
 $$;
 
+DROP FUNCTION IF EXISTS search_objects_by_attribute(TEXT, TEXT);
 CREATE OR REPLACE FUNCTION search_objects_by_attribute(
     field_name TEXT,
     field_value TEXT
@@ -2772,6 +3366,7 @@ CREATE OR REPLACE FUNCTION search_objects_by_attribute(
 RETURNS TABLE(
     source_type TEXT,
     object_id BIGINT,
+    source_uid TEXT,
     page_url TEXT,
     details JSONB,
     attributes JSONB,
@@ -2796,6 +3391,7 @@ WITH matched_objects AS (
 SELECT
     mo.object_type AS source_type,
     mo.object_id,
+    ar.source_uid,
     ar.page_url,
 
     -- pick correct JSON source
@@ -2844,6 +3440,7 @@ LEFT JOIN HTTPInfo hi
 GROUP BY
     mo.object_type,
     mo.object_id,
+    ar.source_uid,
     ar.page_url,
     wo.details,
     ni.details,
@@ -2856,10 +3453,12 @@ ORDER BY mo.rank DESC;
 $$;
 
 
+DROP FUNCTION IF EXISTS search_objects_by_attributes(JSONB);
 CREATE OR REPLACE FUNCTION search_objects_by_attributes(filters JSONB)
 RETURNS TABLE(
     source_type TEXT,
     object_id BIGINT,
+    source_uid TEXT,
     page_url TEXT,
     details JSONB,
     attributes JSONB,
@@ -2879,6 +3478,7 @@ matches AS (
     SELECT
         oa.object_type,
         oa.object_id,
+        ar.source_uid,
         ar.page_url,
         ar.created_at,
         ar.last_updated_at,
@@ -2901,6 +3501,7 @@ matched_objects AS (
     SELECT
         object_type,
         object_id,
+        source_uid,
         page_url,
         created_at,
         last_updated_at,
@@ -2911,6 +3512,7 @@ matched_objects AS (
     GROUP BY
         object_type,
         object_id,
+        source_uid,
         page_url,
         created_at,
         last_updated_at
@@ -2920,6 +3522,7 @@ matched_objects AS (
 SELECT
     mo.object_type AS source_type,
     mo.object_id,
+    mo.source_uid,
     mo.page_url,
 
     -- polymorphic details selection
@@ -2969,6 +3572,7 @@ LEFT JOIN HTTPInfo hi
 GROUP BY
     mo.object_type,
     mo.object_id,
+    mo.source_uid,
     mo.page_url,
     wo.details,
     ni.details,
@@ -3058,6 +3662,12 @@ ALTER TABLE entitymemberships OWNER TO :CROWLER_DB_USER;
 ALTER TABLE correlationrules OWNER TO :CROWLER_DB_USER;
 ALTER TABLE objectcorrelations OWNER TO :CROWLER_DB_USER;
 ALTER TABLE eventschedules OWNER TO :CROWLER_DB_USER;
+ALTER TABLE timeseriesmetrics OWNER TO :CROWLER_DB_USER;
+ALTER TABLE timeseriesobservations OWNER TO :CROWLER_DB_USER;
+ALTER TABLE timeseriesaggregates OWNER TO :CROWLER_DB_USER;
+ALTER TABLE entityobservationbackfillcheckpoints OWNER TO :CROWLER_DB_USER;
+ALTER TABLE emailmailboxstate OWNER TO :CROWLER_DB_USER;
+ALTER TABLE emailmessagestate OWNER TO :CROWLER_DB_USER;
 
 -- Grants permissions to the user on the :"POSTGRES_DB" database
 SELECT grant_sequence_permissions('public', :'CROWLER_DB_USER');

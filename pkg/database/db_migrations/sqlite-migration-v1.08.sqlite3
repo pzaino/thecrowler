@@ -1,0 +1,60 @@
+-- SQLite upgrade migration inventory for Information Seed schema v1.8.
+-- SQLite setup applies the column-add portions through pkg/database/sqlite_db.go
+-- because supported SQLite versions do not all provide ADD COLUMN IF NOT EXISTS.
+-- Fresh v1.8-compatible databases can run the CREATE TABLE/INDEX statements below.
+
+CREATE TABLE IF NOT EXISTS InformationSeedCandidate (
+    information_seed_candidate_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    information_seed_id INTEGER NOT NULL,
+    normalized_url VARCHAR(2048) NOT NULL,
+    host VARCHAR(255),
+    provider VARCHAR(255),
+    query TEXT,
+    rank INTEGER DEFAULT 0 NOT NULL,
+    score REAL DEFAULT 0 NOT NULL,
+    decision_status VARCHAR(32) NOT NULL CHECK (decision_status IN ('accepted', 'rejected')),
+    rejection_reason TEXT DEFAULT '' NOT NULL,
+    metadata TEXT,
+    run_attempt INTEGER DEFAULT 0 NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (information_seed_id, normalized_url, provider, query, rank, run_attempt),
+    FOREIGN KEY(information_seed_id) REFERENCES InformationSeed(information_seed_id) ON DELETE CASCADE
+);
+
+-- Apply these ADD COLUMN statements only when PRAGMA table_info reports the
+-- column is absent; see ensureSQLiteInformationSeedSchema and
+-- ensureSQLiteSourceInformationSeedProvenance for the executable guard.
+-- ALTER TABLE InformationSeed ADD COLUMN status VARCHAR(50) DEFAULT 'new' NOT NULL;
+-- ALTER TABLE InformationSeed ADD COLUMN priority VARCHAR(64) DEFAULT '' NOT NULL;
+-- ALTER TABLE InformationSeed ADD COLUMN engine VARCHAR(256) DEFAULT '' NOT NULL;
+-- ALTER TABLE InformationSeed ADD COLUMN last_processed_at TIMESTAMP;
+-- ALTER TABLE InformationSeed ADD COLUMN last_error TEXT;
+-- ALTER TABLE InformationSeed ADD COLUMN last_error_at TIMESTAMP;
+-- ALTER TABLE InformationSeed ADD COLUMN disabled BOOLEAN DEFAULT FALSE;
+-- ALTER TABLE InformationSeed ADD COLUMN attempts INTEGER DEFAULT 0 NOT NULL;
+-- ALTER TABLE SourceInformationSeedIndex ADD COLUMN discovery_provider VARCHAR(255);
+-- ALTER TABLE SourceInformationSeedIndex ADD COLUMN discovery_query TEXT;
+-- ALTER TABLE SourceInformationSeedIndex ADD COLUMN discovery_rank INTEGER;
+-- ALTER TABLE SourceInformationSeedIndex ADD COLUMN candidate_score REAL;
+-- ALTER TABLE SourceInformationSeedIndex ADD COLUMN candidate_reason TEXT;
+-- ALTER TABLE SourceInformationSeedIndex ADD COLUMN discovery_metadata TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_informationseed_status ON InformationSeed(status);
+CREATE INDEX IF NOT EXISTS idx_informationseed_priority ON InformationSeed(priority);
+CREATE INDEX IF NOT EXISTS idx_informationseed_disabled ON InformationSeed(disabled);
+CREATE INDEX IF NOT EXISTS idx_informationseed_last_processed_at ON InformationSeed(last_processed_at);
+CREATE INDEX IF NOT EXISTS idx_informationseed_last_error_at ON InformationSeed(last_error_at);
+CREATE INDEX IF NOT EXISTS idx_informationseed_processing_stale ON InformationSeed(status, disabled, last_processed_at);
+CREATE INDEX IF NOT EXISTS idx_informationseed_claim_queue ON InformationSeed(disabled, status, priority, created_at, information_seed_id);
+CREATE INDEX IF NOT EXISTS idx_informationseed_engine_status ON InformationSeed(engine, status, last_processed_at);
+CREATE INDEX IF NOT EXISTS idx_informationseedcandidate_seed ON InformationSeedCandidate(information_seed_id, run_attempt DESC, last_updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_informationseedcandidate_decision ON InformationSeedCandidate(decision_status);
+CREATE INDEX IF NOT EXISTS idx_informationseedcandidate_seed_decision ON InformationSeedCandidate(information_seed_id, decision_status, run_attempt DESC);
+CREATE INDEX IF NOT EXISTS idx_informationseedcandidate_host ON InformationSeedCandidate(host);
+CREATE INDEX IF NOT EXISTS idx_informationseedcandidate_provider ON InformationSeedCandidate(provider);
+CREATE INDEX IF NOT EXISTS idx_informationseedcandidate_normalized_url ON InformationSeedCandidate(normalized_url);
+CREATE INDEX IF NOT EXISTS idx_sourceinformationseedindex_information_seed_id ON SourceInformationSeedIndex(information_seed_id);
+CREATE INDEX IF NOT EXISTS idx_sourceinformationseedindex_source_id ON SourceInformationSeedIndex(source_id);
+CREATE INDEX IF NOT EXISTS idx_sourceinformationseedindex_seed_source ON SourceInformationSeedIndex(information_seed_id, source_id);
+CREATE INDEX IF NOT EXISTS idx_sourceinformationseedindex_provider_rank ON SourceInformationSeedIndex(information_seed_id, discovery_provider, discovery_rank);

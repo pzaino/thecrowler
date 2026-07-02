@@ -1,0 +1,6 @@
+{
+  "results": [
+    {"url": "https://example.net/", "title": "Generic Example", "snippet": "Generic snippet.", "score": 0.75}
+  ],
+  "total": 1
+}

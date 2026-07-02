@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -28,11 +29,13 @@ import (
 	"gopkg.in/yaml.v2"
 
 	agt "github.com/pzaino/thecrowler/pkg/agent"
+	auth "github.com/pzaino/thecrowler/pkg/auth"
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 	plg "github.com/pzaino/thecrowler/pkg/plugin"
 	rset "github.com/pzaino/thecrowler/pkg/ruleset"
+	ws "github.com/pzaino/thecrowler/pkg/ws"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
@@ -60,6 +63,12 @@ var (
 	sysReadyMtx sync.RWMutex // Mutex to protect the SysReady variable
 	sysReady    int          // System readiness status variable 0 = not ready, 1 = starting up, 2 = ready
 
+	eventsHTTPServerMtx    sync.RWMutex
+	eventsHTTPServer       *http.Server
+	eventsShutdownComplete = make(chan struct{})
+	apiEventJobs           sync.WaitGroup
+	apiEventsAccepting     atomic.Bool
+
 	// dbHandler is the database handler
 	dbHandler cdb.Handler
 
@@ -71,11 +80,13 @@ var (
 
 	clientLimiters = make(map[string]*rate.Limiter)
 	limitersMutex  sync.Mutex
-	jobQueue       = make(chan cdb.Event, 160_000) // buffered requests queue
-	internalQ      = make(chan cdb.Event, 160_000) // buffered small; DB-only work
+	jobQueue       = make(chan cdb.Event, 160_000) // buffered notification queue
+	apiEventQ      = make(chan cdb.Event, 160_000) // API create requests; DB-only work
+	internalQ      = make(chan cdb.Event, 160_000) // other internal DB-only work
 	externalQ      = make(chan cdb.Event, 160_000) // buffered larger; JS+DB work
 
 	mainInstance = []string{"crowler-events", "crowler-events-0"}
+	eventsWSHub  *ws.Hub
 )
 
 func setSysReady(newStatus int) {
@@ -183,7 +194,8 @@ func main() {
 	for i := 0; i < runtime.NumCPU(); i++ {
 		go eventWorker()
 	}
-	startInternalWorkers(runtime.NumCPU())     // internal events workers
+	startAPICreateWorkers(runtime.NumCPU())    // latency-sensitive API persistence workers
+	startInternalWorkers(runtime.NumCPU())     // other internal events workers
 	startExternalWorkers(runtime.NumCPU() * 2) // external events workers
 
 	// Setup prometheus push gateway if enabled
@@ -237,6 +249,9 @@ func main() {
 		// zero, there is no timeout.
 		IdleTimeout: time.Duration(config.Events.IdleTimeout) * time.Second,
 	}
+	eventsHTTPServerMtx.Lock()
+	eventsHTTPServer = srv
+	eventsHTTPServerMtx.Unlock()
 
 	_ = runtime.GOMAXPROCS(runtime.NumCPU())
 
@@ -268,8 +283,15 @@ func main() {
 		// Start the event listener (on a separate go routine)
 		go cdb.ListenForEvents(&dbHandler, handleNotification, notifyTimeout)
 
-		// Start events scheduler
+		// Provider listeners are singleton lifecycle owners. Their durable crawl
+		// requests are claimed atomically by one of the scalable crawler engines.
+		if config.Email.Enabled {
+			go newEmailListenerManager(&dbHandler, config.Email).Run(context.Background())
+		}
+
+		// Start events scheduler and isolated time-series maintenance.
 		cdb.StartScheduler(&dbHandler, config)
+		startTimeSeriesAggregationScheduler(&dbHandler, config.TimeSeries)
 
 		// Start heartbeat loop if enabled
 		if config.Events.HeartbeatEnabled {
@@ -278,14 +300,53 @@ func main() {
 	}
 
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting server on %s:%d", config.Events.Host, config.Events.Port)
+	apiEventsAccepting.Store(true)
+	setSysReady(2) // Indicate system is ready
+	var serveErr error
 	if strings.ToLower(strings.TrimSpace(config.Events.SSLMode)) == cmn.EnableStr {
-		setSysReady(2) // Indicate system is ready
-		cmn.DebugMsg(cmn.DbgLvlFatal, "Server return: %v", srv.ListenAndServeTLS(config.Events.CertFile, config.Events.KeyFile))
+		serveErr = srv.ListenAndServeTLS(config.Events.CertFile, config.Events.KeyFile)
 	} else {
-		setSysReady(2) // Indicate system is ready
-		cmn.DebugMsg(cmn.DbgLvlFatal, "Server return: %v", srv.ListenAndServe())
+		serveErr = srv.ListenAndServe()
 	}
 	setSysReady(0) // Indicate system is NOT ready
+	if errors.Is(serveErr, http.ErrServerClosed) {
+		<-eventsShutdownComplete
+		return
+	}
+	if serveErr != nil {
+		cmn.DebugMsg(cmn.DbgLvlFatal, "Server return: %v", serveErr)
+	}
+}
+
+func shutdownEventsHTTPServer(sig os.Signal) {
+	defer close(eventsShutdownComplete)
+	cmn.DebugMsg(cmn.DbgLvlInfo, "%s received, draining accepted API events...", sig)
+	apiEventsAccepting.Store(false)
+	setSysReady(0)
+
+	eventsHTTPServerMtx.RLock()
+	srv := eventsHTTPServer
+	eventsHTTPServerMtx.RUnlock()
+	if eventsWSHub != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = eventsWSHub.Shutdown(ctx)
+		cancel()
+	}
+	if srv != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := srv.Shutdown(ctx); err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "Graceful HTTP shutdown failed: %v", err)
+			_ = srv.Close()
+		}
+		cancel()
+	}
+
+	// Do not terminate while an acknowledged in-memory request is outstanding.
+	// If the database is temporarily unavailable, workers continue retrying and
+	// shutdown waits rather than discarding accepted events.
+	apiEventJobs.Wait()
+	cmn.DebugMsg(cmn.DbgLvlInfo, "All accepted API events were persisted")
+	updateMetrics()
 }
 
 func cloudRunAddr(cfg cfg.Config) string {
@@ -498,17 +559,21 @@ type PluginText struct {
 
 // initAPIv1 initializes the API v1 handlers
 func initAPIv1() {
+	tagsNone := []string{}
+	tagsHealth := []string{"Health"}
+	tagsDocs := []string{"Documentation"}
+
 	// Health check
-	healthCheckWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(healthCheckHandler)))
-	readyCheckWithMiddlewares := SecurityHeadersMiddleware(RateLimitMiddleware(http.HandlerFunc(readyCheckHandler)))
+	healthCheckWithMiddlewares := withAll(http.HandlerFunc(healthCheckHandler))
+	readyCheckWithMiddlewares := withAll(http.HandlerFunc(readyCheckHandler))
 
 	http.Handle("/v1/health", healthCheckWithMiddlewares)
 	http.Handle("/v1/health/", healthCheckWithMiddlewares)
-	cmn.RegisterAPIRoute("/v1/health", []string{"GET"}, "Health check endpoint", false, false, 200, nil, nil, nil)
+	cmn.RegisterAPIRoute("/v1/health", []string{"GET"}, "Health check endpoint", tagsHealth, false, false, 200, nil, nil, nil)
 
 	http.Handle("/v1/ready", readyCheckWithMiddlewares)
 	http.Handle("/v1/ready/", readyCheckWithMiddlewares)
-	cmn.RegisterAPIRoute("/v1/ready", []string{"GET"}, "Readiness check endpoint", false, false, 200, nil, nil, nil)
+	cmn.RegisterAPIRoute("/v1/ready", []string{"GET"}, "Readiness check endpoint", tagsHealth, false, false, 200, nil, nil, nil)
 
 	// Events API endpoints
 	createEventWithMiddlewares := withAll(http.HandlerFunc(createEventHandler))
@@ -519,28 +584,32 @@ func initAPIv1() {
 	removeEventsBeforeWithMiddlewares := withAll(http.HandlerFunc(removeEventsBeforeHandler))
 	listEventsWithMiddlewares := withAll(http.HandlerFunc(listEventsHandler))
 
+	eventsWSHub = ws.NewHub("events", ws.Config(config.Events.WebSocket))
+	http.Handle("/v1/event/ws", withAll(http.HandlerFunc(eventsWSHub.Handler)))
+	cmn.RegisterAPIRoute("/v1/event/ws", []string{"GET"}, "WebSocket live event updates endpoint", tagsNone, false, false, 101, nil, nil, nil)
+
 	baseAPI := "/v1/event/"
 
 	http.Handle(baseAPI+"create", createEventWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"create", []string{"POST"}, "Create a new event", false, false, 201, cdb.Event{}, nil, EventResponse{})
+	cmn.RegisterAPIRoute(baseAPI+"create", []string{"POST"}, "Create a new event", tagsNone, false, false, 201, cdb.Event{}, nil, EventResponse{})
 
 	http.Handle(baseAPI+"schedule", scheduleEventWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"schedule", []string{"POST"}, "Schedule a new event", false, false, 201, ScheduleEventRequest{}, nil, EventScheduleResponse{})
+	cmn.RegisterAPIRoute(baseAPI+"schedule", []string{"POST"}, "Schedule a new event", tagsNone, false, false, 201, ScheduleEventRequest{}, nil, EventScheduleResponse{})
 
 	http.Handle(baseAPI+"status", checkEventWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"status", []string{"GET"}, "Check the status of an event by its ID", false, false, 200, nil, cmn.StdAPIQuery{}, []cdb.Event{})
+	cmn.RegisterAPIRoute(baseAPI+"status", []string{"GET"}, "Check the status of an event by its ID", tagsNone, false, false, 200, nil, cmn.StdAPIQuery{}, []cdb.Event{})
 
 	http.Handle(baseAPI+"update", updateEventWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"update", []string{"POST"}, "Update an existing event by its ID", false, false, 204, cdb.Event{}, nil, EventUpdateResponse{})
+	cmn.RegisterAPIRoute(baseAPI+"update", []string{"POST"}, "Update an existing event by its ID", tagsNone, false, false, 204, cdb.Event{}, nil, EventUpdateResponse{})
 
 	http.Handle(baseAPI+"remove", removeEventWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"remove", []string{"GET"}, "Remove an event by its ID", false, false, 204, nil, APIEventREquest{}, EventUpdateResponse{})
+	cmn.RegisterAPIRoute(baseAPI+"remove", []string{"GET"}, "Remove an event by its ID", tagsNone, false, false, 204, nil, APIEventREquest{}, EventUpdateResponse{})
 
 	http.Handle(baseAPI+"remove_before", removeEventsBeforeWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"remove_before", []string{"GET"}, "Remove events before a certain timestamp", false, false, 204, nil, APIRemoveBeforeRequest{}, EventResponse{})
+	cmn.RegisterAPIRoute(baseAPI+"remove_before", []string{"GET"}, "Remove events before a certain timestamp", tagsNone, false, false, 204, nil, APIRemoveBeforeRequest{}, EventResponse{})
 
 	http.Handle(baseAPI+"list", listEventsWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"list", []string{"GET"}, "List all events", false, false, 200, nil, nil, []cdb.Event{})
+	cmn.RegisterAPIRoute(baseAPI+"list", []string{"GET"}, "List all events", tagsNone, false, false, 200, nil, nil, []cdb.Event{})
 
 	// Handle uploads
 
@@ -551,21 +620,22 @@ func initAPIv1() {
 	baseAPI = "/v1/upload/"
 
 	http.Handle(baseAPI+"ruleset", uploadRulesetHandlerWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"ruleset", []string{"POST"}, "Upload a new ruleset", false, false, 201, rset.Ruleset{}, nil, cmn.StdAPISuccess{})
+	cmn.RegisterAPIRoute(baseAPI+"ruleset", []string{"POST"}, "Upload a new ruleset", tagsNone, false, false, 201, rset.Ruleset{}, nil, cmn.StdAPISuccess{})
 
 	http.Handle(baseAPI+"plugin", uploadPluginHandlerWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"plugin", []string{"POST"}, "Upload a new plugin", false, false, 201, PluginText{}, nil, cmn.StdAPISuccess{})
+	cmn.RegisterAPIRoute(baseAPI+"plugin", []string{"POST"}, "Upload a new plugin", tagsNone, false, false, 201, PluginText{}, nil, cmn.StdAPISuccess{})
 
 	http.Handle(baseAPI+"agent", uploadAgentHandlerWithMiddlewares)
-	cmn.RegisterAPIRoute(baseAPI+"agent", []string{"POST"}, "Upload a new agent configuration", false, false, 201, agt.JobConfig{}, nil, cmn.StdAPISuccess{})
+	cmn.RegisterAPIRoute(baseAPI+"agent", []string{"POST"}, "Upload a new agent configuration", tagsNone, false, false, 201, agt.JobConfig{}, nil, cmn.StdAPISuccess{})
 
 	if config.Events.EnableAPIDocs {
 		// OpenAPI spec endpoint
 		http.Handle("/v1/openapi.json", withAll(http.HandlerFunc(openapiHandler)))
-		cmn.RegisterAPIRoute("/v1/openapi.json", []string{"GET"}, "OpenAPI 3.0.3 specification (generated at runtime)", false, false, 200, nil, nil, nil)
+		cmn.RegisterAPIRoute("/v1/openapi.json", []string{"GET"}, "OpenAPI 3.0.3 specification (generated at runtime)", tagsDocs, false, false, 200, nil, nil, nil)
 
 		// Finally the docs endpoint
-		http.Handle("/v1/docs", withAll(http.HandlerFunc(docsHandler)))
+		http.Handle("/v1/docs", withAll(http.HandlerFunc(openapiHandler)))
+		cmn.RegisterAPIRoute("/v1/docs", []string{"GET"}, "API documentation and available endpoints", tagsDocs, false, false, 200, nil, nil, nil)
 	}
 }
 
@@ -594,18 +664,38 @@ func openapiHandler(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	// If host is 0.0.0.0, leave serverURL blank (Swagger UI can still work).
+	const localhost = "http://localhost"
 	host := strings.TrimSpace(config.Events.URL)
+	port := ""
+	if (config.Events.Port != 80) && (config.Events.Port != 443) && (config.Events.Port != 0) {
+		port = fmt.Sprintf(":%d", config.Events.Port)
+	}
 	if host == "" {
 		host = strings.TrimSpace(config.Events.Host)
-		if host != "" && host != "0.0.0.0" && host != "::" {
-			port := ""
-			if (config.Events.Port != 80) && (config.Events.Port != 443) && (config.Events.Port != 0) {
-				port = fmt.Sprintf(":%d", config.Events.Port)
-			}
+		if (host != "") && (host != "0.0.0.0") && (host != "::") {
 			serverURL = fmt.Sprintf("%s://%s%s", scheme, host, port)
+		} else {
+			serverURL = localhost // Default to localhost if host is not set or is a wildcard
+			if port != "" {
+				serverURL += port
+			}
 		}
 	} else {
-		serverURL = fmt.Sprintf("%s://%s", scheme, host)
+		// If we have a URL configured, use it as the base for the server URL (but ensure it has the correct scheme and port)
+		if !strings.HasPrefix(host, "http://") && !strings.HasPrefix(host, "https://") {
+			host = fmt.Sprintf("%s://%s", scheme, host)
+		}
+		serverURL = host
+	}
+	if serverURL == "" {
+		serverURL = localhost
+		if port != "" {
+			serverURL += port
+		}
+	}
+	// Check if the serverURL got the port attached twice (e.g., if config.API.URL already included the port)
+	if strings.Count(serverURL, ":") > 2 && strings.Contains(serverURL, port) {
+		serverURL = strings.Replace(serverURL, port, "", 1)
 	}
 
 	spec := cmn.BuildOpenAPISpec(routes, cmn.OpenAPIOptions{
@@ -613,6 +703,16 @@ func openapiHandler(w http.ResponseWriter, _ *http.Request) {
 		Version:     "v1",
 		Description: "Dynamically generated OpenAPI spec from the running server route registry.",
 		ServerURL:   serverURL,
+		Contact: &cmn.OpenAPIContact{
+			Name:  "CROWler Team",
+			URL:   "https://github.com/pzaino/thecrowler",
+			Email: "",
+		},
+		Tags: []cmn.OpenAPITag{
+			{Name: "API", Description: "Endpoints for creating, managing, and querying events."},
+			{Name: "Health", Description: "Endpoints related to health and readiness checks."},
+			{Name: "Documentation", Description: "Endpoints related to API documentation and specifications."},
+		},
 	})
 
 	handleErrorAndRespond(w, nil, spec, "", http.StatusInternalServerError, http.StatusOK)
@@ -634,7 +734,9 @@ func withAll(m http.Handler) http.Handler {
 	return RecoverMiddleware(
 		SecurityHeadersMiddleware(
 			KeepAliveHeadersMiddleware(
-				RateLimitMiddleware(m),
+				RateLimitMiddleware(
+					auth.Middleware(config.Events.Auth, dbHandler)(CORSHeadersMiddleware(m)),
+				),
 			),
 		),
 	)
@@ -685,10 +787,19 @@ func SecurityHeadersMiddleware(next http.Handler) http.Handler {
 		// Add various security headers here
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'")
+		// w.Header().Set("Content-Security-Policy", "default-src 'self'")
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// CORSHeadersMiddleware applies the Events service CORS policy from configuration.
+func CORSHeadersMiddleware(next http.Handler) http.Handler {
+	cors := config.Events.CORS
+	return cmn.CORSHeadersMiddleware(cmn.CORSOptions{
+		Enabled:        cors.Enabled,
+		AllowedOrigins: cors.AllowedOrigins,
+	})(next)
 }
 
 func healthCheckHandler(w http.ResponseWriter, _ *http.Request) {
@@ -751,28 +862,54 @@ type EventResponse struct {
 }
 
 func createEventHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+		return
+	}
+
 	var event cdb.Event
 	if err := json.NewDecoder(r.Body).Decode(&event); err != nil {
 		http.Error(w, "Invalid body", http.StatusBadRequest)
 		return
 	}
+	if err := validateEmailLifecycleEvent(event); err != nil {
+		http.Error(w, "Invalid event payload", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(event.Type) == "" {
+		http.Error(w, "Missing event_type", http.StatusBadRequest)
+		return
+	}
+	if !apiEventsAccepting.Load() {
+		http.Error(w, "Events manager is shutting down", http.StatusServiceUnavailable)
+		return
+	}
 
-	eventID := cdb.GenerateEventUID(event)
+	if event.Timestamp == "" {
+		event.Timestamp = time.Now().Format(time.RFC3339Nano)
+	}
+	event.ID = cdb.GenerateEventUID(event)
 	event.Action = actionInsert
 	if event.ExpiresAt == "" {
 		event.ExpiresAt = time.Now().Add(5 * time.Minute).Format(time.RFC3339)
 	}
 
-	// Async process
-	//jobQueue <- event
-	if !enqueueWithTimeout(jobQueue, event, 500*time.Millisecond) {
+	// Admission is deliberately non-blocking. The 160k buffer absorbs bursts; if
+	// it is exhausted, reply immediately so clients can retry instead of adding
+	// unbounded latency or memory pressure.
+	apiEventJobs.Add(1)
+	select {
+	case apiEventQ <- event:
+	default:
+		apiEventJobs.Done()
+		w.Header().Set("Retry-After", "1")
 		http.Error(w, "Events queue is full", http.StatusServiceUnavailable)
 		return
 	}
 
-	//response := map[string]string{"message": "Event created successfully", "event_id": eventID}
 	response := EventResponse{
-		ID:  eventID,
+		ID:  event.ID,
 		Msg: "Event creation scheduled successfully",
 	}
 	handleErrorAndRespond(w, nil, response, "Error creating event: ", http.StatusInternalServerError, http.StatusCreated)
@@ -1016,6 +1153,9 @@ func handleNotification(payload string) {
 	var event cdb.Event
 	mEventsTotalReceived.With(prometheus.Labels{"engine": cmn.GetMicroServiceName()}).Inc()
 	if err := json.Unmarshal([]byte(payload), &event); err == nil {
+		if eventsWSHub != nil {
+			eventsWSHub.Broadcast("event", event)
+		}
 		// Put the event in the jobQueue
 		if !enqueueWithTimeout(jobQueue, event, 500*time.Millisecond) {
 			cmn.DebugMsg(cmn.DbgLvlWarn, "Job queue full; dropping event %s (type=%s)", event.ID, event.Type)
@@ -1025,6 +1165,58 @@ func handleNotification(payload string) {
 	} else {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to decode notification: %v", err)
 		mEventsTotalDropped.With(prometheus.Labels{"engine": cmn.GetMicroServiceName()}).Inc()
+	}
+}
+
+func startAPICreateWorkers(n int) {
+	for i := 0; i < n; i++ {
+		go func() {
+			for event := range apiEventQ {
+				persistQueuedAPIEvent(event)
+				apiEventJobs.Done()
+			}
+		}()
+	}
+}
+
+var createQueuedAPIEvent = func(ctx context.Context, event cdb.Event) error {
+	_, err := cdb.CreateEvent(ctx, &dbHandler, event)
+	if err == nil && eventsWSHub != nil {
+		eventsWSHub.Broadcast("event.created", event)
+	}
+	return err
+}
+
+func persistQueuedAPIEvent(event cdb.Event) {
+	for !persistQueuedAPIEventUntilSuccess(event) {
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func persistQueuedAPIEventUntilSuccess(event cdb.Event) (completed bool) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "API event worker panic on event %s: %v\n%s", event.ID, rec, debug.Stack())
+			completed = false
+		}
+	}()
+
+	const callTimeout = 5 * time.Second
+	for attempt := 1; ; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+		err := createQueuedAPIEvent(ctx, event)
+		cancel()
+		if err == nil {
+			return true
+		}
+
+		delay := time.Duration(1<<min(attempt-1, 7)) * 20 * time.Millisecond
+		jitter := time.Duration(rand.Int63n(int64(delay / 2))) //nolint:gosec // jitter, not cryptography
+		if attempt == 1 || attempt%10 == 0 {
+			cmn.DebugMsg(cmn.DbgLvlWarn, "Queued API event %s insert failed (attempt %d): %v; retrying in %s",
+				event.ID, attempt, err, delay+jitter)
+		}
+		time.Sleep(delay + jitter)
 	}
 }
 
@@ -1128,6 +1320,9 @@ func processInternalEvent(event cdb.Event) {
 			_, err = cdb.CreateEvent(ctx, &dbHandler, event)
 			cancel() // Cancel the context to free resources
 			if err == nil {
+				if eventsWSHub != nil {
+					eventsWSHub.Broadcast("event.created", event)
+				}
 				return // success!
 			}
 
@@ -1815,6 +2010,14 @@ var (
 		[]string{"engine"},
 	)
 
+	mQueueAPILength = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "crowler_events_queue_api_create",
+			Help: "Current number of accepted API create requests waiting for a DB worker",
+		},
+		[]string{"engine"},
+	)
+
 	mQueueInternalLength = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "crowler_events_queue_internal",
@@ -1864,6 +2067,7 @@ func registerMetrics() {
 		mEventsTotalErrors,
 		mEventsTotalDropped,
 		mQueueJobLength,
+		mQueueAPILength,
 		mQueueInternalLength,
 		mQueueExternalLength,
 		mWorkersRunning,
@@ -1882,6 +2086,7 @@ func updateMetrics() {
 
 	// Queue sizes
 	mQueueJobLength.With(labels).Set(float64(len(jobQueue)))
+	mQueueAPILength.With(labels).Set(float64(len(apiEventQ)))
 	mQueueInternalLength.With(labels).Set(float64(len(internalQ)))
 	mQueueExternalLength.With(labels).Set(float64(len(externalQ)))
 
@@ -1896,6 +2101,7 @@ func updateMetrics() {
 
 	p := push.New(url, "crowler_events").
 		Collector(mQueueJobLength).
+		Collector(mQueueAPILength).
 		Collector(mQueueInternalLength).
 		Collector(mQueueExternalLength).
 		Collector(mWorkersRunning).

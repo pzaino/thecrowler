@@ -25,7 +25,7 @@ if [ ! -f "$DOCKER_DAEMON_CONFIG" ]; then
     # If the file doesn't exist, create it with containerd enabled
     enabled=1
     echo "Creating Docker daemon configuration file with containerd enabled at $DOCKER_DAEMON_CONFIG..."
-    sudo mkdir -p $(dirname "$DOCKER_DAEMON_CONFIG")  # Ensure the directory exists
+    sudo mkdir -p "$(dirname "$DOCKER_DAEMON_CONFIG")"  # Ensure the directory exists
     sudo bash -c "cat > $DOCKER_DAEMON_CONFIG" <<EOL
 {
   "features": {
@@ -58,7 +58,8 @@ if [ $enabled -eq 1 ]; then
 fi
 
 # Verify that Docker restarted successfully
-if [ $? -eq 0 ]; then
+rval=$?
+if [ $rval -eq 0 ]; then
     echo "Docker has been restarted successfully, and containerd is enabled."
 else
     echo "Failed to restart Docker. Please check the Docker service."

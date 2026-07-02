@@ -1,0 +1,22 @@
+{
+  "query": {"original": "seed query", "show_strict_warning": false},
+  "web": {
+    "type": "search",
+    "total": 2,
+    "results": [
+      {
+        "title": "Example Domain",
+        "url": "https://example.com/",
+        "description": "Example snippet from Brave.",
+        "page_age": "2026-05-01T00:00:00",
+        "profile": {"name": "example.com", "long_name": "Example Domain"}
+      },
+      {
+        "title": "Example Org",
+        "url": "https://example.org/",
+        "description": "Second Brave snippet.",
+        "language": "en"
+      }
+    ]
+  }
+}

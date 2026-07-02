@@ -787,7 +787,7 @@
         },
         "control": {
           "title": "CROWler Engine (internal) Control API Configuration",
-          "description": "This is the CROWler's Control API configuration. The Control API is an internal management API that resides within the CROWler Engine. Its primary purpose is to allow internal tools, like health checks, to monitor and manage the operational status of the CROWler Engine (e.g., starting, stopping, or checking the status of crawls). It is used to control and manage engine-level operations. Important: The Control API has nothing to do with the General API (configured using the api section). The General API is an external-facing interface, exposed to interact with The CROWler to make data requests or post new sources. This section specifically configures the Control API, which operates within the CROWler Engine itself. Unlike the General API, which is designed for external interactions, the Control API is part of the CROWler’s Engine internal management system, and is not an external service.",
+          "description": "This is the CROWler's Control API configuration. The Control API is an internal management API that resides within the CROWler Engine. Its primary purpose is to allow internal tools, like health checks, to monitor and manage the operational status of the CROWler Engine (e.g., starting, stopping, or checking the status of crawls). It is used to control and manage engine-level operations. Important: The Control API has nothing to do with the General API (configured using the api section). The General API is an external-facing interface, exposed to interact with The CROWler to make data requests or post new sources. This section specifically configures the Control API, which operates within the CROWler Engine itself. Unlike the General API, which is designed for external interactions, the Control API is part of the CROWler\u2019s Engine internal management system, and is not an external service.",
           "type": "object",
           "properties": {
             "host": {
@@ -866,6 +866,253 @@
       },
       "additionalProperties": false
     },
+    "email": {
+      "title": "CROWler Email Crawling Runtime Configuration",
+      "description": "Process-wide email connector credentials. Source-specific mailbox and extraction policy remains in each Source configuration.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "credentials": {
+          "type": "object",
+          "description": "Credentials keyed by the auth.credential_ref used in an email Source. Values may be supplied through environment interpolation.",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "username": {
+                "type": "string"
+              },
+              "password": {
+                "type": "string"
+              },
+              "oauth_json": {
+                "type": "string"
+              },
+              "client_id": {
+                "type": "string"
+              },
+              "client_secret": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "default": {}
+        }
+      },
+      "additionalProperties": false
+    },
+    "information_seed": {
+      "title": "CROWler Information Seed Discovery Configuration",
+      "description": "Bounded configuration for discovering new information seeds through approved providers and plugins.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "title": "Information Seed Discovery Enabled",
+          "description": "Enables or disables bounded information seed discovery.",
+          "type": "boolean"
+        },
+        "query_timer": {
+          "title": "Information Seed Query Timer",
+          "description": "Seconds between seed discovery cycles.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400,
+          "examples": [
+            300
+          ]
+        },
+        "max_concurrent_seeds": {
+          "title": "Information Seed Maximum Concurrent Seeds",
+          "description": "Maximum number of seeds processed concurrently.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32,
+          "examples": [
+            2
+          ]
+        },
+        "max_queries_per_seed": {
+          "title": "Information Seed Maximum Queries Per Seed",
+          "description": "Maximum provider queries generated from a single seed.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "examples": [
+            5
+          ]
+        },
+        "max_candidates_per_seed": {
+          "title": "Information Seed Maximum Candidates Per Seed",
+          "description": "Maximum candidate sources accepted from a single seed.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000,
+          "examples": [
+            50
+          ]
+        },
+        "retry_interval": {
+          "title": "Information Seed Retry Interval",
+          "description": "Seconds to wait before retrying failed seed discovery work.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400,
+          "examples": [
+            60
+          ]
+        },
+        "processing_timeout": {
+          "title": "Information Seed Processing Timeout",
+          "description": "Maximum wall-clock time to spend processing one seed. Supports the same duration strings used by crawler processing_timeout.",
+          "type": "string",
+          "examples": [
+            "30 minutes",
+            "1 hour"
+          ]
+        },
+        "providers": {
+          "title": "Information Seed Providers",
+          "description": "Provider settings and credentials keyed by provider name.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string",
+                "description": "Provider identifier."
+              },
+              "host": {
+                "type": "string",
+                "description": "Provider host or base URL."
+              },
+              "endpoint": {
+                "type": "string",
+                "description": "Provider endpoint path."
+              },
+              "api_key_label": {
+                "type": "string",
+                "description": "Header or query parameter name for API keys."
+              },
+              "api_key": {
+                "type": "string",
+                "description": "API key credential."
+              },
+              "api_id": {
+                "type": "string",
+                "description": "API identifier credential."
+              },
+              "api_secret": {
+                "type": "string",
+                "description": "API secret credential."
+              },
+              "api_token": {
+                "type": "string",
+                "description": "API token credential."
+              },
+              "token": {
+                "type": "string",
+                "description": "Generic token credential."
+              },
+              "secret": {
+                "type": "string",
+                "description": "Generic secret credential."
+              },
+              "username": {
+                "type": "string",
+                "description": "Username credential."
+              },
+              "password": {
+                "type": "string",
+                "description": "Password credential."
+              },
+              "timeout": {
+                "type": "integer",
+                "description": "Provider request timeout in seconds.",
+                "minimum": 1,
+                "maximum": 300
+              },
+              "rate_limit": {
+                "type": "string",
+                "description": "Provider request rate limit expression."
+              },
+              "max_requests": {
+                "type": "integer",
+                "description": "Maximum provider requests per seed.",
+                "minimum": 1,
+                "maximum": 100
+              },
+              "parameters": {
+                "type": "object",
+                "description": "Additional provider query parameters. Use placeholders for sensitive values.",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "headers": {
+                "type": "object",
+                "description": "Additional provider HTTP headers. Use placeholders for sensitive values.",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "page_size": {
+                "type": "integer",
+                "description": "Maximum results requested per provider page.",
+                "minimum": 1,
+                "maximum": 100
+              },
+              "max_pages": {
+                "type": "integer",
+                "description": "Maximum provider pages requested per seed.",
+                "minimum": 1,
+                "maximum": 10
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "provider_allow_list": {
+          "title": "Information Seed Provider Allow List",
+          "description": "Provider names allowed to run. Leave empty to prevent provider execution until an explicit allow-list is configured.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "plugin_limits": {
+          "title": "Information Seed Plugin Limits",
+          "description": "Timeout and output-size limits for information seed plugins.",
+          "type": "object",
+          "properties": {
+            "timeout": {
+              "title": "Information Seed Plugin Timeout",
+              "description": "Plugin execution timeout in seconds.",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 300,
+              "examples": [
+                30
+              ]
+            },
+            "max_output_size_bytes": {
+              "title": "Information Seed Plugin Maximum Output Size",
+              "description": "Maximum plugin output size in bytes.",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10485760,
+              "examples": [
+                1048576
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "attributes_indexing": {
       "title": "CROWler Attributes Indexing Configuration",
       "description": "This is the CROWler's attributes indexing configuration. It is used to configure the indexing of the attributes of the web objects, net info and http info in the database. This is required in order to implement data correlation features.",
@@ -878,62 +1125,62 @@
           "items": {
             "type": "object",
             "properties": {
-                "key": {
+              "key": {
+                "type": "string",
+                "description": "This is the key of the web object attribute to index. For example, 'url', 'title', 'content' etc.",
+                "examples": [
+                  "url",
+                  "title",
+                  "content"
+                ]
+              },
+              "path": {
+                "type": "string",
+                "description": "This is the JSON path of the web object attribute in the details JSONB file to index. For example, 'details.scraped_data.url', 'details.links[*]' etc.",
+                "examples": [
+                  "details.scraped_data.url",
+                  "details.metadata.title",
+                  "details.content.text"
+                ]
+              },
+              "index_type": {
+                "type": "string",
+                "description": "This is the type of the web object attribute to index. For example, 'string', 'integer', 'boolean' etc.",
+                "enum": [
+                  "string",
+                  "integer",
+                  "boolean",
+                  "date",
+                  "array"
+                ],
+                "examples": [
+                  "string",
+                  "integer",
+                  "boolean"
+                ]
+              },
+              "normalizers": {
+                "type": "array",
+                "description": "This is the list of normalizers to apply to the web object attribute before indexing it. For example, 'lowercase', 'uppercase', 'trim' etc.",
+                "items": {
                   "type": "string",
-                  "description": "This is the key of the web object attribute to index. For example, 'url', 'title', 'content' etc.",
-                  "examples": [
-                    "url",
-                    "title",
-                    "content"
-                  ]
-                },
-                "path": {
-                  "type": "string",
-                  "description": "This is the JSON path of the web object attribute in the details JSONB file to index. For example, 'details.scraped_data.url', 'details.links[*]' etc.",
-                  "examples": [
-                    "details.scraped_data.url",
-                    "details.metadata.title",
-                    "details.content.text"
-                  ]
-                },
-                "index_type": {
-                  "type": "string",
-                  "description": "This is the type of the web object attribute to index. For example, 'string', 'integer', 'boolean' etc.",
                   "enum": [
-                    "string",
-                    "integer",
-                    "boolean",
-                    "date",
-                    "array"
-                  ],
-                  "examples": [
-                    "string",
-                    "integer",
-                    "boolean"
-                  ]
-                },
-                "normalizers": {
-                  "type": "array",
-                  "description": "This is the list of normalizers to apply to the web object attribute before indexing it. For example, 'lowercase', 'uppercase', 'trim' etc.",
-                  "items": {
-                    "type": "string",
-                    "enum": [
-                      "lowercase",
-                      "uppercase",
-                      "trim",
-                      ""
-                    ]
-                  },
-                  "examples": [
                     "lowercase",
                     "uppercase",
-                    "trim"
-                   ]
+                    "trim",
+                    ""
+                  ]
                 },
-                "index": {
-                  "type": "boolean",
-                  "description": "This is a flag that tells the CROWler to index this web object attribute in the database. This is required in order to implement data correlation features."
-                }
+                "examples": [
+                  "lowercase",
+                  "uppercase",
+                  "trim"
+                ]
+              },
+              "index": {
+                "type": "boolean",
+                "description": "This is a flag that tells the CROWler to index this web object attribute in the database. This is required in order to implement data correlation features."
+              }
             },
             "additionalProperties": false
           }
@@ -945,61 +1192,61 @@
           "items": {
             "type": "object",
             "properties": {
-                "key": {
+              "key": {
+                "type": "string",
+                "description": "This is the key of the net info attribute to index. For example, 'ip', 'asn', 'isp' etc.",
+                "examples": [
+                  "ip",
+                  "asn",
+                  "isp"
+                ]
+              },
+              "path": {
+                "type": "string",
+                "description": "This is the JSON path of the net info attribute in the details JSONB file to index. For example, 'details.net_info.ip', 'details.net_info.asn' etc.",
+                "examples": [
+                  "details.net_info.ip",
+                  "details.net_info.asn",
+                  "details.net_info.isp"
+                ]
+              },
+              "index_type": {
+                "type": "string",
+                "description": "This is the type of the net info attribute to index. For example, 'string', 'integer', 'boolean' etc.",
+                "enum": [
+                  "string",
+                  "integer",
+                  "boolean",
+                  "date",
+                  "array"
+                ],
+                "examples": [
+                  "string",
+                  "integer",
+                  "boolean"
+                ]
+              },
+              "normalizers": {
+                "type": "array",
+                "description": "This is the list of normalizers to apply to the net info attribute before indexing it. For example, 'lowercase', 'uppercase', 'trim' etc.",
+                "items": {
                   "type": "string",
-                  "description": "This is the key of the net info attribute to index. For example, 'ip', 'asn', 'isp' etc.",
-                  "examples": [
-                    "ip",
-                    "asn",
-                    "isp"
-                  ]
-                },
-                "path": {
-                  "type": "string",
-                  "description": "This is the JSON path of the net info attribute in the details JSONB file to index. For example, 'details.net_info.ip', 'details.net_info.asn' etc.",
-                  "examples": [
-                    "details.net_info.ip",
-                    "details.net_info.asn",
-                    "details.net_info.isp"
-                  ]
-                },
-                "index_type": {
-                  "type": "string",
-                  "description": "This is the type of the net info attribute to index. For example, 'string', 'integer', 'boolean' etc.",
                   "enum": [
-                    "string",
-                    "integer",
-                    "boolean",
-                    "date",
-                    "array"
-                  ],
-                  "examples": [
-                    "string",
-                    "integer",
-                    "boolean"
-                  ]
-                },
-                "normalizers": {
-                  "type": "array",
-                  "description": "This is the list of normalizers to apply to the net info attribute before indexing it. For example, 'lowercase', 'uppercase', 'trim' etc.",
-                  "items": {
-                    "type": "string",
-                    "enum": [
-                      "lowercase",
-                      "uppercase",
-                      "trim"
-                    ]
-                  },
-                  "examples": [
                     "lowercase",
                     "uppercase",
                     "trim"
-                   ]
+                  ]
                 },
-                "index": {
-                  "type": "boolean",
-                  "description": "This is a flag that tells the CROWler to index this net info attribute in the database. This is required in order to implement data correlation features."
-                }
+                "examples": [
+                  "lowercase",
+                  "uppercase",
+                  "trim"
+                ]
+              },
+              "index": {
+                "type": "boolean",
+                "description": "This is a flag that tells the CROWler to index this net info attribute in the database. This is required in order to implement data correlation features."
+              }
             },
             "additionalProperties": false
           }
@@ -1011,59 +1258,59 @@
           "items": {
             "type": "object",
             "properties": {
-                "key": {
+              "key": {
+                "type": "string",
+                "description": "This is the key of the http info attribute to index. For example, 'status_code', 'content_type' etc.",
+                "examples": [
+                  "status_code",
+                  "content_type"
+                ]
+              },
+              "path": {
+                "type": "string",
+                "description": "This is the JSON path of the http info attribute in the details JSONB file to index. For example, 'details.http_info.status_code', 'details.http_info.headers.content_type' etc.",
+                "examples": [
+                  "details.http_info.status_code",
+                  "details.http_info.headers.content_type"
+                ]
+              },
+              "index_type": {
+                "type": "string",
+                "description": "This is the type of the http info attribute to index. For example, 'string', 'integer', 'boolean' etc.",
+                "enum": [
+                  "string",
+                  "integer",
+                  "boolean",
+                  "date",
+                  "array"
+                ],
+                "examples": [
+                  "string",
+                  "integer",
+                  "boolean"
+                ]
+              },
+              "normalizers": {
+                "type": "array",
+                "description": "This is the list of normalizers to apply to the http info attribute before indexing it. For example, 'lowercase', 'uppercase', 'trim' etc.",
+                "items": {
                   "type": "string",
-                  "description": "This is the key of the http info attribute to index. For example, 'status_code', 'content_type' etc.",
-                  "examples": [
-                    "status_code",
-                    "content_type"
-                  ]
-                },
-                "path": {
-                  "type": "string",
-                  "description": "This is the JSON path of the http info attribute in the details JSONB file to index. For example, 'details.http_info.status_code', 'details.http_info.headers.content_type' etc.",
-                  "examples": [
-                    "details.http_info.status_code",
-                    "details.http_info.headers.content_type"
-                  ]
-                },
-                "index_type": {
-                  "type": "string",
-                  "description": "This is the type of the http info attribute to index. For example, 'string', 'integer', 'boolean' etc.",
                   "enum": [
-                    "string",
-                    "integer",
-                    "boolean",
-                    "date",
-                    "array"
-                  ],
-                  "examples": [
-                    "string",
-                    "integer",
-                    "boolean"
-                  ]
-                },
-                "normalizers": {
-                  "type": "array",
-                  "description": "This is the list of normalizers to apply to the http info attribute before indexing it. For example, 'lowercase', 'uppercase', 'trim' etc.",
-                  "items": {
-                    "type": "string",
-                    "enum": [
-                      "lowercase",
-                      "uppercase",
-                      "trim"
-                    ]
-                  },
-                  "examples": [
                     "lowercase",
                     "uppercase",
                     "trim"
-                   ]
+                  ]
                 },
-                "index": {
-                  "type": "boolean",
-                  "description": "This is a flag that tells the CROWler to index this http info attribute in the database. This is required in order to implement data correlation features."
-                }
+                "examples": [
+                  "lowercase",
+                  "uppercase",
+                  "trim"
+                ]
+              },
+              "index": {
+                "type": "boolean",
+                "description": "This is a flag that tells the CROWler to index this http info attribute in the database. This is required in order to implement data correlation features."
+              }
             },
             "additionalProperties": false
           }
@@ -1201,6 +1448,39 @@
             ]
           }
         },
+        "cors": {
+          "title": "CROWler General/Search API CORS Configuration",
+          "description": "Controls Cross-Origin Resource Sharing response headers for the General/Search API. Keep disabled unless browser clients need cross-origin access. Use explicit origins for production; use [\"*\"] only for public APIs that do not rely on browser credentials.",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "title": "CROWler General/Search API CORS Enabled",
+              "description": "Enables CORS headers and OPTIONS preflight handling for the General/Search API.",
+              "type": "boolean"
+            },
+            "allowed_origins": {
+              "title": "CROWler General/Search API CORS Allowed Origins",
+              "description": "Exact allowed Origin header values. Empty denies all browser origins. Use [\"*\"] to allow any origin.",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "examples": [
+                [
+                  "https://console.example.com"
+                ],
+                [
+                  "*"
+                ]
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "enabled"
+          ]
+        },
         "plugins": {
           "title": "CROWler General/Search API Plugins Configuration",
           "description": "This is the plugins configuration for the General/Search API. It is used to configure the plugins that the CROWler General API will use to extend its functionality.",
@@ -1242,6 +1522,99 @@
           "title": "CROWler General/Search API Use Google Cloud Run",
           "description": "This is a flag that tells the CROWler General API to use Google Cloud Run to run the API. If enabled, the CROWler will deploy the General API on Google Cloud Run. This is useful to make the API scalable and highly available.",
           "type": "boolean"
+        },
+        "websocket": {
+          "title": "WebSocket live updates",
+          "description": "Controls optional WebSocket live update streams.",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "allowed_origins": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "heartbeat_interval": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "write_queue_size": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "write_timeout": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "enabled"
+          ]
+        },
+        "auth": {
+          "title": "Authentication and authorization",
+          "description": "Shared local/OIDC-compatible bearer token authentication. Set enabled false to preserve unauthenticated deployments.",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "disabled",
+                "local",
+                "oidc",
+                "hybrid"
+              ]
+            },
+            "issuer": {
+              "type": "string"
+            },
+            "audience": {
+              "type": "string"
+            },
+            "hmac_secret": {
+              "type": "string"
+            },
+            "token_ttl": {
+              "type": "integer",
+              "minimum": 60
+            },
+            "local": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            },
+            "external": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "issuer": {
+                  "type": "string"
+                },
+                "jwks_url": {
+                  "type": "string"
+                },
+                "audience": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false,
@@ -1250,7 +1623,7 @@
         "timeout"
       ]
     },
-    "selenium": {
+    "vdi": {
       "title": "CROWler VDI access Configuration",
       "description": "This is the VDI configuration section, it's used to configure the VDI and tell the CROWler's Engine how to connect to it. It is the configuration for all the tools in the VDI image (for ex. selenium driver, Rbee etc.), to scale the CROWler web crawling capabilities, you can add multiple VDIs in an array format.",
       "type": "array",
@@ -1499,6 +1872,39 @@
           "description": "This is a flag that tells the CROWler Events Manager to use Google Cloud Run to run the API. If enabled, the CROWler will deploy the Events Manager API on Google Cloud Run. This is useful to make the API scalable and highly available.",
           "type": "boolean"
         },
+        "cors": {
+          "title": "CROWler Events Manager CORS Configuration",
+          "description": "Controls Cross-Origin Resource Sharing response headers for the Events Manager API. Keep disabled unless browser clients need cross-origin access. Use explicit origins for production; use [\"*\"] only for public APIs that do not rely on browser credentials.",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "title": "CROWler Events Manager CORS Enabled",
+              "description": "Enables CORS headers and OPTIONS preflight handling for the Events Manager API.",
+              "type": "boolean"
+            },
+            "allowed_origins": {
+              "title": "CROWler Events Manager CORS Allowed Origins",
+              "description": "Exact allowed Origin header values. Empty denies all browser origins. Use [\"*\"] to allow any origin.",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "examples": [
+                [
+                  "https://events-console.example.com"
+                ],
+                [
+                  "*"
+                ]
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "enabled"
+          ]
+        },
         "master_events_manager": {
           "title": "CROWler Events Manager Master Events Manager's name",
           "description": "This is the name of the Master Events Manager in a multi-instance Events Manager deployment. If you have multiple Events Manager instances running, you can set one of them as the Master Events Manager. The Master Events Manager is responsible for coordinating all systems events among the other Events Managers and ensuring that events are processed correctly. The other Events Manager enact as Events API endpoints only.",
@@ -1572,6 +1978,99 @@
             "1 days",
             "1 months"
           ]
+        },
+        "websocket": {
+          "title": "WebSocket live updates",
+          "description": "Controls optional WebSocket live update streams.",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "allowed_origins": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "heartbeat_interval": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "write_queue_size": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "write_timeout": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "enabled"
+          ]
+        },
+        "auth": {
+          "title": "Authentication and authorization",
+          "description": "Shared local/OIDC-compatible bearer token authentication. Set enabled false to preserve unauthenticated deployments.",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "disabled",
+                "local",
+                "oidc",
+                "hybrid"
+              ]
+            },
+            "issuer": {
+              "type": "string"
+            },
+            "audience": {
+              "type": "string"
+            },
+            "hmac_secret": {
+              "type": "string"
+            },
+            "token_ttl": {
+              "type": "integer",
+              "minimum": 60
+            },
+            "local": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            },
+            "external": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "issuer": {
+                  "type": "string"
+                },
+                "jwks_url": {
+                  "type": "string"
+                },
+                "audience": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
@@ -2842,6 +3341,562 @@
       "type": "integer",
       "examples": [
         1
+      ]
+    },
+    "timeseries": {
+      "title": "Time-series Metrics",
+      "description": "Declarative metric extraction configuration. Disabled by default and not coupled to a database emitter.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "defaults": {
+          "$ref": "#/definitions/timeSeriesMetricDefaults"
+        },
+        "retention": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "raw": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*(ns|us|\u00b5s|ms|s|m|h|d|w)$",
+              "default": "30d"
+            },
+            "aggregated": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*(ns|us|\u00b5s|ms|s|m|h|d|w)$",
+              "default": "365d"
+            }
+          }
+        },
+        "aggregation": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false
+            },
+            "schedule": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*(ns|us|\u00b5s|ms|s|m|h|d|w)$",
+              "default": "5m"
+            },
+            "batch_size": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100000,
+              "default": 1000
+            },
+            "max_batches": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000,
+              "default": 10
+            },
+            "overlap": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*(ns|us|\u00b5s|ms|s|m|h|d|w)$",
+              "default": "15m"
+            }
+          }
+        },
+        "storage": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "backend": {
+              "type": "string",
+              "enum": [
+                "postgres"
+              ],
+              "default": "postgres"
+            },
+            "table_prefix": {
+              "type": "string",
+              "minLength": 1,
+              "default": "timeseries"
+            },
+            "partitioning": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "default": false
+                },
+                "interval": {
+                  "$ref": "#/definitions/timeSeriesPartitionInterval"
+                },
+                "precreate": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 365,
+                  "default": 7
+                }
+              }
+            }
+          }
+        },
+        "cardinality": {
+          "$ref": "#/definitions/timeSeriesCardinality"
+        },
+        "privacy": {
+          "$ref": "#/definitions/timeSeriesPrivacy"
+        },
+        "metrics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/timeSeriesMetric"
+          },
+          "default": []
+        }
+      }
+    }
+  },
+  "definitions": {
+    "timeSeriesSourceKind": {
+      "type": "string",
+      "enum": [
+        "keyword",
+        "metatag",
+        "object_attribute",
+        "webobject",
+        "httpinfo",
+        "netinfo",
+        "screenshot",
+        "file",
+        "information_seed",
+        "information_seed_candidate",
+        "source_discovery",
+        "entity_membership",
+        "object_correlation",
+        "correlation_rule",
+        "custom"
+      ]
+    },
+    "timeSeriesObjectType": {
+      "type": "string",
+      "enum": [
+        "webobject",
+        "httpinfo",
+        "netinfo"
+      ]
+    },
+    "timeSeriesValueType": {
+      "type": "string",
+      "enum": [
+        "integer",
+        "decimal",
+        "duration",
+        "count",
+        "timestamp",
+        "boolean",
+        "string",
+        "json"
+      ],
+      "default": "integer"
+    },
+    "timeSeriesAggregate": {
+      "type": "string",
+      "enum": [
+        "count",
+        "sum",
+        "average",
+        "min",
+        "max",
+        "distinct_count",
+        "first",
+        "last",
+        "p50",
+        "p75",
+        "p90",
+        "p95",
+        "p99"
+      ]
+    },
+    "timeSeriesBucketInterval": {
+      "type": "string",
+      "enum": [
+        "none",
+        "1m",
+        "5m",
+        "15m",
+        "1h",
+        "1d",
+        "1w",
+        "1mo"
+      ],
+      "default": "1h"
+    },
+    "timeSeriesPartitionInterval": {
+      "type": "string",
+      "enum": [
+        "1m",
+        "5m",
+        "15m",
+        "1h",
+        "1d",
+        "1w",
+        "1mo"
+      ],
+      "default": "1d"
+    },
+    "timeSeriesTimeBasis": {
+      "type": "string",
+      "enum": [
+        "observed_at",
+        "event_at",
+        "source_timestamp"
+      ],
+      "default": "observed_at"
+    },
+    "timeSeriesDedupeScope": {
+      "type": "string",
+      "enum": [
+        "none",
+        "source",
+        "object",
+        "global"
+      ],
+      "default": "none"
+    },
+    "timeSeriesFailurePolicy": {
+      "type": "string",
+      "enum": [
+        "log_skip",
+        "log",
+        "skip",
+        "retry",
+        "fail_indexing"
+      ],
+      "default": "log_skip"
+    },
+    "timeSeriesOverflow": {
+      "type": "string",
+      "enum": [
+        "drop",
+        "hash",
+        "overflow_bucket"
+      ],
+      "default": "drop"
+    },
+    "timeSeriesSelector": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": true
+    },
+    "timeSeriesCardinality": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_series_per_metric": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000000,
+          "default": 100000
+        },
+        "max_dimensions": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 64,
+          "default": 10
+        },
+        "max_values_per_dimension": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000,
+          "default": 10000
+        },
+        "overflow": {
+          "$ref": "#/definitions/timeSeriesOverflow"
+        }
+      }
+    },
+    "timeSeriesPrivacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "hash_only": {
+          "type": "boolean",
+          "default": false
+        },
+        "store_value_text": {
+          "type": "boolean",
+          "default": false
+        },
+        "max_value_length": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1048576,
+          "default": 2048
+        },
+        "redact_patterns": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "regex"
+          },
+          "default": []
+        }
+      },
+      "not": {
+        "required": [
+          "hash_only",
+          "store_value_text"
+        ],
+        "properties": {
+          "hash_only": {
+            "const": true
+          },
+          "store_value_text": {
+            "const": true
+          }
+        }
+      }
+    },
+    "timeSeriesMetricDefaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "value_type": {
+          "$ref": "#/definitions/timeSeriesValueType"
+        },
+        "aggregates": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/definitions/timeSeriesAggregate"
+          },
+          "default": [
+            "count"
+          ]
+        },
+        "bucket_interval": {
+          "$ref": "#/definitions/timeSeriesBucketInterval"
+        },
+        "time_basis": {
+          "$ref": "#/definitions/timeSeriesTimeBasis"
+        },
+        "dedupe_scope": {
+          "$ref": "#/definitions/timeSeriesDedupeScope"
+        },
+        "failure_policy": {
+          "$ref": "#/definitions/timeSeriesFailurePolicy"
+        }
+      }
+    },
+    "timeSeriesDimension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "selector"
+      ],
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "selector": {
+          "$ref": "#/definitions/timeSeriesSelector"
+        }
+      }
+    },
+    "timeSeriesMetric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "source_kind"
+      ],
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "description": {
+          "type": "string"
+        },
+        "source_kind": {
+          "$ref": "#/definitions/timeSeriesSourceKind"
+        },
+        "object_type": {
+          "$ref": "#/definitions/timeSeriesObjectType"
+        },
+        "selector": {
+          "$ref": "#/definitions/timeSeriesSelector"
+        },
+        "value_type": {
+          "$ref": "#/definitions/timeSeriesValueType"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "aggregates": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/definitions/timeSeriesAggregate"
+          }
+        },
+        "bucket_interval": {
+          "$ref": "#/definitions/timeSeriesBucketInterval"
+        },
+        "time_basis": {
+          "$ref": "#/definitions/timeSeriesTimeBasis"
+        },
+        "timestamp_selector": {
+          "$ref": "#/definitions/timeSeriesSelector"
+        },
+        "dedupe_scope": {
+          "$ref": "#/definitions/timeSeriesDedupeScope"
+        },
+        "failure_policy": {
+          "$ref": "#/definitions/timeSeriesFailurePolicy"
+        },
+        "dimensions": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/definitions/timeSeriesDimension"
+          }
+        },
+        "cardinality": {
+          "$ref": "#/definitions/timeSeriesCardinality"
+        },
+        "privacy": {
+          "$ref": "#/definitions/timeSeriesPrivacy"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "source_kind": {
+                "const": "metatag"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "selector"
+            ],
+            "properties": {
+              "selector": {
+                "required": [
+                  "metatag_name"
+                ],
+                "properties": {
+                  "metatag_name": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "source_kind": {
+                "const": "object_attribute"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "object_type",
+              "selector"
+            ],
+            "properties": {
+              "selector": {
+                "required": [
+                  "attribute_key"
+                ],
+                "properties": {
+                  "attribute_key": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "not": {
+              "required": [
+                "object_type"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "time_basis"
+            ],
+            "properties": {
+              "time_basis": {
+                "enum": [
+                  "event_at",
+                  "source_timestamp"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "timestamp_selector"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "value_type"
+            ],
+            "properties": {
+              "value_type": {
+                "enum": [
+                  "boolean",
+                  "string",
+                  "json"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "aggregates": {
+                "not": {
+                  "contains": {
+                    "enum": [
+                      "sum",
+                      "average",
+                      "min",
+                      "max",
+                      "p50",
+                      "p75",
+                      "p90",
+                      "p95",
+                      "p99"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
       ]
     }
   },

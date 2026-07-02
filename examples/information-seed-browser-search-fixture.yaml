@@ -1,0 +1,58 @@
+# Hermetic browser_search WebDriver fixture template.
+#
+# This example is intentionally disabled and credential-free. It targets only a
+# locally controlled fixture host in the reserved .test namespace. Before use:
+#   1. serve the fixture pages at http://browser-search-fixture.test:8080;
+#   2. configure a Selenium/VDI entry named fixture-vdi;
+#   3. load examples/information-seed-browser-search-fixture-ruleset.yaml;
+#   4. enable that ruleset group and information_seed only in an isolated
+#      fixture environment.
+information_seed:
+  enabled: false
+  query_timer: 300
+  max_concurrent_seeds: 1
+  # WebDriver operations share this cap with the provider-level request budget.
+  # The fixture needs navigation, consent, query, two scrapes, and pagination.
+  max_queries_per_seed: 8
+  max_candidates_per_seed: 3
+  retry_interval: 300
+  processing_timeout: 30s
+
+  # The provider is retained and validated, but the global enabled gate above
+  # prevents execution. The companion ruleset group is independently disabled.
+  provider_allow_list:
+    - browser_fixture
+
+  providers:
+    browser_fixture:
+      provider: browser_search
+      transport: webdriver
+      host: http://browser-search-fixture.test:8080
+      endpoint: /index.html
+      timeout: 20
+      rate_limit: 1s
+      max_requests: 8
+      page_size: 10
+      max_pages: 2
+      browser:
+        vdi_allow_list:
+          - fixture-vdi
+        navigation_timeout: 5
+        page_readiness_timeout: 3
+        hbs_enabled: false
+        selenium_fallback: true
+        consent_actions:
+          - browser fixture accept consent
+        query_actions:
+          - browser fixture enter query
+          - browser fixture submit query
+        pagination_actions:
+          - browser fixture next page
+        scraping_rules:
+          - browser fixture extract results
+        allowed_navigation_hosts:
+          - browser-search-fixture.test
+        max_pages: 2
+        max_requests: 8
+        max_candidates: 3
+        screenshot_on_error: false

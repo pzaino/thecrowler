@@ -1720,6 +1720,163 @@ func TestJSPluginRegisterRemove(t *testing.T) {
 	}
 }
 
+func TestAddJSAPIIncludeReturnsLibPluginResult(t *testing.T) {
+	reg := NewJSPluginRegister()
+
+	caller := NewJSPlugin(`
+// name: caller
+// type: engine_plugin
+`)
+	caller.Name = "caller"
+	caller.PType = enginePlugin
+
+	lib := NewJSPlugin(`
+// name: utils
+// type: lib_plugin
+var utils = {
+	add: function(a, b) {
+		return a + b;
+	}
+};
+utils;
+`)
+	lib.Name = "utils"
+	lib.PType = libPlugin
+
+	reg.Register(caller.Name, *caller)
+	reg.Register(lib.Name, *lib)
+	registeredCaller, ok := reg.GetPlugin(caller.Name)
+	if !ok {
+		t.Fatalf("caller plugin should be registered")
+	}
+
+	vm := otto.New()
+	rt := &pluginRuntime{
+		current: &registeredCaller,
+		subs:    make(map[string]*pluginEventSub),
+	}
+
+	if err := addJSAPIInclude(vm, rt); err != nil {
+		t.Fatalf("addJSAPIInclude returned an error: %v", err)
+	}
+
+	value, err := vm.Run(`include("utils").add(2, 3);`)
+	if err != nil {
+		t.Fatalf("include returned an unusable library result: %v", err)
+	}
+
+	got, err := value.ToInteger()
+	if err != nil {
+		t.Fatalf("converting include result to integer: %v", err)
+	}
+	if got != 5 {
+		t.Fatalf("include result add(2, 3) = %d, want 5", got)
+	}
+}
+
+func TestAddJSAPIIncludeReturnsNamedLibWhenScriptResultUndefined(t *testing.T) {
+	reg := NewJSPluginRegister()
+
+	caller := NewJSPlugin(`
+// name: caller
+// type: api_plugin
+`)
+	caller.Name = "caller"
+	caller.PType = apiPlugin
+
+	lib := NewJSPlugin(`
+// name: lib_ig_common
+// type: lib_plugin
+var lib_ig_common = {
+	normalizeParam: function(value) {
+		return String(value);
+	}
+};
+`)
+	lib.Name = "lib_ig_common"
+	lib.PType = libPlugin
+
+	reg.Register(caller.Name, *caller)
+	reg.Register(lib.Name, *lib)
+	registeredCaller, ok := reg.GetPlugin(caller.Name)
+	if !ok {
+		t.Fatalf("caller plugin should be registered")
+	}
+
+	vm := otto.New()
+	rt := &pluginRuntime{
+		current: &registeredCaller,
+		subs:    make(map[string]*pluginEventSub),
+	}
+
+	if err := addJSAPIInclude(vm, rt); err != nil {
+		t.Fatalf("addJSAPIInclude returned an error: %v", err)
+	}
+
+	value, err := vm.Run(`
+var lib = include("lib_ig_common");
+lib && lib.normalizeParam("instagram-user");
+`)
+	if err != nil {
+		t.Fatalf("include returned an unusable named library: %v", err)
+	}
+
+	got, err := value.ToString()
+	if err != nil {
+		t.Fatalf("converting include result to string: %v", err)
+	}
+	if got != "instagram-user" {
+		t.Fatalf("include named lib normalizeParam() = %q, want instagram-user", got)
+	}
+}
+
+func TestAddJSAPIIncludeCanResolveFromRegisteredPluginFallback(t *testing.T) {
+	reg := NewJSPluginRegister()
+
+	caller := NewJSPlugin(`
+// name: detached_api_caller
+// type: api_plugin
+`)
+	caller.Name = "detached_api_caller"
+	caller.PType = apiPlugin
+	caller.InRegisters = nil
+
+	lib := NewJSPlugin(`
+// name: fallback_lib_ig_common
+// type: lib_plugin
+var fallback_lib_ig_common = {
+	loaded: true
+};
+`)
+	lib.Name = "fallback_lib_ig_common"
+	lib.PType = libPlugin
+
+	reg.Register(lib.Name, *lib)
+
+	vm := otto.New()
+	rt := &pluginRuntime{
+		current: caller,
+		subs:    make(map[string]*pluginEventSub),
+	}
+
+	if err := addJSAPIInclude(vm, rt); err != nil {
+		t.Fatalf("addJSAPIInclude returned an error: %v", err)
+	}
+
+	value, err := vm.Run(`include("fallback_lib_ig_common").loaded;`)
+	if err != nil {
+		t.Fatalf("include could not resolve registered fallback library: %v", err)
+	}
+
+	got, err := value.ToBoolean()
+	if err != nil {
+		t.Fatalf("converting include result to boolean: %v", err)
+	}
+	if !got {
+		t.Fatalf("include fallback library loaded = false, want true")
+	}
+}
+
 func TestNormalizeTimeoutMillis(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -2144,5 +2301,84 @@ func TestAddJSAPIClient_GCPIDTokenMissingAudience(t *testing.T) {
 
 	if exported != nil {
 		t.Fatalf("expected undefined/nil result on auth failure, got %#v", exported)
+	}
+}
+
+func TestAddJSAPIAddObjectType(t *testing.T) {
+	vm := otto.New()
+	if err := addJSAPIAddObjectType(vm); err != nil {
+		t.Fatalf("addJSAPIAddObjectType returned error: %v", err)
+	}
+	params := map[string]interface{}{"crowler_meta": map[string]interface{}{"object_type": []interface{}{" Product "}}}
+	if err := vm.Set("params", params); err != nil {
+		t.Fatalf("setting params: %v", err)
+	}
+	if _, err := vm.Run(`addObjectType("product", "News Article", ["news article", "Profile"]);`); err != nil {
+		t.Fatalf("running addObjectType: %v", err)
+	}
+	value, err := vm.Run(`JSON.stringify(params.crowler_meta.object_type);`)
+	if err != nil {
+		t.Fatalf("reading object_type: %v", err)
+	}
+	got, _ := value.ToString()
+	want := `["product","news_article","profile"]`
+	if got != want {
+		t.Fatalf("object_type = %s, want %s", got, want)
+	}
+}
+
+func TestSyncVMParamsPersistsObjectTypeToGoParams(t *testing.T) {
+	vm := otto.New()
+	if err := addJSAPIAddObjectType(vm); err != nil {
+		t.Fatalf("addJSAPIAddObjectType returned error: %v", err)
+	}
+	params := map[string]interface{}{"crowler_meta": map[string]interface{}{}}
+	if err := vm.Set("params", params); err != nil {
+		t.Fatalf("setting params: %v", err)
+	}
+	if _, err := vm.Run(`addObjectType("Profile");`); err != nil {
+		t.Fatalf("running addObjectType: %v", err)
+	}
+	syncVMParams(vm, params)
+	cm, ok := params["crowler_meta"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("crowler_meta not synced: %#v", params["crowler_meta"])
+	}
+	labels, ok := cm["object_type"].([]string)
+	if !ok || len(labels) != 1 || labels[0] != "profile" {
+		t.Fatalf("synced object_type = %#v, want [profile]", cm["object_type"])
+	}
+}
+
+func TestSyncVMParamsMergesAssignedObjectType(t *testing.T) {
+	vm := otto.New()
+	params := map[string]interface{}{"crowler_meta": map[string]interface{}{"object_type": []interface{}{" Product "}, "source_uid": "src-1"}}
+	if err := vm.Set("params", params); err != nil {
+		t.Fatalf("setting params: %v", err)
+	}
+	if _, err := vm.Run(`params.crowler_meta = {object_type: ["News Article", "product"], extra: "value"};`); err != nil {
+		t.Fatalf("assigning object_type: %v", err)
+	}
+
+	syncVMParams(vm, params)
+	cm, ok := params["crowler_meta"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("crowler_meta not synced: %#v", params["crowler_meta"])
+	}
+	labels, ok := cm["object_type"].([]string)
+	if !ok {
+		t.Fatalf("synced object_type = %#v, want []string", cm["object_type"])
+	}
+	wantLabels := map[string]bool{"product": true, "news_article": true}
+	if len(labels) != len(wantLabels) {
+		t.Fatalf("synced object_type = %#v, want product and news_article", labels)
+	}
+	for _, label := range labels {
+		if !wantLabels[label] {
+			t.Fatalf("synced object_type = %#v, unexpected label %q", labels, label)
+		}
+	}
+	if got := cm["extra"]; got != "value" {
+		t.Fatalf("extra = %#v, want value", got)
 	}
 }

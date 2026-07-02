@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Hermetic Browser Search Fixture</title>
+</head>
+<body>
+  <section id="consent-wall">
+    <p>This local test fixture requires consent.</p>
+    <button id="accept-consent" type="button">Accept</button>
+  </section>
+  <form id="query-form" action="results.html" method="get" hidden>
+    <label for="query">Query</label>
+    <input id="query" name="q" autocomplete="off">
+    <button id="submit-query" type="submit">Search</button>
+  </form>
+  <script>
+    document.querySelector("#accept-consent").addEventListener("click", () => {
+      document.querySelector("#consent-wall").hidden = true;
+      document.querySelector("#query-form").hidden = false;
+    });
+  </script>
+</body>
+</html>

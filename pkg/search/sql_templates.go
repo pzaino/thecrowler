@@ -4,6 +4,7 @@ package search
 // Base query used for SearchIndex search.
 var sqlSearchIndexBody = `
 SELECT DISTINCT
+    COALESCE(s.source_uid, '') AS source_uid,
     si.title,
     si.page_url,
     si.summary,
@@ -20,12 +21,17 @@ LEFT JOIN
     KeywordIndex ki ON si.index_id = ki.index_id
 LEFT JOIN
     Keywords k ON ki.keyword_id = k.keyword_id
+LEFT JOIN
+    SourceSearchIndex ssi ON si.index_id = ssi.index_id
+LEFT JOIN
+    Sources s ON ssi.source_id = s.source_id
 WHERE
 `
 
 // Same as above but without returning content.
 var sqlSearchIndexBodyNoContent = `
 SELECT DISTINCT
+    COALESCE(s.source_uid, '') AS source_uid,
     si.title,
     si.page_url,
     si.summary,
@@ -42,11 +48,16 @@ LEFT JOIN
     KeywordIndex ki ON si.index_id = ki.index_id
 LEFT JOIN
     Keywords k ON ki.keyword_id = k.keyword_id
+LEFT JOIN
+    SourceSearchIndex ssi ON si.index_id = ssi.index_id
+LEFT JOIN
+    Sources s ON ssi.source_id = s.source_id
 WHERE
 `
 
 var sqlScreenshotBody = `
 SELECT DISTINCT
+    COALESCE(src.source_uid, '') AS source_uid,
     s.screenshot_link,
     s.created_at,
     s.last_updated_at,
@@ -63,12 +74,17 @@ LEFT JOIN
     KeywordIndex ki ON si.index_id = ki.index_id
 LEFT JOIN
     Keywords k ON ki.keyword_id = k.keyword_id
+LEFT JOIN
+    SourceSearchIndex ssi ON si.index_id = ssi.index_id
+LEFT JOIN
+    Sources src ON ssi.source_id = src.source_id
 WHERE
     s.screenshot_link != '' AND s.screenshot_link IS NOT NULL AND
 `
 
 var sqlWebObjectsBody = `
 SELECT DISTINCT
+    COALESCE(s.source_uid, '') AS source_uid,
     wo.object_link,
     wo.created_at,
     wo.last_updated_at,
@@ -87,13 +103,82 @@ LEFT JOIN
     KeywordIndex ki ON si.index_id = ki.index_id
 LEFT JOIN
     Keywords k ON ki.keyword_id = k.keyword_id
+LEFT JOIN
+    SourceSearchIndex ssi ON si.index_id = ssi.index_id
+LEFT JOIN
+    Sources s ON ssi.source_id = s.source_id
 WHERE
     wo.object_link != '' AND wo.object_link IS NOT NULL AND
+`
+
+var sqlWebObjectsBySourceID = `
+SELECT DISTINCT
+    COALESCE(s.source_uid, '') AS source_uid,
+    wo.object_link,
+    wo.created_at,
+    wo.last_updated_at,
+    wo.object_type,
+    wo.object_hash,
+    wo.object_content,
+    wo.object_html,
+    wo.details
+FROM
+    WebObjects AS wo
+JOIN
+    WebObjectsIndex AS woi ON wo.object_id = woi.object_id
+JOIN
+    SourceSearchIndex AS ssi ON woi.index_id = ssi.index_id
+JOIN
+    Sources AS s ON ssi.source_id = s.source_id
+WHERE
+    ssi.source_id = $1
+ORDER BY
+    wo.created_at DESC;
+`
+
+var sqlWebObjectsBySourceUID = `
+SELECT DISTINCT
+    s.source_uid,
+    wo.object_link,
+    wo.created_at,
+    wo.last_updated_at,
+    wo.object_type,
+    wo.object_hash,
+    wo.object_content,
+    wo.object_html,
+    wo.details
+FROM
+    WebObjects AS wo
+JOIN
+    WebObjectsIndex AS woi ON wo.object_id = woi.object_id
+JOIN
+    SourceSearchIndex AS ssi ON woi.index_id = ssi.index_id
+JOIN
+    Sources AS s ON ssi.source_id = s.source_id
+WHERE
+    s.source_uid = $1
+ORDER BY
+    wo.created_at DESC;
+`
+
+var sqlSourceUIDByName = `
+SELECT source_uid, name, url
+FROM Sources
+WHERE LOWER(name) = LOWER($1)
+ORDER BY source_id;
+`
+
+var sqlSourceUIDByURL = `
+SELECT source_uid, name, url
+FROM Sources
+WHERE LOWER(url) = LOWER($1)
+ORDER BY source_id;
 `
 
 var sqlScrapedDataBody = `
 SELECT DISTINCT
     ss.source_id,
+    COALESCE(s.source_uid, '') AS source_uid,
     si.page_url AS url,
     sd.last_updated_at AS collected_at,
     sd.details->'scraped_data' AS scraped_data
@@ -109,6 +194,8 @@ LEFT JOIN
     Keywords k ON ki.keyword_id = k.keyword_id
 LEFT JOIN
     SourceSearchIndex ss ON si.index_id = ss.index_id
+LEFT JOIN
+    Sources s ON ss.source_id = s.source_id
 WHERE
     si.page_url != '' AND si.page_url IS NOT NULL AND
 `
@@ -120,6 +207,7 @@ WITH PartnerSources AS (
 WhoisAndSSLInfo AS (
     SELECT
         ps.source_id,
+        COALESCE(s.source_uid, '') AS source_uid,
         ps.url,
         ni.created_at,
         ni.details->'whois' AS whois_info,
@@ -128,6 +216,8 @@ WhoisAndSSLInfo AS (
         PartnerSources ps
     JOIN
         SourceSearchIndex ssi ON ps.source_id = ssi.source_id
+    JOIN
+        Sources s ON ps.source_id = s.source_id
     LEFT JOIN
         NetInfoIndex nii ON ssi.index_id = nii.index_id
     LEFT JOIN
@@ -141,17 +231,18 @@ WhoisAndSSLInfo AS (
 )
 SELECT DISTINCT
     source_id,
+    COALESCE(source_uid, '') AS source_uid,
     url,
     created_at,
     whois_info,
     ssl_info
 FROM
     WhoisAndSSLInfo
-WHERE
 `
 
 var sqlNetInfoBody = `
 SELECT DISTINCT
+    COALESCE(s.source_uid, '') AS source_uid,
     ni.created_at,
     ni.last_updated_at,
     ni.details
@@ -162,6 +253,10 @@ JOIN
 JOIN
     SearchIndex si ON nii.index_id = si.index_id
 LEFT JOIN
+    SourceSearchIndex ssi ON si.index_id = ssi.index_id
+LEFT JOIN
+    Sources s ON ssi.source_id = s.source_id
+LEFT JOIN
     KeywordIndex ki ON si.index_id = ki.index_id
 LEFT JOIN
     Keywords k ON ki.keyword_id = k.keyword_id
@@ -170,6 +265,7 @@ WHERE
 
 var sqlHTTPInfoBody = `
 SELECT DISTINCT
+    COALESCE(s.source_uid, '') AS source_uid,
     hi.created_at,
     hi.last_updated_at,
     hi.details
@@ -179,6 +275,10 @@ JOIN
     HTTPInfoIndex hii ON hi.httpinfo_id = hii.httpinfo_id
 JOIN
     SearchIndex si ON hii.index_id = si.index_id
+LEFT JOIN
+    SourceSearchIndex ssi ON si.index_id = ssi.index_id
+LEFT JOIN
+    Sources s ON ssi.source_id = s.source_id
 LEFT JOIN
     KeywordIndex ki ON si.index_id = ki.index_id
 LEFT JOIN

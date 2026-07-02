@@ -13,13 +13,17 @@ import (
 	vdi "github.com/pzaino/thecrowler/pkg/vdi"
 )
 
+// RuleCallKind represents the type of rule call, either a plugin call or an agent call.
 type RuleCallKind string
 
 const (
+	// RuleCallKindPlugin indicates a call to a JavaScript plugin.
 	RuleCallKindPlugin RuleCallKind = "plugin_call"
-	RuleCallKindAgent  RuleCallKind = "agent_call"
+	// RuleCallKindAgent indicates a call to an agent.
+	RuleCallKindAgent RuleCallKind = "agent_call"
 )
 
+// RuleCallRequest represents a request to execute a rule call, including its kind, parameters, and metadata.
 type RuleCallRequest struct {
 	Kind       RuleCallKind
 	PluginName string
@@ -34,6 +38,7 @@ type RuleCallRequest struct {
 	RuleGroup  string
 }
 
+// RuleCallResult represents the result of a rule call, including its success status, any returned value, and metadata.
 type RuleCallResult struct {
 	Kind     RuleCallKind           `json:"kind"`
 	Name     string                 `json:"name"`
@@ -86,6 +91,10 @@ func (s *ruleCallRuntimeState) afterCall(loopKey string) {
 }
 
 func executeRuleCall(ctx *ProcessContext, wd *vdi.WebDriver, req RuleCallRequest) RuleCallResult {
+	const (
+		continueOnError = "continue"
+		ignoreOnError   = "ignore"
+	)
 	result := RuleCallResult{Kind: req.Kind, Success: false, Metadata: map[string]interface{}{"caller": req.Caller}}
 	if ctx != nil && ctx.ruleCallState == nil {
 		ctx.ruleCallState = newRuleCallRuntimeState()
@@ -143,7 +152,7 @@ func executeRuleCall(ctx *ProcessContext, wd *vdi.WebDriver, req RuleCallRequest
 		result.TimedOut = true
 		result.Error = "timeout"
 		result.Metadata["duration_ms"] = time.Since(start).Milliseconds()
-		if req.OnError == "continue" || req.OnError == "ignore" {
+		if req.OnError == continueOnError || req.OnError == ignoreOnError {
 			return result
 		}
 		return result
@@ -152,7 +161,7 @@ func executeRuleCall(ctx *ProcessContext, wd *vdi.WebDriver, req RuleCallRequest
 	if err != nil {
 		result.Error = err.Error()
 		cmn.DebugMsg(cmn.DbgLvlError, "rule call failed kind=%s name=%s caller=%s err=%v", req.Kind, result.Name, req.Caller, err)
-		if req.OnError == "continue" || req.OnError == "ignore" {
+		if req.OnError == continueOnError || req.OnError == ignoreOnError {
 			return result
 		}
 		return result
@@ -185,12 +194,12 @@ func interpolateRuleCallParam(ctx *ProcessContext, wd *vdi.WebDriver, s string) 
 	return s
 }
 
-func executePluginCall(ctx *ProcessContext, wd *vdi.WebDriver, pluginName string, _ map[string]interface{}) (interface{}, error) {
+func executePluginCall(ctx *ProcessContext, wd *vdi.WebDriver, pluginName string, params map[string]interface{}) (interface{}, error) {
 	plugin, exists := ctx.re.JSPlugins.GetPlugin(pluginName)
 	if !exists {
 		return nil, fmt.Errorf("plugin not found: %s", pluginName)
 	}
-	return (*wd).ExecuteScript(plugin.String(), nil)
+	return plugin.Execute(wd, ctx.db, ctx.config.Plugins.PluginsTimeout, params)
 }
 
 func executeAgentCall(agentName string, params map[string]interface{}) (interface{}, error) {

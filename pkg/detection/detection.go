@@ -26,6 +26,7 @@ import (
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
+
 	agent "github.com/pzaino/thecrowler/pkg/agent"
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"

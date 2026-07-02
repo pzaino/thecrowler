@@ -1,0 +1,71 @@
+# Complete local configuration example; replace connection values for your deployment.
+version: "1.0.0"
+author: "example"
+description: "Time-series configuration example; no domain metric is built in."
+created_at: "2026-06-06T00:00:00Z"
+database:
+  type: postgres
+  host: localhost
+  port: 5432
+  user: example
+  password: example
+  dbname: SitesIndex
+crawler: {}
+api:
+  host: localhost
+  timeout: 30
+selenium: []
+network_info: {}
+
+timeseries:
+  enabled: true
+  defaults:
+    value_type: integer
+    aggregates: [count]
+    bucket_interval: 1h
+    time_basis: observed_at
+    dedupe_scope: object
+    failure_policy: log_skip
+  retention:
+    raw: 30d
+    aggregated: 365d
+  aggregation:
+    enabled: true
+    schedule: 5m
+    batch_size: 1000
+    max_batches: 10
+    overlap: 15m
+  storage:
+    backend: postgres
+    table_prefix: timeseries
+    partitioning:
+      enabled: false
+      interval: 1d
+      precreate: 7
+  cardinality:
+    max_series_per_metric: 10000
+    max_dimensions: 4
+    max_values_per_dimension: 1000
+    overflow: drop
+  privacy:
+    hash_only: true
+    store_value_text: false
+    max_value_length: 256
+    redact_patterns:
+      - '(?i)(authorization|cookie|token|secret|password)'
+  metrics:
+    # Example only: replace the placeholder with a deployment-owned term.
+    - key: example.brand.keyword_occurrences
+      enabled: true
+      description: Example daily occurrence total for a selected company term.
+      source_kind: keyword
+      selector:
+        keyword: example company
+        from: occurrences
+      value_type: count
+      aggregates: [sum, average, max]
+      bucket_interval: 1d
+      dimensions:
+        - key: monitored_class
+          selector:
+            constant: brand

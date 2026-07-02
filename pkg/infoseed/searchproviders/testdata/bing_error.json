@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "401",
+    "message": "Access denied for Ocp-Apim-Subscription-Key: SHOULD_NOT_LEAK"
+  }
+}

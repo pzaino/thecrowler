@@ -148,6 +148,17 @@ os: "linux"
 debug_level: 3
 `))
 
+	f.Add([]byte(`timeseries:
+  enabled: true
+  metrics:
+    - key: title_count
+      source_kind: metatag
+      selector:
+        metatag_name: title
+      value_type: integer
+      aggregates: [count, sum]
+`))
+
 	f.Fuzz(func(t *testing.T, data []byte) {
 		_, err := ParseConfig(data)
 		if err != nil {

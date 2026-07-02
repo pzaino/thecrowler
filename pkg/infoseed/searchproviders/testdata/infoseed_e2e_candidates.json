@@ -1,0 +1,34 @@
+{
+  "results": [
+    {
+      "url": "HTTPS://Accepted.Example.test:443/Path/?utm_source=fake-search&keep=1#fragment",
+      "title": "Accepted Candidate",
+      "score": 0.55,
+      "metadata": {"fixture_case": "accepted"}
+    },
+    {
+      "url": "https://reject.example.test/rejected-by-plugin?utm_source=fake-search",
+      "title": "Rejected Candidate",
+      "score": 0.45,
+      "metadata": {"fixture_case": "rejected"}
+    },
+    {
+      "url": "https://accepted.example.test/Path/?keep=1&utm_source=duplicate",
+      "title": "Duplicate Candidate",
+      "score": 0.40,
+      "metadata": {"fixture_case": "duplicate"}
+    },
+    {
+      "url": "http://existing.example.test:80/Already?utm_medium=fake-search",
+      "title": "Existing Source Candidate",
+      "score": 0.70,
+      "metadata": {"fixture_case": "existing_source"}
+    },
+    {
+      "url": "https://override.example.test/discover?utm_campaign=fake-search",
+      "title": "Override Candidate",
+      "score": 0.60,
+      "metadata": {"fixture_case": "source_overrides"}
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Example Public Feed</title>
+    <item>
+      <title>Alpha public research update</title>
+      <link>/research/alpha</link>
+      <description>Alpha snippet from an RSS fixture.</description>
+      <content:encoded>Long Alpha content from an RSS fixture.</content:encoded>
+      <guid>rss-alpha-guid</guid>
+      <pubDate>Fri, 05 Jun 2026 00:00:00 GMT</pubDate>
+      <category>threat-intel</category>
+      <author>analyst@example.com</author>
+      <dc:creator>Research Analyst</dc:creator>
+    </item>
+    <item>
+      <title>Unrelated update</title>
+      <link>https://example.com/other</link>
+      <description>This entry should be filtered by the query.</description>
+    </item>
+  </channel>
+</rss>

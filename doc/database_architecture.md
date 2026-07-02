@@ -1,8 +1,120 @@
 # TheCROWler DB architecture
 
-The CROWler uses a PostgreSQL database to store the data it collects. However
-it's internal data API is designed to be database agnostic, so it could be
-easily adapted to use other databases in the future.
+The CROWler uses PostgreSQL as its primary production database, and the database
+package also carries setup/migration coverage for MySQL/MariaDB and SQLite so
+Information Seed schema changes can be validated consistently across supported
+DBMS backends.
+
+
+## InformationSeed schema migration coverage
+
+Information Seed schema changes are represented in both fresh-install setup SQL
+and upgrade migration SQL for every supported DBMS:
+
+- PostgreSQL: `pkg/database/db_migrations/postgresql-setup.pgsql` and
+  `pkg/database/db_migrations/postgresql-migration-v1.8.pgsql`.
+- MySQL/MariaDB: `pkg/database/db_migrations/mysql-setup-v1.4.mysql` and
+  `pkg/database/db_migrations/mysql-migration-v1.8.mysql`.
+- SQLite: `pkg/database/db_migrations/sqlite-setup-v1.4.sqlite3`,
+  `pkg/database/db_migrations/sqlite-migration-v1.8.sqlite3`, and the guarded runtime
+  migrations in `pkg/database/sqlite_db.go` for SQLite versions that cannot run
+  `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`.
+
+The v1.8 Information Seed inventory includes lifecycle fields on
+`InformationSeed` (`status`, `priority`, `engine`, `last_processed_at`,
+`last_error`, `last_error_at`, `disabled`, and `attempts`), durable candidate
+decision audit rows in `InformationSeedCandidate`, and per-source/seed discovery
+provenance columns on `SourceInformationSeedIndex`.
+
+Read-path indexes are maintained for common seed claiming/listing filters,
+candidate audit lookups, and source/seed-link inspection. In particular,
+`idx_informationseed_claim_queue` supports enabled/status/priority claim scans,
+`idx_informationseed_engine_status` supports claimed-row follow-up lookups,
+`idx_informationseedcandidate_seed_decision` and candidate host/provider/URL
+indexes support candidate audit inspection, and
+`idx_sourceinformationseedindex_seed_source` plus
+`idx_sourceinformationseedindex_provider_rank` support accepted-source link
+inspection by seed and provider rank.
+
+
+## InformationSeed claiming semantics
+
+For the full status lifecycle, finalization rules, and rerun idempotency contract, see [Information seed lifecycle](information_seed_lifecycle.md).
+
+`ClaimInformationSeeds` is implemented in the database package with explicit
+DBMS-specific branches selected by `Handler.DBMS()`. All branches skip rows where
+`disabled = true`, claim seeds in `new` or `pending`, reclaim stale `processing`
+seeds only when `last_processed_at` is older than the configured
+`processingTimeout`, and retry `error` seeds only when `last_error_at` is older
+than the configured `retryAfter`.
+
+DBMS-specific behavior and limitations:
+
+- **PostgreSQL** uses a single transactional `UPDATE ... FROM (SELECT ... FOR
+  UPDATE SKIP LOCKED LIMIT ...) RETURNING ...` claim. Concurrent claimers skip
+  locked eligible rows and receive only the rows they atomically changed.
+- **MySQL** uses the project-supported MySQL 8 style `SELECT ... FOR UPDATE SKIP
+  LOCKED` inside a transaction, followed by a guarded `UPDATE` of the locked
+  primary keys and a select of rows assigned to the claiming `engine`. This
+  requires InnoDB row locks and MySQL versions that support `SKIP LOCKED`; older
+  MySQL versions may block on locked rows or require a different guarded-update
+  fallback.
+- **SQLite** uses a transaction-safe bounded `UPDATE InformationSeed ... WHERE
+  information_seed_id IN (SELECT ... LIMIT ...)` pattern, then selects rows
+  assigned to the same `engine` and exact claim timestamp. SQLite does not
+  provide row-level `SKIP LOCKED`, so concurrent writers are serialized by
+  SQLite's database/page-level write locking rather than skipping locked rows.
+
+
+## Source and information seed provenance
+
+`Sources.config` stores the crawler configuration for a source itself: rulesets,
+execution-plan settings, crawling restrictions, and other behavior that should
+travel with the source no matter how many seeds discover it. It should not be
+used for seed-specific discovery evidence because a single source can be
+associated with many information seeds. Information Seed discovery supplies this
+column from the seed default at `InformationSeed.config.source_config` or, for a
+single candidate, from the plugin result at
+`source_overrides.source_config`. The per-candidate object replaces the default
+before the normal Source configuration validator and persistence policy run.
+
+`SourceInformationSeedIndex` stores provenance that is specific to one
+`(source_id, information_seed_id)` relationship. The unique pair remains the
+identity of the relationship, while optional discovery columns record metadata
+from the discovery pass that connected that source to that seed:
+
+- `discovery_provider`: search engine, API, plugin, model, or other provider
+  that returned the candidate.
+- `discovery_query`: query, dork, prompt, or request used to produce the
+  candidate.
+- `discovery_rank`: provider rank or result position.
+- `candidate_score`: normalized pre-crawl score assigned to the candidate.
+- `candidate_reason`: concise explanation for why the candidate matched.
+- `discovery_metadata`: JSON/JSONB object for provider-specific fields such as
+  snippets, raw result IDs, query parameters, or scoring features.
+
+`LinkSourceToInformationSeed` is intentionally idempotent and only creates the
+relationship if it is missing. Callers that have discovery evidence should use
+the richer metadata link helper, which upserts only the matching
+`(source_id, information_seed_id)` row and leaves omitted metadata fields
+unchanged. This keeps provenance for other seeds separate even when the same
+source URL is discovered by multiple seeds.
+
+`InformationSeedCandidate` stores the durable decision evidence for every
+candidate considered by an information-seed run, including accepted and rejected
+candidates. This is a deliberate product decision: rejected candidates are
+persisted for auditability, debugging, and provider/plugin policy review, but
+they are not promoted into `Sources` and therefore never enter the crawl
+frontier. Accepted rows in `InformationSeedCandidate` record the per-run
+decision evidence, while `SourceInformationSeedIndex` remains the accepted-source
+provenance table for the actual source/seed relationship.
+
+`InformationSeedCandidate` rows include the seed ID, normalized URL, host,
+provider, query, rank, score, `accepted`/`rejected` decision status, rejection
+reason, provider/plugin metadata, run attempt number, and timestamps. Listing is
+provided by database helpers with seed-scoped pagination and by the
+`/v1/information_seed/candidates` API endpoint. Console/API seed listing still
+reports accepted source counts separately from candidate audit rows.
 
 Here below is a diagram of the database architecture:
 
@@ -11,11 +123,37 @@ erDiagram
     InformationSeed {
         BIGSERIAL information_seed_id PK
         TIMESTAMP created_at
+        TIMESTAMP deleted_at
         TIMESTAMP last_updated_at
         BIGINT category_id
         BIGINT usr_id
         VARCHAR information_seed
+        VARCHAR status
+        VARCHAR priority
+        VARCHAR engine
+        TIMESTAMP last_processed_at
+        TEXT last_error
+        TIMESTAMP last_error_at
+        BOOLEAN disabled
+        INTEGER attempts
         JSONB config
+    }
+
+    InformationSeedCandidate {
+        BIGSERIAL information_seed_candidate_id PK
+        BIGINT information_seed_id FK "REFERENCES InformationSeed(information_seed_id)"
+        VARCHAR normalized_url
+        VARCHAR host
+        VARCHAR provider
+        TEXT query
+        INTEGER rank
+        FLOAT score
+        VARCHAR decision_status
+        TEXT rejection_reason
+        JSONB metadata
+        INTEGER run_attempt
+        TIMESTAMP created_at
+        TIMESTAMP last_updated_at
     }
 
     Sources {
@@ -138,7 +276,14 @@ erDiagram
         BIGSERIAL source_information_seed_id PK
         BIGINT source_id FK "REFERENCES Sources(source_id)"
         BIGINT information_seed_id FK "REFERENCES InformationSeed(information_seed_id)"
+        VARCHAR discovery_provider
+        TEXT discovery_query
+        INTEGER discovery_rank
+        FLOAT candidate_score
+        TEXT candidate_reason
+        JSONB discovery_metadata
         TIMESTAMP created_at
+        TIMESTAMP deleted_at
         TIMESTAMP last_updated_at
     }
 
@@ -209,6 +354,7 @@ erDiagram
     Categories ||--|{ Categories : "parent_id"
     InformationSeed ||--o{ Categories : "category_id"
     InformationSeed ||--o{ Sources : "usr_id"
+    InformationSeedCandidate ||--|{ InformationSeed : "information_seed_id"
     Sources ||--o{ Categories : "category_id"
     Sources ||--o{ Owners : "usr_id"
     Owners ||--o{ Sources : "usr_id"
@@ -233,3 +379,15 @@ erDiagram
     HTTPInfoIndex ||--|{ SearchIndex : "index_id"
     Screenshots ||--|{ SearchIndex : "index_id"
 ```
+
+## Entity observation backfill
+
+Entity memberships may be assigned after extractors have already emitted observations. `BackfillObservationEntities` repairs raw observations by matching `TimeSeriesObservations.object_type/object_id` to `EntityMemberships`, filling only a missing `entity_id`, preserving an existing `dimensions.confidence`, and appending membership evidence to existing provenance. The helper is bounded by batch size and batch count and returns an observation-ID checkpoint. `RunEntityObservationBackfillJob` persists that checkpoint for a named job and resets it after a complete sweep, allowing a later delayed membership to revisit older unassigned observations.
+
+The backfill deliberately does **not** update `TimeSeriesAggregates`. Its result reports `AffectedStart` and `AffectedEnd`, the minimum and maximum `observed_at` timestamps of rows actually changed during that run. The named checkpoint also accumulates this affected range. `ReaggregateTimeSeriesBackfill` uses that affected range for explicit aggregate repair; no aggregate grouping is silently rewritten by the backfill itself.
+
+## Time-series storage
+
+`TimeSeriesMetrics`, `TimeSeriesObservations`, `TimeSeriesAggregates`, `TimeSeriesAggregationRuns`, and `EntityObservationBackfillCheckpoints` implement the v1 analytical projection on PostgreSQL, MySQL, and SQLite. Search and discovery tables remain authoritative; aggregate rows can be rebuilt from retained observations, and entity backfill updates raw scope before explicit reaggregation.
+
+PostgreSQL partitioning configuration is optional and declarative in v1; automatic partition creation is not part of the shipped startup path. MySQL and SQLite use unpartitioned tables. See [Time-series observations and aggregates](timeseries.md#storage-portability-and-postgresql-partitioning).

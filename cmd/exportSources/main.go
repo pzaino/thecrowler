@@ -3,8 +3,10 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"time"
@@ -13,6 +15,43 @@ import (
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 
 	_ "github.com/lib/pq"
+)
+
+const exportQuery = `
+	SELECT
+		s.source_id,
+		s.url AS source_url,
+
+		si.index_id,
+		si.page_url,
+		si.created_at,
+		si.last_updated_at,
+
+		wo.object_id,
+		wo.object_type,
+		wo.object_link,
+		wo.object_hash,
+		wo.object_content,
+		wo.object_html,
+		wo.details,
+		wo.created_at,
+		wo.last_updated_at
+	FROM Sources s
+	JOIN SourceSearchIndex ssi
+		ON ssi.source_id = s.source_id
+	JOIN SearchIndex si
+		ON si.index_id = ssi.index_id
+	LEFT JOIN WebObjectsIndex woi
+		ON woi.index_id = si.index_id
+	LEFT JOIN WebObjects wo
+		ON wo.object_id = woi.object_id
+	ORDER BY s.source_id, si.index_id, wo.object_id;`
+
+var (
+	loadConfig   = cfg.LoadConfig
+	openDatabase = sql.Open
+	now          = time.Now
+	createFile   = func(name string) (io.WriteCloser, error) { return os.Create(name) }
 )
 
 // Export represents the overall export structure.
@@ -49,13 +88,22 @@ type WebObject struct {
 }
 
 func main() {
-	configFile := flag.String("config", "config.yaml", "Path to config file")
-	output := flag.String("out", "", "Output JSON file (default stdout)")
-	flag.Parse()
-
-	config, err := cfg.LoadConfig(*configFile)
-	if err != nil {
+	if err := run(os.Args[1:], os.Stdout); err != nil {
 		log.Fatal(err)
+	}
+}
+
+func run(args []string, stdout io.Writer) error {
+	flags := flag.NewFlagSet("exportSources", flag.ContinueOnError)
+	configFile := flags.String("config", "config.yaml", "Path to config file")
+	output := flags.String("out", "", "Output JSON file (default stdout)")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+
+	config, err := loadConfig(*configFile)
+	if err != nil {
+		return err
 	}
 
 	psqlInfo := fmt.Sprintf(
@@ -67,156 +115,139 @@ func main() {
 		config.Database.DBName,
 	)
 
-	db, err := sql.Open(cdb.DBPostgresStr, psqlInfo)
+	db, err := openDatabase(cdb.DBPostgresStr, psqlInfo)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	defer db.Close()
 
-	rows, err := db.Query(`
-	SELECT
-		s.source_id,
-		s.url AS source_url,
-
-		si.index_id,
-		si.page_url,
-		si.created_at,
-		si.last_updated_at,
-
-		wo.object_id,
-		wo.object_type,
-		wo.object_link,
-		wo.object_hash,
-		wo.object_content,
-		wo.object_html,
-		wo.details,
-		wo.created_at,
-		wo.last_updated_at
-	FROM Sources s
-	JOIN SourceSearchIndex ssi
-		ON ssi.source_id = s.source_id
-	JOIN SearchIndex si
-		ON si.index_id = ssi.index_id
-	LEFT JOIN WebObjectsIndex woi
-		ON woi.index_id = si.index_id
-	LEFT JOIN WebObjects wo
-		ON wo.object_id = woi.object_id
-	ORDER BY s.source_id, si.index_id, wo.object_id;
-	`)
+	export, err := collectExport(db, now().UTC())
 	if err != nil {
-		log.Fatal(err)
+		return err
+	}
+
+	writer := stdout
+	var outputFile io.WriteCloser
+	if *output != "" {
+		outputFile, err = createFile(*output)
+		if err != nil {
+			return err
+		}
+		defer outputFile.Close()
+		writer = outputFile
+	}
+
+	return encodeExport(writer, export)
+}
+
+func collectExport(db *sql.DB, exportedAt time.Time) (Export, error) {
+	rows, err := db.Query(exportQuery)
+	if err != nil {
+		return Export{}, err
 	}
 	defer rows.Close()
 
-	sourceMap := map[uint64]*Source{}
-	pageMap := map[uint64]*Page{}
+	export := Export{
+		ExportedAt: exportedAt,
+		Sources:    []Source{},
+	}
+	sourceIndexes := make(map[uint64]int)
+	pageIndexes := make(map[uint64]map[uint64]int)
 
 	for rows.Next() {
 		var (
 			sourceID  uint64
 			sourceURL string
+			indexID   uint64
+			pageURL   string
 
-			indexID           uint64
-			pageURL           string
 			pageCreatedAt     time.Time
 			pageLastUpdatedAt sql.NullTime
 
-			obj WebObject
-
-			objCreatedAt     time.Time
-			objLastUpdatedAt sql.NullTime
-
-			objContent sql.NullString
-			objHTML    sql.NullString
+			objectID        sql.NullInt64
+			objectType      sql.NullString
+			objectLink      sql.NullString
+			objectHash      sql.NullString
+			objectContent   sql.NullString
+			objectHTML      sql.NullString
+			objectDetails   []byte
+			objectCreatedAt sql.NullTime
+			objectUpdatedAt sql.NullTime
 		)
 
-		err := rows.Scan(
-			&sourceID,
-			&sourceURL,
-
-			&indexID,
-			&pageURL,
-			&pageCreatedAt,
-			&pageLastUpdatedAt,
-
-			&obj.ObjectID,
-			&obj.ObjectType,
-			&obj.ObjectLink,
-			&obj.ObjectHash,
-			&objContent,
-			&objHTML,
-			&obj.Details,
-			&objCreatedAt,
-			&objLastUpdatedAt,
-		)
-		if err != nil {
-			log.Fatal(err)
+		if err := rows.Scan(
+			&sourceID, &sourceURL,
+			&indexID, &pageURL, &pageCreatedAt, &pageLastUpdatedAt,
+			&objectID, &objectType, &objectLink, &objectHash,
+			&objectContent, &objectHTML, &objectDetails,
+			&objectCreatedAt, &objectUpdatedAt,
+		); err != nil {
+			return Export{}, err
 		}
 
-		if objContent.Valid {
-			obj.ObjectContent = &objContent.String
-		}
-		if objHTML.Valid {
-			obj.ObjectHTML = &objHTML.String
-		}
-		obj.CreatedAt = objCreatedAt
-		if objLastUpdatedAt.Valid {
-			t := objLastUpdatedAt.Time
-			obj.LastUpdatedAt = &t
-		}
-
-		src, ok := sourceMap[sourceID]
-		if !ok {
-			src = &Source{
+		sourceIndex, found := sourceIndexes[sourceID]
+		if !found {
+			sourceIndex = len(export.Sources)
+			sourceIndexes[sourceID] = sourceIndex
+			pageIndexes[sourceID] = make(map[uint64]int)
+			export.Sources = append(export.Sources, Source{
 				SourceID:  sourceID,
 				SourceURL: sourceURL,
-			}
-			sourceMap[sourceID] = src
+				Pages:     []*Page{},
+			})
 		}
 
-		pg, ok := pageMap[indexID]
-		if !ok {
-			pg = &Page{
+		pageIndex, found := pageIndexes[sourceID][indexID]
+		if !found {
+			pageIndex = len(export.Sources[sourceIndex].Pages)
+			pageIndexes[sourceID][indexID] = pageIndex
+			export.Sources[sourceIndex].Pages = append(export.Sources[sourceIndex].Pages, &Page{
 				IndexID: indexID,
 				PageURL: pageURL,
-			}
-			pageMap[indexID] = pg
-			src.Pages = append(src.Pages, pg)
+				Objects: []WebObject{},
+			})
 		}
 
-		if obj.ObjectID == 0 {
+		if !objectID.Valid {
 			continue
 		}
+		if objectID.Int64 < 0 {
+			return Export{}, errors.New("web object ID cannot be negative")
+		}
 
-		pg.Objects = append(pg.Objects, obj)
+		object := WebObject{
+			ObjectID:   uint64(objectID.Int64),
+			ObjectType: objectType.String,
+			ObjectLink: objectLink.String,
+			ObjectHash: objectHash.String,
+			Details:    json.RawMessage(objectDetails),
+		}
+		if objectContent.Valid {
+			object.ObjectContent = &objectContent.String
+		}
+		if objectHTML.Valid {
+			object.ObjectHTML = &objectHTML.String
+		}
+		if objectCreatedAt.Valid {
+			object.CreatedAt = objectCreatedAt.Time
+		}
+		if objectUpdatedAt.Valid {
+			updatedAt := objectUpdatedAt.Time
+			object.LastUpdatedAt = &updatedAt
+		}
+
+		page := export.Sources[sourceIndex].Pages[pageIndex]
+		page.Objects = append(page.Objects, object)
 	}
 
 	if err := rows.Err(); err != nil {
-		log.Fatal(err)
+		return Export{}, err
 	}
+	return export, nil
+}
 
-	export := Export{
-		ExportedAt: time.Now().UTC(),
-	}
-
-	for _, src := range sourceMap {
-		export.Sources = append(export.Sources, *src)
-	}
-
-	var out *os.File
-	if *output == "" {
-		out = os.Stdout
-	} else {
-		out, err = os.Create(*output)
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer out.Close()
-	}
-
-	enc := json.NewEncoder(out)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(export); err != nil {
-		log.Fatal(err)
-	}
+func encodeExport(writer io.Writer, export Export) error {
+	encoder := json.NewEncoder(writer)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(export)
 }

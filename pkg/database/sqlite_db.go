@@ -51,9 +51,300 @@ func (handler *SQLiteHandler) Connect(c cfg.Config) error {
 		if err == nil {
 			_, err = handler.db.Exec("PRAGMA synchronous=1;")
 		}
+		if err == nil {
+			err = ensureSQLiteSourceSchema(handler.db)
+		}
+		if err == nil {
+			err = ensureSQLiteInformationSeedSchema(handler.db)
+		}
+		if err == nil {
+			err = ensureSQLiteEntityCorrelationSchema(handler.db)
+		}
+		if err == nil {
+			err = ensureSQLiteTimeSeriesAggregationSchema(handler.db)
+		}
 	}
 
 	return err
+}
+
+func ensureSQLiteTimeSeriesAggregationSchema(db *sql.DB) error {
+	var name string
+	err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='TimeSeriesAggregates'").Scan(&name)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	if err == nil {
+		columns, columnErr := sqliteColumns(db, "TimeSeriesAggregates")
+		if columnErr != nil {
+			return columnErr
+		}
+		migrations := []sqliteColumnMigration{
+			{column: "occurrence_total", statement: "ALTER TABLE TimeSeriesAggregates ADD COLUMN occurrence_total NUMERIC NOT NULL DEFAULT 0"},
+			{column: "distinct_value_count", statement: "ALTER TABLE TimeSeriesAggregates ADD COLUMN distinct_value_count INTEGER NOT NULL DEFAULT 0"},
+			{column: "last_value_boolean", statement: "ALTER TABLE TimeSeriesAggregates ADD COLUMN last_value_boolean BOOLEAN"},
+			{column: "last_value_json", statement: "ALTER TABLE TimeSeriesAggregates ADD COLUMN last_value_json TEXT"},
+			{column: "first_seen_at", statement: "ALTER TABLE TimeSeriesAggregates ADD COLUMN first_seen_at TIMESTAMP"},
+			{column: "last_seen_at", statement: "ALTER TABLE TimeSeriesAggregates ADD COLUMN last_seen_at TIMESTAMP"},
+		}
+		for _, migration := range migrations {
+			if !columns[migration.column] {
+				if _, err = db.Exec(migration.statement); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS TimeSeriesAggregationRuns (
+		run_key VARCHAR(255) PRIMARY KEY, status VARCHAR(32) NOT NULL, checkpoint_at TIMESTAMP,
+		range_start TIMESTAMP, range_end TIMESTAMP, started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		completed_at TIMESTAMP, last_error TEXT, last_updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)`)
+	return err
+}
+
+func ensureSQLiteEntityCorrelationSchema(db *sql.DB) error {
+	migrations := map[string][]sqliteColumnMigration{
+		"EntityMemberships": {
+			{column: "membership_role", statement: "ALTER TABLE EntityMemberships ADD COLUMN membership_role TEXT"},
+			{column: "membership_type", statement: "ALTER TABLE EntityMemberships ADD COLUMN membership_type TEXT"},
+		},
+		"ObjectCorrelations": {
+			{column: "entity_id", statement: "ALTER TABLE ObjectCorrelations ADD COLUMN entity_id INTEGER REFERENCES Entities(entity_id) ON DELETE SET NULL"},
+			{column: "confidence", statement: "ALTER TABLE ObjectCorrelations ADD COLUMN confidence REAL CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1))"},
+		},
+	}
+	for table, tableMigrations := range migrations {
+		var name string
+		err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&name)
+		if err == sql.ErrNoRows {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		columns, err := sqliteColumns(db, table)
+		if err != nil {
+			return err
+		}
+		for _, migration := range tableMigrations {
+			if !columns[migration.column] {
+				if _, err = db.Exec(migration.statement); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS EntityObservationBackfillCheckpoints (
+		job_name VARCHAR(255) PRIMARY KEY, last_observation_id INTEGER NOT NULL DEFAULT 0,
+		affected_start TIMESTAMP, affected_end TIMESTAMP, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		last_updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)`)
+	return err
+}
+
+func ensureSQLiteSourceSchema(db *sql.DB) error {
+	var tableName string
+	err := db.QueryRow("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'Sources'").Scan(&tableName)
+	if err == sql.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	columns, err := sqliteColumns(db, "Sources")
+	if err != nil {
+		return err
+	}
+
+	migrations := []struct {
+		column    string
+		statement string
+	}{
+		{column: "name", statement: "ALTER TABLE Sources ADD COLUMN name VARCHAR(255)"},
+		{column: "priority", statement: "ALTER TABLE Sources ADD COLUMN priority VARCHAR(64) DEFAULT '' NOT NULL"},
+	}
+	for _, migration := range migrations {
+		if !columns[migration.column] {
+			if _, err = db.Exec(migration.statement); err != nil {
+				return err
+			}
+		}
+	}
+
+	if _, err = db.Exec("CREATE INDEX IF NOT EXISTS idx_sources_priority ON Sources(priority)"); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+type sqliteColumnMigration struct {
+	column    string
+	statement string
+}
+
+var sqliteInformationSeedLifecycleMigrations = []sqliteColumnMigration{
+	{column: "status", statement: "ALTER TABLE InformationSeed ADD COLUMN status VARCHAR(50) DEFAULT 'new' NOT NULL"},
+	{column: "priority", statement: "ALTER TABLE InformationSeed ADD COLUMN priority VARCHAR(64) DEFAULT '' NOT NULL"},
+	{column: "engine", statement: "ALTER TABLE InformationSeed ADD COLUMN engine VARCHAR(256) DEFAULT '' NOT NULL"},
+	{column: "last_processed_at", statement: "ALTER TABLE InformationSeed ADD COLUMN last_processed_at TIMESTAMP"},
+	{column: "last_error", statement: "ALTER TABLE InformationSeed ADD COLUMN last_error TEXT"},
+	{column: "last_error_at", statement: "ALTER TABLE InformationSeed ADD COLUMN last_error_at TIMESTAMP"},
+	{column: "disabled", statement: "ALTER TABLE InformationSeed ADD COLUMN disabled BOOLEAN DEFAULT FALSE"},
+	{column: "attempts", statement: "ALTER TABLE InformationSeed ADD COLUMN attempts INTEGER DEFAULT 0 NOT NULL"},
+}
+
+var sqliteInformationSeedLifecycleIndexes = []string{
+	"CREATE INDEX IF NOT EXISTS idx_informationseed_status ON InformationSeed(status)",
+	"CREATE INDEX IF NOT EXISTS idx_informationseed_priority ON InformationSeed(priority)",
+	"CREATE INDEX IF NOT EXISTS idx_informationseed_disabled ON InformationSeed(disabled)",
+	"CREATE INDEX IF NOT EXISTS idx_informationseed_last_processed_at ON InformationSeed(last_processed_at)",
+	"CREATE INDEX IF NOT EXISTS idx_informationseed_last_error_at ON InformationSeed(last_error_at)",
+	"CREATE INDEX IF NOT EXISTS idx_informationseed_processing_stale ON InformationSeed(status, disabled, last_processed_at)",
+	"CREATE INDEX IF NOT EXISTS idx_informationseed_claim_queue ON InformationSeed(disabled, status, priority, created_at, information_seed_id)",
+	"CREATE INDEX IF NOT EXISTS idx_informationseed_engine_status ON InformationSeed(engine, status, last_processed_at)",
+}
+
+func ensureSQLiteInformationSeedSchema(db *sql.DB) error {
+	var tableName string
+	err := db.QueryRow("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'InformationSeed'").Scan(&tableName)
+	if err == sql.ErrNoRows {
+		return ensureSQLiteInformationSeedCandidateSchema(db)
+	}
+	if err != nil {
+		return err
+	}
+
+	if err = applySQLiteColumnMigrations(db, "InformationSeed", sqliteInformationSeedLifecycleMigrations); err != nil {
+		return err
+	}
+
+	for _, statement := range sqliteInformationSeedLifecycleIndexes {
+		if _, err = db.Exec(statement); err != nil {
+			return err
+		}
+	}
+
+	return ensureSQLiteInformationSeedCandidateSchema(db)
+}
+
+func applySQLiteColumnMigrations(db *sql.DB, table string, migrations []sqliteColumnMigration) error {
+	columns, err := sqliteColumns(db, table)
+	if err != nil {
+		return err
+	}
+
+	for _, migration := range migrations {
+		if columns[migration.column] {
+			continue
+		}
+		if _, err = db.Exec(migration.statement); err != nil {
+			return err
+		}
+		columns[migration.column] = true
+	}
+
+	return nil
+}
+
+func ensureSQLiteInformationSeedCandidateSchema(db *sql.DB) error {
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS InformationSeedCandidate (
+			information_seed_candidate_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			information_seed_id INTEGER NOT NULL,
+			normalized_url VARCHAR(2048) NOT NULL,
+			host VARCHAR(255),
+			provider VARCHAR(255),
+			query TEXT,
+			rank INTEGER DEFAULT 0 NOT NULL,
+			score REAL DEFAULT 0 NOT NULL,
+			decision_status VARCHAR(32) NOT NULL CHECK (decision_status IN ('accepted', 'rejected')),
+			rejection_reason TEXT DEFAULT '' NOT NULL,
+			metadata TEXT,
+			run_attempt INTEGER DEFAULT 0 NOT NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE (information_seed_id, normalized_url, provider, query, rank, run_attempt),
+			FOREIGN KEY(information_seed_id) REFERENCES InformationSeed(information_seed_id) ON DELETE CASCADE
+		);`); err != nil {
+		return err
+	}
+	for _, statement := range []string{
+		"CREATE INDEX IF NOT EXISTS idx_informationseedcandidate_seed ON InformationSeedCandidate(information_seed_id, run_attempt DESC, last_updated_at DESC)",
+		"CREATE INDEX IF NOT EXISTS idx_informationseedcandidate_decision ON InformationSeedCandidate(decision_status)",
+		"CREATE INDEX IF NOT EXISTS idx_informationseedcandidate_seed_decision ON InformationSeedCandidate(information_seed_id, decision_status, run_attempt DESC)",
+		"CREATE INDEX IF NOT EXISTS idx_informationseedcandidate_host ON InformationSeedCandidate(host)",
+		"CREATE INDEX IF NOT EXISTS idx_informationseedcandidate_provider ON InformationSeedCandidate(provider)",
+		"CREATE INDEX IF NOT EXISTS idx_informationseedcandidate_normalized_url ON InformationSeedCandidate(normalized_url)",
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			return err
+		}
+	}
+	return ensureSQLiteSourceInformationSeedProvenance(db)
+}
+
+func ensureSQLiteSourceInformationSeedProvenance(db *sql.DB) error {
+	var tableName string
+	err := db.QueryRow("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'SourceInformationSeedIndex'").Scan(&tableName)
+	if err == sql.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	migrations := []sqliteColumnMigration{
+		{column: "discovery_provider", statement: "ALTER TABLE SourceInformationSeedIndex ADD COLUMN discovery_provider VARCHAR(255)"},
+		{column: "discovery_query", statement: "ALTER TABLE SourceInformationSeedIndex ADD COLUMN discovery_query TEXT"},
+		{column: "discovery_rank", statement: "ALTER TABLE SourceInformationSeedIndex ADD COLUMN discovery_rank INTEGER"},
+		{column: "candidate_score", statement: "ALTER TABLE SourceInformationSeedIndex ADD COLUMN candidate_score REAL"},
+		{column: "candidate_reason", statement: "ALTER TABLE SourceInformationSeedIndex ADD COLUMN candidate_reason TEXT"},
+		{column: "discovery_metadata", statement: "ALTER TABLE SourceInformationSeedIndex ADD COLUMN discovery_metadata TEXT"},
+	}
+
+	if err = applySQLiteColumnMigrations(db, "SourceInformationSeedIndex", migrations); err != nil {
+		return err
+	}
+
+	for _, statement := range []string{
+		"CREATE INDEX IF NOT EXISTS idx_sourceinformationseedindex_information_seed_id ON SourceInformationSeedIndex(information_seed_id)",
+		"CREATE INDEX IF NOT EXISTS idx_sourceinformationseedindex_source_id ON SourceInformationSeedIndex(source_id)",
+		"CREATE INDEX IF NOT EXISTS idx_sourceinformationseedindex_seed_source ON SourceInformationSeedIndex(information_seed_id, source_id)",
+		"CREATE INDEX IF NOT EXISTS idx_sourceinformationseedindex_provider_rank ON SourceInformationSeedIndex(information_seed_id, discovery_provider, discovery_rank)",
+	} {
+		if _, err = db.Exec(statement); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func sqliteColumns(db *sql.DB, table string) (map[string]bool, error) {
+	rows, err := db.Query("PRAGMA table_info('" + strings.ReplaceAll(table, "'", "''") + "')")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	columns := map[string]bool{}
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			columnType string
+			notNull    int
+			dfltValue  sql.NullString
+			pk         int
+		)
+		if err = rows.Scan(&cid, &name, &columnType, &notNull, &dfltValue, &pk); err != nil {
+			return nil, err
+		}
+		columns[name] = true
+	}
+
+	return columns, rows.Err()
 }
 
 // Close closes the database connection

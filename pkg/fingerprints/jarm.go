@@ -43,6 +43,9 @@ func jarmHash(jarmRaw string) string {
 
 	for _, handshake := range handshakes {
 		components := strings.Split(handshake, "|")
+		if len(components) < 4 {
+			components = append(components, make([]string, 4-len(components))...)
+		}
 		fuzzyHash.WriteString(cipherBytes(components[0]))
 		fuzzyHash.WriteString(versionByte(components[1]))
 		alpnsAndExt.WriteString(components[2])
@@ -96,7 +99,10 @@ func versionByte(version string) string {
 	}
 
 	options := "abcdef"
-	count := int(version[3] - '0')
+	count := int(version[len(version)-1] - '0')
+	if count < 0 || count >= len(options) {
+		return "0"
+	}
 	return string(options[count])
 }
 

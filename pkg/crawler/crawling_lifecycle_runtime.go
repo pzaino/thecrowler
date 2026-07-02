@@ -43,7 +43,11 @@ func (s *lifecycleRuntimeState) beforeCall(scope, dedupKey, recursionKey string)
 	s.activeRecursionKey[recursionKey] = struct{}{}
 	return nil
 }
-func (s *lifecycleRuntimeState) afterCall(recursionKey string) { s.mu.Lock(); delete(s.activeRecursionKey, recursionKey); s.mu.Unlock() }
+func (s *lifecycleRuntimeState) afterCall(recursionKey string) {
+	s.mu.Lock()
+	delete(s.activeRecursionKey, recursionKey)
+	s.mu.Unlock()
+}
 
 func executeCrawlingLifecycleHook(ctx *ProcessContext, wd *vdi.WebDriver, state *lifecycleRuntimeState, rule rules.CrawlingRule, stage string, in map[string]interface{}) RuleCallResult {
 	hook := rule.GetLifecycleHook(stage)
@@ -55,7 +59,9 @@ func executeCrawlingLifecycleHook(ctx *ProcessContext, wd *vdi.WebDriver, state 
 		req.Params = map[string]interface{}{}
 	}
 	ctxMap := map[string]interface{}{"stage": stage, "rule": rule.RuleName}
-	for k, v := range in { ctxMap[k]=v }
+	for k, v := range in {
+		ctxMap[k] = v
+	}
 	req.Params["crawl_context"] = ctxMap
 	sourceID := ""
 	sourceURL := ""

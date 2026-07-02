@@ -20,6 +20,7 @@ import (
 	"database/sql"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -42,6 +43,7 @@ var (
 func insertWebsite(db *sql.DB, source *cdb.Source) error {
 	// SQL statement to insert a new website
 	stmt := `INSERT INTO Sources (
+				source_uid,
 				url,
 				last_crawled_at,
 				status,
@@ -52,32 +54,33 @@ func insertWebsite(db *sql.DB, source *cdb.Source) error {
 				config
 			) VALUES (
 				$1,
+				$2,
 				NULL,
 				'pending',
-				$2,
 				$3,
 				$4,
 				$5,
-				$6
+				$6,
+				$7
 			) RETURNING source_id;
 		`
 
 	// Normalize the URL
 	source.URL = normalizeURL(source.URL)
 
-	// Execute the SQL statement and get the ID of the inserted website
-	results, err := db.Query(stmt, source.URL, source.CategoryID, source.UsrID, source.Restricted, source.Flags, source.Config)
-	if err != nil {
-		return err
-	}
-
-	// Get the ID of the inserted website
+	// Execute the SQL statement and get the ID of the inserted website.
 	var id uint64
-	for results.Next() {
-		err = results.Scan(&id)
-		if err != nil {
-			return err
-		}
+	if err := db.QueryRow(
+		stmt,
+		cdb.CalculateSourceUID(source.Name, source.URL),
+		source.URL,
+		source.CategoryID,
+		source.UsrID,
+		source.Restricted,
+		source.Flags,
+		source.Config,
+	).Scan(&id); err != nil {
+		return err
 	}
 
 	fmt.Println("Website inserted successfully! Assigned Source ID: ", id)
@@ -97,16 +100,25 @@ func normalizeURL(url string) string {
 }
 
 func main() {
-	configFile := flag.String("config", "config.yaml", "Path to the configuration file")
-	url := flag.String("url", "", "URL of the website to add")
-	bulk := flag.String("bulk", "", "Add multiple websites from a CSV file")
-	catID := flag.Uint64("catID", 0, "Category ID")
-	usrID := flag.Uint64("usrID", 0, "User ID")
-	restricted := flag.Uint("restricted", 1, "Restricted crawling")
-	flags := flag.Uint("flags", 0, "Flags")
-	sourceConfig := flag.String("srccfg", "", "Source configuration file")
-	force := flag.Bool("force", false, "Force the insertion of the website even if the config file is not found or it is invalid")
-	flag.Parse()
+	if err := run(os.Args[1:]); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run(args []string) error {
+	flagsSet := flag.NewFlagSet("addSource", flag.ContinueOnError)
+	configFile := flagsSet.String("config", "config.yaml", "Path to the configuration file")
+	url := flagsSet.String("url", "", "URL of the website to add")
+	bulk := flagsSet.String("bulk", "", "Add multiple websites from a CSV file")
+	catID := flagsSet.Uint64("catID", 0, "Category ID")
+	usrID := flagsSet.Uint64("usrID", 0, "User ID")
+	restricted := flagsSet.Uint("restricted", 1, "Restricted crawling")
+	sourceFlags := flagsSet.Uint("flags", 0, "Flags")
+	sourceConfig := flagsSet.String("srccfg", "", "Source configuration file")
+	force := flagsSet.Bool("force", false, "Force the insertion of the website even if the config file is not found or it is invalid")
+	if err := flagsSet.Parse(args); err != nil {
+		return err
+	}
 
 	forceInsert = *force
 
@@ -114,12 +126,12 @@ func main() {
 	var err error
 	config, err = cfg.LoadConfig(*configFile)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	// Check if the URL is provided
 	if *url == "" && *bulk == "" {
-		log.Fatal("Please provide a URL of the website to add or a file name for a bulk add.")
+		return errors.New("please provide a URL of the website to add or a file name for a bulk add")
 	}
 
 	// Database connection setup (replace with your actual database configuration)
@@ -128,7 +140,7 @@ func main() {
 		config.Database.User, config.Database.Password, config.Database.DBName)
 	db, err := sql.Open(cdb.DBPostgresStr, psqlInfo)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	defer db.Close() //nolint:errcheck // We can't check the error in a defer statement
 
@@ -140,20 +152,20 @@ func main() {
 			CategoryID: *catID,
 			UsrID:      *usrID,
 			Restricted: *restricted,
-			Flags:      *flags,
+			Flags:      *sourceFlags,
 			Status:     0,
 		}
 		// Check if the source configuration file is provided
 		if *sourceConfig != "" {
 			source.Config, err = getSourceConfig(*sourceConfig)
 			if err != nil {
-				log.Fatalf("Error reading source configuration file: %v", err)
+				return fmt.Errorf("error reading source configuration file: %w", err)
 			}
 		}
 
 		// Insert the website
 		if err := insertWebsite(db, &source); err != nil {
-			log.Fatalf("Error inserting website: %v", err)
+			return fmt.Errorf("error inserting website: %w", err)
 		}
 	}
 
@@ -161,9 +173,11 @@ func main() {
 	if *bulk != "" {
 		// Read the file and insert the websites
 		if err := insertWebsitesFromFile(db, *bulk); err != nil {
-			log.Fatalf("Error inserting websites from file: %v", err)
+			return fmt.Errorf("error inserting websites from file: %w", err)
 		}
 	}
+
+	return nil
 }
 
 // insertWebsitesFromFile inserts websites from a CSV file into the database.
@@ -178,6 +192,7 @@ func insertWebsitesFromFile(db *sql.DB, filename string) error {
 
 	// Create a new CSV reader
 	r := csv.NewReader(file)
+	r.FieldsPerRecord = -1
 
 	// Read the CSV records
 	for {
@@ -242,8 +257,8 @@ func insertWebsitesFromFile(db *sql.DB, filename string) error {
 		}
 
 		// Check if the row has a config file name
-		if len(record) > 4 {
-			sourceRecord.Config, err = getSourceConfig(record[5])
+		if len(record) > 5 {
+			sourceRecord.Config, err = getSourceConfig(strings.TrimSpace(record[5]))
 			if err != nil {
 				if forceInsert {
 					fmt.Printf("Error reading source configuration file for %s: %v\n", sourceRecord.URL, err)
@@ -273,22 +288,6 @@ func prepareURL(url string) string {
 	// Trim trailing slash
 	url = strings.TrimRight(url, "/")
 
-	// Check if the URL starts with hxxp:// or hxxps://
-	if strings.HasPrefix(url, "hxxp://") {
-		url = strings.Replace(url, "hxxp://", "http://", 1)
-	}
-	if strings.HasPrefix(url, "hxxps://") {
-		url = strings.Replace(url, "hxxps://", "https://", 1)
-	}
-
-	// Check if the URL starts with fxp:// or fxps://
-	if strings.HasPrefix(url, "fxp://") {
-		url = strings.Replace(url, "fxp://", "ftp://", 1)
-	}
-	if strings.HasPrefix(url, "fxps://") {
-		url = strings.Replace(url, "fxps://", "ftps://", 1)
-	}
-
 	// Replace squatted characters in the URL
 	url = strings.Replace(url, "[.]", ".", -1)
 	url = strings.Replace(url, "(.)", ".", -1)
@@ -302,6 +301,20 @@ func prepareURL(url string) string {
 	url = strings.Replace(url, "[?]", "?", -1)
 	url = strings.Replace(url, "(?)", "?", -1)
 	url = strings.Replace(url, "{?}", "?", -1)
+
+	// Restore defanged schemes after replacing obfuscated punctuation.
+	if strings.HasPrefix(url, "hxxp://") {
+		url = strings.Replace(url, "hxxp://", "http://", 1)
+	}
+	if strings.HasPrefix(url, "hxxps://") {
+		url = strings.Replace(url, "hxxps://", "https://", 1)
+	}
+	if strings.HasPrefix(url, "fxp://") {
+		url = strings.Replace(url, "fxp://", "ftp://", 1)
+	}
+	if strings.HasPrefix(url, "fxps://") {
+		url = strings.Replace(url, "fxps://", "ftps://", 1)
+	}
 
 	return url
 }

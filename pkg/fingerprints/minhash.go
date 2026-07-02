@@ -16,6 +16,7 @@
 package fingerprints
 
 import (
+	"encoding/binary"
 	"fmt"
 	"hash/fnv"
 	"math"
@@ -42,13 +43,10 @@ func NewMinHash(numHash int) *MinHash {
 // hashFunction computes the hash of the given data with the given seed.
 func hashFunction(data []byte, seed uint64) uint64 {
 	h := fnv.New64a()
-	_, err := h.Write(data)
-	if err != nil {
-		_, err = h.Write([]byte{byte(seed)})
-		if err != nil {
-			return 0
-		}
-	}
+	var seedBytes [8]byte
+	binary.LittleEndian.PutUint64(seedBytes[:], seed)
+	_, _ = h.Write(seedBytes[:])
+	_, _ = h.Write(data)
 	return h.Sum64()
 }
 

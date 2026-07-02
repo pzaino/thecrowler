@@ -26,6 +26,14 @@ alt="OpenSSF Security Best Practices badge"></a> //-->
 ![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/pzaino/thecrowler)
 ![GitHub Tag](https://img.shields.io/github/v/tag/pzaino/thecrowler)
 
+Please consider supporting this project! The CROWler is empowering thousands of users (mostly professionals and enterprises) to build their own content discovery and intelligence based solutions, and it's growing fast. If you want to support the project, you can do it by:
+
+- Clicking the support button on the GitHub page
+- Buying some official merchandise from the [CROWler Merch Store](https://www.redbubble.com/shop/ap/181179394)
+- Contacting the author for consultancies, paid support, or custom development.
+
+<b>Important note</b>: From release 2.0.0, the section `selenium` in the configuration file has been renamed to `vdi`. Please update your configuration file accordingly. The old `selenium` section is no longer supported.
+
 ## What is it?
 
 The CROWler is a self-hosted, event-driven Content Discovery and Intelligence development platform
@@ -190,6 +198,15 @@ For a complete and detailed breakdown, see: **[doc/features.md](doc/features.md)
 - Docker-based deployment
 - On-prem, cloud, and hybrid environments
 
+### User-data analytics
+
+- Configurable typed time-series observations over persisted search/discovery facts
+- Materialized aggregate buckets, aggregate-first `/v1` queries, and bounded drill-down
+- Late-data reaggregation, retention, and delayed entity backfill
+- Existing search tables remain authoritative; infrastructure telemetry is not part of the time-series system and is handled separately in Prometheus/logging/admin tooling
+
+See the [time-series guide](doc/timeseries.md) and [schema-valid examples](examples/timeseries/).
+
 **Full feature list and detailed explanations:**
 [doc/features.md](doc/features.md)
 
@@ -321,12 +338,22 @@ command:
 This will build your requested component in `./bin`
 
 ```bash
-./bin/removeSite
-./bin/addSite
 ./bin/addCategory
+./bin/addSource
 ./bin/api
+./bin/crowler-agt
+./bin/events
+./bin/exportSources
+./bin/healthCheck
+./bin/removeSource
 ./bin/thecrowler
+./bin/updateSourceStatus
 ```
+
+`thecrowler` is the main engine, the one that does the crawling, detection, etc.
+`api` is the General API server, that serves search and console API endpoints.
+`events` is the Events Manager, that manages the events and the event-driven automation and servers Events API endpoints.
+all other binaries are CLI tools that can be used to interact with the system, for example to add sources, categories, etc.
 
 Build them as you need them, or run the `autobuild.sh` (no arguments) to build
 them all.
@@ -372,6 +399,16 @@ The DB should need no maintenance, The CROWler will take care of that. Any time
 there is no crawling activity and it's passed 1 hours from the previous
 maintenance activity, The CROWler will clean up the database and optimize the
 indexes.
+
+## Support this project!
+
+The CROWler now counts thousands of git clones and downloads every week, and it's growing fast.
+It's great to see how many people are using it already, and I'm really happy about that. If you want to support the project, you can do it by:
+
+- Clicking the support button on the GitHub page
+- Buying some official merchandise from the [CROWler Merch Store](https://www.redbubble.com/shop/ap/181179394)
+
+Thank you for your support and remember that free software rely on the support of the community to thrive and grow, so if you like the project, please consider supporting it!
 
 ## License
 

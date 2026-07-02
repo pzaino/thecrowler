@@ -1,0 +1,335 @@
+// Copyright 2023 Paolo Fabio Zaino
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+
+package database
+
+import (
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"strings"
+	"time"
+
+	cfg "github.com/pzaino/thecrowler/pkg/config"
+)
+
+const (
+	InformationSeedCandidateDecisionAccepted = "accepted"
+	InformationSeedCandidateDecisionRejected = "rejected"
+)
+
+// InformationSeedCandidate records the durable decision evidence for one
+// candidate considered during an information seed run. Accepted candidates may
+// also have SourceInformationSeedIndex provenance; rejected candidates never
+// create Source rows and are represented only in this audit table.
+type InformationSeedCandidate struct {
+	ID                uint64
+	InformationSeedID uint64
+	NormalizedURL     string
+	Host              string
+	Provider          string
+	Query             string
+	Rank              int
+	Score             float64
+	DecisionStatus    string
+	RejectionReason   string
+	Metadata          *json.RawMessage
+	RunAttempt        int
+	CreatedAt         sql.NullTime
+	LastUpdatedAt     sql.NullTime
+}
+
+// InformationSeedCandidateFilter describes pagination for listing candidate
+// decisions by information seed.
+type InformationSeedCandidateFilter struct {
+	Limit  int
+	Offset int
+}
+
+// UpsertInformationSeedCandidateDecisions inserts or updates information seed
+// candidate decision evidence. The operation is idempotent for a single seed,
+// normalized URL, provider, query, rank, and run attempt tuple.
+func UpsertInformationSeedCandidateDecisions(db *Handler, candidates []InformationSeedCandidate) error {
+	if db == nil || *db == nil {
+		return fmt.Errorf("database handler is nil")
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	dbms := normalizeInformationSeedDBMS((*db).DBMS())
+	if !isSupportedInformationSeedDBMS(dbms) {
+		return fmt.Errorf("unsupported database type for information seed candidate decisions: %s", (*db).DBMS())
+	}
+
+	tx, err := (*db).Begin()
+	if err != nil {
+		return fmt.Errorf("failed to start information seed candidate transaction: %w", err)
+	}
+	committed := false
+	defer rollbackIfUncommitted(tx, &committed)
+
+	query := informationSeedCandidateUpsertQuery(dbms)
+	for _, candidate := range candidates {
+		metadata, err := informationSeedCandidateMetadataString(candidate.Metadata)
+		if err != nil {
+			return err
+		}
+		args, err := informationSeedCandidateArgs(candidate, metadata)
+		if err != nil {
+			return err
+		}
+		if _, err = tx.Exec(query, args...); err != nil {
+			return fmt.Errorf("failed to upsert information seed %d candidate %q: %w", candidate.InformationSeedID, candidate.NormalizedURL, err)
+		}
+		persisted, persistErr := getInformationSeedCandidateDecisionTx(tx, dbms, candidate)
+		if persistErr != nil {
+			return persistErr
+		}
+		if err = emitInformationSeedCandidateObservationsTx(tx, dbms, *persisted); err != nil {
+			return err
+		}
+	}
+
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit information seed candidate transaction: %w", err)
+	}
+	committed = true
+	return nil
+}
+
+// ListInformationSeedCandidateDecisions returns candidate decision evidence for
+// one seed in newest-decision order with stable pagination.
+func ListInformationSeedCandidateDecisions(db *Handler, seedID uint64, filter InformationSeedCandidateFilter) ([]InformationSeedCandidate, error) {
+	if db == nil || *db == nil {
+		return nil, fmt.Errorf("database handler is nil")
+	}
+	if seedID == 0 {
+		return nil, fmt.Errorf("information seed ID must be provided")
+	}
+	dbms := normalizeInformationSeedDBMS((*db).DBMS())
+	if !isSupportedInformationSeedDBMS(dbms) {
+		return nil, fmt.Errorf("unsupported database type for information seed candidate listing: %s", (*db).DBMS())
+	}
+	limit := filter.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	offset := filter.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	p1 := informationSeedPlaceholderForDBMS(dbms, 1)
+	p2 := informationSeedPlaceholderForDBMS(dbms, 2)
+	p3 := informationSeedPlaceholderForDBMS(dbms, 3)
+	query := fmt.Sprintf(`
+		SELECT information_seed_candidate_id, information_seed_id, normalized_url,
+			host, provider, query, rank, score, decision_status, rejection_reason,
+			metadata, run_attempt, created_at, last_updated_at
+		FROM InformationSeedCandidate
+		WHERE information_seed_id = %s
+		ORDER BY run_attempt DESC, last_updated_at DESC, information_seed_candidate_id DESC
+		LIMIT %s OFFSET %s`, p1, p2, p3)
+	rows, err := (*db).ExecuteQuery(query, seedID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list information seed %d candidate decisions: %w", seedID, err)
+	}
+	return scanInformationSeedCandidateRows(rows)
+}
+
+func informationSeedCandidateUpsertQuery(dbms string) string {
+	switch dbms {
+	case DBPostgresStr:
+		return `
+			INSERT INTO InformationSeedCandidate (
+				information_seed_id, normalized_url, host, provider, query, rank, score,
+				decision_status, rejection_reason, metadata, run_attempt
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11)
+			ON CONFLICT (information_seed_id, normalized_url, provider, query, rank, run_attempt)
+			DO UPDATE SET
+				host = EXCLUDED.host,
+				score = EXCLUDED.score,
+				decision_status = EXCLUDED.decision_status,
+				rejection_reason = EXCLUDED.rejection_reason,
+				metadata = EXCLUDED.metadata,
+				last_updated_at = NOW()`
+	case DBMySQLStr:
+		return `
+			INSERT INTO InformationSeedCandidate (
+				information_seed_id, normalized_url, host, provider, query, rank, score,
+				decision_status, rejection_reason, metadata, run_attempt
+			)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON DUPLICATE KEY UPDATE
+				host = VALUES(host),
+				score = VALUES(score),
+				decision_status = VALUES(decision_status),
+				rejection_reason = VALUES(rejection_reason),
+				metadata = VALUES(metadata),
+				last_updated_at = CURRENT_TIMESTAMP`
+	default:
+		return `
+			INSERT INTO InformationSeedCandidate (
+				information_seed_id, normalized_url, host, provider, query, rank, score,
+				decision_status, rejection_reason, metadata, run_attempt
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, json($10), $11)
+			ON CONFLICT (information_seed_id, normalized_url, provider, query, rank, run_attempt)
+			DO UPDATE SET
+				host = excluded.host,
+				score = excluded.score,
+				decision_status = excluded.decision_status,
+				rejection_reason = excluded.rejection_reason,
+				metadata = excluded.metadata,
+				last_updated_at = CURRENT_TIMESTAMP`
+	}
+}
+
+func informationSeedCandidateArgs(candidate InformationSeedCandidate, metadata *string) ([]interface{}, error) {
+	if candidate.InformationSeedID == 0 {
+		return nil, fmt.Errorf("information seed ID must be provided")
+	}
+	normalizedURL := strings.TrimSpace(candidate.NormalizedURL)
+	if normalizedURL == "" {
+		return nil, fmt.Errorf("candidate normalized URL is required")
+	}
+	status := strings.ToLower(strings.TrimSpace(candidate.DecisionStatus))
+	if status != InformationSeedCandidateDecisionAccepted && status != InformationSeedCandidateDecisionRejected {
+		return nil, fmt.Errorf("candidate decision status must be accepted or rejected")
+	}
+	if status == InformationSeedCandidateDecisionAccepted {
+		candidate.RejectionReason = ""
+	}
+	return []interface{}{
+		candidate.InformationSeedID,
+		normalizedURL,
+		strings.TrimSpace(candidate.Host),
+		strings.TrimSpace(candidate.Provider),
+		strings.TrimSpace(candidate.Query),
+		candidate.Rank,
+		candidate.Score,
+		status,
+		strings.TrimSpace(candidate.RejectionReason),
+		nullableArg(metadata),
+		candidate.RunAttempt,
+	}, nil
+}
+
+func informationSeedCandidateMetadataString(metadata *json.RawMessage) (*string, error) {
+	if metadata == nil {
+		return nil, nil
+	}
+	if len(*metadata) == 0 {
+		return nil, fmt.Errorf("candidate metadata must be valid JSON when provided")
+	}
+	if !json.Valid(*metadata) {
+		return nil, fmt.Errorf("candidate metadata must be valid JSON")
+	}
+	metadataString := string(*metadata)
+	return &metadataString, nil
+}
+
+func scanInformationSeedCandidateRows(rows *sql.Rows) ([]InformationSeedCandidate, error) {
+	defer rows.Close()
+	candidates := []InformationSeedCandidate{}
+	for rows.Next() {
+		var candidate InformationSeedCandidate
+		var metadata sql.NullString
+		if err := rows.Scan(
+			&candidate.ID,
+			&candidate.InformationSeedID,
+			&candidate.NormalizedURL,
+			&candidate.Host,
+			&candidate.Provider,
+			&candidate.Query,
+			&candidate.Rank,
+			&candidate.Score,
+			&candidate.DecisionStatus,
+			&candidate.RejectionReason,
+			&metadata,
+			&candidate.RunAttempt,
+			&candidate.CreatedAt,
+			&candidate.LastUpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		if metadata.Valid {
+			raw := json.RawMessage(metadata.String)
+			candidate.Metadata = &raw
+		}
+		candidates = append(candidates, candidate)
+	}
+	return candidates, rows.Err()
+}
+
+func getInformationSeedCandidateDecisionTx(tx *sql.Tx, dbms string, candidate InformationSeedCandidate) (*InformationSeedCandidate, error) {
+	p := newInformationSeedPlaceholders(dbms)
+	row := tx.QueryRow(`SELECT information_seed_candidate_id, information_seed_id, normalized_url,
+		host, provider, query, rank, score, decision_status, rejection_reason,
+		metadata, run_attempt, created_at, last_updated_at
+		FROM InformationSeedCandidate
+		WHERE information_seed_id = `+p.Next()+` AND normalized_url = `+p.Next()+`
+		  AND provider = `+p.Next()+` AND query = `+p.Next()+` AND rank = `+p.Next()+`
+		  AND run_attempt = `+p.Next(), candidate.InformationSeedID, strings.TrimSpace(candidate.NormalizedURL),
+		strings.TrimSpace(candidate.Provider), strings.TrimSpace(candidate.Query), candidate.Rank, candidate.RunAttempt)
+	var persisted InformationSeedCandidate
+	var metadata sql.NullString
+	if err := row.Scan(&persisted.ID, &persisted.InformationSeedID, &persisted.NormalizedURL,
+		&persisted.Host, &persisted.Provider, &persisted.Query, &persisted.Rank, &persisted.Score,
+		&persisted.DecisionStatus, &persisted.RejectionReason, &metadata, &persisted.RunAttempt,
+		&persisted.CreatedAt, &persisted.LastUpdatedAt); err != nil {
+		return nil, fmt.Errorf("lookup persisted information seed candidate: %w", err)
+	}
+	if metadata.Valid {
+		raw := json.RawMessage(metadata.String)
+		persisted.Metadata = &raw
+	}
+	return &persisted, nil
+}
+
+func emitInformationSeedCandidateObservationsTx(tx *sql.Tx, dbms string, candidate InformationSeedCandidate) error {
+	metadata := map[string]interface{}{}
+	if candidate.Metadata != nil && len(*candidate.Metadata) > 0 {
+		_ = json.Unmarshal(*candidate.Metadata, &metadata)
+	}
+	observedAt := time.Now().UTC()
+	if candidate.LastUpdatedAt.Valid {
+		observedAt = candidate.LastUpdatedAt.Time.UTC()
+	}
+	fields := map[string]interface{}{
+		"count": 1, "decision_status": candidate.DecisionStatus,
+		"accepted_count":   boolCount(candidate.DecisionStatus == InformationSeedCandidateDecisionAccepted),
+		"rejected_count":   boolCount(candidate.DecisionStatus == InformationSeedCandidateDecisionRejected),
+		"rejection_reason": candidate.RejectionReason, "reason": candidate.RejectionReason,
+		"provider": candidate.Provider, "query": candidate.Query, "rank": candidate.Rank,
+		"score": candidate.Score, "host": candidate.Host, "normalized_url": candidate.NormalizedURL,
+		"run_attempt": candidate.RunAttempt, "metadata": metadata,
+	}
+	seedID, candidateID := candidate.InformationSeedID, candidate.ID
+	return emitInformationSeedObservationsTx(tx, dbms, informationSeedObservationEvent{
+		SourceKind: cfg.TimeSeriesSourceInformationSeedCandidate,
+		Event:      "decision_" + candidate.DecisionStatus,
+		Identity:   fmt.Sprintf("candidate:%d:decision:%s", candidate.ID, candidate.DecisionStatus),
+		ObservedAt: observedAt,
+		Scope: TimeSeriesScope{InformationSeedID: &seedID, InformationSeedCandidateID: &candidateID,
+			SubjectType: string(cfg.TimeSeriesSourceInformationSeedCandidate), SubjectID: &candidateID},
+		Fields: fields,
+		Provenance: map[string]interface{}{
+			"information_seed_id": candidate.InformationSeedID, "information_seed_candidate_id": candidate.ID,
+			"candidate_row_id": candidate.ID, "provider_identifier": candidate.Provider,
+			"normalized_url": candidate.NormalizedURL, "host": candidate.Host, "query": candidate.Query,
+			"rank": candidate.Rank, "score": candidate.Score, "decision_status": candidate.DecisionStatus,
+			"rejection_reason": candidate.RejectionReason, "decision_evidence": metadata,
+			"run_attempt": candidate.RunAttempt, "transition": "decision_" + candidate.DecisionStatus,
+		},
+	})
+}
+
+func boolCount(value bool) int64 {
+	if value {
+		return 1
+	}
+	return 0
+}

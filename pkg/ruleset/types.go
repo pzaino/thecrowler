@@ -216,6 +216,7 @@ type PreCondition struct {
 // ScrapingRule represents a scraping rule
 type ScrapingRule struct {
 	RuleName          string                 `json:"rule_name" yaml:"rule_name"`
+	ObjectType        []string               `json:"object_type,omitempty" yaml:"object_type,omitempty"`
 	Scope             string                 `json:"scope" yaml:"scope"`
 	PreConditions     []PreCondition         `json:"pre_conditions,omitempty" yaml:"pre_conditions,omitempty"`
 	Conditions        map[string]interface{} `json:"conditions" yaml:"conditions"`
@@ -229,6 +230,7 @@ type ScrapingRule struct {
 // ActionRule represents an action rule
 type ActionRule struct {
 	RuleName       string                 `json:"rule_name" yaml:"rule_name"`
+	ObjectType     []string               `json:"object_type,omitempty" yaml:"object_type,omitempty"`
 	Scope          string                 `json:"scope" yaml:"scope"`
 	ActionType     string                 `json:"action_type" yaml:"action_type"`
 	Selectors      []Selector             `json:"selectors" yaml:"selectors"`
@@ -296,7 +298,8 @@ type PostProcessingStep struct {
 
 // DetectionRule represents a rule for detecting specific technologies or objects
 type DetectionRule struct {
-	RuleName            string                 `yaml:"rule_name"`
+	RuleName            string                 `json:"rule_name" yaml:"rule_name"`
+	ObjectType          []string               `json:"object_type,omitempty" yaml:"object_type,omitempty"`
 	Scope               string                 `json:"scope" yaml:"scope"`
 	ObjectName          string                 `yaml:"object_name"`
 	HTTPHeaderFields    []HTTPHeaderField      `yaml:"http_header_fields,omitempty"`
@@ -474,7 +477,8 @@ type MetaTag struct {
 
 // CrawlingRule represents a crawling rule for URL fuzzing and form handling
 type CrawlingRule struct {
-	RuleName          string             `yaml:"rule_name"`
+	RuleName          string             `json:"rule_name" yaml:"rule_name"`
+	ObjectType        []string           `json:"object_type,omitempty" yaml:"object_type,omitempty"`
 	RequestType       string             `yaml:"request_type"`
 	TargetElements    []TargetElement    `yaml:"target_elements"`
 	FuzzingParameters []FuzzingParameter `yaml:"fuzzing_parameters"`

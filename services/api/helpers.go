@@ -12,9 +12,34 @@ import (
 	"time"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
+	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
+	infoseeddiag "github.com/pzaino/thecrowler/pkg/infoseed"
+	mailconfig "github.com/pzaino/thecrowler/pkg/mail/config"
 	plg "github.com/pzaino/thecrowler/pkg/plugin"
 )
+
+const sourceConfigRedactionMarker = mailconfig.RedactedValue
+
+// marshalRedactedSourceConfig serializes a source configuration after replacing
+// secret values and secret-store references in its email envelope. Email
+// extensions are recursive because provider-specific settings can nest
+// authentication material.
+func marshalRedactedSourceConfig(sourceConfig cfg.SourceConfig) ([]byte, error) {
+	encoded, err := json.Marshal(sourceConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	var document map[string]any
+	if err := json.Unmarshal(encoded, &document); err != nil {
+		return nil, err
+	}
+	if email, ok := document["email"]; ok {
+		document["email"] = mailconfig.RedactValue(email)
+	}
+	return json.Marshal(document)
+}
 
 func handleRequestWithDB(w http.ResponseWriter, r *http.Request, successCode int, action func(string, int, *cdb.Handler) (interface{}, error)) {
 	select {
@@ -52,10 +77,11 @@ func handleErrorAndRespond(w http.ResponseWriter, err error, results interface{}
 	w.Header().Set("Content-Type", "application/json")
 	if err != nil {
 		// Log the error and prepare an error response
-		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg, err)
+		redactedErr := mailconfig.RedactString(infoseeddiag.RedactDiagnosticString(err.Error()))
+		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg, redactedErr)
 		response = cmn.StdAPIError{
 			ErrCode: errCode,
-			Err:     err.Error(),
+			Err:     redactedErr,
 			Message: errMsg,
 		}
 		w.WriteHeader(errCode) // Send the error code
@@ -76,7 +102,7 @@ func handleErrorAndRespond(w http.ResponseWriter, err error, results interface{}
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		// Log the error and send a fallback error response
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "Error encoding JSON response: %v", err)
-		cmn.DebugMsg(cmn.DbgLvlDebug4, "Original Results: %+v", results)
+		cmn.DebugMsg(cmn.DbgLvlDebug4, "Original Results: %s", mailconfig.RedactString(fmt.Sprintf("%+v", results)))
 
 		fallbackResponse := cmn.StdAPIError{
 			ErrCode: http.StatusInternalServerError,
@@ -153,6 +179,70 @@ func extractQueryOrBody(r *http.Request) (string, error) {
 	return query, nil
 }
 
+func queryValuesToPluginJSON(values url.Values) map[string]interface{} {
+	data := make(map[string]interface{}, len(values))
+	for key, vals := range values {
+		if len(vals) == 0 {
+			data[key] = ""
+			continue
+		}
+		if len(vals) == 1 {
+			data[key] = vals[0]
+			continue
+		}
+		copied := make([]string, len(vals))
+		copy(copied, vals)
+		data[key] = copied
+	}
+	return data
+}
+
+func apiPluginHTTPContext(r *http.Request) map[string]interface{} {
+	return map[string]interface{}{
+		"method": r.Method,
+		"path":   r.URL.Path,
+		"query":  r.URL.RawQuery,
+		"header": r.Header,
+	}
+}
+
+func attachHTTPContextToPluginData(data interface{}, httpCtx map[string]interface{}) interface{} {
+	if object, ok := data.(map[string]interface{}); ok {
+		object["http"] = httpCtx
+		return object
+	}
+	return data
+}
+
+func extractAPIPluginData(r *http.Request) (interface{}, map[string]interface{}, error) {
+	httpCtx := apiPluginHTTPContext(r)
+	if r.Method == http.MethodGet {
+		data := queryValuesToPluginJSON(r.URL.Query())
+		data["http"] = httpCtx
+		return data, httpCtx, nil
+	}
+
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		return nil, httpCtx, err
+	}
+	r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
+	trimmed := strings.TrimSpace(string(bodyBytes))
+	if trimmed == "" {
+		data := map[string]interface{}{"http": httpCtx}
+		return data, httpCtx, nil
+	}
+
+	var parsed interface{}
+	if err := json.Unmarshal(bodyBytes, &parsed); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "Input is not valid JSON, treating as raw string")
+		parsed = PrepareInput(trimmed)
+	}
+
+	return attachHTTPContextToPluginData(parsed, httpCtx), httpCtx, nil
+}
+
 func getQTypeFromName(name string) int {
 	name = strings.ToLower(strings.TrimSpace(name))
 	if name == "post" {
@@ -207,7 +297,7 @@ func makeAPIPluginHandler(plugin plg.JSPlugin) http.HandlerFunc {
 }
 
 func handleNormalAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg.JSPlugin) {
-	input, err := extractQueryOrBody(r)
+	jsonData, httpCtx, err := extractAPIPluginData(r)
 	defer r.Body.Close() // nolint: errcheck // we don't care about this error code
 	if err != nil {
 		handleErrorAndRespond(
@@ -221,20 +311,9 @@ func handleNormalAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg.JS
 		return
 	}
 
-	var parsed interface{}
-	if err := json.Unmarshal([]byte(input), &parsed); err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug3, "Input is not valid JSON, treating as raw string")
-		parsed = PrepareInput(input)
-	}
-
 	ctx := map[string]interface{}{
-		"http": map[string]interface{}{
-			"method": r.Method,
-			"path":   r.URL.Path,
-			"query":  r.URL.RawQuery,
-			"header": r.Header,
-		},
-		"jsonData": parsed,
+		"http":     httpCtx,
+		"jsonData": jsonData,
 	}
 
 	result, err := plugin.Execute(
@@ -281,13 +360,12 @@ func handleStreamingAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg
 		return
 	}
 
-	input, err := extractQueryOrBody(r)
+	jsonData, httpCtx, err := extractAPIPluginData(r)
 	defer r.Body.Close() // nolint: errcheck // we don't care about this error code
 	if err != nil {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
-	input = PrepareInput(input)
 
 	_, err = io.Copy(io.Discard, r.Body)
 	if (err != nil) && (err != io.EOF) {
@@ -318,23 +396,12 @@ func handleStreamingAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg
 
 	pluginDone := make(chan struct{})
 
-	go func(input string) {
+	go func() {
 		defer close(pluginDone)
 
-		var parsed interface{}
-		if err := json.Unmarshal([]byte(input), &parsed); err != nil {
-			cmn.DebugMsg(cmn.DbgLvlDebug3, "Input is not valid JSON, treating as raw string")
-			parsed = input
-		}
-
 		ctx := map[string]interface{}{
-			"http": map[string]interface{}{
-				"method": r.Method,
-				"path":   r.URL.Path,
-				"query":  r.URL.RawQuery,
-				"header": r.Header,
-			},
-			"jsonData": parsed,
+			"http":     httpCtx,
+			"jsonData": jsonData,
 			"progress": func(msg map[string]interface{}) {
 				select {
 				case progressCh <- msg:
@@ -355,7 +422,7 @@ func handleStreamingAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg
 		}
 
 		resultCh <- result
-	}(input)
+	}()
 
 	keepAlive := time.NewTicker(10 * time.Second)
 	defer keepAlive.Stop()

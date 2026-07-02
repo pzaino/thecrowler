@@ -51,6 +51,30 @@ const (
 	// SSDefaultDelayTime Default delay time for service scout
 	SSDefaultDelayTime = 100
 
+	informationSeedDefaultQueryTimer               = 300
+	informationSeedMaxQueryTimer                   = 86400
+	informationSeedDefaultMaxConcurrentSeeds       = 2
+	informationSeedMaxConcurrentSeeds              = 32
+	informationSeedDefaultMaxQueriesPerSeed        = 5
+	informationSeedMaxQueriesPerSeed               = 100
+	informationSeedDefaultMaxCandidatesPerSeed     = 50
+	informationSeedMaxCandidatesPerSeed            = 1000
+	informationSeedDefaultRetryInterval            = 60
+	informationSeedMaxRetryInterval                = 86400
+	informationSeedDefaultProcessingTimeout        = "30 minutes"
+	informationSeedDefaultPluginTimeout            = 30
+	informationSeedMaxPluginTimeout                = 300
+	informationSeedDefaultPluginOutputSize         = 1048576
+	informationSeedMaxPluginOutputSize             = 10485760
+	informationSeedDefaultProviderPageSize         = 10
+	informationSeedMaxProviderPageSize             = 100
+	informationSeedDefaultProviderMaxPages         = 1
+	informationSeedMaxProviderMaxPages             = 10
+	informationSeedDefaultBrowserNavigationTimeout = 45
+	informationSeedMaxBrowserNavigationTimeout     = 300
+	informationSeedDefaultBrowserReadinessTimeout  = 5
+	informationSeedMaxBrowserReadinessTimeout      = 60
+
 	stdRateLimit = "10,10"
 	stdHost      = "0.0.0.0"
 
@@ -181,6 +205,7 @@ func NewConfig() *Config {
 			MaxConns:     100,
 			MaxIdleConns: 75,
 		},
+		Email: DefaultEmailConfig(),
 		Crawler: Crawler{
 			QueryTimer:     5,
 			Workers:        1,
@@ -250,6 +275,22 @@ func NewConfig() *Config {
 				WriteTimeout:      30,
 			},
 		},
+		InformationSeed: InformationSeedConfig{
+			Enabled:              false,
+			QueryTimer:           informationSeedDefaultQueryTimer,
+			MaxConcurrentSeeds:   informationSeedDefaultMaxConcurrentSeeds,
+			MaxQueriesPerSeed:    informationSeedDefaultMaxQueriesPerSeed,
+			MaxCandidatesPerSeed: informationSeedDefaultMaxCandidatesPerSeed,
+			RetryInterval:        informationSeedDefaultRetryInterval,
+			ProcessingTimeout:    informationSeedDefaultProcessingTimeout,
+			Providers:            map[string]InformationSeedProviderConfig{},
+			ProviderAllowList:    []string{},
+			PluginLimits: InformationSeedPluginLimitsConfig{
+				Timeout:            informationSeedDefaultPluginTimeout,
+				MaxOutputSizeBytes: informationSeedDefaultPluginOutputSize,
+			},
+		},
+		TimeSeries: defaultTimeSeriesConfig(),
 		API: API{
 			Host:              cmn.LoalhostStr,
 			Port:              8080,
@@ -481,7 +522,9 @@ func LoadConfig(confName string) (Config, error) {
 	// Set the debug level
 	cmn.SetDebugLevel(dbgLvl)
 
-	cmn.DebugMsg(cmn.DbgLvlDebug5, "Configuration file loaded: %#v", config)
+	logConfig := config
+	logConfig.Email = config.Email.Redacted()
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "Configuration file loaded: %#v", logConfig)
 
 	return config, err
 }
@@ -585,6 +628,15 @@ func ParseConfig(data []byte) (*Config, error) {
 func (c *Config) Validate() error {
 	// Check if the Crawling configuration file contains valid values
 	c.validateCrawler()
+	if err := c.Email.Validate(); err != nil {
+		return err
+	}
+	if err := c.validateInformationSeed(); err != nil {
+		return err
+	}
+	if err := c.validateTimeSeries(); err != nil {
+		return err
+	}
 	c.validateDatabase()
 	c.validateAPI()
 	c.validateEvents()
@@ -960,6 +1012,292 @@ func (c *Config) setDefaultControl() {
 	if c.Crawler.Control.WriteTimeout < 1 {
 		c.Crawler.Control.WriteTimeout = 30
 	}
+}
+
+func (c *Config) validateInformationSeed() error {
+	if c.InformationSeed.QueryTimer < 1 {
+		c.InformationSeed.QueryTimer = informationSeedDefaultQueryTimer
+	} else if c.InformationSeed.QueryTimer > informationSeedMaxQueryTimer {
+		c.InformationSeed.QueryTimer = informationSeedMaxQueryTimer
+	}
+
+	if c.InformationSeed.MaxConcurrentSeeds < 1 {
+		c.InformationSeed.MaxConcurrentSeeds = informationSeedDefaultMaxConcurrentSeeds
+	} else if c.InformationSeed.MaxConcurrentSeeds > informationSeedMaxConcurrentSeeds {
+		c.InformationSeed.MaxConcurrentSeeds = informationSeedMaxConcurrentSeeds
+	}
+
+	if c.InformationSeed.MaxQueriesPerSeed < 1 {
+		c.InformationSeed.MaxQueriesPerSeed = informationSeedDefaultMaxQueriesPerSeed
+	} else if c.InformationSeed.MaxQueriesPerSeed > informationSeedMaxQueriesPerSeed {
+		c.InformationSeed.MaxQueriesPerSeed = informationSeedMaxQueriesPerSeed
+	}
+
+	if c.InformationSeed.MaxCandidatesPerSeed < 1 {
+		c.InformationSeed.MaxCandidatesPerSeed = informationSeedDefaultMaxCandidatesPerSeed
+	} else if c.InformationSeed.MaxCandidatesPerSeed > informationSeedMaxCandidatesPerSeed {
+		c.InformationSeed.MaxCandidatesPerSeed = informationSeedMaxCandidatesPerSeed
+	}
+
+	if c.InformationSeed.RetryInterval < 1 {
+		c.InformationSeed.RetryInterval = informationSeedDefaultRetryInterval
+	} else if c.InformationSeed.RetryInterval > informationSeedMaxRetryInterval {
+		c.InformationSeed.RetryInterval = informationSeedMaxRetryInterval
+	}
+
+	if strings.TrimSpace(c.InformationSeed.ProcessingTimeout) == "" {
+		c.InformationSeed.ProcessingTimeout = informationSeedDefaultProcessingTimeout
+	} else {
+		c.InformationSeed.ProcessingTimeout = strings.TrimSpace(c.InformationSeed.ProcessingTimeout)
+	}
+
+	if c.InformationSeed.PluginLimits.Timeout < 1 {
+		c.InformationSeed.PluginLimits.Timeout = informationSeedDefaultPluginTimeout
+	} else if c.InformationSeed.PluginLimits.Timeout > informationSeedMaxPluginTimeout {
+		c.InformationSeed.PluginLimits.Timeout = informationSeedMaxPluginTimeout
+	}
+
+	if c.InformationSeed.PluginLimits.MaxOutputSizeBytes < 1 {
+		c.InformationSeed.PluginLimits.MaxOutputSizeBytes = informationSeedDefaultPluginOutputSize
+	} else if c.InformationSeed.PluginLimits.MaxOutputSizeBytes > informationSeedMaxPluginOutputSize {
+		c.InformationSeed.PluginLimits.MaxOutputSizeBytes = informationSeedMaxPluginOutputSize
+	}
+
+	if c.InformationSeed.Providers == nil {
+		c.InformationSeed.Providers = map[string]InformationSeedProviderConfig{}
+	}
+
+	allowList := make([]string, 0, len(c.InformationSeed.ProviderAllowList))
+	allowed := map[string]struct{}{}
+	for _, provider := range c.InformationSeed.ProviderAllowList {
+		provider = strings.ToLower(strings.TrimSpace(provider))
+		if provider == "" {
+			continue
+		}
+		if _, exists := allowed[provider]; exists {
+			continue
+		}
+		allowed[provider] = struct{}{}
+		allowList = append(allowList, provider)
+	}
+	c.InformationSeed.ProviderAllowList = allowList
+
+	providers := make(map[string]InformationSeedProviderConfig, len(c.InformationSeed.Providers))
+	for name, provider := range c.InformationSeed.Providers {
+		key := strings.ToLower(strings.TrimSpace(name))
+		if key == "" {
+			continue
+		}
+		if _, ok := allowed[key]; !ok {
+			continue
+		}
+
+		provider.Provider = strings.ToLower(strings.TrimSpace(provider.Provider))
+		if provider.Provider == "" {
+			provider.Provider = key
+		}
+		provider.Transport = strings.ToLower(strings.TrimSpace(provider.Transport))
+		if provider.Transport == "" {
+			provider.Transport = "http"
+		}
+		if provider.Transport != "http" && provider.Transport != "webdriver" {
+			return fmt.Errorf("information seed provider %q: unknown transport %q", key, provider.Transport)
+		}
+		provider.Host = strings.TrimSpace(provider.Host)
+		provider.Endpoint = strings.TrimSpace(provider.Endpoint)
+		provider.APIKeyLabel = strings.TrimSpace(provider.APIKeyLabel)
+		provider.RateLimit = strings.TrimSpace(provider.RateLimit)
+		provider.Parameters = normalizeInformationSeedStringMap(provider.Parameters)
+		provider.Headers = normalizeInformationSeedStringMap(provider.Headers)
+		if provider.Timeout < 1 {
+			provider.Timeout = c.InformationSeed.PluginLimits.Timeout
+		} else if provider.Timeout > informationSeedMaxPluginTimeout {
+			provider.Timeout = informationSeedMaxPluginTimeout
+		}
+		if provider.MaxRequests < 1 {
+			provider.MaxRequests = c.InformationSeed.MaxQueriesPerSeed
+		} else if provider.MaxRequests > c.InformationSeed.MaxQueriesPerSeed {
+			provider.MaxRequests = c.InformationSeed.MaxQueriesPerSeed
+		}
+		if provider.PageSize < 1 {
+			provider.PageSize = informationSeedDefaultProviderPageSize
+		} else if provider.PageSize > informationSeedMaxProviderPageSize {
+			provider.PageSize = informationSeedMaxProviderPageSize
+		}
+		if provider.MaxPages < 1 {
+			provider.MaxPages = informationSeedDefaultProviderMaxPages
+		} else if provider.MaxPages > informationSeedMaxProviderMaxPages {
+			provider.MaxPages = informationSeedMaxProviderMaxPages
+		}
+		if provider.MaxPages > provider.MaxRequests {
+			provider.MaxPages = provider.MaxRequests
+		}
+		if err := c.normalizeInformationSeedBrowserProvider(key, &provider); err != nil {
+			return err
+		}
+		providers[key] = provider
+	}
+	c.InformationSeed.Providers = providers
+	return nil
+}
+
+func (c *Config) normalizeInformationSeedBrowserProvider(name string, provider *InformationSeedProviderConfig) error {
+	if provider.Transport != "webdriver" {
+		if hasInformationSeedBrowserConfig(provider.Browser) {
+			return fmt.Errorf("information seed provider %q: browser configuration requires explicit transport %q", name, "webdriver")
+		}
+		return nil
+	}
+	if err := rejectInformationSeedPrivilegedBrowserOverrides(provider.Parameters); err != nil {
+		return fmt.Errorf("information seed provider %q: %w", name, err)
+	}
+
+	browser := &provider.Browser
+	if browser.BrowserType != 0 || browser.SetGPUPatch || browser.SetVDIGPUPatch || browser.ReinforceBrowserSettings {
+		return fmt.Errorf("information seed provider %q: seed-level privileged browser overrides are not allowed", name)
+	}
+	browser.VDIAllowList = normalizeInformationSeedStringSlice(browser.VDIAllowList, true)
+	browser.InitialActions = normalizeInformationSeedStringSlice(browser.InitialActions, false)
+	browser.ConsentActions = normalizeInformationSeedStringSlice(browser.ConsentActions, false)
+	browser.QueryActions = normalizeInformationSeedStringSlice(browser.QueryActions, false)
+	browser.PaginationActions = normalizeInformationSeedStringSlice(browser.PaginationActions, false)
+	browser.ScrapingRules = normalizeInformationSeedStringSlice(browser.ScrapingRules, false)
+	if len(browser.ScrapingRules) == 0 {
+		return fmt.Errorf("information seed provider %q: webdriver transport requires at least one scraping rule", name)
+	}
+
+	hosts, err := normalizeInformationSeedNavigationHosts(browser.AllowedNavigationHosts)
+	if err != nil {
+		return fmt.Errorf("information seed provider %q: %w", name, err)
+	}
+	browser.AllowedNavigationHosts = hosts
+	browser.NavigationTimeout = boundedInformationSeedValue(browser.NavigationTimeout, informationSeedDefaultBrowserNavigationTimeout, informationSeedMaxBrowserNavigationTimeout)
+	browser.PageReadinessTimeout = boundedInformationSeedValue(browser.PageReadinessTimeout, informationSeedDefaultBrowserReadinessTimeout, informationSeedMaxBrowserReadinessTimeout)
+	browser.MaxPages = boundedInformationSeedValue(browser.MaxPages, informationSeedDefaultProviderMaxPages, min(provider.MaxPages, informationSeedMaxProviderMaxPages))
+	browser.MaxRequests = boundedInformationSeedValue(browser.MaxRequests, provider.MaxRequests, min(provider.MaxRequests, c.InformationSeed.MaxQueriesPerSeed))
+	browser.MaxCandidates = boundedInformationSeedValue(browser.MaxCandidates, min(provider.PageSize, c.InformationSeed.MaxCandidatesPerSeed), c.InformationSeed.MaxCandidatesPerSeed)
+	if browser.MaxPages > browser.MaxRequests {
+		browser.MaxPages = browser.MaxRequests
+	}
+	return nil
+}
+
+func hasInformationSeedBrowserConfig(browser InformationSeedBrowserConfig) bool {
+	return len(browser.VDIAllowList) > 0 ||
+		browser.NavigationTimeout != 0 ||
+		browser.PageReadinessTimeout != 0 ||
+		browser.HBSEnabled ||
+		browser.SeleniumFallback ||
+		len(browser.InitialActions) > 0 ||
+		len(browser.ConsentActions) > 0 ||
+		len(browser.QueryActions) > 0 ||
+		len(browser.PaginationActions) > 0 ||
+		len(browser.ScrapingRules) > 0 ||
+		len(browser.AllowedNavigationHosts) > 0 ||
+		browser.MaxPages != 0 ||
+		browser.MaxRequests != 0 ||
+		browser.MaxCandidates != 0 ||
+		browser.ScreenshotOnError ||
+		browser.BrowserType != 0 ||
+		browser.SetGPUPatch ||
+		browser.SetVDIGPUPatch ||
+		browser.ReinforceBrowserSettings
+}
+
+func boundedInformationSeedValue(value, fallback, maximum int) int {
+	if maximum < 1 {
+		maximum = 1
+	}
+	if fallback < 1 || fallback > maximum {
+		fallback = maximum
+	}
+	if value < 1 {
+		return fallback
+	}
+	if value > maximum {
+		return maximum
+	}
+	return value
+}
+
+func normalizeInformationSeedStringSlice(values []string, lower bool) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	result := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if lower {
+			value = strings.ToLower(value)
+		}
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+var informationSeedNavigationHostPattern = regexp.MustCompile(`^(?:\*\.)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
+
+func normalizeInformationSeedNavigationHosts(values []string) ([]string, error) {
+	hosts := normalizeInformationSeedStringSlice(values, true)
+	for i, host := range hosts {
+		host = strings.TrimSuffix(host, ".")
+		if host == "*" || !informationSeedNavigationHostPattern.MatchString(host) {
+			return nil, fmt.Errorf("unsafe allowed navigation host pattern %q", host)
+		}
+		hosts[i] = host
+	}
+	return hosts, nil
+}
+
+func rejectInformationSeedPrivilegedBrowserOverrides(parameters map[string]string) error {
+	for key := range parameters {
+		normalized := strings.NewReplacer("-", "_", ".", "_").Replace(strings.ToLower(strings.TrimSpace(key)))
+		switch normalized {
+		case "browser_type", "driver_path", "download_dir", "proxy_url", "set_gpu_patch", "set_vdi_gpu_patch", "reinforce_browser_settings", "capabilities", "webdriver_capabilities":
+			return fmt.Errorf("seed-level privileged browser override %q is not allowed", key)
+		}
+	}
+	return nil
+}
+
+func normalizeInformationSeedStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	copyValues := make(map[string]string, len(values))
+	for key, value := range values {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		copyValues[key] = strings.TrimSpace(value)
+	}
+	if len(copyValues) == 0 {
+		return nil
+	}
+	return copyValues
+}
+
+func copyStringMap(values map[string]string) map[string]string {
+	if values == nil {
+		return nil
+	}
+	copyValues := make(map[string]string, len(values))
+	for key, value := range values {
+		copyValues[key] = value
+	}
+	return copyValues
 }
 
 func (c *Config) validateDatabase() {
@@ -1631,6 +1969,10 @@ func (sc *SourceConfig) IsEmpty() bool {
 	}
 
 	if !sc.CrawlingConfig.IsEmpty() {
+		return false
+	}
+
+	if sc.Email != nil {
 		return false
 	}
 
@@ -2446,6 +2788,30 @@ func DeepCopyConfig(src *Config) *Config {
 
 	// Deep copy Crawler (struct can be copied directly)
 	copyConfig.Crawler = src.Crawler
+
+	// Deep copy email credentials so configuration reload snapshots do not share maps.
+	copyConfig.Email = src.Email
+	copyConfig.Email.Credentials = make(map[string]EmailCredentialConfig, len(src.Email.Credentials))
+	for reference, credential := range src.Email.Credentials {
+		copyConfig.Email.Credentials[reference] = credential
+	}
+
+	// Deep copy InformationSeed maps and slices
+	copyConfig.InformationSeed = src.InformationSeed
+	copyConfig.InformationSeed.ProviderAllowList = append([]string(nil), src.InformationSeed.ProviderAllowList...)
+	copyConfig.InformationSeed.Providers = make(map[string]InformationSeedProviderConfig, len(src.InformationSeed.Providers))
+	for k, v := range src.InformationSeed.Providers {
+		v.Parameters = copyStringMap(v.Parameters)
+		v.Headers = copyStringMap(v.Headers)
+		v.Browser.VDIAllowList = append([]string(nil), v.Browser.VDIAllowList...)
+		v.Browser.InitialActions = append([]string(nil), v.Browser.InitialActions...)
+		v.Browser.ConsentActions = append([]string(nil), v.Browser.ConsentActions...)
+		v.Browser.QueryActions = append([]string(nil), v.Browser.QueryActions...)
+		v.Browser.PaginationActions = append([]string(nil), v.Browser.PaginationActions...)
+		v.Browser.ScrapingRules = append([]string(nil), v.Browser.ScrapingRules...)
+		v.Browser.AllowedNavigationHosts = append([]string(nil), v.Browser.AllowedNavigationHosts...)
+		copyConfig.InformationSeed.Providers[k] = v
+	}
 
 	// Deep copy API (struct can be copied directly)
 	copyConfig.API = src.API

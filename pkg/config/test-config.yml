@@ -15,6 +15,9 @@ api:
   port: 8080
   host: 0.0.0.0
   timeout: 10
+  cors:
+    enabled: false
+    allowed_origins: []
 selenium:
   - type: chrome
     path: ""
@@ -35,3 +38,19 @@ network_info:
     path: ""
 
 debug_level: 1
+
+timeseries:
+  enabled: false
+  defaults:
+    failure_policy: log_skip
+  cardinality:
+    max_series_per_metric: 100000
+    max_dimensions: 10
+    max_values_per_dimension: 10000
+    overflow: drop
+  privacy:
+    hash_only: false
+    store_value_text: false
+    max_value_length: 2048
+    redact_patterns: []
+  metrics: []

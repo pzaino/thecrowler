@@ -50,25 +50,25 @@ type DbgLevel int
 
 const (
 	// DbgLvlDebug5 is the debug level
-	DbgLvlDebug5 = 5
+	DbgLvlDebug5 DbgLevel = 5
 	// DbgLvlDebug4 is the debug level
-	DbgLvlDebug4 = 4
+	DbgLvlDebug4 DbgLevel = 4
 	// DbgLvlDebug3 is the debug level
-	DbgLvlDebug3 = 3
+	DbgLvlDebug3 DbgLevel = 3
 	// DbgLvlDebug2 is the debug level
-	DbgLvlDebug2 = 2
+	DbgLvlDebug2 DbgLevel = 2
 	// DbgLvlDebug1 is the debug level
-	DbgLvlDebug1 = 1
+	DbgLvlDebug1 DbgLevel = 1
 	// DbgLvlDebug is the debug level
-	DbgLvlDebug = 1
+	DbgLvlDebug DbgLevel = 1
 	// DbgLvlInfo is the info debug level
-	DbgLvlInfo = 0
+	DbgLvlInfo DbgLevel = 0
 	// DbgLvlWarn is the warning debug level
-	DbgLvlWarn = -1
+	DbgLvlWarn DbgLevel = -1
 	// DbgLvlError is the error debug level
-	DbgLvlError = -2
+	DbgLvlError DbgLevel = -2
 	// DbgLvlFatal is the fatal debug level (this will also exit the program!)
-	DbgLvlFatal = -3
+	DbgLvlFatal DbgLevel = -3
 )
 
 // EnvValue is a struct to represent an environment variable

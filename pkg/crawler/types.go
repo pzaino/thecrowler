@@ -25,6 +25,7 @@ import (
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 	detect "github.com/pzaino/thecrowler/pkg/detection"
 	httpi "github.com/pzaino/thecrowler/pkg/httpinfo"
+	mail "github.com/pzaino/thecrowler/pkg/mail"
 	neti "github.com/pzaino/thecrowler/pkg/netinfo"
 	rs "github.com/pzaino/thecrowler/pkg/ruleset"
 	rules "github.com/pzaino/thecrowler/pkg/ruleset"
@@ -33,16 +34,21 @@ import (
 
 // Pars type to pass parameters to the goroutine
 type Pars struct {
-	WG      *sync.WaitGroup
-	DB      cdb.Handler
-	Src     cdb.Source
-	Sel     *vdi.Pool //Sel     *chan vdi.SeleniumInstance
-	SelIdx  int
-	RE      *rules.RuleEngine
-	Sources *[]cdb.Source
-	Index   uint64
-	Status  *Status
-	Refresh func()
+	WG                 *sync.WaitGroup
+	DB                 cdb.Handler
+	Src                cdb.Source
+	Sel                *vdi.Pool //Sel     *chan vdi.SeleniumInstance
+	SelIdx             int
+	RE                 *rules.RuleEngine
+	Sources            *[]cdb.Source
+	Index              uint64
+	Status             *Status
+	Refresh            func()
+	EmailConfig        *mail.SourceConfig
+	EmailRunner        mail.SourceRunner
+	EmailDependencies  *mail.PipelineDependencies
+	EmailResultHandler EmailResultHandler
+	WebCrawlQueue      WebCrawlQueue
 }
 
 // Status holds the status of the crawler
@@ -68,6 +74,7 @@ type Status struct {
 	LastWait        float64
 	LastDelay       float64
 	LastError       string
+	EmailSummary    *mail.RunSummary
 	// Flags values: 0 - Not started yet, 1 - Running, 2 - Completed, 3 - Error
 	NetInfoRunning  atomic.Int32 // Flag to check if network info is already gathered
 	HTTPInfoRunning atomic.Int32 // Flag to check if HTTP info is already gathered
@@ -96,6 +103,7 @@ type NonAtomicStatus struct {
 	LastWait        float64
 	LastDelay       float64
 	LastError       string
+	EmailSummary    *mail.RunSummary
 	// Flags values: 0 - Not started yet, 1 - Running, 2 - Completed, 3 - Error
 	NetInfoRunning  int32 // Flag to check if network info is already gathered
 	HTTPInfoRunning int32 // Flag to check if HTTP info is already gathered
@@ -130,17 +138,8 @@ type PageInfo struct {
 	DetectedTech            map[string]detect.DetectedEntity `json:"detected_tech"`              // The detected technologies of the web page.
 	ExtDetectionResults     []map[string]interface{}         `json:"external_detection_results"` // The results of the external detection tools.
 	CollectedSessionCookies map[string]interface{}           `json:"collected_session_cookies"`  // The session cookies collected from the web page.
-	Config                  *cfg.Config                      `json:"config"`                     // The configuration of the web page.
-}
-
-// CollectedScript represents a single collected script.
-type CollectedScript struct {
-	ID           uint64   `json:"id"`
-	ScriptType   string   `json:"script_type"`
-	Original     string   `json:"original"`
-	Script       string   `json:"script"`
-	Errors       []string `json:"errors"`
-	IsObfuscated bool     `json:"is_obfuscated"`
+	Config                  *cfg.Config                      `json:"config"`
+	CrowlerMeta             CrowlerMeta                      `json:"crowler_meta"` // The configuration of the web page.
 }
 
 // WebObjectDetails represents the details of a web object.
@@ -303,6 +302,8 @@ type Screenshot struct {
 	ThumbnailWidth  int    `json:"thumbnail_width"`
 	ThumbnailLink   string `json:"thumbnail_link"`
 	Format          string `json:"format"`
+	ContentHash     string `json:"content_hash,omitempty"`
+	LocationHash    string `json:"location_hash,omitempty"`
 }
 
 // ScraperRuleEngine extends RuleEngine from the ruleset package

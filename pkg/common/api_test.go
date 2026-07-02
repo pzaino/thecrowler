@@ -19,9 +19,14 @@ func TestSchemaAnyFromJSON_AllowsBooleanAdditionalProperties(t *testing.T) {
 		t.Fatal("schemaAnyFromJSON returned nil")
 	}
 
-	v, ok := schema.AdditionalProperties.(bool)
+	rawSchema, ok := schema.(map[string]any)
 	if !ok {
-		t.Fatalf("additionalProperties type = %T, expected bool", schema.AdditionalProperties)
+		t.Fatalf("schemaAnyFromJSON type = %T, expected map[string]any", schema)
+	}
+
+	v, ok := rawSchema["additionalProperties"].(bool)
+	if !ok {
+		t.Fatalf("additionalProperties type = %T, expected bool", rawSchema["additionalProperties"])
 	}
 
 	if !v {
@@ -40,9 +45,14 @@ func TestSchemaAnyFromJSON_AllowsObjectAdditionalProperties(t *testing.T) {
 		t.Fatal("schemaAnyFromJSON returned nil")
 	}
 
-	additionalSchema, ok := schema.AdditionalProperties.(map[string]any)
+	rawSchema, ok := schema.(map[string]any)
 	if !ok {
-		t.Fatalf("additionalProperties type = %T, expected map[string]any", schema.AdditionalProperties)
+		t.Fatalf("schemaAnyFromJSON type = %T, expected map[string]any", schema)
+	}
+
+	additionalSchema, ok := rawSchema["additionalProperties"].(map[string]any)
+	if !ok {
+		t.Fatalf("additionalProperties type = %T, expected map[string]any", rawSchema["additionalProperties"])
 	}
 
 	if typ, ok := additionalSchema["type"].(string); !ok || typ != "string" {
@@ -67,24 +77,36 @@ func TestBuildOpenAPISpec_PreservesBooleanAdditionalProperties(t *testing.T) {
 		t.Fatal("missing POST operation")
 	}
 
-	bodySchema, ok := post.RequestBody.Content["application/json"].Schema.(*OpenAPISchema)
+	bodySchema, ok := post.RequestBody.Content["application/json"].Schema.(map[string]any)
 	if !ok {
-		t.Fatalf("request schema type = %T, expected *OpenAPISchema", post.RequestBody.Content["application/json"].Schema)
+		t.Fatalf(
+			"request schema type = %T, expected map[string]any",
+			post.RequestBody.Content["application/json"].Schema,
+		)
 	}
 
-	bodyAdditional, ok := bodySchema.AdditionalProperties.(bool)
+	bodyAdditional, ok := bodySchema["additionalProperties"].(bool)
 	if !ok || !bodyAdditional {
-		t.Fatalf("request additionalProperties = %#v, expected true bool", bodySchema.AdditionalProperties)
+		t.Fatalf(
+			"request additionalProperties = %#v, expected true bool",
+			bodySchema["additionalProperties"],
+		)
 	}
 
-	responseSchema, ok := post.Responses["200"].Content["application/json"].Schema.(*OpenAPISchema)
+	responseSchema, ok := post.Responses["200"].Content["application/json"].Schema.(map[string]any)
 	if !ok {
-		t.Fatalf("response schema type = %T, expected *OpenAPISchema", post.Responses["200"].Content["application/json"].Schema)
+		t.Fatalf(
+			"response schema type = %T, expected map[string]any",
+			post.Responses["200"].Content["application/json"].Schema,
+		)
 	}
 
-	responseAdditional, ok := responseSchema.AdditionalProperties.(bool)
+	responseAdditional, ok := responseSchema["additionalProperties"].(bool)
 	if !ok || responseAdditional {
-		t.Fatalf("response additionalProperties = %#v, expected false bool", responseSchema.AdditionalProperties)
+		t.Fatalf(
+			"response additionalProperties = %#v, expected false bool",
+			responseSchema["additionalProperties"],
+		)
 	}
 
 	if _, err := json.Marshal(spec); err != nil {

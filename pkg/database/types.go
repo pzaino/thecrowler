@@ -48,6 +48,8 @@ type TxHandler struct {
 type Source struct {
 	// ID is the unique identifier of the source.
 	ID uint64
+	// UID is the SHA-256 identifier derived from the normalized source name and URL.
+	UID string
 	// Priority (optional) is the priority of the source, used for scheduling.
 	Priority string
 	// Category (optional) is the category of the source.

@@ -18,14 +18,25 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/url"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
+	infoseeddiag "github.com/pzaino/thecrowler/pkg/infoseed"
 )
+
+var errInvalidSourceConfig = errors.New("invalid source configuration")
+
+func isSourceConfigValidationError(err error) bool {
+	return errors.Is(err, errInvalidSourceConfig)
+}
 
 const (
 	errFailedToInitializeDBHandler = "Failed to initialize database handler"
@@ -33,10 +44,673 @@ const (
 	errFailedToStartTransaction    = "Failed to start transaction"
 	errFailedToCommitTransaction   = "Failed to commit transaction"
 
-	infoAllSourcesStatus = "All Sources status"
+	infoAllSourcesStatus    = "All Sources status"
+	infoAllInformationSeeds = "All Information Seeds"
 	//infoSourceStatus     = "Source status"
 	infoSourceRemoved = "Source and related data removed successfully"
 )
+
+func performAddInformationSeed(query string, qType int, db *cdb.Handler) (InformationSeedResponse, error) {
+	var params informationSeedAddRequest
+	if qType == getQuery {
+		params.InformationSeed = strings.TrimSpace(query)
+	} else {
+		if err := rejectInformationSeedRequestCredentials([]byte(query)); err != nil {
+			return InformationSeedResponse{Message: "Provider credentials are not accepted in information seed requests"}, err
+		}
+		if err := json.Unmarshal([]byte(query), &params); err != nil {
+			return InformationSeedResponse{Message: "Invalid information seed request"}, fmt.Errorf("invalid JSON: %w", err)
+		}
+	}
+
+	configRaw, err := marshalInformationSeedRequestConfig(params.Config)
+	if err != nil {
+		return InformationSeedResponse{Message: "Invalid information seed config"}, err
+	}
+	if err := validateInformationSeedConfig(configRaw); err != nil {
+		return InformationSeedResponse{Message: "Invalid information seed config"}, err
+	}
+
+	params.InformationSeed = strings.TrimSpace(params.InformationSeed)
+	if params.InformationSeed == "" {
+		return InformationSeedResponse{Message: "Information seed text is required"}, fmt.Errorf("information_seed is required")
+	}
+	if params.UsrID == 0 && params.UserID != 0 {
+		params.UsrID = params.UserID
+	}
+	if params.Status == "" {
+		params.Status = "new"
+	}
+
+	id, err := cdb.CreateInformationSeedAndNotify(nil, db, &cdb.InformationSeed{
+		CategoryID:      params.CategoryID,
+		UsrID:           params.UsrID,
+		InformationSeed: params.InformationSeed,
+		Status:          params.Status,
+		Priority:        params.Priority,
+		Engine:          params.Engine,
+		Disabled:        params.Disabled,
+		Config:          configRaw,
+	})
+	if err != nil {
+		return InformationSeedResponse{Message: "Failed to add information seed"}, err
+	}
+
+	row, err := informationSeedRowByID(db, id)
+	if err != nil {
+		return InformationSeedResponse{Message: "Failed to load added information seed"}, err
+	}
+	resp := InformationSeedResponse{Message: "Information seed added successfully", Item: row}
+	if apiWSHub != nil {
+		apiWSHub.Broadcast("information_seed.added", resp)
+	}
+	return resp, nil
+}
+
+func marshalInformationSeedRequestConfig(config *json.RawMessage) (*json.RawMessage, error) {
+	return config, nil
+}
+
+func validateInformationSeedConfig(rawConfig *json.RawMessage) error {
+	if rawConfig == nil {
+		return nil
+	}
+	if len(*rawConfig) == 0 || !json.Valid(*rawConfig) {
+		return fmt.Errorf("information seed config must be valid JSON")
+	}
+	var object map[string]interface{}
+	if err := json.Unmarshal(*rawConfig, &object); err != nil {
+		return fmt.Errorf("information seed config must be a JSON object: %w", err)
+	}
+	if object == nil {
+		return fmt.Errorf("information seed config must be a JSON object")
+	}
+	var runConfig infoseeddiag.SeedRunConfig
+	if err := json.Unmarshal(*rawConfig, &runConfig); err != nil {
+		return fmt.Errorf("information seed config does not match runner schema: %w", err)
+	}
+	allowed := map[string]struct{}{}
+	for _, provider := range configProviderAllowList() {
+		allowed[strings.ToLower(strings.TrimSpace(provider))] = struct{}{}
+	}
+	configuredProviders := config.InformationSeed.Providers
+	for _, provider := range runConfig.Providers {
+		name := strings.ToLower(strings.TrimSpace(provider))
+		if name == "" {
+			return fmt.Errorf("information seed config providers must not contain empty names")
+		}
+		if len(allowed) > 0 {
+			if _, ok := allowed[name]; !ok {
+				return fmt.Errorf("information seed provider %q is not in the configured provider allow-list", name)
+			}
+		}
+		if len(configuredProviders) > 0 {
+			if _, ok := configuredProviders[name]; !ok {
+				return fmt.Errorf("information seed provider %q is not configured", name)
+			}
+		}
+	}
+	return nil
+}
+
+func configProviderAllowList() []string {
+	if len(config.InformationSeed.ProviderAllowList) > 0 {
+		return config.InformationSeed.ProviderAllowList
+	}
+	providers := make([]string, 0, len(config.InformationSeed.Providers))
+	for name := range config.InformationSeed.Providers {
+		providers = append(providers, name)
+	}
+	return providers
+}
+
+func rejectInformationSeedRequestCredentials(raw []byte) error {
+	var decoded interface{}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return nil
+	}
+	if key, ok := containsCredentialKey(decoded); ok {
+		return fmt.Errorf("provider credential field %q must be configured globally, not in request bodies", key)
+	}
+	return nil
+}
+
+func containsCredentialKey(value interface{}) (string, bool) {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		for key, nested := range typed {
+			if isInformationSeedCredentialKey(key) {
+				return key, true
+			}
+			if nestedKey, ok := containsCredentialKey(nested); ok {
+				return nestedKey, true
+			}
+		}
+	case []interface{}:
+		for _, nested := range typed {
+			if nestedKey, ok := containsCredentialKey(nested); ok {
+				return nestedKey, true
+			}
+		}
+	}
+	return "", false
+}
+
+func isInformationSeedCredentialKey(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "api_key", "api_id", "api_secret", "api_token", "token", "secret", "username", "password", "bearer_token", "access_token", "refresh_token", "client_secret":
+		return true
+	default:
+		return false
+	}
+}
+
+func performGetInformationSeedStatus(id uint64, db *cdb.Handler) (InformationSeedResponse, error) {
+	row, err := informationSeedRowByID(db, id)
+	if err != nil {
+		return InformationSeedResponse{Message: "Failed to get information seed status"}, err
+	}
+	return InformationSeedResponse{Message: "Information seed status", Item: row}, nil
+}
+
+func performListInformationSeeds(values url.Values, db *cdb.Handler) (InformationSeedListResponse, error) {
+	filter, err := informationSeedFilterFromValues(values)
+	if err != nil {
+		return InformationSeedListResponse{Message: "Invalid information seed filters"}, err
+	}
+	seeds, err := cdb.ListInformationSeedsWithStats(db, filter)
+	if err != nil {
+		return InformationSeedListResponse{Message: "Failed to list information seeds"}, err
+	}
+
+	items := make([]InformationSeedRow, 0, len(seeds))
+	for _, seed := range seeds {
+		items = append(items, informationSeedRowFromDB(seed.InformationSeed, seed.DiscoveredSourceCount))
+	}
+
+	return InformationSeedListResponse{Message: infoAllInformationSeeds, Items: items, Limit: filter.Limit, Offset: filter.Offset}, nil
+}
+
+func performListInformationSeedSources(seedID uint64, values url.Values, db *cdb.Handler) (InformationSeedLinkedSourceListResponse, error) {
+	if _, err := cdb.GetInformationSeedByID(db, seedID); err != nil {
+		return InformationSeedLinkedSourceListResponse{Message: "Information seed not found", InformationSeedID: seedID}, err
+	}
+	pagination, err := informationSeedPaginationFromValues(values)
+	if err != nil {
+		return InformationSeedLinkedSourceListResponse{Message: "Invalid linked source filters", InformationSeedID: seedID}, err
+	}
+	linked, err := cdb.ListSourcesForInformationSeed(db, seedID, cdb.InformationSeedLinkedSourceFilter{Limit: pagination.Limit, Offset: pagination.Offset})
+	if err != nil {
+		return InformationSeedLinkedSourceListResponse{Message: "Failed to list linked information seed sources", InformationSeedID: seedID}, err
+	}
+	items := make([]InformationSeedLinkedSourceRow, 0, len(linked))
+	for _, source := range linked {
+		items = append(items, informationSeedLinkedSourceRowFromDB(source))
+	}
+	return InformationSeedLinkedSourceListResponse{Message: "Information seed linked sources", InformationSeedID: seedID, Items: items, Limit: pagination.Limit, Offset: pagination.Offset}, nil
+}
+
+func performListInformationSeedCandidateDecisions(seedID uint64, values url.Values, db *cdb.Handler) (InformationSeedCandidateListResponse, error) {
+	if _, err := cdb.GetInformationSeedByID(db, seedID); err != nil {
+		return InformationSeedCandidateListResponse{Message: "Information seed not found", InformationSeedID: seedID}, err
+	}
+	pagination, err := informationSeedPaginationFromValues(values)
+	if err != nil {
+		return InformationSeedCandidateListResponse{Message: "Invalid candidate decision filters", InformationSeedID: seedID}, err
+	}
+	candidates, err := cdb.ListInformationSeedCandidateDecisions(db, seedID, cdb.InformationSeedCandidateFilter{Limit: pagination.Limit, Offset: pagination.Offset})
+	if err != nil {
+		return InformationSeedCandidateListResponse{Message: "Failed to list information seed candidate decisions", InformationSeedID: seedID}, err
+	}
+	items := make([]InformationSeedCandidateRow, 0, len(candidates))
+	for _, candidate := range candidates {
+		items = append(items, informationSeedCandidateRowFromDB(candidate))
+	}
+	return InformationSeedCandidateListResponse{Message: "Information seed candidate decisions", InformationSeedID: seedID, Items: items, Limit: pagination.Limit, Offset: pagination.Offset}, nil
+}
+
+func performGetInformationSeedDiagnostics(seedID uint64, db *cdb.Handler) (InformationSeedDiagnosticsResponse, error) {
+	if _, err := cdb.GetInformationSeedByID(db, seedID); err != nil {
+		return InformationSeedDiagnosticsResponse{Message: "Information seed not found", InformationSeedID: seedID, ProviderRequests: map[string]int{}, RejectionStages: map[string]map[string]int{}}, err
+	}
+	events, err := cdb.ListInformationSeedEvents(db, seedID, cdb.InformationSeedEventFilter{Limit: 25})
+	if err != nil {
+		return InformationSeedDiagnosticsResponse{Message: "Failed to load information seed diagnostics", InformationSeedID: seedID, ProviderRequests: map[string]int{}, RejectionStages: map[string]map[string]int{}}, err
+	}
+	resp := InformationSeedDiagnosticsResponse{
+		Message:           "Information seed diagnostics",
+		InformationSeedID: seedID,
+		ProviderRequests:  map[string]int{},
+		RejectionStages:   map[string]map[string]int{},
+		ProviderFailures:  []map[string]interface{}{},
+		PluginFailures:    []map[string]interface{}{},
+		ErrorSummaries:    []string{},
+	}
+	for _, event := range events {
+		details := redactedInformationSeedDetails(event.Details)
+		if resp.LatestEventTimestamp == "" {
+			resp.LatestEventTimestamp = event.Timestamp
+		}
+		if resp.RunID == "" {
+			resp.RunID, _ = details["run_id"].(string)
+		}
+		if resp.RunAttempt == 0 {
+			resp.RunAttempt = intFromDiagnostic(details["run_attempt"])
+		}
+		mergeProviderRequests(resp.ProviderRequests, details["provider_metrics"])
+		if len(resp.RejectionStages) == 0 {
+			resp.RejectionStages = diagnosticNestedIntMap(details["candidate_rejection_stages"])
+		}
+		resp.ProviderFailures = append(resp.ProviderFailures, diagnosticMapSlice(details["provider_failures"])...)
+		resp.PluginFailures = append(resp.PluginFailures, diagnosticMapSlice(details["plugin_failures"])...)
+		resp.ErrorSummaries = append(resp.ErrorSummaries, diagnosticStringSlice(details["error_summaries"])...)
+	}
+	return resp, nil
+}
+
+func redactedInformationSeedDetails(details map[string]interface{}) map[string]interface{} {
+	redacted, ok := infoseeddiag.RedactDiagnosticValue(details).(map[string]interface{})
+	if !ok || redacted == nil {
+		return map[string]interface{}{}
+	}
+	return redacted
+}
+
+func mergeProviderRequests(dst map[string]int, raw interface{}) {
+	metrics := diagnosticNestedIntMap(raw)
+	for provider, providerMetrics := range metrics {
+		if requests := providerMetrics["requests"]; requests > dst[provider] {
+			dst[provider] = requests
+		}
+	}
+}
+
+func diagnosticNestedIntMap(raw interface{}) map[string]map[string]int {
+	result := map[string]map[string]int{}
+	outer, ok := raw.(map[string]interface{})
+	if !ok {
+		return result
+	}
+	for key, value := range outer {
+		inner := map[string]int{}
+		switch typed := value.(type) {
+		case map[string]interface{}:
+			for innerKey, innerValue := range typed {
+				inner[innerKey] = intFromDiagnostic(innerValue)
+			}
+		case map[string]int:
+			for innerKey, innerValue := range typed {
+				inner[innerKey] = innerValue
+			}
+		}
+		if len(inner) > 0 {
+			result[key] = inner
+		}
+	}
+	return result
+}
+
+func diagnosticMapSlice(raw interface{}) []map[string]interface{} {
+	items := []map[string]interface{}{}
+	slice, ok := raw.([]interface{})
+	if !ok {
+		return items
+	}
+	for _, item := range slice {
+		if mapped, ok := item.(map[string]interface{}); ok {
+			items = append(items, redactedInformationSeedDetails(mapped))
+		}
+	}
+	return items
+}
+
+func diagnosticStringSlice(raw interface{}) []string {
+	items := []string{}
+	slice, ok := raw.([]interface{})
+	if !ok {
+		return items
+	}
+	for _, item := range slice {
+		if value, ok := item.(string); ok {
+			items = append(items, infoseeddiag.RedactDiagnosticString(value))
+		}
+	}
+	return items
+}
+
+func intFromDiagnostic(raw interface{}) int {
+	switch typed := raw.(type) {
+	case int:
+		return typed
+	case int64:
+		return int(typed)
+	case float64:
+		return int(typed)
+	case json.Number:
+		value, _ := typed.Int64()
+		return int(value)
+	default:
+		return 0
+	}
+}
+
+func performRetryInformationSeed(query string, db *cdb.Handler) (InformationSeedResponse, error) {
+	id, err := parseInformationSeedIDFromJSON(query)
+	if err != nil {
+		return InformationSeedResponse{Message: "Invalid information seed retry request"}, err
+	}
+	return performRerunInformationSeedByID(id, db)
+}
+
+func performRerunInformationSeedByID(id uint64, db *cdb.Handler) (InformationSeedResponse, error) {
+	if err := cdb.RerunInformationSeed(db, id); err != nil {
+		return InformationSeedResponse{Message: "Failed to rerun information seed"}, err
+	}
+	row, err := informationSeedRowByID(db, id)
+	if err != nil {
+		return InformationSeedResponse{Message: "Failed to load rerun information seed"}, err
+	}
+	return InformationSeedResponse{Message: "Information seed queued for rerun", Item: row}, nil
+}
+
+func performDisableInformationSeed(query string, db *cdb.Handler) (InformationSeedResponse, error) {
+	id, err := parseInformationSeedIDFromJSON(query)
+	if err != nil {
+		return InformationSeedResponse{Message: "Invalid information seed disable request"}, err
+	}
+	return performDisableInformationSeedByID(id, db)
+}
+
+func performDisableInformationSeedByID(id uint64, db *cdb.Handler) (InformationSeedResponse, error) {
+	if err := cdb.DisableInformationSeed(db, id); err != nil {
+		return InformationSeedResponse{Message: "Failed to disable information seed"}, err
+	}
+	row, err := informationSeedRowByID(db, id)
+	if err != nil {
+		return InformationSeedResponse{Message: "Failed to load disabled information seed"}, err
+	}
+	return InformationSeedResponse{Message: "Information seed disabled", Item: row}, nil
+}
+
+func performEnableInformationSeedByID(id uint64, query string, db *cdb.Handler) (InformationSeedResponse, error) {
+	queuePending, err := parseInformationSeedEnableQueuePending(query)
+	if err != nil {
+		return InformationSeedResponse{Message: "Invalid information seed enable request"}, err
+	}
+	if err := cdb.EnableInformationSeed(db, id, queuePending); err != nil {
+		return InformationSeedResponse{Message: "Failed to enable information seed"}, err
+	}
+	row, err := informationSeedRowByID(db, id)
+	if err != nil {
+		return InformationSeedResponse{Message: "Failed to load enabled information seed"}, err
+	}
+	return InformationSeedResponse{Message: "Information seed enabled", Item: row}, nil
+}
+
+func performListInformationSeedEvents(seedID uint64, values url.Values, db *cdb.Handler) (InformationSeedEventListResponse, error) {
+	if _, err := cdb.GetInformationSeedByID(db, seedID); err != nil {
+		return InformationSeedEventListResponse{Message: "Information seed not found", InformationSeedID: seedID}, err
+	}
+	pagination, err := informationSeedPaginationFromValues(values)
+	if err != nil {
+		return InformationSeedEventListResponse{Message: "Invalid information seed event filters", InformationSeedID: seedID}, err
+	}
+	events, err := cdb.ListInformationSeedEvents(db, seedID, cdb.InformationSeedEventFilter{Limit: pagination.Limit, Offset: pagination.Offset})
+	if err != nil {
+		return InformationSeedEventListResponse{Message: "Failed to list information seed events", InformationSeedID: seedID}, err
+	}
+	items := make([]InformationSeedEventRow, 0, len(events))
+	for _, event := range events {
+		items = append(items, informationSeedEventRowFromDB(event))
+	}
+	return InformationSeedEventListResponse{Message: "Information seed discovery events", InformationSeedID: seedID, Items: items, Limit: pagination.Limit, Offset: pagination.Offset}, nil
+}
+
+type informationSeedPagination struct {
+	Limit  int
+	Offset int
+}
+
+func informationSeedFilterFromValues(values url.Values) (cdb.InformationSeedFilter, error) {
+	pagination, err := informationSeedPaginationFromValues(values)
+	if err != nil {
+		return cdb.InformationSeedFilter{}, err
+	}
+	filter := cdb.InformationSeedFilter{Limit: pagination.Limit, Offset: pagination.Offset}
+	filter.Status = strings.TrimSpace(values.Get("status"))
+	filter.Priority = strings.TrimSpace(values.Get("priority"))
+	if values.Has("disabled") {
+		disabled, err := strconv.ParseBool(values.Get("disabled"))
+		if err != nil {
+			return cdb.InformationSeedFilter{}, fmt.Errorf("disabled must be a boolean")
+		}
+		filter.Disabled = &disabled
+	}
+	if values.Has("category") || values.Has("category_id") {
+		value := values.Get("category_id")
+		if value == "" {
+			value = values.Get("category")
+		}
+		id, err := parseNonNegativeUint(value, "category")
+		if err != nil {
+			return cdb.InformationSeedFilter{}, err
+		}
+		filter.CategoryID = &id
+	}
+	if values.Has("user") || values.Has("user_id") || values.Has("usr_id") {
+		value := values.Get("usr_id")
+		if value == "" {
+			value = values.Get("user_id")
+		}
+		if value == "" {
+			value = values.Get("user")
+		}
+		id, err := parseNonNegativeUint(value, "user")
+		if err != nil {
+			return cdb.InformationSeedFilter{}, err
+		}
+		filter.UsrID = &id
+	}
+	return filter, nil
+}
+
+func informationSeedPaginationFromValues(values url.Values) (informationSeedPagination, error) {
+	const defaultLimit = 100
+	const maxLimit = 500
+	limit := defaultLimit
+	if values.Has("limit") {
+		parsed, err := strconv.Atoi(values.Get("limit"))
+		if err != nil || parsed < 0 {
+			return informationSeedPagination{}, fmt.Errorf("limit must be a non-negative integer")
+		}
+		if parsed > maxLimit {
+			return informationSeedPagination{}, fmt.Errorf("limit must be less than or equal to %d", maxLimit)
+		}
+		limit = parsed
+	}
+	offset := 0
+	if values.Has("offset") {
+		parsed, err := strconv.Atoi(values.Get("offset"))
+		if err != nil || parsed < 0 {
+			return informationSeedPagination{}, fmt.Errorf("offset must be a non-negative integer")
+		}
+		offset = parsed
+	}
+	return informationSeedPagination{Limit: limit, Offset: offset}, nil
+}
+
+func parseNonNegativeUint(value, name string) (uint64, error) {
+	parsed, err := strconv.ParseUint(value, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a non-negative integer", name)
+	}
+	return parsed, nil
+}
+
+func parseInformationSeedIDFromJSON(query string) (uint64, error) {
+	var req informationSeedIDRequest
+	if err := json.Unmarshal([]byte(query), &req); err != nil {
+		return 0, fmt.Errorf("invalid JSON: %w", err)
+	}
+	if req.InformationSeedID == 0 {
+		return 0, fmt.Errorf("information_seed_id is required")
+	}
+	return req.InformationSeedID, nil
+}
+
+func parseInformationSeedEnableQueuePending(query string) (bool, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return false, nil
+	}
+	var req informationSeedEnableRequest
+	if err := json.Unmarshal([]byte(query), &req); err != nil {
+		return false, fmt.Errorf("invalid JSON: %w", err)
+	}
+	return req.Pending || req.QueuePending, nil
+}
+
+func informationSeedRowByID(db *cdb.Handler, id uint64) (InformationSeedRow, error) {
+	seeds, err := cdb.ListInformationSeedsWithStats(db, cdb.InformationSeedFilter{ID: id, Limit: 1})
+	if err != nil {
+		return InformationSeedRow{}, err
+	}
+	if len(seeds) == 0 {
+		return InformationSeedRow{}, fmt.Errorf("no information seed found with ID %d", id)
+	}
+	return informationSeedRowFromDB(seeds[0].InformationSeed, seeds[0].DiscoveredSourceCount), nil
+}
+
+func informationSeedRowFromDB(seed cdb.InformationSeed, discoveredSourceCount uint64) InformationSeedRow {
+	lastError := infoseeddiag.RedactDiagnosticString(nullStringString(seed.LastError))
+	return InformationSeedRow{
+		ID:                    seed.ID,
+		CreatedAt:             nullTimeString(seed.CreatedAt),
+		LastUpdatedAt:         nullTimeString(seed.LastUpdatedAt),
+		CategoryID:            seed.CategoryID,
+		UsrID:                 seed.UsrID,
+		InformationSeed:       seed.InformationSeed,
+		Status:                seed.Status,
+		Priority:              seed.Priority,
+		Engine:                seed.Engine,
+		LastProcessedAt:       nullTimeString(seed.LastProcessedAt),
+		HasError:              lastError != "" || seed.LastErrorAt.Valid,
+		LastError:             lastError,
+		LastErrorAt:           nullTimeString(seed.LastErrorAt),
+		Disabled:              seed.Disabled,
+		Attempts:              seed.Attempts,
+		Config:                redactRawMessage(seed.Config),
+		DiscoveredSourceCount: discoveredSourceCount,
+	}
+}
+
+func informationSeedLinkedSourceRowFromDB(linked cdb.InformationSeedLinkedSource) InformationSeedLinkedSourceRow {
+	return InformationSeedLinkedSourceRow{
+		SourceID:                   linked.Source.ID,
+		Priority:                   linked.Source.Priority,
+		CategoryID:                 linked.Source.CategoryID,
+		Name:                       linked.Source.Name,
+		UsrID:                      linked.Source.UsrID,
+		URL:                        linked.Source.URL,
+		Restricted:                 linked.Source.Restricted,
+		Flags:                      linked.Source.Flags,
+		Config:                     redactRawMessage(linked.Source.Config),
+		Disabled:                   linked.Source.Disabled,
+		SourceInformationSeedIndex: sourceInformationSeedIndexRowFromDB(linked.Index),
+	}
+}
+
+func sourceInformationSeedIndexRowFromDB(index cdb.SourceInformationSeedIndex) SourceInformationSeedIndexRow {
+	var rank *int
+	if index.DiscoveryRank.Valid {
+		value := int(index.DiscoveryRank.Int64)
+		rank = &value
+	}
+	var score *float64
+	if index.CandidateScore.Valid {
+		value := index.CandidateScore.Float64
+		score = &value
+	}
+	var metadata *json.RawMessage
+	if index.DiscoveryMetadata.Valid {
+		raw := json.RawMessage(index.DiscoveryMetadata.String)
+		metadata = &raw
+	}
+	return SourceInformationSeedIndexRow{
+		ID:                index.ID,
+		SourceID:          index.SourceID,
+		InformationSeedID: index.InformationSeedID,
+		DiscoveryProvider: nullStringString(index.DiscoveryProvider),
+		DiscoveryQuery:    nullStringString(index.DiscoveryQuery),
+		DiscoveryRank:     rank,
+		CandidateScore:    score,
+		CandidateReason:   nullStringString(index.CandidateReason),
+		DiscoveryMetadata: redactRawMessage(metadata),
+		CreatedAt:         nullTimeString(index.CreatedAt),
+		LastUpdatedAt:     nullTimeString(index.LastUpdatedAt),
+	}
+}
+
+func informationSeedEventRowFromDB(event cdb.Event) InformationSeedEventRow {
+	return InformationSeedEventRow{
+		ID:        event.ID,
+		SourceID:  event.SourceID,
+		Type:      event.Type,
+		Severity:  event.Severity,
+		Timestamp: event.Timestamp,
+		Details:   redactedInformationSeedDetails(event.Details),
+	}
+}
+
+func informationSeedCandidateRowFromDB(candidate cdb.InformationSeedCandidate) InformationSeedCandidateRow {
+	return InformationSeedCandidateRow{
+		ID:                candidate.ID,
+		InformationSeedID: candidate.InformationSeedID,
+		NormalizedURL:     candidate.NormalizedURL,
+		Host:              candidate.Host,
+		Provider:          candidate.Provider,
+		Query:             candidate.Query,
+		Rank:              candidate.Rank,
+		Score:             candidate.Score,
+		DecisionStatus:    candidate.DecisionStatus,
+		RejectionReason:   candidate.RejectionReason,
+		Metadata:          redactRawMessage(candidate.Metadata),
+		RunAttempt:        candidate.RunAttempt,
+		CreatedAt:         nullTimeString(candidate.CreatedAt),
+		LastUpdatedAt:     nullTimeString(candidate.LastUpdatedAt),
+	}
+}
+
+func redactRawMessage(raw *json.RawMessage) *json.RawMessage {
+	if raw == nil || len(*raw) == 0 {
+		return raw
+	}
+	var decoded interface{}
+	if err := json.Unmarshal(*raw, &decoded); err != nil {
+		return raw
+	}
+	redacted := infoseeddiag.RedactDiagnosticValue(decoded)
+	encoded, err := json.Marshal(redacted)
+	if err != nil {
+		return raw
+	}
+	msg := json.RawMessage(encoded)
+	return &msg
+}
+
+func nullTimeString(value sql.NullTime) string {
+	if !value.Valid {
+		return ""
+	}
+	return value.Time.UTC().Format(time.RFC3339Nano)
+}
+
+func nullStringString(value sql.NullString) string {
+	if !value.Valid {
+		return ""
+	}
+	return value.String
+}
 
 func performAddSource(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
 	var params addSourceRequest
@@ -92,7 +766,11 @@ func performAddSource(query string, qType int, db *cdb.Handler) (ConsoleResponse
 	}
 
 	msg := fmt.Sprintf("Website inserted successfully with ID: %d", sourceID)
-	return ConsoleResponse{Message: msg}, nil
+	resp := ConsoleResponse{Message: msg}
+	if apiWSHub != nil {
+		apiWSHub.Broadcast("source.added", map[string]any{"source_id": sourceID, "message": msg})
+	}
+	return resp, nil
 }
 
 func extractAddSourceParams(query string, params *addSourceRequest) {
@@ -151,21 +829,25 @@ func getDefaultConfig() cfg.SourceConfig {
 func validateAndReformatConfig(config *cfg.SourceConfig) error {
 	configJSON, err := json.Marshal(config)
 	if err != nil {
-		return fmt.Errorf("failed to marshal config to JSON: %w", err)
+		return fmt.Errorf("%w: failed to marshal config to JSON: %v", errInvalidSourceConfig, err)
 	}
 
 	var jsonRaw map[string]interface{}
 	if err := json.Unmarshal([]byte(configJSON), &jsonRaw); err != nil {
-		return fmt.Errorf("config field contains invalid JSON: %w", err)
+		return fmt.Errorf("%w: config field contains invalid JSON: %v", errInvalidSourceConfig, err)
 	}
 
 	configJSONChecked, err := json.Marshal(jsonRaw)
 	if err != nil {
-		return fmt.Errorf("failed to marshal Config field: %w", err)
+		return fmt.Errorf("%w: failed to marshal Config field: %v", errInvalidSourceConfig, err)
 	}
 
 	if err := json.Unmarshal(configJSONChecked, config); err != nil {
-		return fmt.Errorf("failed to unmarshal validated JSON back to Config struct: %w", err)
+		return fmt.Errorf("%w: failed to unmarshal validated JSON back to Config struct: %v", errInvalidSourceConfig, err)
+	}
+
+	if err := config.ValidateEmailSource(); err != nil {
+		return fmt.Errorf("%w: %v", errInvalidSourceConfig, err)
 	}
 
 	return nil
@@ -247,8 +929,49 @@ func removeSource(tx *sql.Tx, sourceURL string) (ConsoleResponse, error) {
 	return results, nil
 }
 
+// SourcesStatusResponse represents the full JSON response:
+//
+//	{
+//	  "message": "All Sources status",
+//	  "items": [...]
+//	}
+type SourcesStatusResponse struct {
+	Message string         `json:"message"`
+	Items   []SourceStatus `json:"items"`
+}
+
+// SourceStatus represents one item in the "items" array.
+type SourceStatus struct {
+	SourceID      int                  `json:"source_id"`
+	SourceUID     string               `json:"source_uid"`
+	URL           DBString             `json:"url"`
+	Status        DBString             `json:"status"`
+	Priority      DBString             `json:"priority"`
+	Engine        DBString             `json:"engine"`
+	CreatedAt     DBString             `json:"created_at"`
+	LastUpdatedAt DBString             `json:"last_updated_at"`
+	LastCrawledAt DBString             `json:"last_crawled_at"`
+	LastError     DBString             `json:"last_error"`
+	LastErrorAt   DBString             `json:"last_error_at"`
+	Restricted    int                  `json:"restricted"`
+	Disabled      bool                 `json:"disabled"`
+	Flags         int                  `json:"flags"`
+	Config        SourceConfigResponse `json:"config"`
+	EmailStatus   *SourceEmailStatus   `json:"email_status,omitempty"`
+}
+
+// DBString matches the JSON shape produced by sql.NullString-like values:
+//
+//	{
+//	  "String": "...",
+//	  "Valid": true
+//	}
+type DBString struct {
+	String string `json:"String"`
+	Valid  bool   `json:"Valid"`
+}
+
 func performGetURLStatus(query string, qType int, db *cdb.Handler) (StatusResponse, error) {
-	var results StatusResponse
 	var sourceURL string // Assuming the source URL is passed. Adjust as necessary based on input.
 
 	if qType == getQuery {
@@ -260,141 +983,103 @@ func performGetURLStatus(query string, qType int, db *cdb.Handler) (StatusRespon
 		return StatusResponse{Message: "Invalid request"}, nil
 	}
 
-	// Start a transaction
-	tx, err := (*db).Begin()
-	if err != nil {
-		return StatusResponse{Message: errFailedToStartTransaction}, err
-	}
-
-	// Proceed with getting the status
-	results, err = getURLStatus(tx, sourceURL)
+	results, err := getURLStatus(db, sourceURL)
 	if err != nil {
 		return StatusResponse{Message: "Failed to get the status"}, err
-	}
-
-	// If everything went well, commit the transaction
-	err = tx.Commit()
-	if err != nil {
-		return StatusResponse{Message: errFailedToCommitTransaction}, err
 	}
 
 	return results, nil
 }
 
-func getURLStatus(tx *sql.Tx, sourceURL string) (StatusResponse, error) {
+func getURLStatus(db *cdb.Handler, sourceURL string) (StatusResponse, error) {
 	var results StatusResponse
 	results.Message = "Failed to get the status"
 
-	sourceURL = cmn.NormalizeURL(sourceURL)
-	sourceURL = fmt.Sprintf("%%%s%%", sourceURL)
-	cmn.DebugMsg(cmn.DbgLvlDebug5, "Source URL: %s", sourceURL)
-
-	query := `
-		SELECT source_id,
-			   url,
-			   status,
-			   priority,
-			   engine,
-			   created_at,
-			   last_updated_at,
-			   last_crawled_at,
-			   last_error,
-			   last_error_at,
-			   restricted,
-			   disabled,
-			   flags,
-			   config
-		FROM Sources
-		WHERE url LIKE $1`
-
-	// Get the status
-	rows, err := tx.Query(query, sourceURL)
+	statuses, err := cdb.GetSourceStatusByURL(db, sourceURL)
 	if err != nil {
 		return results, err
 	}
-	defer rows.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
-
-	var statuses []StatusResponseRow
-	for rows.Next() {
-		var row StatusResponseRow
-		var configJSON []byte
-		err = rows.Scan(&row.SourceID, &row.URL, &row.Status, &row.Priority, &row.Engine, &row.CreatedAt, &row.LastUpdatedAt, &row.LastCrawledAt, &row.LastError, &row.LastErrorAt, &row.Restricted, &row.Disabled, &row.Flags, &configJSON)
-		if err != nil {
-			return results, err
-		}
-		if configJSON != nil {
-			if err := json.Unmarshal(configJSON, &row.Config); err != nil {
-				return results, err
-			}
-		}
-
-		statuses = append(statuses, row)
-	}
 
 	results.Message = infoAllSourcesStatus
-	results.Items = statuses
+	results.Items = sourceStatusRowsFromDB(statuses)
 	return results, nil
 }
 
 func performGetAllURLStatus(_ int, db *cdb.Handler) (StatusResponse, error) {
 	// using _ instead of qType because for now we don't need it
-
-	// Start a transaction
-	tx, err := (*db).Begin()
-	if err != nil {
-		return StatusResponse{Message: errFailedToStartTransaction}, err
-	}
-
-	// Proceed with getting all statuses
-	results, err := getAllURLStatus(tx)
+	results, err := getAllURLStatus(db)
 	if err != nil {
 		return StatusResponse{Message: "Failed to get all statuses"}, err
 	}
 
-	// If everything went well, commit the transaction
-	err = tx.Commit()
-	if err != nil {
-		return StatusResponse{Message: errFailedToCommitTransaction}, err
-	}
-
 	return results, nil
 }
 
-func getAllURLStatus(tx *sql.Tx) (StatusResponse, error) {
+func getAllURLStatus(db *cdb.Handler) (StatusResponse, error) {
 	var results StatusResponse
 	results.Message = "Failed to get all statuses"
 
-	// Proceed with getting all statuses
-	rows, err := tx.Query("SELECT source_id, url, status, priority, engine, created_at, last_updated_at, last_crawled_at, last_error, last_error_at, restricted, disabled, flags, config FROM Sources")
+	statuses, err := cdb.ListSourceStatuses(db)
 	if err != nil {
 		return results, err
 	}
-	defer rows.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
-
-	var statuses []StatusResponseRow
-	for rows.Next() {
-		var row StatusResponseRow
-		var configJSON []byte
-		err = rows.Scan(&row.SourceID, &row.URL, &row.Status, &row.Priority, &row.Engine, &row.CreatedAt, &row.LastUpdatedAt, &row.LastCrawledAt, &row.LastError, &row.LastErrorAt, &row.Restricted, &row.Disabled, &row.Flags, &configJSON)
-		if err != nil {
-			return results, err
-		}
-		if configJSON != nil {
-			if err := json.Unmarshal(configJSON, &row.Config); err != nil {
-				return results, err
-			}
-		}
-
-		statuses = append(statuses, row)
-	}
 
 	results.Message = infoAllSourcesStatus
-	results.Items = statuses
+	results.Items = sourceStatusRowsFromDB(statuses)
 	return results, nil
 }
 
+func sourceStatusRowsFromDB(rows []cdb.SourceStatusRow) []StatusResponseRow {
+	statuses := make([]StatusResponseRow, 0, len(rows))
+	for _, row := range rows {
+		statuses = append(statuses, StatusResponseRow{
+			SourceID:      row.SourceID,
+			SourceUID:     row.SourceUID,
+			URL:           row.URL,
+			Status:        row.Status,
+			Priority:      row.Priority,
+			Engine:        row.Engine,
+			CreatedAt:     row.CreatedAt,
+			LastUpdatedAt: row.LastUpdatedAt,
+			LastCrawledAt: row.LastCrawledAt,
+			LastError:     row.LastError,
+			LastErrorAt:   row.LastErrorAt,
+			Restricted:    row.Restricted,
+			Disabled:      row.Disabled,
+			Flags:         row.Flags,
+			Config:        SourceConfigResponse(row.Config),
+			EmailStatus:   sourceEmailStatusFromDB(row.EmailStatus),
+		})
+	}
+	return statuses
+}
+
+func sourceEmailStatusFromDB(status *cdb.SourceEmailStatusRow) *SourceEmailStatus {
+	if status == nil {
+		return nil
+	}
+
+	response := &SourceEmailStatus{
+		ListenerStatus: status.ListenerStatus,
+		CursorSummary: SourceEmailCursorSummary{
+			MailboxCount:          status.MailboxCount,
+			CheckpointedMailboxes: status.CheckpointedMailboxes,
+			HasTokenCursor:        status.HasTokenCursor,
+			HasHistoryCursor:      status.HasHistoryCursor,
+			HasUIDCursor:          status.HasUIDCursor,
+		},
+		ProcessedCount:    status.ProcessedCount,
+		FailedCount:       status.FailedCount,
+		LastErrorCategory: status.LastErrorCategory,
+	}
+	if status.LastSynchronizedAt.Valid {
+		response.LastSynchronizedAt = status.LastSynchronizedAt.String
+	}
+	return response
+}
+
 func performUpdateSource(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
-	var sqlParams cdb.UpdateSourceRequest
+	var sqlParams updateSourceRequest
 	var sourceConfig *string
 	var sourceDetails *string
 
@@ -407,6 +1092,15 @@ func performUpdateSource(query string, qType int, db *cdb.Handler) (ConsoleRespo
 		if err != nil {
 			return ConsoleResponse{Message: "Invalid update request"}, fmt.Errorf("invalid JSON: %w", err)
 		}
+	}
+
+	var requestedConfig *cfg.SourceConfig
+	if sqlParams.Config != nil {
+		validated := cfg.SourceConfig(*sqlParams.Config)
+		if err := validateAndReformatConfig(&validated); err != nil {
+			return ConsoleResponse{Message: "Invalid config"}, err
+		}
+		requestedConfig = &validated
 	}
 
 	// Resolve sourceID if only URL is provided
@@ -439,15 +1133,26 @@ func performUpdateSource(query string, qType int, db *cdb.Handler) (ConsoleRespo
 	if err != nil {
 		return ConsoleResponse{Message: "Failed to retrieve source data"}, fmt.Errorf("error querying existing source data: %w", err)
 	}
+	// extract and validate Config JSON:
+	var srcConfig cfg.SourceConfig
 	if sourceConfig != nil {
-		existingData.Config = json.RawMessage(*sourceConfig)
-	} else {
-		existingData.Config = json.RawMessage("{}")
+		//existingData.Config = json.RawMessage(*sourceConfig)
+		// Transform sourceConfig into the API source configuration struct.
+		if err := json.Unmarshal([]byte(*sourceConfig), &srcConfig); err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling the Config field from DB: %v", err)
+		}
 	}
+
+	// extract free JSON form Details:
 	if sourceDetails != nil {
 		existingData.Details = json.RawMessage(*sourceDetails)
 	} else {
 		existingData.Details = json.RawMessage("{}")
+	}
+
+	mergedConfig := srcConfig
+	if requestedConfig != nil {
+		mergedConfig = *requestedConfig
 	}
 
 	// Merge existing data with provided updates
@@ -458,8 +1163,12 @@ func performUpdateSource(query string, qType int, db *cdb.Handler) (ConsoleRespo
 		Restricted: coalesceInt(sqlParams.Restricted, existingData.Restricted),
 		Disabled:   coalesceBool(sqlParams.Disabled, existingData.Disabled),
 		Flags:      coalesceInt(sqlParams.Flags, existingData.Flags),
-		Config:     coalesceJSON(sqlParams.Config, existingData.Config),
 		Details:    coalesceJSON(sqlParams.Details, existingData.Details),
+	}
+
+	mergedConfigJSON, err := json.Marshal(mergedConfig)
+	if err != nil {
+		return ConsoleResponse{Message: "Invalid config"}, fmt.Errorf("%w: failed to marshal config for update: %v", errInvalidSourceConfig, err)
 	}
 
 	// Perform the update
@@ -480,7 +1189,7 @@ func performUpdateSource(query string, qType int, db *cdb.Handler) (ConsoleRespo
 		mergedData.Restricted,
 		mergedData.Disabled,
 		mergedData.Flags,
-		mergedData.Config,
+		mergedConfigJSON,
 		mergedData.Details,
 		mergedData.SourceID,
 	)
@@ -777,4 +1486,179 @@ func performRemoveCategory(query string, qType int, db *cdb.Handler) (ConsoleRes
 	}
 
 	return ConsoleResponse{Message: "Category removed successfully"}, nil
+}
+
+func performUpdateInformationSeed(query string, _ int, db *cdb.Handler) (InformationSeedResponse, error) {
+	if err := rejectInformationSeedRequestCredentials([]byte(query)); err != nil {
+		return InformationSeedResponse{Message: "Provider credentials are not accepted in information seed requests"}, err
+	}
+	var req informationSeedUpdateRequest
+	if err := json.Unmarshal([]byte(query), &req); err != nil {
+		return InformationSeedResponse{Message: "Invalid information seed update request"}, fmt.Errorf("invalid JSON: %w", err)
+	}
+	if req.InformationSeedID == 0 {
+		return InformationSeedResponse{Message: "Information seed ID is required"}, fmt.Errorf("information_seed_id is required")
+	}
+	existing, err := cdb.GetInformationSeedByID(db, req.InformationSeedID)
+	if err != nil {
+		return InformationSeedResponse{Message: "Failed to load information seed"}, err
+	}
+	if req.CategoryID != nil {
+		existing.CategoryID = *req.CategoryID
+	}
+	if req.UsrID != nil {
+		existing.UsrID = *req.UsrID
+	}
+	if req.UserID != nil {
+		existing.UsrID = *req.UserID
+	}
+	if req.InformationSeed != nil {
+		existing.InformationSeed = strings.TrimSpace(*req.InformationSeed)
+	}
+	if req.Status != nil {
+		existing.Status = strings.TrimSpace(*req.Status)
+	}
+	if req.Priority != nil {
+		existing.Priority = strings.TrimSpace(*req.Priority)
+	}
+	if req.Engine != nil {
+		existing.Engine = strings.TrimSpace(*req.Engine)
+	}
+	if req.Disabled != nil {
+		existing.Disabled = *req.Disabled
+	}
+	if req.Config != nil {
+		raw, err := marshalInformationSeedRequestConfig(req.Config)
+		if err != nil {
+			return InformationSeedResponse{Message: "Invalid information seed config"}, err
+		}
+		if err := validateInformationSeedConfig(raw); err != nil {
+			return InformationSeedResponse{Message: "Invalid information seed config"}, err
+		}
+		existing.Config = raw
+	}
+	if err := cdb.UpdateInformationSeed(db, existing); err != nil {
+		return InformationSeedResponse{Message: "Failed to update information seed"}, err
+	}
+	row, err := informationSeedRowByID(db, req.InformationSeedID)
+	if err != nil {
+		return InformationSeedResponse{Message: "Failed to load updated information seed"}, err
+	}
+	resp := InformationSeedResponse{Message: "Information seed updated successfully", Item: row}
+	if apiWSHub != nil {
+		apiWSHub.Broadcast("information_seed.updated", resp)
+	}
+	return resp, nil
+}
+
+func performRemoveInformationSeed(query string, _ int, db *cdb.Handler) (ConsoleResponse, error) {
+	id, err := parseInformationSeedIDFromJSON(query)
+	if err != nil {
+		return ConsoleResponse{Message: "Invalid information seed remove request"}, err
+	}
+	if err := cdb.RemoveInformationSeed(db, id); err != nil {
+		return ConsoleResponse{Message: "Failed to remove information seed"}, err
+	}
+	return ConsoleResponse{Message: "Information seed removed successfully"}, nil
+}
+
+func performListInformationSeedConfigProviders() InformationSeedConfigProvidersResponse {
+	providers := make([]string, 0, len(config.InformationSeed.Providers))
+	for name := range config.InformationSeed.Providers {
+		providers = append(providers, name)
+	}
+	sort.Strings(providers)
+	return InformationSeedConfigProvidersResponse{Message: "Configured information seed providers", Providers: providers}
+}
+
+func performGetInformationSeedConfigProvider(name string) (InformationSeedConfigProviderResponse, error) {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" {
+		return InformationSeedConfigProviderResponse{Message: "Information seed provider name is required"}, fmt.Errorf("information seed provider name is required")
+	}
+	provider, ok := config.InformationSeed.Providers[name]
+	if !ok {
+		return InformationSeedConfigProviderResponse{Message: "Information seed provider not found", Name: name}, fmt.Errorf("information seed provider %q not found", name)
+	}
+	return InformationSeedConfigProviderResponse{Message: "Configured information seed provider", Name: name, Provider: redactInformationSeedProviderConfig(provider)}, nil
+}
+
+func redactInformationSeedProviderConfig(provider cfg.InformationSeedProviderConfig) cfg.InformationSeedProviderConfig {
+	provider.APIKey = redactConfigSecret(provider.APIKey)
+	provider.APIID = redactConfigSecret(provider.APIID)
+	provider.APISecret = redactConfigSecret(provider.APISecret)
+	provider.APIToken = redactConfigSecret(provider.APIToken)
+	provider.Token = redactConfigSecret(provider.Token)
+	provider.Secret = redactConfigSecret(provider.Secret)
+	provider.Username = redactConfigSecret(provider.Username)
+	provider.Password = redactConfigSecret(provider.Password)
+	provider.Parameters = redactConfigStringMap(provider.Parameters)
+	provider.Headers = redactConfigStringMap(provider.Headers)
+	return provider
+}
+
+func redactConfigStringMap(values map[string]string) map[string]string {
+	if values == nil {
+		return nil
+	}
+	redacted := make(map[string]string, len(values))
+	for key, value := range values {
+		if isInformationSeedCredentialKey(key) {
+			redacted[key] = redactConfigSecret(value)
+			continue
+		}
+		redacted[key] = value
+	}
+	return redacted
+}
+
+func redactConfigSecret(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return ""
+	}
+	return "[REDACTED]"
+}
+
+func performListVDIConfig() VDIConfigListResponse {
+	vdis := make([]string, 0, len(config.Selenium))
+	for _, selenium := range config.Selenium {
+		if strings.TrimSpace(selenium.Name) != "" {
+			vdis = append(vdis, selenium.Name)
+		}
+	}
+	sort.Strings(vdis)
+	return VDIConfigListResponse{Message: "Configured VDIs", VDIs: vdis}
+}
+
+func performGetVDIConfig(name string) (VDIConfigResponse, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return VDIConfigResponse{Message: "VDI name is required"}, fmt.Errorf("vdi name is required")
+	}
+	for _, selenium := range config.Selenium {
+		if strings.EqualFold(strings.TrimSpace(selenium.Name), name) {
+			return VDIConfigResponse{Message: "Configured VDI", Name: selenium.Name, VDI: newSeleniumJSON(selenium)}, nil
+		}
+	}
+	return VDIConfigResponse{Message: "VDI not found", Name: name}, fmt.Errorf("vdi %q not found", name)
+}
+
+func newSeleniumJSON(selenium cfg.Selenium) seleniumJSON {
+	return seleniumJSON{
+		Name:        selenium.Name,
+		Location:    selenium.Location,
+		Path:        selenium.Path,
+		DriverPath:  selenium.DriverPath,
+		Type:        selenium.Type,
+		ServiceType: selenium.ServiceType,
+		Port:        selenium.Port,
+		Host:        selenium.Host,
+		Headless:    selenium.Headless,
+		UseService:  selenium.UseService,
+		SSLMode:     selenium.SSLMode,
+		ProxyURL:    selenium.ProxyURL,
+		DownloadDir: selenium.DownloadDir,
+		Language:    selenium.Language,
+		SysMng:      selenium.SysMng,
+	}
 }

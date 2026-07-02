@@ -1,0 +1,34 @@
+{
+  "kind": "customsearch#search",
+  "url": {
+    "type": "application/json",
+    "template": "https://peer-crowler.example.invalid/v1/search/general?q={searchTerms}"
+  },
+  "queries": {
+    "request": [
+      {
+        "title": "search",
+        "totalResults": 1,
+        "searchTerms": "Tyrell Corporation",
+        "count": 1,
+        "startIndex": 0,
+        "inputEncoding": "utf8",
+        "outputEncoding": "utf8",
+        "safe": "off",
+        "cx": "0"
+      }
+    ],
+    "limit": 10,
+    "offset": 0
+  },
+  "items": [
+    {
+      "title": "Tyrell Federation Result",
+      "link": "https://www.tyrell.example/federated",
+      "summary": "Federated result summary from a peer CROWler.",
+      "type": "text/html",
+      "lang": "en",
+      "snippet": "Federated result snippet from a peer CROWler."
+    }
+  ]
+}

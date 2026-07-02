@@ -2,6 +2,8 @@
 
 To add a new entity to the list of entities, the CROWler requires such an entity to be presented with a RESTFul request to the following end-point:
 
+For email-specific create and update payloads, connector URL schemes, authentication references, listener modes, status fields, validation failures, and defaults, see [Email source API payloads](email-sources.md).
+
 ```http
 http(s)://<crowler-api-ip>:8080/v1/source/add
 ```

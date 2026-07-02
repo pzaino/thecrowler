@@ -1,0 +1,60 @@
+{
+  "information_seed": "Tyrell Corporation",
+  "category_id": 42,
+  "usr_id": 7,
+  "priority": "normal",
+  "status": "new",
+  "disabled": false,
+  "config": {
+    "query_templates": [
+      "{{ .Seed }} official website",
+      "{{ .Seed }} investor relations",
+      "{{ .Seed }} contact support"
+    ],
+    "providers": [
+      "rss_public_news",
+      "common_crawl_latest",
+      "public_json_adapter"
+    ],
+    "tracking_params": [
+      "utm_source",
+      "utm_medium",
+      "utm_campaign",
+      "fbclid"
+    ],
+    "deduplicate_host": true,
+    "max_candidates": 10,
+    "required_url_schemes": [
+      "https"
+    ],
+    "min_score": 0.2,
+    "max_candidates_per_host": 1,
+    "max_candidates_per_domain": 3,
+    "source_name_template": "{{ .Seed }} \u2014 {{ .Candidate.Title }}",
+    "source_priority": "normal",
+    "create_sources": true,
+    "link_existing_sources": true,
+    "update_existing_source_config": false,
+    "disabled": false,
+    "status": "new",
+    "restricted": 1,
+    "flags": 0,
+    "candidate_plugins": [
+      "tyrell_source_config"
+    ],
+    "source_config": {
+      "version": "1.0",
+      "format_version": "1.0",
+      "source_name": "tyrell-information-seed-default",
+      "crawling_config": {
+        "site": "https://www.tyrell.example/",
+        "source_type": "website"
+      },
+      "custom": {
+        "created_by": "information_seed",
+        "seed_label": "tyrell-corporation",
+        "default_source_config": true
+      }
+    }
+  }
+}

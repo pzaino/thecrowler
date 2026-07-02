@@ -16,6 +16,7 @@
 package database
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -31,7 +32,7 @@ func GetSourceByID(db *Handler, sourceID uint64) (*Source, error) {
 	source := &Source{}
 
 	// Query the database
-	err := (*db).QueryRow(`SELECT source_id, url, name, category_id, usr_id, restricted, flags, config FROM Sources WHERE source_id = $1`, sourceID).Scan(&source.ID, &source.URL, &source.Name, &source.CategoryID, &source.UsrID, &source.Restricted, &source.Flags, &source.Config)
+	err := (*db).QueryRow(`SELECT source_id, source_uid, url, name, category_id, usr_id, restricted, flags, config FROM Sources WHERE source_id = $1`, sourceID).Scan(&source.ID, &source.UID, &source.URL, &source.Name, &source.CategoryID, &source.UsrID, &source.Restricted, &source.Flags, &source.Config)
 	if err != nil {
 		return nil, fmt.Errorf("no source found with ID %d", sourceID)
 	}
@@ -41,6 +42,13 @@ func GetSourceByID(db *Handler, sourceID uint64) (*Source, error) {
 
 // CreateSource inserts a new source into the database with detailed configuration validation and marshaling.
 func CreateSource(db *Handler, source *Source, config cfg.SourceConfig) (uint64, error) {
+	if db == nil || *db == nil {
+		return 0, fmt.Errorf("database handler is nil")
+	}
+	if source == nil {
+		return 0, fmt.Errorf("source is nil")
+	}
+
 	// Validate source config
 	if !config.IsEmpty() {
 		if err := validateSourceConfig(config); err != nil {
@@ -54,17 +62,113 @@ func CreateSource(db *Handler, source *Source, config cfg.SourceConfig) (uint64,
 		return 0, fmt.Errorf("failed to marshal source configuration: %v", err)
 	}
 
-	// Trim strings to guarantee consistency
-	url := strings.TrimSpace(source.URL)
-	name := strings.TrimSpace(source.Name)
-	priority := strings.TrimSpace(source.Priority)
+	prepared := preparedSourceInsert{
+		URL:        NormalizeSourceURL(source.URL),
+		Name:       strings.TrimSpace(source.Name),
+		Priority:   strings.TrimSpace(source.Priority),
+		CategoryID: source.CategoryID,
+		UsrID:      source.UsrID,
+		Restricted: source.Restricted,
+		Flags:      source.Flags,
+		Config:     details,
+		Disabled:   source.Disabled,
+	}
+	prepared.UID = CalculateSourceUID(prepared.Name, prepared.URL)
+	source.UID = prepared.UID
 
+	switch normalizeInformationSeedDBMS((*db).DBMS()) {
+	case DBPostgresStr:
+		return createSourcePostgres(db, prepared)
+	case DBSQLiteStr:
+		return createSourceSQLite(db, prepared)
+	case DBMySQLStr:
+		return createSourceMySQL(db, prepared)
+	default:
+		return 0, fmt.Errorf("unsupported database type for source creation: %s", (*db).DBMS())
+	}
+}
+
+// CalculateSourceUID returns a stable SHA-256 identifier for a source.
+func CalculateSourceUID(name, sourceURL string) string {
+	normalizedName := strings.TrimSpace(name)
+	normalizedURL := NormalizeSourceURL(sourceURL)
+	payload := fmt.Sprintf("%d:%s%d:%s", len(normalizedName), normalizedName, len(normalizedURL), normalizedURL)
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(payload)))
+}
+
+// NormalizeSourceURL prepares a source URL for storage and text-based search.
+//
+// URL producers commonly percent-encode the ":" and "/" characters in nested
+// URLs used as query parameter values. Those characters do not need escaping
+// inside a query, and keeping them escaped prevents searches for the nested URL
+// from matching the stored source. Delimiters such as '&', '=', '#', and '+'
+// remain escaped so normalization does not change the query's meaning.
+func NormalizeSourceURL(rawURL string) string {
+	trimmed := strings.TrimSpace(rawURL)
+	if trimmed == "" {
+		return ""
+	}
+
+	parsedURL, err := url.Parse(trimmed)
+	if err != nil || parsedURL.RawQuery == "" {
+		return trimmed
+	}
+
+	parsedURL.RawQuery = decodeSearchableQueryCharacters(parsedURL.RawQuery)
+	return parsedURL.String()
+}
+
+func decodeSearchableQueryCharacters(rawQuery string) string {
+	replacer := strings.NewReplacer(
+		"%2F", "/",
+		"%2f", "/",
+		"%3A", ":",
+		"%3a", ":",
+	)
+	return replacer.Replace(rawQuery)
+}
+
+type preparedSourceInsert struct {
+	UID        string
+	URL        string
+	Name       string
+	Priority   string
+	CategoryID uint64
+	UsrID      uint64
+	Restricted uint
+	Flags      uint
+	Config     []byte
+	Disabled   bool
+	Status     string
+}
+
+func (source preparedSourceInsert) args() []interface{} {
+	return []interface{}{
+		source.URL,
+		source.Name,
+		source.Priority,
+		source.CategoryID,
+		source.UsrID,
+		source.Restricted,
+		source.Flags,
+		source.Config,
+		source.Disabled,
+		source.UID,
+	}
+}
+
+func (source preparedSourceInsert) argsWithStatus() []interface{} {
+	args := source.args()
+	return append(args, source.Status)
+}
+
+func createSourcePostgres(db *Handler, source preparedSourceInsert) (uint64, error) {
 	var sourceID uint64
 
 	query := `
         INSERT INTO Sources
-            (url, name, priority, category_id, usr_id, restricted, flags, config, disabled, status)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'new')
+            (url, name, priority, category_id, usr_id, restricted, flags, config, disabled, source_uid, status)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'new')
         ON CONFLICT (url) DO UPDATE
         SET
             -- update name only if not processing AND non-empty trimmed string
@@ -73,6 +177,11 @@ func CreateSource(db *Handler, source *Source, config cfg.SourceConfig) (uint64,
                      AND BTRIM(EXCLUDED.name) <> ''
                 THEN EXCLUDED.name
                 ELSE Sources.name
+            END,
+            source_uid = CASE
+                WHEN Sources.status <> 'processing' AND BTRIM(EXCLUDED.name) <> ''
+                THEN EXCLUDED.source_uid
+                ELSE Sources.source_uid
             END,
 
             -- update priority only if not processing AND non-empty trimmed string
@@ -137,24 +246,166 @@ func CreateSource(db *Handler, source *Source, config cfg.SourceConfig) (uint64,
         RETURNING source_id;
     `
 
-	err = (*db).QueryRow(
-		query,
-		url,
-		name,
-		priority,
-		source.CategoryID,
-		source.UsrID,
-		source.Restricted,
-		source.Flags,
-		details,
-		source.Disabled,
-	).Scan(&sourceID)
-
+	err := (*db).QueryRow(query, source.args()...).Scan(&sourceID)
 	if err != nil {
-		return 0, fmt.Errorf("failed to create source: %v", err)
+		return 0, fmt.Errorf("failed to create PostgreSQL source: %v", err)
 	}
 
 	return sourceID, nil
+}
+
+func createSourceSQLite(db *Handler, source preparedSourceInsert) (uint64, error) {
+	var sourceID uint64
+
+	query := `
+		INSERT INTO Sources
+			(url, name, priority, category_id, usr_id, restricted, flags, config, disabled, source_uid, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'new')
+		ON CONFLICT (url) DO UPDATE SET
+			name = CASE
+				WHEN Sources.status <> 'processing'
+					 AND TRIM(excluded.name) <> ''
+				THEN excluded.name
+				ELSE Sources.name
+			END,
+			source_uid = CASE
+				WHEN Sources.status <> 'processing' AND TRIM(excluded.name) <> ''
+				THEN excluded.source_uid
+				ELSE Sources.source_uid
+			END,
+			priority = CASE
+				WHEN Sources.status <> 'processing'
+					 AND TRIM(excluded.priority) <> ''
+				THEN excluded.priority
+				ELSE Sources.priority
+			END,
+			category_id = CASE
+				WHEN Sources.status <> 'processing'
+				THEN excluded.category_id
+				ELSE Sources.category_id
+			END,
+			usr_id = CASE
+				WHEN Sources.status <> 'processing'
+				THEN excluded.usr_id
+				ELSE Sources.usr_id
+			END,
+			restricted = CASE
+				WHEN Sources.status <> 'processing'
+				THEN excluded.restricted
+				ELSE Sources.restricted
+			END,
+			flags = CASE
+				WHEN Sources.status <> 'processing'
+				THEN excluded.flags
+				ELSE Sources.flags
+			END,
+			config = CASE
+				WHEN Sources.status <> 'processing'
+					 AND excluded.config IS NOT NULL
+					 AND TRIM(excluded.config) <> ''
+					 AND TRIM(excluded.config) <> '{}'
+					 AND COALESCE(excluded.config, '') <> COALESCE(Sources.config, '')
+				THEN excluded.config
+				ELSE Sources.config
+			END,
+			disabled = CASE
+				WHEN Sources.status <> 'processing'
+				THEN excluded.disabled
+				ELSE Sources.disabled
+			END,
+			status = CASE
+				WHEN Sources.status = 'processing'
+				THEN Sources.status
+				ELSE excluded.status
+			END,
+			last_updated_at = CURRENT_TIMESTAMP
+		RETURNING source_id`
+
+	err := (*db).QueryRow(query, source.args()...).Scan(&sourceID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to create SQLite source: %v", err)
+	}
+
+	return sourceID, nil
+}
+
+func createSourceMySQL(db *Handler, source preparedSourceInsert) (uint64, error) {
+	query := `
+		INSERT INTO Sources
+			(url, name, priority, category_id, usr_id, restricted, flags, config, disabled, source_uid, status)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new')
+		ON DUPLICATE KEY UPDATE
+			source_id = LAST_INSERT_ID(source_id),
+			name = CASE
+				WHEN status <> 'processing'
+					 AND TRIM(VALUES(name)) <> ''
+				THEN VALUES(name)
+				ELSE name
+			END,
+			source_uid = CASE
+				WHEN status <> 'processing' AND TRIM(VALUES(name)) <> ''
+				THEN VALUES(source_uid)
+				ELSE source_uid
+			END,
+			priority = CASE
+				WHEN status <> 'processing'
+					 AND TRIM(VALUES(priority)) <> ''
+				THEN VALUES(priority)
+				ELSE priority
+			END,
+			category_id = CASE
+				WHEN status <> 'processing'
+				THEN VALUES(category_id)
+				ELSE category_id
+			END,
+			usr_id = CASE
+				WHEN status <> 'processing'
+				THEN VALUES(usr_id)
+				ELSE usr_id
+			END,
+			restricted = CASE
+				WHEN status <> 'processing'
+				THEN VALUES(restricted)
+				ELSE restricted
+			END,
+			flags = CASE
+				WHEN status <> 'processing'
+				THEN VALUES(flags)
+				ELSE flags
+			END,
+			config = CASE
+				WHEN status <> 'processing'
+					 AND VALUES(config) IS NOT NULL
+					 AND JSON_LENGTH(VALUES(config)) > 0
+					 AND COALESCE(MD5(CAST(VALUES(config) AS CHAR)), '') <> COALESCE(MD5(CAST(config AS CHAR)), '')
+				THEN VALUES(config)
+				ELSE config
+			END,
+			disabled = CASE
+				WHEN status <> 'processing'
+				THEN VALUES(disabled)
+				ELSE disabled
+			END,
+			status = CASE
+				WHEN status = 'processing'
+				THEN status
+				ELSE VALUES(status)
+			END,
+			last_updated_at = CURRENT_TIMESTAMP`
+
+	result, err := (*db).Exec(query, source.args()...)
+	if err != nil {
+		return 0, fmt.Errorf("failed to create MySQL source: %v", err)
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("failed to retrieve MySQL source ID: %v", err)
+	}
+	if id < 0 {
+		return 0, fmt.Errorf("failed to retrieve MySQL source ID: negative ID %d", id)
+	}
+
+	return uint64(id), nil
 }
 
 // validateSourceConfig validates the SourceConfig struct.
@@ -180,10 +431,24 @@ func validateSourceConfig(config cfg.SourceConfig) error {
 // validateURL checks if a given URL is valid.
 func validateURL(site string) error {
 	parsedURL, err := url.Parse(site)
-	if err != nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
+	if err != nil || parsedURL.Scheme == "" {
 		return fmt.Errorf("invalid URL: %s", site)
 	}
-	return nil
+
+	scheme := strings.ToLower(parsedURL.Scheme)
+	if scheme == "maildir" || scheme == "mbox" {
+		if strings.HasPrefix(strings.ToLower(site), scheme+"://") &&
+			parsedURL.Host == "" && strings.HasPrefix(parsedURL.Path, "/") && parsedURL.Path != "/" {
+			return nil
+		}
+		return fmt.Errorf("invalid URL: %s", site)
+	}
+
+	if parsedURL.Host != "" {
+		return nil
+	}
+
+	return fmt.Errorf("invalid URL: %s", site)
 }
 
 // UpdateSource updates an existing source in the database by ID.
@@ -193,7 +458,7 @@ func UpdateSource(db *Handler, source *Source) error {
         SET url = $1, name = $2, category_id = $3, usr_id = $4, restricted = $5, flags = $6, config = $7, last_updated_at = NOW()
         WHERE source_id = $8
     `
-	_, err := (*db).Exec(query, source.URL, source.Name, source.CategoryID, source.UsrID, source.Restricted, source.Flags, source.Config, source.ID)
+	_, err := (*db).Exec(query, NormalizeSourceURL(source.URL), source.Name, source.CategoryID, source.UsrID, source.Restricted, source.Flags, source.Config, source.ID)
 	if err != nil {
 		return fmt.Errorf("failed to update source with ID %d: %v", source.ID, err)
 	}
@@ -302,7 +567,7 @@ func VacuumSource(db *Handler, sourceID uint64) error {
 // ListSources retrieves all sources from the database with optional filters.
 func ListSources(db *Handler, categoryID *uint64, userID *uint64) ([]Source, error) {
 	sources := []Source{}
-	query := `SELECT source_id, url, name, category_id, usr_id, restricted, flags, config FROM Sources`
+	query := `SELECT source_id, source_uid, url, name, category_id, usr_id, restricted, flags, config FROM Sources`
 	var args []interface{}
 	var conditions []string
 
@@ -325,7 +590,7 @@ func ListSources(db *Handler, categoryID *uint64, userID *uint64) ([]Source, err
 
 	for rows.Next() {
 		var source Source
-		err := rows.Scan(&source.ID, &source.URL, &source.Name, &source.CategoryID, &source.UsrID, &source.Restricted, &source.Flags, &source.Config)
+		err := rows.Scan(&source.ID, &source.UID, &source.URL, &source.Name, &source.CategoryID, &source.UsrID, &source.Restricted, &source.Flags, &source.Config)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan source: %v", err)
 		}
@@ -338,7 +603,7 @@ func ListSources(db *Handler, categoryID *uint64, userID *uint64) ([]Source, err
 func GetSourcesByStatus(db *Handler, status string) ([]Source, error) {
 	sources := []Source{}
 	query := `
-        SELECT source_id, url, name, category_id, usr_id, restricted, flags, config
+        SELECT source_id, source_uid, url, name, category_id, usr_id, restricted, flags, config
         FROM Sources
         WHERE status = $1
     `
@@ -350,7 +615,7 @@ func GetSourcesByStatus(db *Handler, status string) ([]Source, error) {
 
 	for rows.Next() {
 		var source Source
-		err := rows.Scan(&source.ID, &source.URL, &source.Name, &source.CategoryID, &source.UsrID, &source.Restricted, &source.Flags, &source.Config)
+		err := rows.Scan(&source.ID, &source.UID, &source.URL, &source.Name, &source.CategoryID, &source.UsrID, &source.Restricted, &source.Flags, &source.Config)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan source: %v", err)
 		}

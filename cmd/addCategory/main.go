@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
+
+	"github.com/qri-io/jsonschema"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
-	"github.com/qri-io/jsonschema"
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
@@ -109,37 +111,32 @@ func unmarshalFile(filePath string, content []byte, v interface{}) error {
 }
 
 func getFileExtension(filePath string) string {
-	if len(filePath) < 5 {
+	if len(filePath) == 0 {
 		return ""
 	}
-	return filePath[len(filePath)-5:]
+	if !strings.Contains(filePath, ".") {
+		return ""
+	}
+
+	// find the last dot and return the extension
+	lastDot := strings.LastIndex(filePath, ".")
+	if lastDot == -1 {
+		return ""
+	}
+	return filePath[lastDot:]
 }
 
 func validateSchema(content []byte, schemaPath string) error {
-	// load the schema
 	schemaFile, err := os.ReadFile(schemaPath)
 	if err != nil {
 		return fmt.Errorf("error reading schema file: %v", err)
 	}
-	// transform the schemaFile into a string
-	schemaFileString := string(schemaFile)
-	// load the schema into a jsonschema.Schema
-	schemaLoader := jsonschema.Must(schemaFileString)
 
-	// load the schema
-	rs := &jsonschema.Schema{}
-	schemaBytes, err := json.Marshal(schemaLoader)
-	if err != nil {
-		return fmt.Errorf("error marshalling schema: %v", err)
-	}
-	if err := json.Unmarshal(schemaBytes, rs); err != nil {
-		return fmt.Errorf("error unmarshalling schema: %v", err)
+	if !json.Valid(content) {
+		return fmt.Errorf("error unmarshalling document: invalid JSON")
 	}
 
-	var document interface{}
-	if err := json.Unmarshal(content, &document); err != nil {
-		return fmt.Errorf("error unmarshalling document: %v", err)
-	}
+	rs := jsonschema.Must(string(schemaFile))
 
 	errs, err := rs.ValidateBytes(context.Background(), content)
 	if err != nil {

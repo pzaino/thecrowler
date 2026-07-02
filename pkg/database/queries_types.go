@@ -16,7 +16,7 @@ type UpdateSourceRequest struct {
 	Restricted int             `json:"restricted,omitempty"` // Restriction level (0-4)
 	Disabled   bool            `json:"disabled,omitempty"`   // Whether the source is disabled
 	Flags      int             `json:"flags,omitempty"`      // Bitwise flags for the source
-	Config     json.RawMessage `json:"config,omitempty"`     // JSON configuration for the source
+	Config     SourceConfig    `json:"config,omitempty"`     // JSON configuration for the source
 	Details    json.RawMessage `json:"details,omitempty"`    // JSON details about the source's internal state
 }
 

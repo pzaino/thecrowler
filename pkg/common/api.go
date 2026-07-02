@@ -16,6 +16,7 @@ type APIRoute struct {
 	Path              string   `json:"path"`
 	Methods           []string `json:"methods"`
 	Description       string   `json:"description"`
+	Tag               []string `json:"tag,omitempty"`
 	RequiresQ         bool     `json:"requires_q"`
 	ConsoleOnly       bool     `json:"console_only"`
 	Plugin            bool     `json:"plugin"`
@@ -32,6 +33,7 @@ type APIRoute struct {
 type OpenAPISpec struct {
 	OpenAPI    string                 `json:"openapi"`
 	Info       OpenAPIInfo            `json:"info"`
+	Tags       []OpenAPITag           `json:"tags,omitempty"`
 	Servers    []OpenAPIServer        `json:"servers,omitempty"`
 	Paths      map[string]OpenAPIPath `json:"paths"`
 	Components OpenAPIComponents      `json:"components,omitempty"`
@@ -39,8 +41,22 @@ type OpenAPISpec struct {
 
 // OpenAPIInfo represents the metadata information about the API, including its title, version, and an optional description.
 type OpenAPIInfo struct {
-	Title       string `json:"title"`
-	Version     string `json:"version"`
+	Title       string          `json:"title"`
+	Version     string          `json:"version"`
+	Description string          `json:"description,omitempty"`
+	Contact     *OpenAPIContact `json:"contact,omitempty"`
+}
+
+// OpenAPIContact represents the contact information for the API, including name, URL, and email.
+type OpenAPIContact struct {
+	Name  string `json:"name,omitempty"`
+	URL   string `json:"url,omitempty"`
+	Email string `json:"email,omitempty"`
+}
+
+// OpenAPITag represents a tag that can be used to group API operations, including its name and an optional description.
+type OpenAPITag struct {
+	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 }
 
@@ -111,7 +127,9 @@ type OpenAPIOptions struct {
 	Title       string
 	Version     string
 	Description string
-	ServerURL   string // optional, e.g. "http://localhost:8080"
+	ServerURL   string          // optional, e.g. "http://localhost:8080"
+	Contact     *OpenAPIContact // optional contact information for the API
+	Tags        []OpenAPITag    // optional tags to include in the specification
 }
 
 // StdAPIQuery represents a standard query structure that can be used for API endpoints
@@ -135,7 +153,11 @@ type StdAPISuccess struct {
 	Message string `json:"message"`
 }
 
-const getStr = "get"
+const (
+	getStr     = "get"
+	postStr    = "post"
+	typeObject = "object"
+)
 
 var apiRegistry []APIRoute
 var apiRegistryMutex sync.Mutex
@@ -145,6 +167,7 @@ func RegisterAPIRoute(
 	path string,
 	methods []string,
 	description string,
+	tags []string,
 	consoleOnly bool,
 	plugin bool,
 	successStatus int,
@@ -163,6 +186,7 @@ func RegisterAPIRoute(
 		Path:          path,
 		Methods:       methods,
 		Description:   description,
+		Tag:           tags,
 		ConsoleOnly:   consoleOnly,
 		Plugin:        plugin,
 		SuccessStatus: successStatus,
@@ -232,6 +256,9 @@ func parametersFromJSONSchemaObject(schemaJSON string) []OpenAPIParameter {
 		return nil
 	}
 
+	const inQuery = "query"
+	const inPath = "path"
+
 	out := make([]OpenAPIParameter, 0, len(props))
 	for name, v := range props {
 		prop, _ := v.(map[string]any)
@@ -249,9 +276,15 @@ func parametersFromJSONSchemaObject(schemaJSON string) []OpenAPIParameter {
 			s.Type = "string"
 		}
 
+		// Check if the property is in the path
+		typeIn := inQuery
+		if strings.Contains(name, "{"+name+"}") {
+			typeIn = inPath
+		}
+
 		out = append(out, OpenAPIParameter{
 			Name:        name,
-			In:          "query",
+			In:          typeIn,
 			Required:    false,
 			Description: desc,
 			Schema:      s,
@@ -261,7 +294,150 @@ func parametersFromJSONSchemaObject(schemaJSON string) []OpenAPIParameter {
 	return out
 }
 
-func queryParamsFromValue(v any) []OpenAPIParameter {
+func rawSchemaToOpenAPIParameterSchema(raw map[string]any) OpenAPISchema {
+	s := OpenAPISchema{}
+
+	if typ, ok := raw["type"].(string); ok {
+		s.Type = typ
+	}
+
+	if format, ok := raw["format"].(string); ok {
+		s.Format = format
+	}
+
+	if props, ok := raw["properties"].(map[string]any); ok {
+		s.Properties = make(map[string]OpenAPISchema, len(props))
+		for name, propRaw := range props {
+			if propMap, ok := propRaw.(map[string]any); ok {
+				s.Properties[name] = rawSchemaToOpenAPIParameterSchema(propMap)
+			}
+		}
+	}
+
+	if items, ok := raw["items"].(map[string]any); ok {
+		itemSchema := rawSchemaToOpenAPIParameterSchema(items)
+		s.Items = &itemSchema
+	}
+
+	if additionalProperties, ok := raw["additionalProperties"]; ok {
+		s.AdditionalProperties = additionalProperties
+	}
+
+	if requiredRaw, ok := raw["required"].([]any); ok {
+		for _, item := range requiredRaw {
+			if name, ok := item.(string); ok {
+				s.Required = append(s.Required, name)
+			}
+		}
+	}
+
+	if s.Type == "" {
+		s.Type = "string"
+	}
+
+	return s
+}
+
+func queryParamsFromSchemaAny(schema any, path string) []OpenAPIParameter {
+	switch s := schema.(type) {
+	case nil:
+		return nil
+
+	case map[string]any:
+		return queryParamsFromRawSchema(s, path)
+
+	case *OpenAPISchema:
+		if s == nil {
+			return nil
+		}
+		return queryParamsFromOpenAPISchema(*s, path)
+
+	case OpenAPISchema:
+		return queryParamsFromOpenAPISchema(s, path)
+
+	default:
+		return queryParamsFromValue(s, path)
+	}
+}
+
+func queryParamsFromOpenAPISchema(schema OpenAPISchema, path string) []OpenAPIParameter {
+	if schema.Type != typeObject || len(schema.Properties) == 0 {
+		return nil
+	}
+
+	requiredSet := make(map[string]bool, len(schema.Required))
+	for _, name := range schema.Required {
+		requiredSet[name] = true
+	}
+
+	params := make([]OpenAPIParameter, 0, len(schema.Properties))
+
+	for name, prop := range schema.Properties {
+		typeIn := "query"
+		required := requiredSet[name]
+
+		if strings.Contains(path, "{"+name+"}") {
+			typeIn = "path"
+			required = true
+		}
+
+		params = append(params, OpenAPIParameter{
+			Name:     name,
+			In:       typeIn,
+			Required: required,
+			Schema:   prop,
+		})
+	}
+
+	return params
+}
+
+func queryParamsFromRawSchema(schema map[string]any, path string) []OpenAPIParameter {
+	props, _ := schema["properties"].(map[string]any)
+	if len(props) == 0 {
+		return nil
+	}
+
+	requiredSet := map[string]bool{}
+	if requiredRaw, ok := schema["required"].([]any); ok {
+		for _, item := range requiredRaw {
+			if name, ok := item.(string); ok {
+				requiredSet[name] = true
+			}
+		}
+	}
+
+	params := make([]OpenAPIParameter, 0, len(props))
+
+	for name, rawProp := range props {
+		prop, ok := rawProp.(map[string]any)
+		if !ok || len(prop) == 0 {
+			continue
+		}
+
+		typeIn := "query"
+		required := requiredSet[name]
+
+		if strings.Contains(path, "{"+name+"}") {
+			typeIn = "path"
+			required = true
+		}
+
+		desc, _ := prop["description"].(string)
+
+		params = append(params, OpenAPIParameter{
+			Name:        name,
+			In:          typeIn,
+			Required:    required,
+			Description: desc,
+			Schema:      rawSchemaToOpenAPIParameterSchema(prop),
+		})
+	}
+
+	return params
+}
+
+func queryParamsFromValue(v any, path string) []OpenAPIParameter {
 	if v == nil {
 		return nil
 	}
@@ -274,6 +450,9 @@ func queryParamsFromValue(v any) []OpenAPIParameter {
 	}
 
 	var params []OpenAPIParameter
+
+	const inQuery = "query"
+	const inPath = "path"
 
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
@@ -306,13 +485,21 @@ func queryParamsFromValue(v any) []OpenAPIParameter {
 
 		// Query params cannot be arbitrary objects in practice.
 		// If schema is object/any, degrade to string (safe default).
-		if s.Type == "" || s.Type == "object" {
+		if (s.Type == "") || (s.Type == typeObject) {
 			s = OpenAPISchema{Type: "string"}
+		}
+
+		// Check if the field is in the path
+		typeIn := inQuery
+		if strings.Contains(path, "{"+name+"}") {
+			typeIn = inPath
+			// Path parameters must be required
+			required = true
 		}
 
 		params = append(params, OpenAPIParameter{
 			Name:        name,
-			In:          "query",
+			In:          typeIn,
 			Required:    required,
 			Description: strings.TrimSpace(f.Tag.Get("desc")),
 			Schema:      s,
@@ -376,7 +563,7 @@ func schemaFromTypeInternal(t reflect.Type, seen map[reflect.Type]bool) OpenAPIS
 	// Detect json.RawMessage
 	if t == rawMessageType {
 		return OpenAPISchema{
-			Type:                 "object",
+			Type:                 typeObject,
 			AdditionalProperties: &OpenAPISchema{},
 		}
 	}
@@ -431,13 +618,13 @@ func schemaFromTypeInternal(t reflect.Type, seen map[reflect.Type]bool) OpenAPIS
 	case reflect.Map:
 		// OpenAPI requires map keys to be string for JSON objects. If not string, fall back.
 		if t.Key().Kind() != reflect.String {
-			return OpenAPISchema{Type: "object"}
+			return OpenAPISchema{Type: typeObject}
 		}
 
 		// map[string]interface{} => additionalProperties: {}
 		valSchema := schemaFromTypeInternal(t.Elem(), seen)
 		return OpenAPISchema{
-			Type:                 "object",
+			Type:                 typeObject,
 			AdditionalProperties: &valSchema,
 		}
 
@@ -498,7 +685,7 @@ func schemaFromTypeInternal(t reflect.Type, seen map[reflect.Type]bool) OpenAPIS
 		}
 
 		s := OpenAPISchema{
-			Type:       "object",
+			Type:       typeObject,
 			Properties: props,
 		}
 
@@ -514,19 +701,84 @@ func schemaFromTypeInternal(t reflect.Type, seen map[reflect.Type]bool) OpenAPIS
 	}
 }
 
-func schemaAnyFromJSON(schemaJSON string) *OpenAPISchema {
+func schemaAnyFromJSON(schemaJSON string) any {
 	schemaJSON = strings.TrimSpace(schemaJSON)
 	if schemaJSON == "" {
 		return nil
 	}
 
-	var schema OpenAPISchema
+	var schema map[string]any
 	if err := json.Unmarshal([]byte(schemaJSON), &schema); err != nil {
 		DebugMsg(DbgLvlError, "Invalid plugin OpenAPI schema: %v", err)
 		return nil
 	}
 
-	return &schema
+	if len(schema) == 0 {
+		DebugMsg(DbgLvlError, "Invalid plugin OpenAPI schema: empty JSON object")
+		return nil
+	}
+
+	if !looksLikeOpenAPISchema(schema) {
+		DebugMsg(DbgLvlWarn, "Plugin OpenAPI schema does not contain common schema keywords")
+	}
+
+	return schema
+}
+
+func looksLikeOpenAPISchema(schema map[string]any) bool {
+	commonKeys := []string{
+		"$ref",
+		"type",
+		"format",
+		"properties",
+		"items",
+		"required",
+		"additionalProperties",
+		"oneOf",
+		"anyOf",
+		"allOf",
+		"enum",
+		"description",
+		"default",
+		"minimum",
+		"maximum",
+		"minLength",
+		"maxLength",
+		"minItems",
+		"maxItems",
+		"pattern",
+		"nullable",
+	}
+
+	for _, key := range commonKeys {
+		if _, ok := schema[key]; ok {
+			return true
+		}
+	}
+
+	return false
+}
+
+func schemaForRouteValue(v any) any {
+	switch s := v.(type) {
+	case nil:
+		return nil
+
+	case map[string]any:
+		return s
+
+	case *OpenAPISchema:
+		if s != nil {
+			return s
+		}
+		return nil
+
+	case OpenAPISchema:
+		return s
+
+	default:
+		return schemaFromValue(s)
+	}
 }
 
 // BuildOpenAPISpec generates an OpenAPI specification based on the registered API routes and the provided options.
@@ -537,7 +789,9 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 			Title:       defaultIfEmpty(opt.Title, "CROWler API"),
 			Version:     defaultIfEmpty(opt.Version, "v1"),
 			Description: opt.Description,
+			Contact:     opt.Contact,
 		},
+		Tags:  opt.Tags,
 		Paths: make(map[string]OpenAPIPath),
 		Components: OpenAPIComponents{
 			Schemas: map[string]any{},
@@ -547,6 +801,11 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 	if strings.TrimSpace(opt.ServerURL) != "" {
 		spec.Servers = []OpenAPIServer{
 			{URL: strings.TrimRight(opt.ServerURL, "/")},
+		}
+	} else {
+		// default to localhost with no port, since we don't necessarily know the port and it can be proxied
+		spec.Servers = []OpenAPIServer{
+			{URL: "http://localhost"},
 		}
 	}
 
@@ -565,20 +824,7 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 				continue
 			}
 
-			var respSchema any
-
-			switch v := r.ResponseType.(type) {
-			case *OpenAPISchema:
-				if v != nil {
-					respSchema = v
-				}
-			case OpenAPISchema:
-				respSchema = v
-			default:
-				if v != nil {
-					respSchema = schemaFromValue(v)
-				}
-			}
+			respSchema := schemaForRouteValue(r.ResponseType)
 
 			successCode := strconv.Itoa(r.SuccessStatus)
 
@@ -601,7 +847,7 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 					Content: map[string]OpenAPIContent{
 						"application/json": {
 							Schema: OpenAPISchema{
-								Type:       "object",
+								Type:       typeObject,
 								Properties: schemaFromValue(StdAPIError{}).Properties,
 							},
 						},
@@ -612,7 +858,7 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 					Content: map[string]OpenAPIContent{
 						"application/json": {
 							Schema: OpenAPISchema{
-								Type:       "object",
+								Type:       typeObject,
 								Properties: schemaFromValue(StdAPIError{}).Properties,
 							},
 						},
@@ -628,59 +874,15 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 				Responses:   responses,
 			}
 
+			const inQuery = "query"
+			const inPath = "path"
+
 			// Add query parameters from QueryType for GET
 			if (method == getStr) && (r.QueryType != nil) {
-
-				switch v := r.QueryType.(type) {
-
-				case *OpenAPISchema:
-					if v == nil {
-						break
-					}
-					// plugin JSON schema
-					if v.Type == "object" && v.Properties != nil {
-						for name, prop := range v.Properties {
-							op.Parameters = append(op.Parameters, OpenAPIParameter{
-								Name:   name,
-								In:     "query",
-								Schema: prop,
-							})
-						}
-					}
-
-				case OpenAPISchema:
-					if v.Type == "object" && v.Properties != nil {
-						for name, prop := range v.Properties {
-							op.Parameters = append(op.Parameters, OpenAPIParameter{
-								Name:   name,
-								In:     "query",
-								Schema: prop,
-							})
-						}
-					}
-
-				default:
-					// normal struct reflection
-					if v != nil {
-						op.Parameters = append(op.Parameters, queryParamsFromValue(v)...)
-					}
-				}
+				op.Parameters = append(op.Parameters, queryParamsFromSchemaAny(r.QueryType, r.Path)...)
 			}
 
-			var bodySchema any
-
-			switch v := r.BodyType.(type) {
-			case *OpenAPISchema:
-				if v != nil {
-					bodySchema = v
-				}
-			case OpenAPISchema:
-				bodySchema = v
-			default:
-				if v != nil {
-					bodySchema = schemaFromValue(v)
-				}
-			}
+			bodySchema := schemaForRouteValue(r.BodyType)
 
 			// Add JSON body for non-GET requests if BodyType is something other than nil.
 			if (bodySchema != nil) && methodAllowsBody(method) {
@@ -742,13 +944,16 @@ func makeOperationID(method, path string) string {
 }
 
 func tagsForRoute(r APIRoute) []string {
+	if len(r.Tag) > 0 {
+		return r.Tag
+	}
 	if r.Plugin {
-		return []string{"plugins"}
+		return []string{"Plugins"}
 	}
 	if r.ConsoleOnly {
-		return []string{"console"}
+		return []string{"Console"}
 	}
-	return []string{"api"}
+	return []string{"API"}
 }
 
 func shortSummary(desc string) string {

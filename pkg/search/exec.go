@@ -3,7 +3,8 @@ package search
 
 import (
 	"strconv"
-	//cdb "github.com/pzaino/thecrowler/pkg/database"
+
+	cmn "github.com/pzaino/thecrowler/pkg/common"
 )
 
 // ExecParsed executes a parsed query and returns the results.
@@ -16,6 +17,7 @@ func (s *Searcher) ExecParsed(p *ParsedQuery) (*QueryResult, error) {
 
 	sqlQuery += " LIMIT $" + strconv.Itoa(limitIndex) +
 		" OFFSET $" + strconv.Itoa(offsetIndex) + ";"
+	cmn.DebugMsg(cmn.DbgLvlDebug3, "Generated SQL query: %s; parameters: %v", sqlQuery, params)
 
 	rows, err := (*s.DB).ExecuteQuery(sqlQuery, params...)
 	if err != nil {
@@ -29,4 +31,23 @@ func (s *Searcher) ExecParsed(p *ParsedQuery) (*QueryResult, error) {
 		SQL:    sqlQuery,
 		Params: params,
 	}, nil
+}
+
+// Execute parses a dorking query against queryBody and executes it with
+// pagination. Callers that need a custom ORDER BY should use ExecuteOrdered.
+func (s *Searcher) Execute(queryBody, query, parsingType string) (*QueryResult, error) {
+	return s.ExecuteOrdered(queryBody, query, parsingType, "")
+}
+
+// ExecuteOrdered parses and executes a dorking query, appending orderBy before
+// the LIMIT and OFFSET clauses.
+func (s *Searcher) ExecuteOrdered(queryBody, query, parsingType, orderBy string) (*QueryResult, error) {
+	parsed, err := s.ParseAdvancedQuery(queryBody, query, parsingType)
+	if err != nil {
+		return nil, err
+	}
+	if orderBy != "" {
+		parsed.sqlQuery += " " + orderBy
+	}
+	return s.ExecParsed(&parsed)
 }

@@ -460,3 +460,76 @@ debug_level: 0
 ```
 
 The above configuration has been tested with the docker images we provide with this repo.
+
+## Time-series configuration
+
+Time-series metric extraction is configured with the optional top-level
+`timeseries` section. The section defaults to `enabled: false` and has no
+crawler or database side effects by itself. See the
+[configuration reference](./config_reference.md#timeseries) for all source
+kinds, enums, validation rules, privacy controls, and cardinality limits.
+
+A minimal deployment-specific metric looks like this:
+
+```yaml
+timeseries:
+  enabled: false
+  metrics:
+    - key: example_response_duration
+      enabled: true
+      source_kind: object_attribute
+      object_type: httpinfo
+      selector:
+        attribute_key: response_duration
+      value_type: duration
+      aggregates: [count, average, p95]
+      time_basis: source_timestamp
+      timestamp_selector:
+        path: captured_at
+      dimensions:
+        - key: response_class
+          selector:
+            path: status_class
+```
+
+The example remains globally disabled and is illustrative only; the default
+configuration does not seed domain-specific production metrics. If a metric
+does not specify `failure_policy`, it inherits `log_skip`. `fail_indexing` propagates an emitter error through the indexing transaction; `log`,
+`skip`, and the default `log_skip` keep indexing non-fatal.
+
+For a complete workflow, safe examples, emitter timing, registration boundary, aggregation, reaggregation, retention, and API queries, see [Time-series observations and aggregates](timeseries.md). All files under [`examples/timeseries/`](../examples/timeseries/) are examples rather than built-in behavior.
+
+## API authentication and authorization
+
+Both `api` and `events` support the same `auth` configuration model so horizontally scaled replicas validate the same bearer tokens and consult the shared PostgreSQL revocation table. Leave `enabled: false` to preserve unauthenticated deployments.
+
+```yaml
+api:
+  auth:
+    enabled: true
+    mode: hybrid # local, oidc, hybrid, or disabled
+    issuer: crowler
+    audience: crowler-api
+    hmac_secret: ${CROWLER_AUTH_HMAC_SECRET}
+    token_ttl: 3600
+    local:
+      enabled: true
+    external:
+      enabled: true
+      issuer: https://issuer.example.com/
+      jwks_url: https://issuer.example.com/.well-known/jwks.json
+      audience: crowler-api
+
+events:
+  auth:
+    enabled: true
+    mode: hybrid
+    issuer: crowler
+    audience: crowler-events
+    hmac_secret: ${CROWLER_AUTH_HMAC_SECRET}
+    token_ttl: 3600
+    local:
+      enabled: true
+```
+
+Local users, roles, scopes, role-scope grants, user-scope grants, and token revocations are stored in PostgreSQL (`Users`, `AuthRoles`, `AuthScopes`, `UserRoles`, `UserScopes`, `RoleScopes`, and `AuthRevokedTokens`). Local passwords use Argon2id hashes. Clients obtain a local access token with `POST /v1/auth/login` and then send `Authorization: Bearer <token>` for REST requests. WebSocket clients authenticate with the same header or an `access_token` query parameter.

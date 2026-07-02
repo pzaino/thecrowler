@@ -1,7 +1,7 @@
 
 # Features
 
-The **CROWler** is a comprehensive web crawling and scraping tool designed to perform various tasks related to web content discovery and data collection. Below is a detailed list of its features, along with their descriptions and benefits.
+The **CROWler** is a comprehensive a self-hosted, event-driven Content Discovery and Intelligence development platform designed for advanced crawling, scraping, detection, and automation using real browsers, data-connectors, rulesets, plugins, and agents. Below is a detailed list of its features, along with their descriptions and benefits.
 
 ## Table of Contents
 
@@ -54,7 +54,7 @@ The **CROWler** is a comprehensive web crawling and scraping tool designed to pe
   - *Benefits*: Helps categorize and organize content for analysis and indexing. Keywords can also be used in security searches and events to identify sources of interest.
 
 - **Site Language Detection**: Detects the language of a website to support multilingual crawling and content analysis. Even in the absence of language tags, CROWler can detect the language of a page.
-  - *Benefits*: Facilitates language-specific processing and analysis of web content.
+  - *Benefits*: Facilitates language-specific processing and analysis of discovered content (from the web, emails, filesystems, sensors and other data-connectors).
 
 - **Content Analysis**: Analyzes the content of web pages to extract metadata, entities, and other structured information.
   - *Benefits*: Provides insights into the content of web pages for categorization, indexing, and analysis.
@@ -292,7 +292,7 @@ The **CROWler** is a comprehensive web crawling and scraping tool designed to pe
 ## (Features Group 19) AI and Traditional Agents
 
 - **AI Integration**: Supports integration with AI models for data analysis, entity recognition, and other tasks.
-  - *Benefits*: Enhances data processing capabilities and enables advanced analysis of web content.
+  - *Benefits*: Enhances data processing capabilities and enables advanced analysis of collected content (from the web, emails, filesystems, sensors, and other data-connectors).
 
 - **AI Agents**: Supports AI agents for performing complex tasks like natural language processing, image recognition, and sentiment analysis.
   - *Benefits*: Enables advanced data processing and analysis using AI techniques.
@@ -363,5 +363,19 @@ The **CROWler** is a comprehensive web crawling and scraping tool designed to pe
   - *Benefits*: Streamlines the development and deployment process, ensuring that changes to CROWler configurations are tested and deployed efficiently.
 - **ChatGPT AI Chatbot service**: CROWler has a dedicated ChatGPT AI Chatbot service for interactive support and assistance.
   - *Benefits*: Provides users with instant access to help and guidance while using CROWler, improving the user experience.
+
+## (Features Group 22) Configurable user-data time series observations and materialized aggregate buckets
+
+- The v1 time-series feature provides:
+  - typed raw observations
+  - aggregate-first chart buckets
+  - bounded drill-down
+  - change detection
+  - dedupe
+  - late-data overlap
+  - explicit reaggregation
+  - retention
+  - delayed entity assignment for persisted crawler/discovery facts.
+  -It supports PostgreSQL, MySQL, and SQLite storage. It intentionally excludes worker/VDI health, API latency, queues, scheduler/database health, and process telemetry.
 
 ---

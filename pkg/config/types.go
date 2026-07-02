@@ -385,29 +385,70 @@ type PlatformInfo struct {
 /////////////////////////////////////////////////
 //// ---------- API Configuration ---------- ////
 
+// AuthConfig represents shared authentication and authorization settings for API services.
+type AuthConfig struct {
+	Enabled    bool               `json:"enabled" yaml:"enabled"`
+	Mode       string             `json:"mode" yaml:"mode"`
+	Issuer     string             `json:"issuer" yaml:"issuer"`
+	Audience   string             `json:"audience" yaml:"audience"`
+	HMACSecret string             `json:"hmac_secret" yaml:"hmac_secret"`
+	TokenTTL   int                `json:"token_ttl" yaml:"token_ttl"`
+	Local      LocalAuthConfig    `json:"local" yaml:"local"`
+	External   ExternalAuthConfig `json:"external" yaml:"external"`
+}
+
+type LocalAuthConfig struct {
+	Enabled bool `json:"enabled" yaml:"enabled"`
+}
+
+type ExternalAuthConfig struct {
+	Enabled  bool   `json:"enabled" yaml:"enabled"`
+	Issuer   string `json:"issuer" yaml:"issuer"`
+	JWKSURL  string `json:"jwks_url" yaml:"jwks_url"`
+	Audience string `json:"audience" yaml:"audience"`
+}
+
+// CORSConfig represents service-specific CORS configuration.
+type CORSConfig struct {
+	Enabled        bool     `json:"enabled" yaml:"enabled"`                 // Whether to enable CORS response headers.
+	AllowedOrigins []string `json:"allowed_origins" yaml:"allowed_origins"` // Exact origins allowed by CORS; use ["*"] to allow any origin.
+}
+
+// WebSocketConfig represents optional WebSocket live update settings.
+type WebSocketConfig struct {
+	Enabled           bool     `json:"enabled" yaml:"enabled"`
+	AllowedOrigins    []string `json:"allowed_origins" yaml:"allowed_origins"`
+	HeartbeatInterval int      `json:"heartbeat_interval" yaml:"heartbeat_interval"`
+	WriteQueueSize    int      `json:"write_queue_size" yaml:"write_queue_size"`
+	WriteTimeout      int      `json:"write_timeout" yaml:"write_timeout"`
+}
+
 // API represents the API configuration
 type API struct {
-	URL               string     `yaml:"url"`                                              // Base URL for the API (e.g., "http://localhost:8080/api")
-	Host              string     `yaml:"host"`                                             // Hostname of the API server
-	Port              int        `yaml:"port"`                                             // Port number of the API server
-	Timeout           int        `yaml:"timeout"`                                          // Timeout for API requests (in seconds)
-	IdleTimeout       int        `yaml:"idle_timeout"`                                     // Idle timeout for API connections (in seconds)
-	ContentSearch     bool       `yaml:"content_search"`                                   // Whether to search in the content too or not
-	DisableDefault    bool       `yaml:"enable_default"`                                   // Whether to enable the default API endpoints or not
-	EnableAPIDocs     bool       `json:"enable_api_docs" yaml:"enable_api_docs"`           // Whether to enable API documentation or not
-	ReturnContent     bool       `yaml:"return_content"`                                   // Whether to return the content or not
-	SSLMode           string     `yaml:"sslmode"`                                          // SSL mode for API connection (e.g., "disable")
-	CertFile          string     `yaml:"cert_file"`                                        // Path to the SSL certificate file
-	KeyFile           string     `yaml:"key_file"`                                         // Path to the SSL key file
-	RateLimit         string     `yaml:"rate_limit"`                                       // Rate limit values are tuples (for ex. "1,3") where 1 means allows 1 request per second with a burst of 3 requests
-	EnableConsole     bool       `yaml:"enable_console"`                                   // Whether to enable the console or not
-	ReadHeaderTimeout int        `yaml:"readheader_timeout"`                               // ReadHeaderTimeout is the amount of time allowed to read request headers.
-	ReadTimeout       int        `yaml:"read_timeout"`                                     // ReadTimeout is the maximum duration for reading the entire request
-	WriteTimeout      int        `yaml:"write_timeout"`                                    // WriteTimeout
-	Return404         bool       `yaml:"return_404"`                                       // Whether to return 404 for not found or not
-	AllowedIPs        []string   `yaml:"allowed_ips"`                                      // Allowed origins for CORS
-	Plugins           APIPlugins `yaml:"plugins"`                                          // API plugins configuration
-	UseGoogleCloudRun bool       `json:"use_google_cloud_run" yaml:"use_google_cloud_run"` // Whether to use Google Cloud Run for the events handler or not
+	URL               string          `yaml:"url"`                                              // Base URL for the API (e.g., "http://localhost:8080/api")
+	Host              string          `yaml:"host"`                                             // Hostname of the API server
+	Port              int             `yaml:"port"`                                             // Port number of the API server
+	Timeout           int             `yaml:"timeout"`                                          // Timeout for API requests (in seconds)
+	IdleTimeout       int             `yaml:"idle_timeout"`                                     // Idle timeout for API connections (in seconds)
+	ContentSearch     bool            `yaml:"content_search"`                                   // Whether to search in the content too or not
+	DisableDefault    bool            `yaml:"enable_default"`                                   // Whether to enable the default API endpoints or not
+	EnableAPIDocs     bool            `json:"enable_api_docs" yaml:"enable_api_docs"`           // Whether to enable API documentation or not
+	ReturnContent     bool            `yaml:"return_content"`                                   // Whether to return the content or not
+	SSLMode           string          `yaml:"sslmode"`                                          // SSL mode for API connection (e.g., "disable")
+	CertFile          string          `yaml:"cert_file"`                                        // Path to the SSL certificate file
+	KeyFile           string          `yaml:"key_file"`                                         // Path to the SSL key file
+	RateLimit         string          `yaml:"rate_limit"`                                       // Rate limit values are tuples (for ex. "1,3") where 1 means allows 1 request per second with a burst of 3 requests
+	EnableConsole     bool            `yaml:"enable_console"`                                   // Whether to enable the console or not
+	ReadHeaderTimeout int             `yaml:"readheader_timeout"`                               // ReadHeaderTimeout is the amount of time allowed to read request headers.
+	ReadTimeout       int             `yaml:"read_timeout"`                                     // ReadTimeout is the maximum duration for reading the entire request
+	WriteTimeout      int             `yaml:"write_timeout"`                                    // WriteTimeout
+	Return404         bool            `yaml:"return_404"`                                       // Whether to return 404 for not found or not
+	AllowedIPs        []string        `yaml:"allowed_ips"`                                      // Allowed IP addresses and CIDRs for API access
+	CORS              CORSConfig      `json:"cors" yaml:"cors"`                                 // Allowed origins for CORS
+	Plugins           APIPlugins      `yaml:"plugins"`                                          // API plugins configuration
+	UseGoogleCloudRun bool            `json:"use_google_cloud_run" yaml:"use_google_cloud_run"` // Whether to use Google Cloud Run for the events handler or not
+	WebSocket         WebSocketConfig `json:"websocket" yaml:"websocket"`                       // WebSocket live updates configuration
+	Auth              AuthConfig      `json:"auth" yaml:"auth"`                                 // Authentication and authorization configuration
 }
 
 // APIPlugins represents the API plugins configuration
@@ -465,28 +506,31 @@ type SysMngConfig struct {
 
 // EventsConfig represents the events handler service configuration
 type EventsConfig struct {
-	URL                      string `json:"url" yaml:"url"`                                                 // Base URL for the events handler API (e.g., "http://localhost:8080/api/events")
-	Host                     string `json:"host" yaml:"host"`                                               // Hostname of the events handler server
-	Port                     int    `json:"port" yaml:"port"`                                               // Port number of the events handler server
-	Timeout                  int    `json:"timeout" yaml:"timeout"`                                         // Timeout for events handler requests (in seconds)
-	IdleTimeout              int    `json:"idle_timeout" yaml:"idle_timeout"`                               // Idle timeout for events handler requests (in seconds)
-	SSLMode                  string `json:"sslmode" yaml:"sslmode"`                                         // SSL mode for events handler connection (e.g., "disable")
-	CertFile                 string `json:"cert_file" yaml:"cert_file"`                                     // Path to the SSL certificate file
-	KeyFile                  string `json:"key_file" yaml:"key_file"`                                       // Path to the SSL key file
-	RateLimit                string `json:"rate_limit" yaml:"rate_limit"`                                   // Rate limit values are tuples (for ex. "1,3") where 1 means allows 1 request per second with a burst of 3 requests
-	ReadHeaderTimeout        int    `json:"readheader_timeout" yaml:"readheader_timeout"`                   // ReadHeaderTimeout is the amount of time allowed to read request headers.
-	ReadTimeout              int    `json:"read_timeout" yaml:"read_timeout"`                               // ReadTimeout is the maximum duration for reading the entire request
-	WriteTimeout             int    `json:"write_timeout" yaml:"write_timeout"`                             // WriteTimeout
-	MasterEventsManager      string `json:"master_events_manager" yaml:"master_events_manager"`             // Master events manager's name (e.g., "crowler-events-0", "crowler-events-10")
-	EnableAPIDocs            bool   `json:"enable_api_docs" yaml:"enable_api_docs"`                         // Whether to enable API documentation or not
-	EventRemoval             string `json:"automatic_events_removal" yaml:"automatic_events_removal"`       // Automatic events removal from the database (always, fails, success, never or "")
-	HeartbeatEnabled         bool   `json:"heartbeat_enabled" yaml:"heartbeat_enabled"`                     // Whether to enable heartbeat or not
-	HeartbeatInterval        string `json:"heartbeat_interval" yaml:"heartbeat_interval"`                   // Heartbeat interval (in seconds)
-	HeartbeatTimeout         string `json:"heartbeat_timeout" yaml:"heartbeat_timeout"`                     // Heartbeat timeout (in seconds)
-	HeartbeatLog             bool   `json:"heartbeat_log" yaml:"heartbeat_log"`                             // Whether to log heartbeat or not
-	SysDBMaintenance         string `json:"sys_db_maintenance_schedule" yaml:"sys_db_maintenance_schedule"` // System database maintenance interval (in hours)
-	SysDBWebObjectsRetention string `json:"sys_db_webobjects_retention" yaml:"sys_db_webobjects_retention"` // System database web objects retention period (in hours/days/months/years)
-	UseGoogleCloudRun        bool   `json:"use_google_cloud_run" yaml:"use_google_cloud_run"`               // Whether to use Google Cloud Run for the events handler or not
+	URL                      string          `json:"url" yaml:"url"`                                                 // Base URL for the events handler API (e.g., "http://localhost:8080/api/events")
+	Host                     string          `json:"host" yaml:"host"`                                               // Hostname of the events handler server
+	Port                     int             `json:"port" yaml:"port"`                                               // Port number of the events handler server
+	Timeout                  int             `json:"timeout" yaml:"timeout"`                                         // Timeout for events handler requests (in seconds)
+	IdleTimeout              int             `json:"idle_timeout" yaml:"idle_timeout"`                               // Idle timeout for events handler requests (in seconds)
+	SSLMode                  string          `json:"sslmode" yaml:"sslmode"`                                         // SSL mode for events handler connection (e.g., "disable")
+	CertFile                 string          `json:"cert_file" yaml:"cert_file"`                                     // Path to the SSL certificate file
+	KeyFile                  string          `json:"key_file" yaml:"key_file"`                                       // Path to the SSL key file
+	RateLimit                string          `json:"rate_limit" yaml:"rate_limit"`                                   // Rate limit values are tuples (for ex. "1,3") where 1 means allows 1 request per second with a burst of 3 requests
+	ReadHeaderTimeout        int             `json:"readheader_timeout" yaml:"readheader_timeout"`                   // ReadHeaderTimeout is the amount of time allowed to read request headers.
+	ReadTimeout              int             `json:"read_timeout" yaml:"read_timeout"`                               // ReadTimeout is the maximum duration for reading the entire request
+	WriteTimeout             int             `json:"write_timeout" yaml:"write_timeout"`                             // WriteTimeout
+	MasterEventsManager      string          `json:"master_events_manager" yaml:"master_events_manager"`             // Master events manager's name (e.g., "crowler-events-0", "crowler-events-10")
+	EnableAPIDocs            bool            `json:"enable_api_docs" yaml:"enable_api_docs"`                         // Whether to enable API documentation or not
+	EventRemoval             string          `json:"automatic_events_removal" yaml:"automatic_events_removal"`       // Automatic events removal from the database (always, fails, success, never or "")
+	HeartbeatEnabled         bool            `json:"heartbeat_enabled" yaml:"heartbeat_enabled"`                     // Whether to enable heartbeat or not
+	HeartbeatInterval        string          `json:"heartbeat_interval" yaml:"heartbeat_interval"`                   // Heartbeat interval (in seconds)
+	HeartbeatTimeout         string          `json:"heartbeat_timeout" yaml:"heartbeat_timeout"`                     // Heartbeat timeout (in seconds)
+	HeartbeatLog             bool            `json:"heartbeat_log" yaml:"heartbeat_log"`                             // Whether to log heartbeat or not
+	SysDBMaintenance         string          `json:"sys_db_maintenance_schedule" yaml:"sys_db_maintenance_schedule"` // System database maintenance interval (in hours)
+	SysDBWebObjectsRetention string          `json:"sys_db_webobjects_retention" yaml:"sys_db_webobjects_retention"` // System database web objects retention period (in hours/days/months/years)
+	UseGoogleCloudRun        bool            `json:"use_google_cloud_run" yaml:"use_google_cloud_run"`               // Whether to use Google Cloud Run for the events handler or not
+	CORS                     CORSConfig      `json:"cors" yaml:"cors"`                                               // CORS configuration for the Events Manager API
+	WebSocket                WebSocketConfig `json:"websocket" yaml:"websocket"`                                     // WebSocket live updates configuration
+	Auth                     AuthConfig      `json:"auth" yaml:"auth"`                                               // Authentication and authorization configuration
 }
 
 /////////////////////////////////////////////////
@@ -569,6 +613,80 @@ type PluginConfig struct {
 	Type             string                 `yaml:"type"`              // Type of storage (e.g., "local", "http", "volume", "queue", "s3")
 	SSLMode          string                 `yaml:"sslmode"`           // SSL mode for API connection (e.g., "disable")
 	Refresh          int                    `yaml:"refresh"`           // Refresh interval for the ruleset (in seconds)
+}
+
+/////////////////////////////////////////////////
+//// ------- Information Seed Config ------- ////
+
+// InformationSeedBrowserConfig contains the bounded, non-privileged settings
+// used by an information seed provider that explicitly opts in to WebDriver.
+type InformationSeedBrowserConfig struct {
+	VDIAllowList             []string `json:"vdi_allow_list" yaml:"vdi_allow_list"`                                             // VDI names the provider may lease
+	NavigationTimeout        int      `json:"navigation_timeout" yaml:"navigation_timeout"`                                     // Navigation timeout (in seconds)
+	PageReadinessTimeout     int      `json:"page_readiness_timeout" yaml:"page_readiness_timeout"`                             // DOM readiness timeout (in seconds)
+	HBSEnabled               bool     `json:"hbs_enabled" yaml:"hbs_enabled"`                                                   // Whether human-behavior simulation is enabled
+	SeleniumFallback         bool     `json:"selenium_fallback" yaml:"selenium_fallback"`                                       // Whether Selenium actions may be used when HBS fails
+	InitialActions           []string `json:"initial_actions" yaml:"initial_actions"`                                           // Action-rule references run after initial navigation
+	ConsentActions           []string `json:"consent_actions" yaml:"consent_actions"`                                           // Action-rule references used for consent handling
+	QueryActions             []string `json:"query_actions" yaml:"query_actions"`                                               // Action-rule references used to submit a query
+	PaginationActions        []string `json:"pagination_actions" yaml:"pagination_actions"`                                     // Action-rule references used to paginate results
+	ScrapingRules            []string `json:"scraping_rules" yaml:"scraping_rules"`                                             // Scraping-rule references used to extract candidates
+	AllowedNavigationHosts   []string `json:"allowed_navigation_hosts" yaml:"allowed_navigation_hosts"`                         // Exact hosts or leading-wildcard host patterns allowed during navigation
+	MaxPages                 int      `json:"max_pages" yaml:"max_pages"`                                                       // Maximum browser result pages per seed
+	MaxRequests              int      `json:"max_requests" yaml:"max_requests"`                                                 // Maximum browser requests/actions consuming the request budget
+	MaxCandidates            int      `json:"max_candidates" yaml:"max_candidates"`                                             // Maximum candidates returned by browser extraction
+	ScreenshotOnError        bool     `json:"screenshot_on_error" yaml:"screenshot_on_error"`                                   // Whether a diagnostic screenshot may be captured on failure
+	BrowserType              int      `json:"browser_type,omitempty" yaml:"browser_type,omitempty"`                             // Reserved privileged override; seed providers may not set it
+	SetGPUPatch              bool     `json:"set_gpu_patch,omitempty" yaml:"set_gpu_patch,omitempty"`                           // Reserved privileged override; seed providers may not set it
+	SetVDIGPUPatch           bool     `json:"set_vdi_gpu_patch,omitempty" yaml:"set_vdi_gpu_patch,omitempty"`                   // Reserved privileged override; seed providers may not set it
+	ReinforceBrowserSettings bool     `json:"reinforce_browser_settings,omitempty" yaml:"reinforce_browser_settings,omitempty"` // Reserved privileged override; seed providers may not set it
+}
+
+// InformationSeedProviderConfig represents credentials and runtime settings for
+// an information seed discovery provider.
+type InformationSeedProviderConfig struct {
+	Provider    string                       `json:"provider" yaml:"provider"`           // Provider identifier (for example, "google", "bing", "plugin")
+	Transport   string                       `json:"transport" yaml:"transport"`         // Provider transport; WebDriver must be explicitly selected
+	Browser     InformationSeedBrowserConfig `json:"browser" yaml:"browser"`             // Bounded browser settings used only by the WebDriver transport
+	Host        string                       `json:"host" yaml:"host"`                   // Provider host or base URL
+	Endpoint    string                       `json:"endpoint" yaml:"endpoint"`           // Provider endpoint path
+	APIKeyLabel string                       `json:"api_key_label" yaml:"api_key_label"` // Header or query parameter name for API keys
+	APIKey      string                       `json:"api_key" yaml:"api_key"`             // API key credential
+	APIID       string                       `json:"api_id" yaml:"api_id"`               // API identifier credential
+	APISecret   string                       `json:"api_secret" yaml:"api_secret"`       // API secret credential
+	APIToken    string                       `json:"api_token" yaml:"api_token"`         // API token credential
+	Token       string                       `json:"token" yaml:"token"`                 // Generic token credential
+	Secret      string                       `json:"secret" yaml:"secret"`               // Generic secret credential
+	Username    string                       `json:"username" yaml:"username"`           // Username credential
+	Password    string                       `json:"password" yaml:"password"`           // Password credential
+	Timeout     int                          `json:"timeout" yaml:"timeout"`             // Provider request timeout (in seconds)
+	RateLimit   string                       `json:"rate_limit" yaml:"rate_limit"`       // Provider request rate limit expression
+	MaxRequests int                          `json:"max_requests" yaml:"max_requests"`   // Maximum provider requests per seed
+	Parameters  map[string]string            `json:"parameters" yaml:"parameters"`       // Additional query parameters sent to the provider
+	Headers     map[string]string            `json:"headers" yaml:"headers"`             // Additional HTTP headers sent to the provider
+	PageSize    int                          `json:"page_size" yaml:"page_size"`         // Maximum results requested per provider page
+	MaxPages    int                          `json:"max_pages" yaml:"max_pages"`         // Maximum provider pages requested per seed
+}
+
+// InformationSeedPluginLimitsConfig represents bounded plugin execution limits
+// used by information seed discovery.
+type InformationSeedPluginLimitsConfig struct {
+	Timeout            int `json:"timeout" yaml:"timeout"`                             // Plugin execution timeout (in seconds)
+	MaxOutputSizeBytes int `json:"max_output_size_bytes" yaml:"max_output_size_bytes"` // Maximum plugin output size (in bytes)
+}
+
+// InformationSeedConfig represents bounded configuration for information seed discovery.
+type InformationSeedConfig struct {
+	Enabled              bool                                     `json:"enabled" yaml:"enabled"`                                 // Whether information seed discovery is enabled
+	QueryTimer           int                                      `json:"query_timer" yaml:"query_timer"`                         // Time to wait between seed discovery cycles (in seconds)
+	MaxConcurrentSeeds   int                                      `json:"max_concurrent_seeds" yaml:"max_concurrent_seeds"`       // Maximum seed discovery jobs to run concurrently
+	MaxQueriesPerSeed    int                                      `json:"max_queries_per_seed" yaml:"max_queries_per_seed"`       // Maximum provider queries generated per seed
+	MaxCandidatesPerSeed int                                      `json:"max_candidates_per_seed" yaml:"max_candidates_per_seed"` // Maximum candidate sources accepted per seed
+	RetryInterval        int                                      `json:"retry_interval" yaml:"retry_interval"`                   // Time to wait before retrying failed seed discovery (in seconds)
+	ProcessingTimeout    string                                   `json:"processing_timeout" yaml:"processing_timeout"`           // Maximum time to process one seed
+	Providers            map[string]InformationSeedProviderConfig `json:"providers" yaml:"providers"`                             // Provider settings and credentials
+	ProviderAllowList    []string                                 `json:"provider_allow_list" yaml:"provider_allow_list"`         // Providers allowed to run; empty disables provider execution
+	PluginLimits         InformationSeedPluginLimitsConfig        `json:"plugin_limits" yaml:"plugin_limits"`                     // Plugin timeout and output-size limits
 }
 
 /////////////////////////////////////////////////
@@ -706,14 +824,23 @@ type Config struct {
 	// Crawler configuration
 	Crawler Crawler `json:"crawler" yaml:"crawler"`
 
+	// Email crawling runtime configuration
+	Email EmailConfig `json:"email" yaml:"email"`
+
+	// Information seed discovery configuration
+	InformationSeed InformationSeedConfig `json:"information_seed" yaml:"information_seed"`
+
 	// Attributes indexing configuration
 	AttributesIndexing AttributeIndexingConfig `json:"attributes_indexing" yaml:"attributes_indexing"` // Configuration for attributes indexing
+
+	// Time-series metric extraction and retention configuration
+	TimeSeries TimeSeriesConfig `json:"timeseries" yaml:"timeseries"`
 
 	// API configuration
 	API API `json:"api" yaml:"api"`
 
 	// VDIConfig configuration
-	Selenium []Selenium `json:"selenium" yaml:"selenium"`
+	Selenium []Selenium `json:"vdi" yaml:"vdi"`
 
 	// Prometheus configuration
 	Prometheus PrometheusConfig `json:"prometheus" yaml:"prometheus"`
@@ -812,17 +939,22 @@ type SourceConfig struct {
 	CrawlingConfig CrawlingConfig         `json:"crawling_config" yaml:"crawling_config" validate:"required"`
 	ExecutionPlan  []ExecutionPlanItem    `json:"execution_plan,omitempty" yaml:"execution_plan,omitempty"`
 	Custom         map[string]interface{} `json:"custom,omitempty" yaml:"custom,omitempty"` // Flexible custom configuration
+	Email          *EmailSourceConfig     `json:"email,omitempty" yaml:"email,omitempty"`
 	MetaData       map[string]interface{} `json:"meta_data,omitempty" yaml:"meta_data,omitempty"`
 }
 
+// SourceTypeEmail identifies an email source while preserving the string-based source type API.
+const SourceTypeEmail = "email"
+
 // CrawlingConfig represents the crawling configuration for a source
 type CrawlingConfig struct {
-	Site              string   `json:"site" yaml:"site" validate:"required,url"`
+	// Site can be a URL (starting with http://, https://, ftp://, ftps://, null://) or a local file path (starting with maildir:/// or mbox:///)
+	Site              string   `json:"site" yaml:"site" validate:"required,url|startswith=http://|startswith=https://|startswith=ftp://|startswith=ftps://|startswith=null://|startswith=maildir:///|startswith=mbox:///"`
 	URLReferrer       string   `json:"url_referrer,omitempty" yaml:"url_referrer,omitempty"`               // URL referrer for the source
 	AlternativeLinks  []string `json:"alternative_links,omitempty" yaml:"alternative_links,omitempty"`     // URLs to use if no links are found
 	RetriesOnRedirect int      `json:"retries_on_redirect,omitempty" yaml:"retries_on_redirect,omitempty"` // Number of retries on redirect
 	UnwantedURLs      []string `json:"unwanted_urls,omitempty" yaml:"unwanted_urls,omitempty"`             // Unwanted URLs patterns that trigger a redirect detection
-	SourceType        string   `json:"source_type" yaml:"source_type"`                                     // Type of the source (web, api, file) (validate:"required,oneof=website api file db")
+	SourceType        string   `json:"source_type" yaml:"source_type"`                                     // Type of the source (website, api, file, db, email)
 }
 
 // IsEmpty returns true if the CrawlingConfig is empty

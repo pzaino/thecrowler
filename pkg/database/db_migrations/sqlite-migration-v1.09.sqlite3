@@ -1,0 +1,156 @@
+--------------------------------------------------------------------------------
+-- Foundational time-series schema (v1.9).
+-- JSON documents are stored as canonical JSON encoded in TEXT columns.
+CREATE TABLE IF NOT EXISTS TimeSeriesMetrics (
+    metric_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    metric_key VARCHAR(255) NOT NULL UNIQUE,
+    display_name VARCHAR(255) NOT NULL,
+    description TEXT,
+    source_kind VARCHAR(64) NOT NULL,
+    value_type VARCHAR(32) NOT NULL,
+    aggregate VARCHAR(32) NOT NULL,
+    bucket VARCHAR(32) NOT NULL,
+    time_basis VARCHAR(32) NOT NULL,
+    dedupe_scope VARCHAR(64) NOT NULL,
+    object_type VARCHAR(64) NOT NULL,
+    failure_policy VARCHAR(64) NOT NULL,
+    selector TEXT NOT NULL,
+    dimensions TEXT,
+    retention_policy TEXT,
+    cardinality_policy TEXT,
+    unit VARCHAR(64),
+    enabled INTEGER NOT NULL DEFAULT 1,
+    store_value_text INTEGER NOT NULL DEFAULT 0,
+    hash_only INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP,
+    last_updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- TimeSeriesObservations is append-only history. Optional references are nulled
+-- when operational records are removed so historical measurements survive.
+CREATE TABLE IF NOT EXISTS TimeSeriesObservations (
+    observation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    metric_id INTEGER NOT NULL REFERENCES TimeSeriesMetrics(metric_id) ON DELETE RESTRICT,
+    observed_at TIMESTAMP NOT NULL,
+    effective_at TIMESTAMP,
+    collected_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    source_updated_at TIMESTAMP,
+    bucket_start TIMESTAMP NOT NULL,
+    bucket_end TIMESTAMP NOT NULL,
+    information_seed_id INTEGER REFERENCES InformationSeed(information_seed_id) ON DELETE SET NULL,
+    information_seed_candidate_id INTEGER REFERENCES InformationSeedCandidate(information_seed_candidate_id) ON DELETE SET NULL,
+    source_id INTEGER REFERENCES Sources(source_id) ON DELETE SET NULL,
+    source_information_seed_id INTEGER REFERENCES SourceInformationSeedIndex(source_information_seed_id) ON DELETE SET NULL,
+    index_id INTEGER REFERENCES SearchIndex(index_id) ON DELETE SET NULL,
+    entity_id INTEGER REFERENCES Entities(entity_id) ON DELETE SET NULL,
+    subject_type VARCHAR(64),
+    subject_id INTEGER,
+    object_type VARCHAR(64),
+    object_id INTEGER,
+    correlation_rule_id INTEGER REFERENCES CorrelationRules(rule_id) ON DELETE SET NULL,
+    correlation_object_type_1 VARCHAR(64),
+    correlation_object_id_1 INTEGER,
+    correlation_object_type_2 VARCHAR(64),
+    correlation_object_id_2 INTEGER,
+    value_numeric NUMERIC,
+    value_integer INTEGER,
+    value_boolean INTEGER,
+    value_text TEXT,
+    value_json TEXT,
+    value_timestamp TIMESTAMP,
+    value_hash VARCHAR(64) NOT NULL,
+    previous_observation_id INTEGER REFERENCES TimeSeriesObservations(observation_id) ON DELETE SET NULL,
+    previous_value_hash VARCHAR(64),
+    is_changed INTEGER NOT NULL DEFAULT 0,
+    change_type VARCHAR(32),
+    change_delta_numeric NUMERIC,
+    change_detected_at TIMESTAMP,
+    dedupe_key VARCHAR(64) NOT NULL UNIQUE,
+    dimensions TEXT,
+    provenance TEXT,
+    provenance_hash VARCHAR(64),
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP,
+    last_updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS TimeSeriesAggregates (
+    aggregate_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    metric_id INTEGER NOT NULL REFERENCES TimeSeriesMetrics(metric_id) ON DELETE RESTRICT,
+    bucket_start TIMESTAMP NOT NULL,
+    bucket_end TIMESTAMP NOT NULL,
+    information_seed_id INTEGER REFERENCES InformationSeed(information_seed_id) ON DELETE SET NULL,
+    information_seed_candidate_id INTEGER REFERENCES InformationSeedCandidate(information_seed_candidate_id) ON DELETE SET NULL,
+    source_id INTEGER REFERENCES Sources(source_id) ON DELETE SET NULL,
+    source_information_seed_id INTEGER REFERENCES SourceInformationSeedIndex(source_information_seed_id) ON DELETE SET NULL,
+    index_id INTEGER REFERENCES SearchIndex(index_id) ON DELETE SET NULL,
+    entity_id INTEGER REFERENCES Entities(entity_id) ON DELETE SET NULL,
+    subject_type VARCHAR(64),
+    subject_id INTEGER,
+    object_type VARCHAR(64),
+    object_id INTEGER,
+    correlation_rule_id INTEGER REFERENCES CorrelationRules(rule_id) ON DELETE SET NULL,
+    correlation_object_type_1 VARCHAR(64),
+    correlation_object_id_1 INTEGER,
+    correlation_object_type_2 VARCHAR(64),
+    correlation_object_id_2 INTEGER,
+    dimensions TEXT,
+    value_count INTEGER NOT NULL DEFAULT 0,
+    occurrence_total NUMERIC NOT NULL DEFAULT 0,
+    distinct_value_count INTEGER NOT NULL DEFAULT 0,
+    numeric_count INTEGER NOT NULL DEFAULT 0,
+    numeric_sum NUMERIC,
+    numeric_min NUMERIC,
+    numeric_max NUMERIC,
+    numeric_avg NUMERIC,
+    percentile_50 NUMERIC,
+    percentile_75 NUMERIC,
+    percentile_90 NUMERIC,
+    percentile_95 NUMERIC,
+    percentile_99 NUMERIC,
+    first_observation_id INTEGER REFERENCES TimeSeriesObservations(observation_id) ON DELETE SET NULL,
+    first_observed_at TIMESTAMP,
+    first_value_numeric NUMERIC,
+    first_value_text TEXT,
+    first_value_hash VARCHAR(64),
+    last_observation_id INTEGER REFERENCES TimeSeriesObservations(observation_id) ON DELETE SET NULL,
+    last_observed_at TIMESTAMP,
+    last_value_numeric NUMERIC,
+    last_value_text TEXT,
+    last_value_hash VARCHAR(64),
+    last_value_boolean BOOLEAN,
+    last_value_json TEXT,
+    first_seen_at TIMESTAMP,
+    last_seen_at TIMESTAMP,
+    change_count INTEGER NOT NULL DEFAULT 0,
+    aggregate_hash VARCHAR(64) NOT NULL UNIQUE,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP,
+    last_updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_timeseriesmetrics_enabled ON TimeSeriesMetrics(enabled, deleted_at);
+CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_metric_bucket ON TimeSeriesObservations(metric_id, bucket_start);
+CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_seed ON TimeSeriesObservations(information_seed_id, observed_at);
+CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_seed_candidate ON TimeSeriesObservations(information_seed_candidate_id, observed_at);
+CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_source ON TimeSeriesObservations(source_id, observed_at);
+CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_index ON TimeSeriesObservations(index_id, observed_at);
+CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_entity ON TimeSeriesObservations(entity_id, observed_at);
+CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_subject ON TimeSeriesObservations(subject_type, subject_id, observed_at);
+CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_object ON TimeSeriesObservations(object_type, object_id, observed_at);
+CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_correlation_rule ON TimeSeriesObservations(correlation_rule_id, observed_at);
+CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_dedupe_key ON TimeSeriesObservations(dedupe_key);
+CREATE INDEX IF NOT EXISTS idx_timeseriesaggregates_metric_bucket ON TimeSeriesAggregates(metric_id, bucket_start);
+CREATE INDEX IF NOT EXISTS idx_timeseriesaggregates_seed ON TimeSeriesAggregates(information_seed_id, bucket_start);
+CREATE INDEX IF NOT EXISTS idx_timeseriesaggregates_seed_candidate ON TimeSeriesAggregates(information_seed_candidate_id, bucket_start);
+CREATE INDEX IF NOT EXISTS idx_timeseriesaggregates_source ON TimeSeriesAggregates(source_id, bucket_start);
+CREATE INDEX IF NOT EXISTS idx_timeseriesaggregates_index ON TimeSeriesAggregates(index_id, bucket_start);
+CREATE INDEX IF NOT EXISTS idx_timeseriesaggregates_entity ON TimeSeriesAggregates(entity_id, bucket_start);
+CREATE INDEX IF NOT EXISTS idx_timeseriesaggregates_subject ON TimeSeriesAggregates(subject_type, subject_id, bucket_start);
+CREATE INDEX IF NOT EXISTS idx_timeseriesaggregates_object ON TimeSeriesAggregates(object_type, object_id, bucket_start);
+CREATE INDEX IF NOT EXISTS idx_timeseriesaggregates_correlation_rule ON TimeSeriesAggregates(correlation_rule_id, bucket_start);
+CREATE INDEX IF NOT EXISTS idx_timeseriesaggregates_aggregate_hash ON TimeSeriesAggregates(aggregate_hash);
+--------------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS TimeSeriesAggregationRuns (run_key VARCHAR(255) PRIMARY KEY,status VARCHAR(32) NOT NULL,checkpoint_at TIMESTAMP,range_start TIMESTAMP,range_end TIMESTAMP,started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,completed_at TIMESTAMP,last_error TEXT,last_updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP);
