@@ -36,9 +36,7 @@ Please consider supporting this project! The CROWler is empowering thousands of 
 
 ## What is it?
 
-The CROWler is a self-hosted, event-driven Content Discovery and Intelligence development platform
-designed for advanced web crawling, scraping, detection, and automation using real browsers,
-rulesets, plugins, and agents.
+The CROWler is a self-hosted, event-driven Content Discovery and Intelligence development platform designed for advanced web, email, APIs (both REST and WebSockets), filesystems, network crawling, scraping, detection, and automation using real browsers, rulesets, plugins, and agents.
 
 **Project status:** Still under active development (WIP). Most components are usable.
 Beta testers welcome. Full [daily progress stats](https://githubtracker.com/pzaino/thecrowler).
