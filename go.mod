@@ -24,7 +24,7 @@ require (
 	golang.org/x/crypto v0.53.0
 )
 
-require golang.org/x/sync v0.21.0
+require golang.org/x/sync v0.22.0
 
 require (
 	cloud.google.com/go/auth v0.20.0 // indirect
@@ -138,5 +138,5 @@ require (
 	github.com/andybalholm/cascadia v1.3.4 // indirect
 	github.com/blang/semver v3.5.1+incompatible // indirect
 	golang.org/x/net v0.56.0
-	golang.org/x/text v0.39.0
+	golang.org/x/text v0.40.0
 )
