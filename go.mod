@@ -24,7 +24,7 @@ require (
 	golang.org/x/crypto v0.53.0
 )
 
-require golang.org/x/sync v0.21.0
+require golang.org/x/sync v0.22.0
 
 require (
 	cloud.google.com/go/auth v0.20.0 // indirect
