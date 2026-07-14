@@ -51,4 +51,4 @@ var math_utils = (function () {
 })();
 
 // Export library for other plugins
-result = math_utils;
+var result = math_utils;
