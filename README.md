@@ -54,6 +54,8 @@ Events and more. These components work together to provide a comprehensive
 platform to develop your own solutions for content discovery, data extraction,
 and more.
 
+Also don't forget to check out all CROWler's related [projects and tools](https://github.com/topics/thecrowler), there are good extensions to help covering more use cases and to make your life easier.
+
 ## What Makes the CROWler Different
 
 - **Real browsers, not abstractions**
