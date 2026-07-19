@@ -71,6 +71,7 @@ func TestInitAPIv1RegistersSearchConsoleAndDocsRoutes(t *testing.T) {
 		"/v1/source/vacuum",
 		"/v1/source/status",
 		"/v1/source/statuses",
+		"/v1/source/statuses/filter",
 		"/v1/config/information_seed/providers",
 		"/v1/config/vdis",
 		"/v1/information_seed/add",
