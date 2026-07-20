@@ -718,22 +718,55 @@ CREATE INDEX IF NOT EXISTS idx_objectcorrelations_entity
 
 CREATE OR REPLACE FUNCTION cleanup_artifact_data()
 RETURNS trigger AS $$
+DECLARE
+    deleted_object_id BIGINT;
+    deleted_row JSONB;
 BEGIN
+    deleted_row := to_jsonb(OLD);
+
+    CASE TG_ARGV[0]
+        WHEN 'webobject' THEN
+            deleted_object_id :=
+                (deleted_row ->> 'object_id')::BIGINT;
+
+        WHEN 'netinfo' THEN
+            deleted_object_id :=
+                (deleted_row ->> 'netinfo_id')::BIGINT;
+
+        WHEN 'httpinfo' THEN
+            deleted_object_id :=
+                (deleted_row ->> 'httpinfo_id')::BIGINT;
+
+        ELSE
+            RAISE EXCEPTION
+                'cleanup_artifact_data(): unsupported artifact type %',
+                TG_ARGV[0];
+    END CASE;
+
+    IF deleted_object_id IS NULL THEN
+        RAISE EXCEPTION
+            'cleanup_artifact_data(): missing identifier for artifact type %',
+            TG_ARGV[0];
+    END IF;
 
     DELETE FROM ObjectAttributes
     WHERE object_type = TG_ARGV[0]
-    AND object_id = OLD.object_id;
+      AND object_id = deleted_object_id;
 
     DELETE FROM EntityMemberships
     WHERE object_type = TG_ARGV[0]
-    AND object_id = OLD.object_id;
+      AND object_id = deleted_object_id;
 
     DELETE FROM ObjectCorrelations
-    WHERE (object_type_1 = TG_ARGV[0] AND object_id_1 = OLD.object_id)
-       OR (object_type_2 = TG_ARGV[0] AND object_id_2 = OLD.object_id);
+    WHERE (
+        object_type_1 = TG_ARGV[0]
+        AND object_id_1 = deleted_object_id
+    ) OR (
+        object_type_2 = TG_ARGV[0]
+        AND object_id_2 = deleted_object_id
+    );
 
     RETURN OLD;
-
 END;
 $$ LANGUAGE plpgsql;
 
