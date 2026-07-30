@@ -680,6 +680,7 @@ func initAPIv1() {
 		vacuumSourceHandlerWithMiddlewares := withPublicMiddlewares(vacuumSourceHandler)
 		singleURLstatusHandlerWithMiddlewares := withPublicMiddlewares(singleURLstatusHandler)
 		allURLstatusHandlerWithMiddlewares := withPublicMiddlewares(allURLstatusHandler)
+		filteredURLstatusHandlerWithMiddlewares := withPublicMiddlewares(filteredURLstatusHandler)
 		informationSeedAddHandlerWithMiddlewares := withPublicMiddlewares(informationSeedAddHandler)
 		informationSeedStatusHandlerWithMiddlewares := withPublicMiddlewares(informationSeedStatusHandler)
 		informationSeedListHandlerWithMiddlewares := withPublicMiddlewares(informationSeedListHandler)
@@ -719,6 +720,9 @@ func initAPIv1() {
 
 		http.Handle("/v1/source/statuses", allURLstatusHandlerWithMiddlewares)
 		cmn.RegisterAPIRoute("/v1/source/statuses", []string{"GET"}, "All URLs status endpoint (console)", tagsNone, true, false, 200, nil, nil, SourcesStatusResponse{})
+
+		http.Handle("/v1/source/statuses/filter", filteredURLstatusHandlerWithMiddlewares)
+		cmn.RegisterAPIRoute("/v1/source/statuses/filter", []string{"GET"}, "Filtered URLs status endpoint (console)", tagsNone, true, false, 200, nil, cmn.StdAPIQuery{}, SourcesStatusResponse{})
 
 		// Configuration inspection endpoints
 
@@ -1749,6 +1753,35 @@ func singleURLstatusHandler(w http.ResponseWriter, r *http.Request) {
 			totalSuccess.Add(1)
 		}
 		handleErrorAndRespond(w, err, results, "Error performing status: %v", http.StatusInternalServerError, successCode)
+	case <-time.After(5 * time.Second): // Wait for a connection with timeout
+		healthStatus := HealthCheck{
+			Status: "DB is overloaded, please try again later",
+		}
+		totalErrors.Add(1)
+		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+	}
+}
+
+// filteredURLstatusHandler handles status requests for sources whose URL contains the q filter.
+func filteredURLstatusHandler(w http.ResponseWriter, r *http.Request) {
+	select {
+	case dbSemaphore <- struct{}{}:
+		defer func() { <-dbSemaphore }()
+
+		successCode := http.StatusOK
+		query, err := extractQueryOrBody(r)
+		if err != nil {
+			handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in filtered statuses request", http.StatusBadRequest, successCode)
+			return
+		}
+
+		results, err := performGetFilteredURLStatus(query, getQTypeFromName(r.Method), &dbHandler)
+		if err != nil {
+			totalErrors.Add(1)
+		} else {
+			totalSuccess.Add(1)
+		}
+		handleErrorAndRespond(w, err, results, "Error performing filtered status: %v", http.StatusInternalServerError, successCode)
 	case <-time.After(5 * time.Second): // Wait for a connection with timeout
 		healthStatus := HealthCheck{
 			Status: "DB is overloaded, please try again later",

@@ -1005,6 +1005,33 @@ func getURLStatus(db *cdb.Handler, sourceURL string) (StatusResponse, error) {
 	return results, nil
 }
 
+func performGetFilteredURLStatus(query string, qType int, db *cdb.Handler) (StatusResponse, error) {
+	if qType != getQuery {
+		return StatusResponse{Message: "Invalid request"}, nil
+	}
+
+	results, err := getFilteredURLStatus(db, query)
+	if err != nil {
+		return StatusResponse{Message: "Failed to get filtered statuses"}, err
+	}
+
+	return results, nil
+}
+
+func getFilteredURLStatus(db *cdb.Handler, urlFilter string) (StatusResponse, error) {
+	var results StatusResponse
+	results.Message = "Failed to get filtered statuses"
+
+	statuses, err := cdb.ListSourceStatusesByURLFilter(db, urlFilter)
+	if err != nil {
+		return results, err
+	}
+
+	results.Message = infoAllSourcesStatus
+	results.Items = sourceStatusRowsFromDB(statuses)
+	return results, nil
+}
+
 func performGetAllURLStatus(_ int, db *cdb.Handler) (StatusResponse, error) {
 	// using _ instead of qType because for now we don't need it
 	results, err := getAllURLStatus(db)

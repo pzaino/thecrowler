@@ -275,7 +275,8 @@ func TestSourceStatusHelpersNormalizeURLAndListStatuses(t *testing.T) {
 			(source_uid, url, status, priority, engine, created_at, last_updated_at, last_crawled_at, last_error, last_error_at, restricted, disabled, flags, config)
 		VALUES
 			('uid-example', 'https://example.test/path', 'new', 'high', 'engine-a', '2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z', '2026-01-03T00:00:00Z', '', '', 2, FALSE, 7, '{}'),
-			('uid-other', 'https://other.test', 'processing', 'low', 'engine-b', '2026-01-04T00:00:00Z', '2026-01-05T00:00:00Z', '2026-01-06T00:00:00Z', 'boom', '2026-01-07T00:00:00Z', 1, TRUE, 8, '{}')`)
+			('uid-upload', 'https://example.test/videos/upload/42', 'new', 'normal', 'engine-a', '2026-01-04T00:00:00Z', '2026-01-05T00:00:00Z', '2026-01-06T00:00:00Z', '', '', 2, FALSE, 9, '{}'),
+			('uid-other', 'https://other.test', 'processing', 'low', 'engine-b', '2026-01-07T00:00:00Z', '2026-01-08T00:00:00Z', '2026-01-09T00:00:00Z', 'boom', '2026-01-10T00:00:00Z', 1, TRUE, 8, '{}')`)
 	if err != nil {
 		t.Fatalf("insert source statuses: %v", err)
 	}
@@ -327,8 +328,8 @@ func TestSourceStatusHelpersNormalizeURLAndListStatuses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list source statuses: %v", err)
 	}
-	if len(statuses) != 2 {
-		t.Fatalf("expected two statuses, got %d", len(statuses))
+	if len(statuses) != 3 {
+		t.Fatalf("expected three statuses, got %d", len(statuses))
 	}
 	for _, status := range statuses {
 		if status.SourceID == 2 && status.EmailStatus != nil {
@@ -336,11 +337,19 @@ func TestSourceStatusHelpersNormalizeURLAndListStatuses(t *testing.T) {
 		}
 	}
 
+	filteredStatuses, err := ListSourceStatusesByURLFilter(&handler, " /upload/ ")
+	if err != nil {
+		t.Fatalf("list source statuses by URL filter: %v", err)
+	}
+	if len(filteredStatuses) != 1 || filteredStatuses[0].SourceUID != "uid-upload" || filteredStatuses[0].URL.String != "https://example.test/videos/upload/42" {
+		t.Fatalf("unexpected filtered source statuses: %#v", filteredStatuses)
+	}
+
 	uidMatches, err := GetSourceStatusByUID(&handler, "uid-other")
 	if err != nil {
 		t.Fatalf("get source status by UID: %v", err)
 	}
-	if len(uidMatches) != 1 || uidMatches[0].SourceID != 2 || uidMatches[0].SourceUID != "uid-other" {
+	if len(uidMatches) != 1 || uidMatches[0].SourceID != 3 || uidMatches[0].SourceUID != "uid-other" {
 		t.Fatalf("unexpected source status by UID: %#v", uidMatches)
 	}
 }

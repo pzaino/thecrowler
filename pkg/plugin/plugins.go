@@ -2232,7 +2232,9 @@ func addJSAPIInclude(vm *otto.Otto, rt *pluginRuntime) error {
 
 		callee, ok := resolvePluginFromCaller(caller, name)
 		if !ok {
-			v, _ := vm.ToValue(nil)
+			v, _ := vm.ToValue(map[string]interface{}{
+				"error": fmt.Sprintf("lib plugin %q is not registered", name),
+			})
 			return v
 		}
 
@@ -2253,6 +2255,24 @@ func addJSAPIInclude(vm *otto.Otto, rt *pluginRuntime) error {
 		}
 		defer rt.pop()
 
+		// `result` is the conventional lib_plugin export. Isolate it from
+		// exports left behind by earlier include() calls in the same VM.
+		previousResult, previousResultErr := vm.Get("result")
+		if previousResultErr != nil {
+			previousResult = otto.UndefinedValue()
+		}
+
+		if err := vm.Set("result", otto.UndefinedValue()); err != nil {
+			v, _ := vm.ToValue(map[string]interface{}{
+				"error": fmt.Sprintf("unable to prepare lib plugin export: %v", err),
+			})
+			return v
+		}
+
+		defer func() {
+			_ = vm.Set("result", previousResult)
+		}()
+
 		// execute script inside current VM
 		result, err := vm.Run(callee.Script)
 		if err != nil {
@@ -2260,6 +2280,12 @@ func addJSAPIInclude(vm *otto.Otto, rt *pluginRuntime) error {
 				"error": err.Error(),
 			})
 			return v
+		}
+
+		// Support the documented/conventional `var result = ...` export.
+		if exportedResult, err := vm.Get("result"); err == nil &&
+			exportedResult.IsDefined() && !exportedResult.IsNull() {
+			return exportedResult
 		}
 
 		if result.IsDefined() && !result.IsNull() {

@@ -18,6 +18,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
@@ -114,6 +115,31 @@ func GetSourceStatusByURL(db *Handler, sourceURL string) ([]SourceStatusRow, err
 	rows, err := (*db).ExecuteQuery(query, "%"+normalizedURL+"%")
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve source status by URL: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // We can't check return value on defer
+
+	statuses, err := scanSourceStatusRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := attachSourceEmailStatuses(db, statuses); err != nil {
+		return nil, err
+	}
+	return statuses, nil
+}
+
+// ListSourceStatusesByURLFilter retrieves source status rows whose URL contains urlFilter.
+// The filter is applied directly as a SQL LIKE contains match.
+func ListSourceStatusesByURLFilter(db *Handler, urlFilter string) ([]SourceStatusRow, error) {
+	if db == nil || *db == nil {
+		return nil, fmt.Errorf("database handler is nil")
+	}
+
+	filter := strings.TrimSpace(urlFilter)
+	query := sourceStatusSelect + "\n\tWHERE url LIKE " + sourceStatusPlaceholder(db)
+	rows, err := (*db).ExecuteQuery(query, "%"+filter+"%")
+	if err != nil {
+		return nil, fmt.Errorf("failed to list source statuses by URL filter: %w", err)
 	}
 	defer rows.Close() //nolint:errcheck // We can't check return value on defer
 
