@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	cmn "github.com/pzaino/thecrowler/pkg/common"
 	rs "github.com/pzaino/thecrowler/pkg/ruleset"
 	vdi "github.com/pzaino/thecrowler/pkg/vdi"
 )
@@ -388,7 +389,11 @@ func runPluginStep(ctx context.Context, runtime Runtime, ruleName string, index 
 	if err != nil {
 		return nil, err
 	}
-	parameters, _ := step.Details["parameters"].(map[string]interface{})
+	parameters := cmn.ConvertInfToMap(step.Details["parameters"])
+	if parameters == nil {
+		parameters = make(map[string]interface{})
+	}
+
 	value, err := runtime.Plugins.RunPlugin(ctx, PluginRequest{Name: name, Data: data, Parameters: parameters, Caller: "scraping.post_processing", RuleName: ruleName, Step: index})
 	if err != nil {
 		return nil, err
