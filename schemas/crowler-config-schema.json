@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://github.com/pzaino/thecrowler/main/schemas/crowler-config-schema.json",
   "title": "CROWler Configuration Schema",
-  "description": "This is the configuration schema for the CROWler. This schema describes all the sections of the config.yaml configuration file and provides info on configuring a fleet of CROWler's Engines, VDIs, APIs and how they should work. Keep in mind that the 'remote' property should be used on its own, and the 'database', 'crawler', 'api', 'selenium', 'network_info' properties should be used together.",
+  "description": "This is the configuration schema for the CROWler. This schema describes all the sections of the config.yaml configuration file and provides info on configuring a fleet of CROWler's Engines, VDIs, APIs and how they should work. Keep in mind that the 'remote' property should be used on its own, and the 'database', 'crawler', 'api', 'vdi', 'network_info' properties should be used together.",
   "type": "object",
   "properties": {
     "version": {
@@ -3921,7 +3921,7 @@
               "database",
               "crawler",
               "api",
-              "selenium",
+              "vdi",
               "network_info"
             ]
           }
@@ -3942,8 +3942,8 @@
         "api": {
           "$ref": "#/properties/api"
         },
-        "selenium": {
-          "$ref": "#/properties/selenium"
+        "vdi": {
+          "$ref": "#/properties/vdi"
         },
         "network_info": {
           "$ref": "#/properties/network_info"
@@ -3953,7 +3953,7 @@
         "database",
         "crawler",
         "api",
-        "selenium",
+        "vdi",
         "network_info"
       ],
       "not": {
@@ -3978,7 +3978,7 @@
           "database",
           "crawler",
           "api",
-          "selenium",
+          "vdi",
           "network_info"
         ]
       }
