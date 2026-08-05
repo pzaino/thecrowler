@@ -1150,6 +1150,7 @@
                   "string",
                   "integer",
                   "boolean",
+                  "float",
                   "date",
                   "array"
                 ],
@@ -1168,6 +1169,8 @@
                     "lowercase",
                     "uppercase",
                     "trim",
+                    "fix_utf8",
+                    "collapse_spaces",
                     ""
                   ]
                 },
@@ -1176,6 +1179,13 @@
                   "uppercase",
                   "trim"
                 ]
+              },
+              "run_also": {
+                "type": "array",
+                "description": "if this key matches, then also run the ones in this List",
+                "items": {
+                  "type": "string"
+                }
               },
               "index": {
                 "type": "boolean",
@@ -1813,7 +1823,7 @@
         },
         "timeout": {
           "title": "CROWler Events Manager Timeout",
-          "description": "This is the timeout for the Events Manager. It is the maximum amount of time that the CROWler will wait for the Events Manager to respond.",
+          "description": "This is the timeout for the Events Manager API request. It is the maximum amount of time that the CROWler will wait for the Events Manager to respond.",
           "type": "integer",
           "minimum": 10
         },
