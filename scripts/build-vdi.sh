@@ -5,15 +5,30 @@ set -euo pipefail
 pars="${*:-}"
 
 # === CI toggles ===
-: "${FORCE_CHROMIUM:=false}"   # set to "true" in CI to force chromium build
 : "${SKIP_COMPOSE:=false}"     # set to "true" in CI to avoid docker compose + env checks
 export DOCKER_BUILDKIT="${DOCKER_BUILDKIT:-1}"
 
-version_to_integer() {
-  local version=$1; local padded_version=""
-  IFS='.' read -ra parts <<< "$version"
-  for part in "${parts[@]}"; do padded_version+=$(printf "%02d" "$part"); done
-  echo "$((10#$padded_version))"
+# Return an absolute path without depending on GNU realpath.
+absolute_path() {
+  case "$1" in
+    /*)
+      printf '%s\n' "$1"
+      ;;
+    *)
+      printf '%s/%s\n' \
+        "$(cd "$(dirname "$1")" && pwd -P)" \
+        "$(basename "$1")"
+      ;;
+  esac
+}
+
+# BSD sed requires an explicit empty backup suffix for in-place editing.
+sed_in_place() {
+  if [ "$(uname -s)" = "Darwin" ]; then
+    sed -i '' "$@"
+  else
+    sed -i "$@"
+  fi
 }
 
 # Optional config sourcing
@@ -36,14 +51,22 @@ if [ "${SKIP_COMPOSE}" != "true" ]; then
   : "${DOCKER_CROWLER_DB_USER:=crowler}"
 fi
 
-# Detect host arch -> default platform
-ARCH=$(uname -m)
-PLATFORM="linux/amd64"
-POSTGRES_IMAGE=""
-if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
-  PLATFORM="linux/arm64/v8"
-  POSTGRES_IMAGE="arm64v8/"
+# Honour an explicitly requested target when cross-building under QEMU. Falling
+# back to the host architecture keeps the command-line behaviour unchanged.
+REQUESTED_PLATFORM="${TARGET_PLATFORM:-${DOCKER_DEFAULT_PLATFORM:-}}"
+if [ -z "$REQUESTED_PLATFORM" ]; then
+  case "$(uname -m)" in
+    aarch64|arm64) REQUESTED_PLATFORM="linux/arm64/v8" ;;
+    x86_64|amd64) REQUESTED_PLATFORM="linux/amd64" ;;
+    *) echo "Unsupported host architecture: $(uname -m)" >&2; exit 1 ;;
+  esac
 fi
+
+case "$REQUESTED_PLATFORM" in
+  linux/amd64) PLATFORM="linux/amd64"; POSTGRES_IMAGE="" ;;
+  linux/arm64|linux/arm64/v8) PLATFORM="linux/arm64/v8"; POSTGRES_IMAGE="arm64v8/" ;;
+  *) echo "Unsupported target platform: $REQUESTED_PLATFORM" >&2; exit 1 ;;
+esac
 export PLATFORMS="$PLATFORM"
 export DOCKER_DEFAULT_PLATFORM="$PLATFORM"
 export DOCKER_POSTRGES_IMAGE="$POSTGRES_IMAGE"
@@ -57,20 +80,12 @@ CURRENT_DATE=$(date +%Y%m%d)
 export SELENIUM_PROD_RELEASE="${SELENIUM_VER_NUM}-${CURRENT_DATE}"
 : "${SELENIUM_PORT:=4444}"
 
-# Decide target image name used inside Selenium build
-if [ "${FORCE_CHROMIUM}" = "true" ]; then
-  export DOCKER_SELENIUM_IMAGE="selenium/standalone-chromium:${SELENIUM_PROD_RELEASE}"
-else
-  DOCKER_SELENIUM_IMAGE="selenium/standalone-chrome:${SELENIUM_PROD_RELEASE}"
-  if [ "$PLATFORM" = "linux/arm64/v8" ]; then
-    DOCKER_SELENIUM_IMAGE="selenium/standalone-chromium:${SELENIUM_PROD_RELEASE}"
-    SELENIUM_VER_NUM_INT=$(version_to_integer "$SELENIUM_VER_NUM")
-    TARGET_VER_INT=$(version_to_integer "4.21.0")
-    if [ "$SELENIUM_VER_NUM_INT" -lt "$TARGET_VER_INT" ]; then
-      DOCKER_SELENIUM_IMAGE="selenium/standalone-firefox:${SELENIUM_PROD_RELEASE}"
-    fi
-  fi
-  export DOCKER_SELENIUM_IMAGE
+# Chromium is available on both supported architectures; unlike Google Chrome,
+# it also gives the two builds a consistent browser and image repository.
+export DOCKER_SELENIUM_IMAGE="selenium/standalone-chromium:${SELENIUM_PROD_RELEASE}"
+
+if [ -n "${VDI_IMAGE_OUTPUT_FILE:-}" ]; then
+  printf '%s\n' "$DOCKER_SELENIUM_IMAGE" > "$VDI_IMAGE_OUTPUT_FILE"
 fi
 
 echo "Building Selenium image for ${PLATFORM} -> ${DOCKER_SELENIUM_IMAGE}"
@@ -143,23 +158,57 @@ pushd ./docker-selenium >/dev/null
       fi
     fi
 
-    # Chromium (NodeChromium) patch for ARM64 or multi
-    if [ "$PLATFORM" = "linux/arm64/v8" ]; then
-      patch_file="Dockerfile_Chromium_ARM64_${SELENIUM_VER_NUM}.patch"
-      if [ ! -f "../selenium-patches/${SELENIUM_VER_NUM}/${patch_file}" ]; then
-        patch_file="Dockerfile_Chromium_multi_${SELENIUM_VER_NUM}.patch"
-      fi
-      if [ -f "../selenium-patches/${SELENIUM_VER_NUM}/${patch_file}" ]; then
-        pushd ./NodeChromium >/dev/null
-          cp "../../selenium-patches/${SELENIUM_VER_NUM}/${patch_file}" "./${patch_file}"
-          patch Dockerfile "./${patch_file}" || { echo "Failed to apply Chromium patch"; exit 1; }
-        popd >/dev/null
-      else
-        echo "No Chromium patch file found for ${SELENIUM_VER_NUM}, skipping."
-      fi
+    # A multi-platform NodeChromium patch applies to amd64 as well as arm64.
+    # Only fall back to an ARM-specific patch when no shared patch exists.
+    chromium_patch="../selenium-patches/${SELENIUM_VER_NUM}/Dockerfile_Chromium_multi_${SELENIUM_VER_NUM}.patch"
+    if [ ! -f "$chromium_patch" ] && [ "$PLATFORM" = "linux/arm64/v8" ]; then
+      chromium_patch="../selenium-patches/${SELENIUM_VER_NUM}/Dockerfile_Chromium_ARM64_${SELENIUM_VER_NUM}.patch"
+    fi
+    if [ -f "$chromium_patch" ]; then
+      chromium_patch=$(absolute_path "$chromium_patch")
+      echo "Applying NodeChromium patch for ${PLATFORM}: ${chromium_patch}"
+      pushd ./NodeChromium >/dev/null
+        patch Dockerfile "$chromium_patch" || { echo "Failed to apply NodeChromium patch: ${chromium_patch}"; exit 1; }
+      popd >/dev/null
+    else
+      echo "No NodeChromium patch found for Selenium ${SELENIUM_VER_NUM} on ${PLATFORM}; checking built-in compatibility guardrails."
     fi
   else
     echo "No patches found for Selenium ${SELENIUM_VER_NUM}, continuing…"
+  fi
+
+  # Older docker-selenium releases install Chromium from Debian sid on top of
+  # Ubuntu. Debian base-files 14's merged-/usr diversions conflict with the
+  # diversions already present in Ubuntu unless they are removed first. Keep
+  # this as a version-independent guardrail: local .env files may select a
+  # release for which the repository has no dedicated NodeChromium patch.
+  if grep -q 'deb ${CHROMIUM_DEB_SITE}/ sid main' ./NodeChromium/Dockerfile \
+      && ! grep -q 'dpkg-divert --package base-files --no-rename --remove' ./NodeChromium/Dockerfile; then
+    echo "Applying built-in NodeChromium merged-/usr compatibility fix for ${PLATFORM}"
+    dockerfile="./NodeChromium/Dockerfile"
+    temporary_file="${dockerfile}.tmp.$$"
+
+    awk '
+      {
+        print
+      }
+
+      index($0, "archive-key-12-security.asc") &&
+      index($0, "gpg --dearmor") {
+        print "  && for d in bin lib lib32 lib64 libo32 libx32 sbin; do dpkg-divert --package base-files --no-rename --remove /$d; done \\"
+      }
+    ' "$dockerfile" > "$temporary_file"
+
+    mv "$temporary_file" "$dockerfile"
+  fi
+
+  if grep -q 'deb ${CHROMIUM_DEB_SITE}/ sid main' ./NodeChromium/Dockerfile \
+      && ! grep -q 'dpkg-divert --package base-files --no-rename --remove' ./NodeChromium/Dockerfile; then
+    echo "Failed to install the Chromium merged-/usr compatibility fix" >&2
+    exit 1
+  fi
+  if grep -q 'deb ${CHROMIUM_DEB_SITE}/ sid main' ./NodeChromium/Dockerfile; then
+    echo "Verified NodeChromium merged-/usr compatibility fix for ${PLATFORM}"
   fi
 
   # RBee + assets
@@ -171,8 +220,8 @@ pushd ./docker-selenium >/dev/null
   # --- Guardrail: if Makefile still contains --attest/--sbom, strip them for docker driver ---
   if grep -q -- '--attest' Makefile || grep -Eq -- '--sbom(=| )' Makefile; then
     echo "Stripping --attest/--sbom flags from Selenium Makefile for docker driver compatibility…"
-    sed -i 's/--attest[^ ]*//g' Makefile
-    sed -i 's/--sbom[= ][^ ]*//g' Makefile
+    sed_in_place 's/--attest[^ ]*//g' Makefile
+    sed_in_place 's/--sbom[= ][^ ]*//g' Makefile
   fi
 
   # ===== Docker Hub mirror fallback for library images (ubuntu:*) =====
@@ -191,50 +240,61 @@ pushd ./docker-selenium >/dev/null
   echo "Using library mirror prefix: ${LIB_MIRROR}"
 
   # Collect ubuntu tags used across Selenium Dockerfiles (Base, Standalone, Node*)
-  mapfile -t UBUNTU_TAGS < <(grep -RhoE '^FROM[[:space:]]+ubuntu:([^[:space:]]+)' \
-      Base Standalone Node* 2>/dev/null | awk '{print $2}' | cut -d: -f2 | sort -u)
+  # Store tags as a newline-delimited value. This works with Bash 3.2 and avoids
+  # mapfile/readarray, which are only available in newer Bash releases.
+  UBUNTU_TAGS="$(
+    grep -RhoE '^FROM[[:space:]]+ubuntu:([^[:space:]]+)' \
+      Base Standalone Node* 2>/dev/null \
+      | awk '{print $2}' \
+      | cut -d: -f2 \
+      | sort -u \
+      || true
+  )"
 
-  if [ "${#UBUNTU_TAGS[@]}" -gt 0 ]; then
-    echo "Ubuntu tags referenced: ${UBUNTU_TAGS[*]}"
+  if [ -n "$UBUNTU_TAGS" ]; then
+    printf 'Ubuntu tags referenced: %s\n' \
+      "$(printf '%s\n' "$UBUNTU_TAGS" | paste -sd ' ' -)"
   fi
 
   # Rewrite FROM lines to use the mirror (safer than retagging because BuildKit may still HEAD the registry)
   # Examples: FROM ubuntu:noble-20241118.1  ->  FROM public.ecr.aws/docker/library/ubuntu:noble-20241118.1
-  find . -maxdepth 2 -type f -name 'Dockerfile*' -print0 | xargs -0 sed -i -E \
-    "s#^FROM[[:space:]]+ubuntu:#FROM ${LIB_MIRROR}/ubuntu:#"
+  # Portable equivalent of find -maxdepth 2. Unmatched globs are skipped by the
+  # regular-file check.
+  for dockerfile in ./Dockerfile* ./*/Dockerfile*; do
+    [ -f "$dockerfile" ] || continue
+
+    sed_in_place -E \
+      "s#^FROM[[:space:]]+ubuntu:#FROM ${LIB_MIRROR}/ubuntu:#" \
+      "$dockerfile"
+  done
 
   # Prime cache: pull each required ubuntu tag from the mirror with retries
-  for tag in "${UBUNTU_TAGS[@]}"; do
+  while IFS= read -r tag; do
+    [ -n "$tag" ] || continue
+
     echo "Pulling ${LIB_MIRROR}/ubuntu:${tag}"
-    n=0; until [ $n -ge 5 ]; do
-      if docker pull "${LIB_MIRROR}/ubuntu:${tag}"; then break; fi
-      n=$((n+1)); sleep $((2**n))
+    n=0
+    until [ "$n" -ge 5 ]; do
+      if docker pull "${LIB_MIRROR}/ubuntu:${tag}"; then
+        break
+      fi
+
+      n=$((n + 1))
+      sleep $((2 ** n))
     done
-  done
+  done < <(printf '%s\n' "$UBUNTU_TAGS")
   # ===== END mirror fallback =====
 
-  # Build (Chromium forced in CI if requested)
-  if [ "${FORCE_CHROMIUM}" = "true" ]; then
-    make standalone_chromium
-  else
-    if [ "$PLATFORM" = "linux/arm64/v8" ]; then
-      SELENIUM_VER_NUM_INT=$(version_to_integer "$SELENIUM_VER_NUM")
-      TARGET_VER_INT=$(version_to_integer "4.21.0")
-      if [ "$SELENIUM_VER_NUM_INT" -lt "$TARGET_VER_INT" ]; then
-        make standalone_firefox
-      else
-        make standalone_chromium
-      fi
-    else
-      make standalone_chrome
-    fi
-  fi
+  make standalone_chromium
+  rval=$?
+
 popd >/dev/null
 
-# optional compose
-if [ "${SKIP_COMPOSE}" = "true" ]; then
-  echo "SKIP_COMPOSE=true: not running docker compose."
+# If rval is 0 then the build succeeded, otherwise it failed. Exit with the same code.
+if [ $rval -eq 0 ]; then
+  echo "Selenium image build succeeded for ${PLATFORM} -> ${DOCKER_SELENIUM_IMAGE}"
 else
-  # shellcheck disable=SC2086
-  docker compose ${pars}
+  echo "Selenium image build failed for ${PLATFORM} -> ${DOCKER_SELENIUM_IMAGE}" >&2
 fi
+
+exit $rval

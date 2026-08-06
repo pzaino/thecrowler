@@ -21,12 +21,12 @@ on:
         default: "20250202"
       push_latest:
         description: "Also update :latest multi-arch tag?"
-        required: false
-        default: "true"
+        type: boolean
+        default: true
       dry_run:
         description: "Dry run (do not push)"
-        required: false
-        default: "false"
+        type: boolean
+        default: false
 
 env:
   REGISTRY: docker.io
@@ -48,9 +48,18 @@ jobs:
           egress-policy: block
           allowed-endpoints: >
             github.com:443
+            api.github.com:443
+            objects.githubusercontent.com:443
             mirror.gcr.io:443
             public.ecr.aws:443
             registry-1.docker.io:443
+            auth.docker.io:443
+            production.cloudflare.docker.com:443
+            archive.ubuntu.com:80
+            archive.ubuntu.com:443
+            security.ubuntu.com:80
+            security.ubuntu.com:443
+            ppa.launchpadcontent.net:443
 
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -65,8 +74,8 @@ jobs:
             install: true
 
       - name: Log in to Docker Hub
-        if: ${{ github.event.inputs.dry_run != 'true' }}
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
+        if: ${{ !inputs.dry_run }}
+        uses: docker/login-action@371161bbe7024a29a25c5e19bfcbc0804fe9ad2c
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
@@ -77,42 +86,37 @@ jobs:
 
       - name: Build Selenium VDI (Chromium) for ${{ matrix.arch }}
         env:
-          # Force cross-platform build without editing the Makefiles:
-          DOCKER_DEFAULT_PLATFORM: linux/${{ matrix.arch }}${{ matrix.arch == 'arm64' && '/v8' || '' }}
-          FORCE_CHROMIUM: "true"
+          TARGET_PLATFORM: linux/${{ matrix.arch }}${{ matrix.arch == 'arm64' && '/v8' || '' }}
           SKIP_COMPOSE: "true"
-          SELENIUM_VER_NUM: ${{ github.event.inputs.selenium_version }}
-          SELENIUM_BUILDID: ${{ github.event.inputs.selenium_build_id }}
+          SELENIUM_VER_NUM: ${{ inputs.selenium_version }}
+          SELENIUM_BUILDID: ${{ inputs.selenium_build_id }}
+          VDI_IMAGE_OUTPUT_FILE: ${{ runner.temp }}/vdi-image
         run: |
           scripts/build-vdi.sh
           echo "Listing built selenium images:"
           docker images 'selenium/standalone-*' --format '{{.Repository}}:{{.Tag}} ({{.ID}})'
 
-      - name: Retag as ${{ env.IMAGE_NAME }}:${{ github.event.inputs.release_tag }}-${{ matrix.arch }}
+      - name: Retag as ${{ env.IMAGE_NAME }}:${{ inputs.release_tag }}-${{ matrix.arch }}
+        env:
+          VDI_IMAGE_OUTPUT_FILE: ${{ runner.temp }}/vdi-image
         run: |
-          # Pick the chromium build first; fallback to chrome (unlikely).
-          IMG=$(docker images --format '{{.Repository}}:{{.Tag}}' selenium/standalone-chromium | head -n1)
-          if [ -z "$IMG" ]; then
-            IMG=$(docker images --format '{{.Repository}}:{{.Tag}}' selenium/standalone-chrome | head -n1)
-          fi
-          if [ -z "$IMG" ]; then
-            echo "ERROR: No built selenium standalone image found"; exit 1
-          fi
+          IMG=$(cat "$VDI_IMAGE_OUTPUT_FILE")
+          docker image inspect "$IMG" >/dev/null
           echo "Using source image: $IMG"
-          TARGET="${REGISTRY}/${IMAGE_OWNER}/${IMAGE_NAME}:${{ github.event.inputs.release_tag }}-${{ matrix.arch }}"
+          TARGET="${REGISTRY}/${IMAGE_OWNER}/${IMAGE_NAME}:${{ inputs.release_tag }}-${{ matrix.arch }}"
           docker tag "$IMG" "$TARGET"
           docker images "$TARGET"
 
       - name: Push arch image
-        if: ${{ github.event.inputs.dry_run != 'true' }}
+        if: ${{ !inputs.dry_run }}
         run: |
-          docker push "${REGISTRY}/${IMAGE_OWNER}/${IMAGE_NAME}:${{ github.event.inputs.release_tag }}-${{ matrix.arch }}"
+          docker push "${REGISTRY}/${IMAGE_OWNER}/${IMAGE_NAME}:${{ inputs.release_tag }}-${{ matrix.arch }}"
 
   publish:
     name: Publish multi-arch manifest
     needs: build
     runs-on: ubuntu-latest
-    if: ${{ github.event.inputs.dry_run != 'true' }}
+    if: ${{ !inputs.dry_run }}
     steps:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd
@@ -123,19 +127,19 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Create and push manifest for ${{ github.event.inputs.release_tag }}
+      - name: Create and push manifest for ${{ inputs.release_tag }}
         run: |
           BASE="${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ env.IMAGE_NAME }}"
           docker buildx imagetools create \
-            -t "${BASE}:${{ github.event.inputs.release_tag }}" \
-            "${BASE}:${{ github.event.inputs.release_tag }}-amd64" \
-            "${BASE}:${{ github.event.inputs.release_tag }}-arm64"
+            -t "${BASE}:${{ inputs.release_tag }}" \
+            "${BASE}:${{ inputs.release_tag }}-amd64" \
+            "${BASE}:${{ inputs.release_tag }}-arm64"
 
       - name: Also update :latest (optional)
-        if: ${{ github.event.inputs.push_latest == 'true' }}
+        if: ${{ inputs.push_latest }}
         run: |
           BASE="${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ env.IMAGE_NAME }}"
           docker buildx imagetools create \
             -t "${BASE}:latest" \
-            "${BASE}:${{ github.event.inputs.release_tag }}-amd64" \
-            "${BASE}:${{ github.event.inputs.release_tag }}-arm64"
+            "${BASE}:${{ inputs.release_tag }}-amd64" \
+            "${BASE}:${{ inputs.release_tag }}-arm64"
