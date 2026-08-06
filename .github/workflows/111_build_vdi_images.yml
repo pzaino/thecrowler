@@ -3,28 +3,27 @@ name: Build & Push VDI (Chromium)
 
 permissions:
   contents: read
-  packages: write
 
 on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Tag for Docker image (e.g., v1.5.0)"
+        description: "Tag for Docker image, for example v2.0.0"
         required: true
       selenium_version:
-        description: "Selenium version (default 4.28.1)"
+        description: "Selenium version"
         required: false
         default: "4.28.1"
       selenium_build_id:
-        description: "Selenium build id (default 20250202)"
+        description: "Selenium build ID"
         required: false
         default: "20250202"
       push_latest:
-        description: "Also update :latest multi-arch tag?"
+        description: "Also update the latest multi-platform tag"
         type: boolean
         default: true
       dry_run:
-        description: "Dry run (do not push)"
+        description: "Build both platforms without pushing"
         type: boolean
         default: false
 
@@ -32,17 +31,34 @@ env:
   REGISTRY: docker.io
   IMAGE_OWNER: zfpsystems
   IMAGE_NAME: crowler-vdi
+  BUILDKIT_PROGRESS: plain
+
+# Prevent two runs from publishing the same release tag concurrently.
+concurrency:
+  group: crowler-vdi-${{ inputs.release_tag }}
+  cancel-in-progress: false
 
 jobs:
   build:
     name: Build ${{ matrix.arch }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
-        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-24.04
+
+          - arch: arm64
+            platform: linux/arm64/v8
+            runner: ubuntu-24.04-arm
+
     steps:
-      - name: Harden the runner (audit)
+      - name: Harden the runner
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920
         with:
           egress-policy: audit
@@ -50,6 +66,8 @@ jobs:
             github.com:443
             api.github.com:443
             objects.githubusercontent.com:443
+            results-receiver.actions.githubusercontent.com:443
+            pipelines.actions.githubusercontent.com:443
             mirror.gcr.io:443
             public.ecr.aws:443
             registry-1.docker.io:443
@@ -64,60 +82,165 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8
+      - name: Validate release tag
+        shell: bash
+        run: |
+          set -euo pipefail
 
-      - name: Set up Docker Buildx (use docker driver)
+          TAG="${{ inputs.release_tag }}"
+
+          if [[ ! "$TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "Invalid Docker tag: $TAG" >&2
+            echo "The tag must be at most 128 characters and contain only letters, digits, dots, underscores, or hyphens." >&2
+            exit 1
+          fi
+
+      # No QEMU. Each build runs on its native CPU architecture.
+      - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd
         with:
-            driver: docker
-            install: true
+          driver: docker
+          install: true
 
       - name: Log in to Docker Hub
         if: ${{ !inputs.dry_run }}
-        uses: docker/login-action@371161bbe7024a29a25c5e19bfcbc0804fe9ad2c
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PAT }}
 
-      - name: Ensure script exists
+      - name: Ensure build script exists
+        shell: bash
         run: |
-          test -x scripts/build-vdi.sh || { echo "scripts/build-vdi.sh missing or not executable"; exit 1; }
+          set -euo pipefail
 
-      - name: Build Selenium VDI (Chromium) for ${{ matrix.arch }}
+          test -x scripts/build-vdi.sh || {
+            echo "scripts/build-vdi.sh is missing or not executable" >&2
+            exit 1
+          }
+
+      - name: Show build environment
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Runner architecture: $(uname -m)"
+          echo "Target platform: ${{ matrix.platform }}"
+          docker version
+          docker buildx version
+
+      - name: Build Selenium VDI for ${{ matrix.arch }}
         env:
-          TARGET_PLATFORM: linux/${{ matrix.arch }}${{ matrix.arch == 'arm64' && '/v8' || '' }}
+          TARGET_PLATFORM: ${{ matrix.platform }}
           SKIP_COMPOSE: "true"
           SELENIUM_VER_NUM: ${{ inputs.selenium_version }}
           SELENIUM_BUILDID: ${{ inputs.selenium_build_id }}
           VDI_IMAGE_OUTPUT_FILE: ${{ runner.temp }}/vdi-image
+        shell: bash
         run: |
-          scripts/build-vdi.sh
-          echo "Listing built selenium images:"
-          docker images 'selenium/standalone-*' --format '{{.Repository}}:{{.Tag}} ({{.ID}})'
+          set -euo pipefail
 
-      - name: Retag as ${{ env.IMAGE_NAME }}:${{ inputs.release_tag }}-${{ matrix.arch }}
+          scripts/build-vdi.sh
+
+          test -s "$VDI_IMAGE_OUTPUT_FILE" || {
+            echo "The VDI build did not write an image name to $VDI_IMAGE_OUTPUT_FILE" >&2
+            exit 1
+          }
+
+          IMG="$(cat "$VDI_IMAGE_OUTPUT_FILE")"
+
+          docker image inspect "$IMG" >/dev/null
+
+          echo "Built image: $IMG"
+          docker image inspect "$IMG" \
+            --format 'ID={{.Id}} Architecture={{.Architecture}} OS={{.Os}}'
+
+      # Pushes the platform image by digest only.
+      #
+      # No :release-amd64 or :release-arm64 tags are created.
+      # The Dockerfile is a no-op wrapper around the locally built image.
+      # It does not add or modify filesystem layers.
+      - name: Push platform manifest by digest
+        if: ${{ !inputs.dry_run }}
         env:
           VDI_IMAGE_OUTPUT_FILE: ${{ runner.temp }}/vdi-image
+          DIGEST_DIR: ${{ runner.temp }}/digests
+          METADATA_FILE: ${{ runner.temp }}/build-metadata.json
+          PUBLISH_CONTEXT: ${{ runner.temp }}/publish-context
+        shell: bash
         run: |
-          IMG=$(cat "$VDI_IMAGE_OUTPUT_FILE")
-          docker image inspect "$IMG" >/dev/null
-          echo "Using source image: $IMG"
-          TARGET="${REGISTRY}/${IMAGE_OWNER}/${IMAGE_NAME}:${{ inputs.release_tag }}-${{ matrix.arch }}"
-          docker tag "$IMG" "$TARGET"
-          docker images "$TARGET"
+          set -euo pipefail
 
-      - name: Push arch image
+          IMG="$(cat "$VDI_IMAGE_OUTPUT_FILE")"
+          BASE="${REGISTRY}/${IMAGE_OWNER}/${IMAGE_NAME}"
+
+          mkdir -p "$PUBLISH_CONTEXT" "$DIGEST_DIR"
+
+          cat > "$PUBLISH_CONTEXT/Dockerfile" <<'DOCKERFILE'
+          ARG SOURCE_IMAGE
+          FROM ${SOURCE_IMAGE}
+          DOCKERFILE
+
+          docker buildx build \
+            --platform "${{ matrix.platform }}" \
+            --build-arg "SOURCE_IMAGE=${IMG}" \
+            --provenance=false \
+            --metadata-file "$METADATA_FILE" \
+            --output "type=image,name=${BASE},push=true,push-by-digest=true,name-canonical=true" \
+            "$PUBLISH_CONTEXT"
+
+          DIGEST="$(
+            jq -er '."containerimage.digest"' "$METADATA_FILE"
+          )"
+
+          case "$DIGEST" in
+            sha256:*) ;;
+            *)
+              echo "Invalid image digest returned by Buildx: $DIGEST" >&2
+              exit 1
+              ;;
+          esac
+
+          DIGEST_VALUE="${DIGEST#sha256:}"
+
+          # The empty filename transports the digest to the publish job.
+          touch "${DIGEST_DIR}/${DIGEST_VALUE}"
+
+          echo "Published ${{ matrix.platform }} as ${BASE}@${DIGEST}"
+
+          docker buildx imagetools inspect "${BASE}@${DIGEST}"
+
+      - name: Upload platform digest
         if: ${{ !inputs.dry_run }}
-        run: |
-          docker push "${REGISTRY}/${IMAGE_OWNER}/${IMAGE_NAME}:${{ inputs.release_tag }}-${{ matrix.arch }}"
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
 
   publish:
-    name: Publish multi-arch manifest
+    name: Publish multi-platform image
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     if: ${{ !inputs.dry_run }}
+
     steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920
+        with:
+          egress-policy: audit
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            objects.githubusercontent.com:443
+            results-receiver.actions.githubusercontent.com:443
+            pipelines.actions.githubusercontent.com:443
+            registry-1.docker.io:443
+            auth.docker.io:443
+            production.cloudflare.docker.com:443
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd
 
@@ -125,21 +248,127 @@ jobs:
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+          password: ${{ secrets.DOCKER_PAT }}
 
-      - name: Create and push manifest for ${{ inputs.release_tag }}
-        run: |
-          BASE="${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ env.IMAGE_NAME }}"
-          docker buildx imagetools create \
-            -t "${BASE}:${{ inputs.release_tag }}" \
-            "${BASE}:${{ inputs.release_tag }}-amd64" \
-            "${BASE}:${{ inputs.release_tag }}-arm64"
+      - name: Download platform digests
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: digest-*
+          path: ${{ runner.temp }}/digests
+          merge-multiple: true
 
-      - name: Also update :latest (optional)
-        if: ${{ inputs.push_latest }}
+      - name: Create and push multi-platform tags
+        shell: bash
         run: |
-          BASE="${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ env.IMAGE_NAME }}"
+          set -euo pipefail
+
+          BASE="${REGISTRY}/${IMAGE_OWNER}/${IMAGE_NAME}"
+          DIGEST_DIR="${RUNNER_TEMP}/digests"
+
+          mapfile -t DIGEST_FILES < <(
+            find "$DIGEST_DIR" \
+              -maxdepth 1 \
+              -type f \
+              -printf '%f\n' \
+              | sort
+          )
+
+          if [ "${#DIGEST_FILES[@]}" -ne 2 ]; then
+            echo "Expected exactly two platform digests, found ${#DIGEST_FILES[@]}" >&2
+            printf 'Found digest file: %s\n' "${DIGEST_FILES[@]:-none}" >&2
+            exit 1
+          fi
+
+          PLATFORM_REFS=()
+
+          for digest in "${DIGEST_FILES[@]}"; do
+            if [[ ! "$digest" =~ ^[0-9a-f]{64}$ ]]; then
+              echo "Invalid SHA-256 digest filename: $digest" >&2
+              exit 1
+            fi
+
+            PLATFORM_REFS+=("${BASE}@sha256:${digest}")
+          done
+
+          TAG_ARGS=(
+            --tag "${BASE}:${{ inputs.release_tag }}"
+          )
+
+          if [ "${{ inputs.push_latest }}" = "true" ] &&
+             [ "${{ inputs.release_tag }}" != "latest" ]; then
+            TAG_ARGS+=(
+              --tag "${BASE}:latest"
+            )
+          fi
+
+          printf 'Platform manifest: %s\n' "${PLATFORM_REFS[@]}"
+          printf 'Publishing tag: %s\n' "${TAG_ARGS[@]}"
+
           docker buildx imagetools create \
-            -t "${BASE}:latest" \
-            "${BASE}:${{ inputs.release_tag }}-amd64" \
-            "${BASE}:${{ inputs.release_tag }}-arm64"
+            "${TAG_ARGS[@]}" \
+            "${PLATFORM_REFS[@]}"
+
+      - name: Verify release manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BASE="${REGISTRY}/${IMAGE_OWNER}/${IMAGE_NAME}"
+          IMAGE="${BASE}:${{ inputs.release_tag }}"
+
+          verify_multi_platform_image() {
+            local image="$1"
+            local manifest_file
+
+            manifest_file="$(mktemp)"
+
+            echo "Inspecting $image"
+
+            docker buildx imagetools inspect \
+              "$image" \
+              --raw > "$manifest_file"
+
+            jq . "$manifest_file"
+
+            jq -e '
+              (.manifests | length == 2)
+              and any(
+                .manifests[];
+                .platform.os == "linux"
+                and .platform.architecture == "amd64"
+              )
+              and any(
+                .manifests[];
+                .platform.os == "linux"
+                and .platform.architecture == "arm64"
+              )
+            ' "$manifest_file" >/dev/null || {
+              echo "The image is not a two-platform AMD64/ARM64 image: $image" >&2
+              rm -f "$manifest_file"
+              exit 1
+            }
+
+            rm -f "$manifest_file"
+
+            docker buildx imagetools inspect "$image"
+          }
+
+          verify_multi_platform_image "$IMAGE"
+
+          if [ "${{ inputs.push_latest }}" = "true" ]; then
+            verify_multi_platform_image "${BASE}:latest"
+          fi
+
+      - name: Show published images
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BASE="${REGISTRY}/${IMAGE_OWNER}/${IMAGE_NAME}"
+
+          echo "Published:"
+          echo "  ${BASE}:${{ inputs.release_tag }}"
+
+          if [ "${{ inputs.push_latest }}" = "true" ]; then
+            echo "  ${BASE}:latest"
+          fi
