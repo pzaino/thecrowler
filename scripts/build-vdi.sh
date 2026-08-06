@@ -8,6 +8,29 @@ pars="${*:-}"
 : "${SKIP_COMPOSE:=false}"     # set to "true" in CI to avoid docker compose + env checks
 export DOCKER_BUILDKIT="${DOCKER_BUILDKIT:-1}"
 
+# Return an absolute path without depending on GNU realpath.
+absolute_path() {
+  case "$1" in
+    /*)
+      printf '%s\n' "$1"
+      ;;
+    *)
+      printf '%s/%s\n' \
+        "$(cd "$(dirname "$1")" && pwd -P)" \
+        "$(basename "$1")"
+      ;;
+  esac
+}
+
+# BSD sed requires an explicit empty backup suffix for in-place editing.
+sed_in_place() {
+  if [ "$(uname -s)" = "Darwin" ]; then
+    sed -i '' "$@"
+  else
+    sed -i "$@"
+  fi
+}
+
 # Optional config sourcing
 if [ -f config.sh ]; then
   source config.sh
@@ -142,7 +165,7 @@ pushd ./docker-selenium >/dev/null
       chromium_patch="../selenium-patches/${SELENIUM_VER_NUM}/Dockerfile_Chromium_ARM64_${SELENIUM_VER_NUM}.patch"
     fi
     if [ -f "$chromium_patch" ]; then
-      chromium_patch=$(realpath "$chromium_patch")
+      chromium_patch=$(absolute_path "$chromium_patch")
       echo "Applying NodeChromium patch for ${PLATFORM}: ${chromium_patch}"
       pushd ./NodeChromium >/dev/null
         patch Dockerfile "$chromium_patch" || { echo "Failed to apply NodeChromium patch: ${chromium_patch}"; exit 1; }
@@ -162,8 +185,21 @@ pushd ./docker-selenium >/dev/null
   if grep -q 'deb ${CHROMIUM_DEB_SITE}/ sid main' ./NodeChromium/Dockerfile \
       && ! grep -q 'dpkg-divert --package base-files --no-rename --remove' ./NodeChromium/Dockerfile; then
     echo "Applying built-in NodeChromium merged-/usr compatibility fix for ${PLATFORM}"
-    sed -i '\#archive-key-12-security.asc.*gpg --dearmor#a\  && for d in bin lib lib32 lib64 libo32 libx32 sbin; do dpkg-divert --package base-files --no-rename --remove /$d; done \\' \
-      ./NodeChromium/Dockerfile
+    dockerfile="./NodeChromium/Dockerfile"
+    temporary_file="${dockerfile}.tmp.$$"
+
+    awk '
+      {
+        print
+      }
+
+      index($0, "archive-key-12-security.asc") &&
+      index($0, "gpg --dearmor") {
+        print "  && for d in bin lib lib32 lib64 libo32 libx32 sbin; do dpkg-divert --package base-files --no-rename --remove /$d; done \\"
+      }
+    ' "$dockerfile" > "$temporary_file"
+
+    mv "$temporary_file" "$dockerfile"
   fi
 
   if grep -q 'deb ${CHROMIUM_DEB_SITE}/ sid main' ./NodeChromium/Dockerfile \
@@ -184,8 +220,8 @@ pushd ./docker-selenium >/dev/null
   # --- Guardrail: if Makefile still contains --attest/--sbom, strip them for docker driver ---
   if grep -q -- '--attest' Makefile || grep -Eq -- '--sbom(=| )' Makefile; then
     echo "Stripping --attest/--sbom flags from Selenium Makefile for docker driver compatibility…"
-    sed -i 's/--attest[^ ]*//g' Makefile
-    sed -i 's/--sbom[= ][^ ]*//g' Makefile
+    sed_in_place 's/--attest[^ ]*//g' Makefile
+    sed_in_place 's/--sbom[= ][^ ]*//g' Makefile
   fi
 
   # ===== Docker Hub mirror fallback for library images (ubuntu:*) =====
@@ -204,26 +240,49 @@ pushd ./docker-selenium >/dev/null
   echo "Using library mirror prefix: ${LIB_MIRROR}"
 
   # Collect ubuntu tags used across Selenium Dockerfiles (Base, Standalone, Node*)
-  mapfile -t UBUNTU_TAGS < <(grep -RhoE '^FROM[[:space:]]+ubuntu:([^[:space:]]+)' \
-      Base Standalone Node* 2>/dev/null | awk '{print $2}' | cut -d: -f2 | sort -u)
+  # Store tags as a newline-delimited value. This works with Bash 3.2 and avoids
+  # mapfile/readarray, which are only available in newer Bash releases.
+  UBUNTU_TAGS="$(
+    grep -RhoE '^FROM[[:space:]]+ubuntu:([^[:space:]]+)' \
+      Base Standalone Node* 2>/dev/null \
+      | awk '{print $2}' \
+      | cut -d: -f2 \
+      | sort -u \
+      || true
+  )"
 
-  if [ "${#UBUNTU_TAGS[@]}" -gt 0 ]; then
-    echo "Ubuntu tags referenced: ${UBUNTU_TAGS[*]}"
+  if [ -n "$UBUNTU_TAGS" ]; then
+    printf 'Ubuntu tags referenced: %s\n' \
+      "$(printf '%s\n' "$UBUNTU_TAGS" | paste -sd ' ' -)"
   fi
 
   # Rewrite FROM lines to use the mirror (safer than retagging because BuildKit may still HEAD the registry)
   # Examples: FROM ubuntu:noble-20241118.1  ->  FROM public.ecr.aws/docker/library/ubuntu:noble-20241118.1
-  find . -maxdepth 2 -type f -name 'Dockerfile*' -print0 | xargs -0 sed -i -E \
-    "s#^FROM[[:space:]]+ubuntu:#FROM ${LIB_MIRROR}/ubuntu:#"
+  # Portable equivalent of find -maxdepth 2. Unmatched globs are skipped by the
+  # regular-file check.
+  for dockerfile in ./Dockerfile* ./*/Dockerfile*; do
+    [ -f "$dockerfile" ] || continue
+
+    sed_in_place -E \
+      "s#^FROM[[:space:]]+ubuntu:#FROM ${LIB_MIRROR}/ubuntu:#" \
+      "$dockerfile"
+  done
 
   # Prime cache: pull each required ubuntu tag from the mirror with retries
-  for tag in "${UBUNTU_TAGS[@]}"; do
+  while IFS= read -r tag; do
+    [ -n "$tag" ] || continue
+
     echo "Pulling ${LIB_MIRROR}/ubuntu:${tag}"
-    n=0; until [ $n -ge 5 ]; do
-      if docker pull "${LIB_MIRROR}/ubuntu:${tag}"; then break; fi
-      n=$((n+1)); sleep $((2**n))
+    n=0
+    until [ "$n" -ge 5 ]; do
+      if docker pull "${LIB_MIRROR}/ubuntu:${tag}"; then
+        break
+      fi
+
+      n=$((n + 1))
+      sleep $((2 ** n))
     done
-  done
+  done < <(printf '%s\n' "$UBUNTU_TAGS")
   # ===== END mirror fallback =====
 
   make standalone_chromium
