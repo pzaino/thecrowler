@@ -45,7 +45,7 @@ jobs:
       - name: Harden the runner (audit)
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920
         with:
-          egress-policy: block
+          egress-policy: audit
           allowed-endpoints: >
             github.com:443
             api.github.com:443
