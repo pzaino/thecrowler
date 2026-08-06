@@ -227,12 +227,15 @@ pushd ./docker-selenium >/dev/null
   # ===== END mirror fallback =====
 
   make standalone_chromium
+  rval=$?
+
 popd >/dev/null
 
-# optional compose
-#if [ "${SKIP_COMPOSE}" = "true" ]; then
-#  echo "SKIP_COMPOSE=true: not running docker compose."
-#else
-#  # shellcheck disable=SC2086
-#  docker compose ${pars}
-#fi
+# If rval is 0 then the build succeeded, otherwise it failed. Exit with the same code.
+if [ $rval -eq 0 ]; then
+  echo "Selenium image build succeeded for ${PLATFORM} -> ${DOCKER_SELENIUM_IMAGE}"
+else
+  echo "Selenium image build failed for ${PLATFORM} -> ${DOCKER_SELENIUM_IMAGE}" >&2
+fi
+
+exit $rval
