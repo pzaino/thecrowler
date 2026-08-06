@@ -5,16 +5,8 @@ set -euo pipefail
 pars="${*:-}"
 
 # === CI toggles ===
-: "${FORCE_CHROMIUM:=false}"   # set to "true" in CI to force chromium build
 : "${SKIP_COMPOSE:=false}"     # set to "true" in CI to avoid docker compose + env checks
 export DOCKER_BUILDKIT="${DOCKER_BUILDKIT:-1}"
-
-version_to_integer() {
-  local version=$1; local padded_version=""
-  IFS='.' read -ra parts <<< "$version"
-  for part in "${parts[@]}"; do padded_version+=$(printf "%02d" "$part"); done
-  echo "$((10#$padded_version))"
-}
 
 # Optional config sourcing
 if [ -f config.sh ]; then
@@ -36,14 +28,22 @@ if [ "${SKIP_COMPOSE}" != "true" ]; then
   : "${DOCKER_CROWLER_DB_USER:=crowler}"
 fi
 
-# Detect host arch -> default platform
-ARCH=$(uname -m)
-PLATFORM="linux/amd64"
-POSTGRES_IMAGE=""
-if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
-  PLATFORM="linux/arm64/v8"
-  POSTGRES_IMAGE="arm64v8/"
+# Honour an explicitly requested target when cross-building under QEMU. Falling
+# back to the host architecture keeps the command-line behaviour unchanged.
+REQUESTED_PLATFORM="${TARGET_PLATFORM:-${DOCKER_DEFAULT_PLATFORM:-}}"
+if [ -z "$REQUESTED_PLATFORM" ]; then
+  case "$(uname -m)" in
+    aarch64|arm64) REQUESTED_PLATFORM="linux/arm64/v8" ;;
+    x86_64|amd64) REQUESTED_PLATFORM="linux/amd64" ;;
+    *) echo "Unsupported host architecture: $(uname -m)" >&2; exit 1 ;;
+  esac
 fi
+
+case "$REQUESTED_PLATFORM" in
+  linux/amd64) PLATFORM="linux/amd64"; POSTGRES_IMAGE="" ;;
+  linux/arm64|linux/arm64/v8) PLATFORM="linux/arm64/v8"; POSTGRES_IMAGE="arm64v8/" ;;
+  *) echo "Unsupported target platform: $REQUESTED_PLATFORM" >&2; exit 1 ;;
+esac
 export PLATFORMS="$PLATFORM"
 export DOCKER_DEFAULT_PLATFORM="$PLATFORM"
 export DOCKER_POSTRGES_IMAGE="$POSTGRES_IMAGE"
@@ -57,20 +57,12 @@ CURRENT_DATE=$(date +%Y%m%d)
 export SELENIUM_PROD_RELEASE="${SELENIUM_VER_NUM}-${CURRENT_DATE}"
 : "${SELENIUM_PORT:=4444}"
 
-# Decide target image name used inside Selenium build
-if [ "${FORCE_CHROMIUM}" = "true" ]; then
-  export DOCKER_SELENIUM_IMAGE="selenium/standalone-chromium:${SELENIUM_PROD_RELEASE}"
-else
-  DOCKER_SELENIUM_IMAGE="selenium/standalone-chrome:${SELENIUM_PROD_RELEASE}"
-  if [ "$PLATFORM" = "linux/arm64/v8" ]; then
-    DOCKER_SELENIUM_IMAGE="selenium/standalone-chromium:${SELENIUM_PROD_RELEASE}"
-    SELENIUM_VER_NUM_INT=$(version_to_integer "$SELENIUM_VER_NUM")
-    TARGET_VER_INT=$(version_to_integer "4.21.0")
-    if [ "$SELENIUM_VER_NUM_INT" -lt "$TARGET_VER_INT" ]; then
-      DOCKER_SELENIUM_IMAGE="selenium/standalone-firefox:${SELENIUM_PROD_RELEASE}"
-    fi
-  fi
-  export DOCKER_SELENIUM_IMAGE
+# Chromium is available on both supported architectures; unlike Google Chrome,
+# it also gives the two builds a consistent browser and image repository.
+export DOCKER_SELENIUM_IMAGE="selenium/standalone-chromium:${SELENIUM_PROD_RELEASE}"
+
+if [ -n "${VDI_IMAGE_OUTPUT_FILE:-}" ]; then
+  printf '%s\n' "$DOCKER_SELENIUM_IMAGE" > "$VDI_IMAGE_OUTPUT_FILE"
 fi
 
 echo "Building Selenium image for ${PLATFORM} -> ${DOCKER_SELENIUM_IMAGE}"
@@ -213,22 +205,7 @@ pushd ./docker-selenium >/dev/null
   done
   # ===== END mirror fallback =====
 
-  # Build (Chromium forced in CI if requested)
-  if [ "${FORCE_CHROMIUM}" = "true" ]; then
-    make standalone_chromium
-  else
-    if [ "$PLATFORM" = "linux/arm64/v8" ]; then
-      SELENIUM_VER_NUM_INT=$(version_to_integer "$SELENIUM_VER_NUM")
-      TARGET_VER_INT=$(version_to_integer "4.21.0")
-      if [ "$SELENIUM_VER_NUM_INT" -lt "$TARGET_VER_INT" ]; then
-        make standalone_firefox
-      else
-        make standalone_chromium
-      fi
-    else
-      make standalone_chrome
-    fi
-  fi
+  make standalone_chromium
 popd >/dev/null
 
 # optional compose
