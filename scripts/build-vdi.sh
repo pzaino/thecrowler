@@ -230,9 +230,9 @@ pushd ./docker-selenium >/dev/null
 popd >/dev/null
 
 # optional compose
-if [ "${SKIP_COMPOSE}" = "true" ]; then
-  echo "SKIP_COMPOSE=true: not running docker compose."
-else
-  # shellcheck disable=SC2086
-  docker compose ${pars}
-fi
+#if [ "${SKIP_COMPOSE}" = "true" ]; then
+#  echo "SKIP_COMPOSE=true: not running docker compose."
+#else
+#  # shellcheck disable=SC2086
+#  docker compose ${pars}
+#fi
