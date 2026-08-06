@@ -135,23 +135,44 @@ pushd ./docker-selenium >/dev/null
       fi
     fi
 
-    # Chromium (NodeChromium) patch for ARM64 or multi
-    if [ "$PLATFORM" = "linux/arm64/v8" ]; then
-      patch_file="Dockerfile_Chromium_ARM64_${SELENIUM_VER_NUM}.patch"
-      if [ ! -f "../selenium-patches/${SELENIUM_VER_NUM}/${patch_file}" ]; then
-        patch_file="Dockerfile_Chromium_multi_${SELENIUM_VER_NUM}.patch"
-      fi
-      if [ -f "../selenium-patches/${SELENIUM_VER_NUM}/${patch_file}" ]; then
-        pushd ./NodeChromium >/dev/null
-          cp "../../selenium-patches/${SELENIUM_VER_NUM}/${patch_file}" "./${patch_file}"
-          patch Dockerfile "./${patch_file}" || { echo "Failed to apply Chromium patch"; exit 1; }
-        popd >/dev/null
-      else
-        echo "No Chromium patch file found for ${SELENIUM_VER_NUM}, skipping."
-      fi
+    # A multi-platform NodeChromium patch applies to amd64 as well as arm64.
+    # Only fall back to an ARM-specific patch when no shared patch exists.
+    chromium_patch="../selenium-patches/${SELENIUM_VER_NUM}/Dockerfile_Chromium_multi_${SELENIUM_VER_NUM}.patch"
+    if [ ! -f "$chromium_patch" ] && [ "$PLATFORM" = "linux/arm64/v8" ]; then
+      chromium_patch="../selenium-patches/${SELENIUM_VER_NUM}/Dockerfile_Chromium_ARM64_${SELENIUM_VER_NUM}.patch"
+    fi
+    if [ -f "$chromium_patch" ]; then
+      chromium_patch=$(realpath "$chromium_patch")
+      echo "Applying NodeChromium patch for ${PLATFORM}: ${chromium_patch}"
+      pushd ./NodeChromium >/dev/null
+        patch Dockerfile "$chromium_patch" || { echo "Failed to apply NodeChromium patch: ${chromium_patch}"; exit 1; }
+      popd >/dev/null
+    else
+      echo "No NodeChromium patch found for Selenium ${SELENIUM_VER_NUM} on ${PLATFORM}; checking built-in compatibility guardrails."
     fi
   else
     echo "No patches found for Selenium ${SELENIUM_VER_NUM}, continuing…"
+  fi
+
+  # Older docker-selenium releases install Chromium from Debian sid on top of
+  # Ubuntu. Debian base-files 14's merged-/usr diversions conflict with the
+  # diversions already present in Ubuntu unless they are removed first. Keep
+  # this as a version-independent guardrail: local .env files may select a
+  # release for which the repository has no dedicated NodeChromium patch.
+  if grep -q 'deb ${CHROMIUM_DEB_SITE}/ sid main' ./NodeChromium/Dockerfile \
+      && ! grep -q 'dpkg-divert --package base-files --no-rename --remove' ./NodeChromium/Dockerfile; then
+    echo "Applying built-in NodeChromium merged-/usr compatibility fix for ${PLATFORM}"
+    sed -i '\#archive-key-12-security.asc.*gpg --dearmor#a\  && for d in bin lib lib32 lib64 libo32 libx32 sbin; do dpkg-divert --package base-files --no-rename --remove /$d; done \\' \
+      ./NodeChromium/Dockerfile
+  fi
+
+  if grep -q 'deb ${CHROMIUM_DEB_SITE}/ sid main' ./NodeChromium/Dockerfile \
+      && ! grep -q 'dpkg-divert --package base-files --no-rename --remove' ./NodeChromium/Dockerfile; then
+    echo "Failed to install the Chromium merged-/usr compatibility fix" >&2
+    exit 1
+  fi
+  if grep -q 'deb ${CHROMIUM_DEB_SITE}/ sid main' ./NodeChromium/Dockerfile; then
+    echo "Verified NodeChromium merged-/usr compatibility fix for ${PLATFORM}"
   fi
 
   # RBee + assets
