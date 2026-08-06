@@ -19,11 +19,11 @@ on:
         required: false
         default: "20250202"
       push_latest:
-        description: "Also update the latest multi-platform tag"
+        description: "Also update :latest multi-platform tag?"
         type: boolean
         default: true
       dry_run:
-        description: "Build both platforms without pushing"
+        description: "Build without publishing"
         type: boolean
         default: false
 
@@ -31,9 +31,9 @@ env:
   REGISTRY: docker.io
   IMAGE_OWNER: zfpsystems
   IMAGE_NAME: crowler-vdi
+  DOCKER_BUILDKIT: 1
   BUILDKIT_PROGRESS: plain
 
-# Prevent two runs from publishing the same release tag concurrently.
 concurrency:
   group: crowler-vdi-${{ inputs.release_tag }}
   cancel-in-progress: false
@@ -52,10 +52,12 @@ jobs:
           - arch: amd64
             platform: linux/amd64
             runner: ubuntu-24.04
+            staging_slot: p0
 
           - arch: arm64
             platform: linux/arm64/v8
             runner: ubuntu-24.04-arm
+            staging_slot: p1
 
     steps:
       - name: Harden the runner
@@ -66,8 +68,6 @@ jobs:
             github.com:443
             api.github.com:443
             objects.githubusercontent.com:443
-            results-receiver.actions.githubusercontent.com:443
-            pipelines.actions.githubusercontent.com:443
             mirror.gcr.io:443
             public.ecr.aws:443
             registry-1.docker.io:443
@@ -91,16 +91,18 @@ jobs:
 
           if [[ ! "$TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
             echo "Invalid Docker tag: $TAG" >&2
-            echo "The tag must be at most 128 characters and contain only letters, digits, dots, underscores, or hyphens." >&2
             exit 1
           fi
 
-      # No QEMU. Each build runs on its native CPU architecture.
+      # Keep the Docker driver because build-vdi.sh expects its resulting image
+      # to be available through the local Docker image store.
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd
         with:
           driver: docker
           install: true
+
+      # QEMU is intentionally absent. Each job runs on its native architecture.
 
       - name: Log in to Docker Hub
         if: ${{ !inputs.dry_run }}
@@ -119,16 +121,6 @@ jobs:
             exit 1
           }
 
-      - name: Show build environment
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "Runner architecture: $(uname -m)"
-          echo "Target platform: ${{ matrix.platform }}"
-          docker version
-          docker buildx version
-
       - name: Build Selenium VDI for ${{ matrix.arch }}
         env:
           TARGET_PLATFORM: ${{ matrix.platform }}
@@ -140,10 +132,13 @@ jobs:
         run: |
           set -euo pipefail
 
+          echo "Runner architecture: $(uname -m)"
+          echo "Target platform: $TARGET_PLATFORM"
+
           scripts/build-vdi.sh
 
           test -s "$VDI_IMAGE_OUTPUT_FILE" || {
-            echo "The VDI build did not write an image name to $VDI_IMAGE_OUTPUT_FILE" >&2
+            echo "VDI image output file was not created" >&2
             exit 1
           }
 
@@ -153,77 +148,32 @@ jobs:
 
           echo "Built image: $IMG"
           docker image inspect "$IMG" \
-            --format 'ID={{.Id}} Architecture={{.Architecture}} OS={{.Os}}'
+            --format 'ID={{.Id}} OS={{.Os}} Architecture={{.Architecture}}'
 
-      # Pushes the platform image by digest only.
-      #
-      # No :release-amd64 or :release-arm64 tags are created.
-      # The Dockerfile is a no-op wrapper around the locally built image.
-      # It does not add or modify filesystem layers.
-      - name: Push platform manifest by digest
+      - name: Tag CI staging image
         if: ${{ !inputs.dry_run }}
         env:
           VDI_IMAGE_OUTPUT_FILE: ${{ runner.temp }}/vdi-image
-          DIGEST_DIR: ${{ runner.temp }}/digests
-          METADATA_FILE: ${{ runner.temp }}/build-metadata.json
-          PUBLISH_CONTEXT: ${{ runner.temp }}/publish-context
         shell: bash
         run: |
           set -euo pipefail
 
           IMG="$(cat "$VDI_IMAGE_OUTPUT_FILE")"
           BASE="${REGISTRY}/${IMAGE_OWNER}/${IMAGE_NAME}"
+          STAGING_TAG="ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${{ matrix.staging_slot }}"
+          TARGET="${BASE}:${STAGING_TAG}"
 
-          mkdir -p "$PUBLISH_CONTEXT" "$DIGEST_DIR"
+          echo "Source image: $IMG"
+          echo "Staging image: $TARGET"
 
-          cat > "$PUBLISH_CONTEXT/Dockerfile" <<'DOCKERFILE'
-          ARG SOURCE_IMAGE
-          FROM ${SOURCE_IMAGE}
-          DOCKERFILE
-
-          docker buildx build \
-            --platform "${{ matrix.platform }}" \
-            --build-arg "SOURCE_IMAGE=${IMG}" \
-            --provenance=false \
-            --metadata-file "$METADATA_FILE" \
-            --output "type=image,name=${BASE},push=true,push-by-digest=true,name-canonical=true" \
-            "$PUBLISH_CONTEXT"
-
-          DIGEST="$(
-            jq -er '."containerimage.digest"' "$METADATA_FILE"
-          )"
-
-          case "$DIGEST" in
-            sha256:*) ;;
-            *)
-              echo "Invalid image digest returned by Buildx: $DIGEST" >&2
-              exit 1
-              ;;
-          esac
-
-          DIGEST_VALUE="${DIGEST#sha256:}"
-
-          # The empty filename transports the digest to the publish job.
-          touch "${DIGEST_DIR}/${DIGEST_VALUE}"
-
-          echo "Published ${{ matrix.platform }} as ${BASE}@${DIGEST}"
-
-          docker buildx imagetools inspect "${BASE}@${DIGEST}"
-
-      - name: Upload platform digest
-        if: ${{ !inputs.dry_run }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: digest-${{ matrix.arch }}
-          path: ${{ runner.temp }}/digests/*
-          if-no-files-found: error
-          retention-days: 1
+          docker tag "$IMG" "$TARGET"
+          docker push "$TARGET"
 
   publish:
     name: Publish multi-platform image
     needs: build
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     if: ${{ !inputs.dry_run }}
 
     steps:
@@ -235,8 +185,6 @@ jobs:
             github.com:443
             api.github.com:443
             objects.githubusercontent.com:443
-            results-receiver.actions.githubusercontent.com:443
-            pipelines.actions.githubusercontent.com:443
             registry-1.docker.io:443
             auth.docker.io:443
             production.cloudflare.docker.com:443
@@ -250,79 +198,54 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PAT }}
 
-      - name: Download platform digests
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          pattern: digest-*
-          path: ${{ runner.temp }}/digests
-          merge-multiple: true
-
-      - name: Create and push multi-platform tags
+      - name: Create release multi-platform image
         shell: bash
         run: |
           set -euo pipefail
 
           BASE="${REGISTRY}/${IMAGE_OWNER}/${IMAGE_NAME}"
-          DIGEST_DIR="${RUNNER_TEMP}/digests"
+          AMD_IMAGE="${BASE}:ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-p0"
+          ARM_IMAGE="${BASE}:ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-p1"
+          RELEASE_IMAGE="${BASE}:${{ inputs.release_tag }}"
 
-          mapfile -t DIGEST_FILES < <(
-            find "$DIGEST_DIR" \
-              -maxdepth 1 \
-              -type f \
-              -printf '%f\n' \
-              | sort
-          )
-
-          if [ "${#DIGEST_FILES[@]}" -ne 2 ]; then
-            echo "Expected exactly two platform digests, found ${#DIGEST_FILES[@]}" >&2
-            printf 'Found digest file: %s\n' "${DIGEST_FILES[@]:-none}" >&2
-            exit 1
-          fi
-
-          PLATFORM_REFS=()
-
-          for digest in "${DIGEST_FILES[@]}"; do
-            if [[ ! "$digest" =~ ^[0-9a-f]{64}$ ]]; then
-              echo "Invalid SHA-256 digest filename: $digest" >&2
-              exit 1
-            fi
-
-            PLATFORM_REFS+=("${BASE}@sha256:${digest}")
-          done
-
-          TAG_ARGS=(
-            --tag "${BASE}:${{ inputs.release_tag }}"
-          )
-
-          if [ "${{ inputs.push_latest }}" = "true" ] &&
-             [ "${{ inputs.release_tag }}" != "latest" ]; then
-            TAG_ARGS+=(
-              --tag "${BASE}:latest"
-            )
-          fi
-
-          printf 'Platform manifest: %s\n' "${PLATFORM_REFS[@]}"
-          printf 'Publishing tag: %s\n' "${TAG_ARGS[@]}"
+          echo "Creating $RELEASE_IMAGE from:"
+          echo "  $AMD_IMAGE"
+          echo "  $ARM_IMAGE"
 
           docker buildx imagetools create \
-            "${TAG_ARGS[@]}" \
-            "${PLATFORM_REFS[@]}"
+            --tag "$RELEASE_IMAGE" \
+            "$AMD_IMAGE" \
+            "$ARM_IMAGE"
 
-      - name: Verify release manifest
+      - name: Update latest
+        if: ${{ inputs.push_latest && inputs.release_tag != 'latest' }}
         shell: bash
         run: |
           set -euo pipefail
 
           BASE="${REGISTRY}/${IMAGE_OWNER}/${IMAGE_NAME}"
-          IMAGE="${BASE}:${{ inputs.release_tag }}"
+          AMD_IMAGE="${BASE}:ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-p0"
+          ARM_IMAGE="${BASE}:ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-p1"
 
-          verify_multi_platform_image() {
+          docker buildx imagetools create \
+            --tag "${BASE}:latest" \
+            "$AMD_IMAGE" \
+            "$ARM_IMAGE"
+
+      - name: Verify multi-platform images
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BASE="${REGISTRY}/${IMAGE_OWNER}/${IMAGE_NAME}"
+
+          verify_image() {
             local image="$1"
             local manifest_file
 
             manifest_file="$(mktemp)"
 
-            echo "Inspecting $image"
+            echo "Verifying $image"
 
             docker buildx imagetools inspect \
               "$image" \
@@ -331,44 +254,69 @@ jobs:
             jq . "$manifest_file"
 
             jq -e '
-              (.manifests | length == 2)
-              and any(
+              any(
                 .manifests[];
                 .platform.os == "linux"
                 and .platform.architecture == "amd64"
               )
-              and any(
+              and
+              any(
                 .manifests[];
                 .platform.os == "linux"
                 and .platform.architecture == "arm64"
               )
             ' "$manifest_file" >/dev/null || {
-              echo "The image is not a two-platform AMD64/ARM64 image: $image" >&2
+              echo "Missing AMD64 or ARM64 manifest in $image" >&2
               rm -f "$manifest_file"
               exit 1
             }
 
             rm -f "$manifest_file"
-
-            docker buildx imagetools inspect "$image"
           }
 
-          verify_multi_platform_image "$IMAGE"
+          verify_image "${BASE}:${{ inputs.release_tag }}"
 
           if [ "${{ inputs.push_latest }}" = "true" ]; then
-            verify_multi_platform_image "${BASE}:latest"
+            verify_image "${BASE}:latest"
           fi
 
-      - name: Show published images
+      - name: Remove CI staging tags
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BASE="${REGISTRY}/${IMAGE_OWNER}/${IMAGE_NAME}"
+          AMD_IMAGE="${BASE}:ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-p0"
+          ARM_IMAGE="${BASE}:ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-p1"
+
+          delete_tag() {
+            local image="$1"
+
+            echo "Deleting staging tag: $image"
+
+            docker run --rm \
+              --network host \
+              --user "$(id -u):$(id -g)" \
+              --env HOME \
+              --volume "$HOME:$HOME" \
+              regclient/regctl:latest \
+              tag delete "$image" \
+              --ignore-missing
+          }
+
+          delete_tag "$AMD_IMAGE"
+          delete_tag "$ARM_IMAGE"
+
+      - name: Verify final images after cleanup
         shell: bash
         run: |
           set -euo pipefail
 
           BASE="${REGISTRY}/${IMAGE_OWNER}/${IMAGE_NAME}"
 
-          echo "Published:"
-          echo "  ${BASE}:${{ inputs.release_tag }}"
+          docker buildx imagetools inspect \
+            "${BASE}:${{ inputs.release_tag }}"
 
           if [ "${{ inputs.push_latest }}" = "true" ]; then
-            echo "  ${BASE}:latest"
+            docker buildx imagetools inspect "${BASE}:latest"
           fi
