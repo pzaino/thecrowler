@@ -92,7 +92,7 @@ func processCustomJS(ctx *ProcessContext, step *rs.PostProcessingStep, data *[]b
 			// transform parametersRaw to a map[string]interface{}
 			parametersMap := cmn.ConvertInfToMap(parametersRaw)
 			if parametersMap != nil {
-				cmn.DebugMsg(cmn.DbgLvlDebug3, "Processing parameters for plugin `%s`: %v", pluginName, step.Details["parameters"])
+				cmn.DebugMsg(cmn.DbgLvlDebug4, "Processing parameters for plugin `%s`: %v", pluginName, step.Details["parameters"])
 				for k, v := range parametersMap {
 					// Check if v is a string first:
 					if str, ok := v.(string); ok {
