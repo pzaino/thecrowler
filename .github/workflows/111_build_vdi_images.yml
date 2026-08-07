@@ -286,7 +286,7 @@ jobs:
           DOCKER_PAT: ${{ secrets.DOCKER_PAT }}
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
 
           BASE="${REGISTRY}/${IMAGE_OWNER}/${IMAGE_NAME}"
           AMD_IMAGE="${BASE}:ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-p0"
@@ -305,7 +305,7 @@ jobs:
 
           echo "Authenticating regctl with Docker Hub"
 
-          printf '%s' "$DOCKER_PAT" |
+          if ! printf '%s' "$DOCKER_PAT" |
             docker run --rm -i \
               --network host \
               --volume "${REGCTL_VOLUME}:/home/appuser/.regctl" \
@@ -313,22 +313,38 @@ jobs:
               registry login docker.io \
                 --user "$DOCKER_USERNAME" \
                 --pass-stdin
+          then
+            echo "::warning::regctl could not authenticate; CI staging tags were not removed"
+            exit 0
+          fi
 
           delete_tag() {
             local image="$1"
 
             echo "Deleting staging tag: $image"
 
-            docker run --rm \
+            if ! docker run --rm \
               --network host \
               --volume "${REGCTL_VOLUME}:/home/appuser/.regctl" \
               "$REGCTL_IMAGE" \
               tag delete "$image" \
                 --ignore-missing
+            then
+              echo "::warning::Unable to remove staging tag: $image"
+              return 1
+            fi
           }
 
-          delete_tag "$AMD_IMAGE"
-          delete_tag "$ARM_IMAGE"
+          cleanup_failed=false
+
+          delete_tag "$AMD_IMAGE" || cleanup_failed=true
+          delete_tag "$ARM_IMAGE" || cleanup_failed=true
+
+          if [ "$cleanup_failed" = "true" ]; then
+            echo "::warning::The final images were published successfully, but one or more CI staging tags remain"
+          else
+            echo "CI staging tags removed successfully"
+          fi
 
       - name: Verify final images after cleanup
         shell: bash

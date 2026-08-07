@@ -279,8 +279,13 @@ and go straight to the **Installation** section.
 
 #### 1. Easy Installation and deployment
 
-The **easiest way** to install the CROWler is to use the docker compose file.
-To do so, follow the [instructions here](doc/docker_build.md).
+The **easiest way** to install the CROWler is to use
+[the crowler deployment support repository](https://github.com/pzaino/thecrowler-deployment-support)
+which contains tools and even AI skills to quickly deploy the CROWler on different
+platforms and environments. Seriously it takes just a minute to deploy a full fleet and no building is required. It supports both AMD 64 and ARM64 platforms.
+
+If you prefer to build the docker images yourself then follow the
+[instructions here](doc/docker_build.md).
 
 **Please note(1)**: If you have questions about config.yaml or the ENV vars,
 or the ruleset etc, you can use the GPT chatbot to help you. Just go to this
