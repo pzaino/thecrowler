@@ -31,6 +31,95 @@ sed_in_place() {
   fi
 }
 
+
+# Ubuntu 24.04 stores its repositories in deb822 .sources files and uses plain
+# HTTP by default. Some routers and captive portals transparently rewrite those
+# requests to local endpoints such as dsldevice/httpi.lp. Insert an HTTPS and
+# retry guard before the first apt-get update in Selenium's Base image.
+inject_ubuntu_https_sources_guard() {
+  local dockerfile="$1"
+  local guard_file="${dockerfile}.https-guard.$$"
+  local temporary_file="${dockerfile}.tmp.$$"
+
+  if grep -q 'CROWLER_FORCE_UBUNTU_HTTPS' "$dockerfile"; then
+    return 0
+  fi
+
+  cat > "$guard_file" <<'DOCKERFILE'
+# CROWLER_FORCE_UBUNTU_HTTPS
+# Avoid transparent HTTP interception of Ubuntu package downloads and make
+# transient package-network failures retry automatically.
+RUN set -eux; \
+    if [ -f /etc/apt/sources.list ]; then \
+      sed -i \
+        -e 's#http://archive.ubuntu.com#https://archive.ubuntu.com#g' \
+        -e 's#http://security.ubuntu.com#https://security.ubuntu.com#g' \
+        -e 's#http://ports.ubuntu.com#https://ports.ubuntu.com#g' \
+        /etc/apt/sources.list; \
+    fi; \
+    if [ -d /etc/apt/sources.list.d ]; then \
+      find /etc/apt/sources.list.d -type f \( -name '*.list' -o -name '*.sources' \) \
+        -exec sed -i \
+          -e 's#http://archive.ubuntu.com#https://archive.ubuntu.com#g' \
+          -e 's#http://security.ubuntu.com#https://security.ubuntu.com#g' \
+          -e 's#http://ports.ubuntu.com#https://ports.ubuntu.com#g' \
+          {} +; \
+    fi; \
+    printf '%s\n' \
+      'Acquire::Retries "5";' \
+      'Acquire::http::Timeout "30";' \
+      'Acquire::https::Timeout "30";' \
+      > /etc/apt/apt.conf.d/80-crowler-network
+DOCKERFILE
+
+  if awk -v guard_file="$guard_file" '
+    !inserted && /^[[:space:]]*RUN[[:space:]]+apt-get[[:space:]]+-qqy[[:space:]]+update/ {
+      while ((getline guard_line < guard_file) > 0) {
+        print guard_line
+      }
+      close(guard_file)
+      inserted = 1
+    }
+
+    {
+      print
+    }
+
+    END {
+      if (!inserted) {
+        exit 42
+      }
+    }
+  ' "$dockerfile" > "$temporary_file"; then
+    mv "$temporary_file" "$dockerfile"
+    rm -f "$guard_file"
+  else
+    local rc=$?
+    rm -f "$guard_file" "$temporary_file"
+    echo "Unable to insert the Ubuntu HTTPS guard into ${dockerfile}" >&2
+    return "$rc"
+  fi
+}
+
+# Package repositories inside Dockerfiles must also use HTTPS. The Ubuntu base
+# source configuration is handled at image-build time by the guard above, while
+# this function fixes repository URLs declared directly in Dockerfiles.
+rewrite_dockerfile_package_urls() {
+  local dockerfile
+
+  for dockerfile in ./Dockerfile* ./*/Dockerfile*; do
+    [ -f "$dockerfile" ] || continue
+
+    sed_in_place \
+      -e 's#http://archive.ubuntu.com#https://archive.ubuntu.com#g' \
+      -e 's#http://security.ubuntu.com#https://security.ubuntu.com#g' \
+      -e 's#http://ports.ubuntu.com#https://ports.ubuntu.com#g' \
+      -e 's#http://deb.debian.org#https://deb.debian.org#g' \
+      -e 's#http://ftp.debian.org#https://ftp.debian.org#g' \
+      "$dockerfile"
+  done
+}
+
 # Remove the temporary Debian Sid repository from the NodeChromium image after
 # Chromium has been installed. Leaving Sid enabled allows later apt operations
 # in derived images to mix Debian packages into the Ubuntu base image.
@@ -76,9 +165,8 @@ append_supervisor_runtime_guard() {
 
 # CROWLER_SUPERVISOR_RUNTIME
 USER root
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends --reinstall \
-      supervisor \
+RUN apt-get -o Acquire::Retries=5 update \
+  && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
       python3-pkg-resources \
   && /usr/bin/python3 -c 'import pkg_resources; print(pkg_resources.__file__)' \
   && /usr/bin/supervisord --version \
@@ -252,6 +340,11 @@ pushd ./docker-selenium >/dev/null
   else
     echo "No patches found for Selenium ${SELENIUM_VER_NUM}, continuing…"
   fi
+
+  # Force package-manager traffic to HTTPS before any Selenium image stage is
+  # built. This prevents transparent HTTP proxying by routers/captive portals.
+  inject_ubuntu_https_sources_guard "./Base/Dockerfile"
+  rewrite_dockerfile_package_urls
 
   # Older docker-selenium releases install Chromium from Debian sid on top of
   # Ubuntu. Debian base-files 14's merged-/usr diversions conflict with the
