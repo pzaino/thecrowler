@@ -31,6 +31,347 @@ sed_in_place() {
   fi
 }
 
+
+# Prepare a CA bundle in the Base build context before switching APT sources
+# from HTTP to HTTPS. Minimal Ubuntu base images may not yet contain the
+# ca-certificates package, so HTTPS cannot bootstrap itself without this file.
+prepare_base_ca_bundle() {
+  local destination="$1"
+  local candidate
+
+  for candidate in \
+    "${SSL_CERT_FILE:-}" \
+    /etc/ssl/certs/ca-certificates.crt \
+    /etc/ssl/cert.pem \
+    /etc/pki/tls/certs/ca-bundle.crt; do
+    [ -n "$candidate" ] || continue
+    [ -s "$candidate" ] || continue
+
+    cp "$candidate" "$destination"
+    break
+  done
+
+  if [ ! -s "$destination" ]; then
+    if command -v curl >/dev/null 2>&1; then
+      curl --fail --location --silent --show-error \
+        --retry 5 --retry-delay 2 \
+        https://curl.se/ca/cacert.pem \
+        --output "$destination"
+    elif command -v wget >/dev/null 2>&1; then
+      wget --tries=5 --output-document="$destination" \
+        https://curl.se/ca/cacert.pem
+    else
+      echo "Unable to obtain a CA bundle for the Ubuntu Base image" >&2
+      exit 1
+    fi
+  fi
+
+  if ! grep -q 'BEGIN CERTIFICATE' "$destination"; then
+    echo "Invalid CA bundle written to $destination" >&2
+    exit 1
+  fi
+
+  chmod 0644 "$destination"
+  echo "Prepared Base CA bundle: $destination"
+}
+
+# Rewrite Ubuntu package sources to HTTPS before the first apt operation. This
+# avoids transparent HTTP interception while retaining Ubuntu Noble packages.
+patch_base_apt_transport() {
+  local dockerfile="$1"
+  local insertion_line
+  local temporary_file
+
+  if grep -q 'CROWLER_APT_HTTPS' "$dockerfile"; then
+    return 0
+  fi
+
+  insertion_line="$(
+    grep -n '^RUN apt-get -qqy update' "$dockerfile" \
+      | head -n 1 \
+      | cut -d: -f1
+  )"
+
+  if [ -z "$insertion_line" ]; then
+    echo "Unable to locate the first Base apt operation in $dockerfile" >&2
+    exit 1
+  fi
+
+  temporary_file="${dockerfile}.tmp.$$"
+
+  {
+    if [ "$insertion_line" -gt 1 ]; then
+      sed -n "1,$((insertion_line - 1))p" "$dockerfile"
+    fi
+
+    cat <<'DOCKERFILE'
+# CROWLER_APT_HTTPS
+COPY crowler-ca-certificates.crt /tmp/crowler-ca-certificates.crt
+RUN set -eux; \
+    mkdir -p /etc/ssl/certs; \
+    cp /tmp/crowler-ca-certificates.crt /etc/ssl/certs/ca-certificates.crt; \
+    chmod 0644 /etc/ssl/certs/ca-certificates.crt; \
+    rm -f /tmp/crowler-ca-certificates.crt; \
+    if [ -f /etc/apt/sources.list ]; then \
+      sed -i \
+        -e 's#http://archive.ubuntu.com#https://archive.ubuntu.com#g' \
+        -e 's#http://security.ubuntu.com#https://security.ubuntu.com#g' \
+        -e 's#http://ports.ubuntu.com#https://ports.ubuntu.com#g' \
+        /etc/apt/sources.list; \
+    fi; \
+    if [ -d /etc/apt/sources.list.d ]; then \
+      find /etc/apt/sources.list.d -type f \
+        \( -name '*.list' -o -name '*.sources' \) \
+        -exec sed -i \
+          -e 's#http://archive.ubuntu.com#https://archive.ubuntu.com#g' \
+          -e 's#http://security.ubuntu.com#https://security.ubuntu.com#g' \
+          -e 's#http://ports.ubuntu.com#https://ports.ubuntu.com#g' \
+          {} +; \
+    fi; \
+    printf '%s\n' \
+      'Acquire::Retries "5";' \
+      'Acquire::http::Timeout "30";' \
+      'Acquire::https::Timeout "30";' \
+      > /etc/apt/apt.conf.d/80crowler-network
+DOCKERFILE
+
+    sed -n "${insertion_line},\$p" "$dockerfile"
+  } > "$temporary_file"
+
+  mv "$temporary_file" "$dockerfile"
+}
+
+# Install packages needed by the final image while the package set is still
+# pure Ubuntu. NodeChromium later installs Chromium from Debian Sid, so the
+# Standalone stage must not run apt afterward.
+patch_base_runtime_packages() {
+  local dockerfile="$1"
+  local temporary_file
+
+  if grep -Eq '^[[:space:]]+python3-pkg-resources[[:space:]]+\\[[:space:]]*$' "$dockerfile" \
+      && grep -Eq '^[[:space:]]+feh[[:space:]]+\\[[:space:]]*$' "$dockerfile"; then
+    return 0
+  fi
+
+  temporary_file="${dockerfile}.tmp.$$"
+
+  if ! awk '
+    /^[[:space:]]+supervisor[[:space:]]+\\[[:space:]]*$/ && !inserted {
+      print
+      print "    python3-pkg-resources \\"
+      print "    feh \\"
+      inserted=1
+      next
+    }
+    { print }
+    END {
+      if (!inserted) {
+        exit 42
+      }
+    }
+  ' "$dockerfile" > "$temporary_file"; then
+    rm -f "$temporary_file"
+    echo "Unable to add runtime packages to $dockerfile" >&2
+    exit 1
+  fi
+
+  mv "$temporary_file" "$dockerfile"
+}
+
+# Modify the repository patch before applying it. The RBee builder must inherit
+# the clean Selenium Base image, not node-chromium with Debian Sid libc. The
+# final stage also must not call apt to install feh. Keep every replacement
+# one-for-one because this file is a normal-diff patch with explicit hunk sizes.
+prepare_standalone_patch() {
+  local patch_file="$1"
+  local temporary_file="${patch_file}.tmp.$$"
+
+  if grep -q 'FROM ${NAMESPACE}/base:${VERSION} AS builder' "$patch_file" \
+      && grep -q '^> RUN command -v feh >/dev/null$' "$patch_file"; then
+    return 0
+  fi
+
+  awk '
+    $0 == "> FROM ${NAMESPACE}/${BASE}:${VERSION} AS builder" {
+      print "> FROM ${NAMESPACE}/base:${VERSION} AS builder"
+      builder=1
+      next
+    }
+
+    $0 == "> LABEL authors=${AUTHORS}" {
+      print "> LABEL authors=\"ZFPSystems\""
+      authors=1
+      next
+    }
+
+    $0 == "> RUN sudo apt-get update && apt-get install -y feh" {
+      print "> RUN command -v feh >/dev/null"
+      feh=1
+      next
+    }
+
+    { print }
+
+    END {
+      if (!builder || !authors || !feh) {
+        exit 42
+      }
+    }
+  ' "$patch_file" > "$temporary_file" || {
+    rm -f "$temporary_file"
+    echo "Unable to prepare Standalone patch: $patch_file" >&2
+    exit 1
+  }
+
+  mv "$temporary_file" "$patch_file"
+}
+
+# Chromium installation from Debian Sid can remove Ubuntu's
+# python3-pkg-resources package from the node-chromium lineage. The clean RBee
+# builder still contains the pure-Python pkg_resources module, so copy it into
+# the final Standalone stage without running apt in the mixed package image.
+restore_pkg_resources_from_builder() {
+  local dockerfile="$1"
+  local temporary_file
+
+  if grep -Fq \
+      'COPY --from=builder /usr/lib/python3/dist-packages/pkg_resources /usr/lib/python3/dist-packages/pkg_resources' \
+      "$dockerfile"; then
+    return 0
+  fi
+
+  temporary_file="${dockerfile}.tmp.$$"
+
+  if ! awk '
+    {
+      print
+    }
+
+    /^[[:space:]]*RUN command -v feh >\/dev\/null[[:space:]]*$/ && !inserted {
+      print "COPY --from=builder /usr/lib/python3/dist-packages/pkg_resources /usr/lib/python3/dist-packages/pkg_resources"
+      inserted=1
+    }
+
+    END {
+      if (!inserted) {
+        exit 42
+      }
+    }
+  ' "$dockerfile" > "$temporary_file"; then
+    rm -f "$temporary_file"
+    echo "Unable to restore pkg_resources in $dockerfile" >&2
+    exit 1
+  fi
+
+  mv "$temporary_file" "$dockerfile"
+}
+
+# Use HTTPS for the temporary Debian Chromium repository.
+patch_node_chromium_apt_transport() {
+  local dockerfile="$1"
+
+  sed_in_place \
+    's#ARG CHROMIUM_DEB_SITE="http://deb.debian.org/debian"#ARG CHROMIUM_DEB_SITE="https://deb.debian.org/debian"#' \
+    "$dockerfile"
+}
+
+# Remove the temporary Debian Sid repository once Chromium is installed. This
+# prevents accidental package mixing in later derived stages.
+append_node_chromium_repo_cleanup() {
+  local dockerfile="$1"
+
+  if grep -q 'CROWLER_REMOVE_DEBIAN_SID' "$dockerfile"; then
+    return 0
+  fi
+
+  cat >> "$dockerfile" <<'DOCKERFILE'
+
+# CROWLER_REMOVE_DEBIAN_SID
+USER root
+RUN if [ -f /etc/apt/sources.list ]; then \
+      sed -i '/[[:space:]]sid[[:space:]]main[[:space:]]*$/d' /etc/apt/sources.list; \
+    fi \
+  && if [ -d /etc/apt/sources.list.d ]; then \
+      find /etc/apt/sources.list.d -type f \
+        \( -name '*.list' -o -name '*.sources' \) \
+        -exec sed -i '/[[:space:]]sid[[:space:]]main[[:space:]]*$/d' {} +; \
+    fi \
+  && rm -f \
+      /etc/apt/trusted.gpg.d/debian-archive-keyring.gpg \
+      /etc/apt/trusted.gpg.d/debian-archive-security-keyring.gpg \
+  && rm -rf /var/lib/apt/lists/* /var/cache/apt/*
+USER ${SEL_UID}
+DOCKERFILE
+}
+
+# Validate the runtime in the final Standalone stage without running apt there.
+append_standalone_runtime_guard() {
+  local dockerfile="$1"
+
+  if grep -q 'CROWLER_SUPERVISOR_RUNTIME' "$dockerfile"; then
+    return 0
+  fi
+
+  cat >> "$dockerfile" <<'DOCKERFILE'
+
+# CROWLER_SUPERVISOR_RUNTIME
+USER root
+RUN command -v feh >/dev/null \
+  && /usr/bin/python3 -c 'import pkg_resources; print(pkg_resources.__file__)' \
+  && /usr/bin/supervisord --version
+USER ${SEL_UID}:${SEL_GID}
+DOCKERFILE
+}
+
+verify_generated_dockerfiles() {
+  local standalone_dockerfile="$1"
+
+  grep -F 'FROM ${NAMESPACE}/base:${VERSION} AS builder' \
+    "$standalone_dockerfile" >/dev/null || {
+      echo "Standalone RBee builder is not using the clean Selenium Base image" >&2
+      sed -n '1,130p' "$standalone_dockerfile" >&2
+      exit 1
+    }
+
+  if grep -F 'RUN sudo apt-get update && apt-get install -y feh' \
+      "$standalone_dockerfile" >/dev/null; then
+    echo "Standalone still installs feh after Debian Sid was introduced" >&2
+    exit 1
+  fi
+
+  grep -F 'COPY --from=builder /usr/lib/python3/dist-packages/pkg_resources /usr/lib/python3/dist-packages/pkg_resources' \
+    "$standalone_dockerfile" >/dev/null || {
+      echo "Standalone does not restore pkg_resources from the clean builder" >&2
+      exit 1
+    }
+
+  grep -F '# CROWLER_SUPERVISOR_RUNTIME' \
+    "$standalone_dockerfile" >/dev/null || {
+      echo "Standalone runtime validation was not added" >&2
+      exit 1
+    }
+}
+
+# Test the completed image before the workflow tags or publishes it.
+verify_supervisor_runtime() {
+  local image="$1"
+  local platform="$2"
+
+  echo "Verifying Supervisor runtime in ${image} for ${platform}"
+
+  docker run --rm \
+    --pull=never \
+    --platform "$platform" \
+    --entrypoint /bin/bash \
+    "$image" \
+    -lc '
+      set -e
+      command -v feh
+      /usr/bin/python3 -c "import pkg_resources; print(pkg_resources.__file__)"
+      /usr/bin/supervisord --version
+    '
+}
+
 # Optional config sourcing
 if [ -f config.sh ]; then
   source config.sh
@@ -144,6 +485,7 @@ pushd ./docker-selenium >/dev/null
     if [ -f "../selenium-patches/${SELENIUM_VER_NUM}/Dockerfile_Standalone_multi_${SELENIUM_VER_NUM}.patch" ]; then
       pushd ./Standalone >/dev/null
         cp "../../selenium-patches/${SELENIUM_VER_NUM}/Dockerfile_Standalone_multi_${SELENIUM_VER_NUM}.patch" "./Dockerfile_Standalone.patch"
+        prepare_standalone_patch "./Dockerfile_Standalone.patch"
         patch Dockerfile ./Dockerfile_Standalone.patch || { echo "Failed to apply Standalone multi patch"; exit 1; }
       popd >/dev/null
     else
@@ -210,6 +552,18 @@ pushd ./docker-selenium >/dev/null
   if grep -q 'deb ${CHROMIUM_DEB_SITE}/ sid main' ./NodeChromium/Dockerfile; then
     echo "Verified NodeChromium merged-/usr compatibility fix for ${PLATFORM}"
   fi
+
+  # Keep Ubuntu package installation in Base, before NodeChromium introduces
+  # Debian Sid packages. The Standalone patch has already been rewritten so its
+  # RBee builder uses this clean Base image.
+  prepare_base_ca_bundle "./Base/crowler-ca-certificates.crt"
+  patch_base_apt_transport "./Base/Dockerfile"
+  patch_base_runtime_packages "./Base/Dockerfile"
+  patch_node_chromium_apt_transport "./NodeChromium/Dockerfile"
+  restore_pkg_resources_from_builder "./Standalone/Dockerfile"
+  append_node_chromium_repo_cleanup "./NodeChromium/Dockerfile"
+  append_standalone_runtime_guard "./Standalone/Dockerfile"
+  verify_generated_dockerfiles "./Standalone/Dockerfile"
 
   # RBee + assets
   cp -r ../Rbee ./Standalone/
@@ -285,16 +639,18 @@ pushd ./docker-selenium >/dev/null
   done < <(printf '%s\n' "$UBUNTU_TAGS")
   # ===== END mirror fallback =====
 
-  make standalone_chromium
-  rval=$?
+  # ==== Build the final image ====
+  rval=0
+  make standalone_chromium || rval=$?
 
 popd >/dev/null
 
 # If rval is 0 then the build succeeded, otherwise it failed. Exit with the same code.
-if [ $rval -eq 0 ]; then
-  echo "Selenium image build succeeded for ${PLATFORM} -> ${DOCKER_SELENIUM_IMAGE}"
+if [ "$rval" -eq 0 ]; then
+  verify_supervisor_runtime "$DOCKER_SELENIUM_IMAGE" "$PLATFORM"
+  echo "Selenium image build and runtime verification succeeded for ${PLATFORM} -> ${DOCKER_SELENIUM_IMAGE}"
 else
   echo "Selenium image build failed for ${PLATFORM} -> ${DOCKER_SELENIUM_IMAGE}" >&2
 fi
 
-exit $rval
+exit "$rval"

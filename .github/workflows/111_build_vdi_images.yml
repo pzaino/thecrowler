@@ -281,6 +281,9 @@ jobs:
           fi
 
       - name: Remove CI staging tags
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_PAT: ${{ secrets.DOCKER_PAT }}
         shell: bash
         run: |
           set -euo pipefail
@@ -289,6 +292,28 @@ jobs:
           AMD_IMAGE="${BASE}:ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-p0"
           ARM_IMAGE="${BASE}:ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-p1"
 
+          REGCTL_IMAGE="regclient/regctl:latest"
+          REGCTL_VOLUME="regctl-config-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+          docker volume create "$REGCTL_VOLUME" >/dev/null
+
+          cleanup_regctl_volume() {
+            docker volume rm -f "$REGCTL_VOLUME" >/dev/null 2>&1 || true
+          }
+
+          trap cleanup_regctl_volume EXIT
+
+          echo "Authenticating regctl with Docker Hub"
+
+          printf '%s' "$DOCKER_PAT" |
+            docker run --rm -i \
+              --network host \
+              --volume "${REGCTL_VOLUME}:/home/appuser/.regctl" \
+              "$REGCTL_IMAGE" \
+              registry login docker.io \
+                --user "$DOCKER_USERNAME" \
+                --pass-stdin
+
           delete_tag() {
             local image="$1"
 
@@ -296,12 +321,10 @@ jobs:
 
             docker run --rm \
               --network host \
-              --user "$(id -u):$(id -g)" \
-              --env HOME \
-              --volume "$HOME:$HOME" \
-              regclient/regctl:latest \
+              --volume "${REGCTL_VOLUME}:/home/appuser/.regctl" \
+              "$REGCTL_IMAGE" \
               tag delete "$image" \
-              --ignore-missing
+                --ignore-missing
           }
 
           delete_tag "$AMD_IMAGE"
