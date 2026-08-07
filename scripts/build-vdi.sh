@@ -32,6 +32,49 @@ sed_in_place() {
 }
 
 
+# Prepare a CA bundle in the Base build context before switching APT sources
+# from HTTP to HTTPS. Minimal Ubuntu base images may not yet contain the
+# ca-certificates package, so HTTPS cannot bootstrap itself without this file.
+prepare_base_ca_bundle() {
+  local destination="$1"
+  local candidate
+
+  for candidate in \
+    "${SSL_CERT_FILE:-}" \
+    /etc/ssl/certs/ca-certificates.crt \
+    /etc/ssl/cert.pem \
+    /etc/pki/tls/certs/ca-bundle.crt; do
+    [ -n "$candidate" ] || continue
+    [ -s "$candidate" ] || continue
+
+    cp "$candidate" "$destination"
+    break
+  done
+
+  if [ ! -s "$destination" ]; then
+    if command -v curl >/dev/null 2>&1; then
+      curl --fail --location --silent --show-error \
+        --retry 5 --retry-delay 2 \
+        https://curl.se/ca/cacert.pem \
+        --output "$destination"
+    elif command -v wget >/dev/null 2>&1; then
+      wget --tries=5 --output-document="$destination" \
+        https://curl.se/ca/cacert.pem
+    else
+      echo "Unable to obtain a CA bundle for the Ubuntu Base image" >&2
+      exit 1
+    fi
+  fi
+
+  if ! grep -q 'BEGIN CERTIFICATE' "$destination"; then
+    echo "Invalid CA bundle written to $destination" >&2
+    exit 1
+  fi
+
+  chmod 0644 "$destination"
+  echo "Prepared Base CA bundle: $destination"
+}
+
 # Rewrite Ubuntu package sources to HTTPS before the first apt operation. This
 # avoids transparent HTTP interception while retaining Ubuntu Noble packages.
 patch_base_apt_transport() {
@@ -63,7 +106,12 @@ patch_base_apt_transport() {
 
     cat <<'DOCKERFILE'
 # CROWLER_APT_HTTPS
+COPY crowler-ca-certificates.crt /tmp/crowler-ca-certificates.crt
 RUN set -eux; \
+    mkdir -p /etc/ssl/certs; \
+    cp /tmp/crowler-ca-certificates.crt /etc/ssl/certs/ca-certificates.crt; \
+    chmod 0644 /etc/ssl/certs/ca-certificates.crt; \
+    rm -f /tmp/crowler-ca-certificates.crt; \
     if [ -f /etc/apt/sources.list ]; then \
       sed -i \
         -e 's#http://archive.ubuntu.com#https://archive.ubuntu.com#g' \
@@ -461,6 +509,7 @@ pushd ./docker-selenium >/dev/null
   # Keep Ubuntu package installation in Base, before NodeChromium introduces
   # Debian Sid packages. The Standalone patch has already been rewritten so its
   # RBee builder uses this clean Base image.
+  prepare_base_ca_bundle "./Base/crowler-ca-certificates.crt"
   patch_base_apt_transport "./Base/Dockerfile"
   patch_base_runtime_packages "./Base/Dockerfile"
   patch_node_chromium_apt_transport "./NodeChromium/Dockerfile"
