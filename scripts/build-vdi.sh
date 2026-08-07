@@ -180,7 +180,8 @@ patch_base_runtime_packages() {
 
 # Modify the repository patch before applying it. The RBee builder must inherit
 # the clean Selenium Base image, not node-chromium with Debian Sid libc. The
-# final stage also must not call apt to install feh.
+# final stage also must not call apt to install feh. Keep every replacement
+# one-for-one because this file is a normal-diff patch with explicit hunk sizes.
 prepare_standalone_patch() {
   local patch_file="$1"
   local temporary_file="${patch_file}.tmp.$$"
@@ -223,6 +224,46 @@ prepare_standalone_patch() {
   }
 
   mv "$temporary_file" "$patch_file"
+}
+
+# Chromium installation from Debian Sid can remove Ubuntu's
+# python3-pkg-resources package from the node-chromium lineage. The clean RBee
+# builder still contains the pure-Python pkg_resources module, so copy it into
+# the final Standalone stage without running apt in the mixed package image.
+restore_pkg_resources_from_builder() {
+  local dockerfile="$1"
+  local temporary_file
+
+  if grep -Fq \
+      'COPY --from=builder /usr/lib/python3/dist-packages/pkg_resources /usr/lib/python3/dist-packages/pkg_resources' \
+      "$dockerfile"; then
+    return 0
+  fi
+
+  temporary_file="${dockerfile}.tmp.$$"
+
+  if ! awk '
+    {
+      print
+    }
+
+    /^[[:space:]]*RUN command -v feh >\/dev\/null[[:space:]]*$/ && !inserted {
+      print "COPY --from=builder /usr/lib/python3/dist-packages/pkg_resources /usr/lib/python3/dist-packages/pkg_resources"
+      inserted=1
+    }
+
+    END {
+      if (!inserted) {
+        exit 42
+      }
+    }
+  ' "$dockerfile" > "$temporary_file"; then
+    rm -f "$temporary_file"
+    echo "Unable to restore pkg_resources in $dockerfile" >&2
+    exit 1
+  fi
+
+  mv "$temporary_file" "$dockerfile"
 }
 
 # Use HTTPS for the temporary Debian Chromium repository.
@@ -297,6 +338,12 @@ verify_generated_dockerfiles() {
     echo "Standalone still installs feh after Debian Sid was introduced" >&2
     exit 1
   fi
+
+  grep -F 'COPY --from=builder /usr/lib/python3/dist-packages/pkg_resources /usr/lib/python3/dist-packages/pkg_resources' \
+    "$standalone_dockerfile" >/dev/null || {
+      echo "Standalone does not restore pkg_resources from the clean builder" >&2
+      exit 1
+    }
 
   grep -F '# CROWLER_SUPERVISOR_RUNTIME' \
     "$standalone_dockerfile" >/dev/null || {
@@ -513,6 +560,7 @@ pushd ./docker-selenium >/dev/null
   patch_base_apt_transport "./Base/Dockerfile"
   patch_base_runtime_packages "./Base/Dockerfile"
   patch_node_chromium_apt_transport "./NodeChromium/Dockerfile"
+  restore_pkg_resources_from_builder "./Standalone/Dockerfile"
   append_node_chromium_repo_cleanup "./NodeChromium/Dockerfile"
   append_standalone_runtime_guard "./Standalone/Dockerfile"
   verify_generated_dockerfiles "./Standalone/Dockerfile"
