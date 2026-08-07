@@ -31,6 +31,82 @@ sed_in_place() {
   fi
 }
 
+# Remove the temporary Debian Sid repository from the NodeChromium image after
+# Chromium has been installed. Leaving Sid enabled allows later apt operations
+# in derived images to mix Debian packages into the Ubuntu base image.
+append_node_chromium_repo_cleanup() {
+  local dockerfile="$1"
+
+  if grep -q 'CROWLER_REMOVE_DEBIAN_SID' "$dockerfile"; then
+    return 0
+  fi
+
+  cat >> "$dockerfile" <<'DOCKERFILE'
+
+# CROWLER_REMOVE_DEBIAN_SID
+# Chromium is already installed. Restore the Ubuntu-only package sources before
+# downstream images run apt-get again.
+USER root
+RUN if [ -f /etc/apt/sources.list ]; then \
+      sed -i '/[[:space:]]sid[[:space:]]main[[:space:]]*$/d' /etc/apt/sources.list; \
+    fi \
+  && if [ -d /etc/apt/sources.list.d ]; then \
+      find /etc/apt/sources.list.d -type f -name '*.list' \
+        -exec sed -i '/[[:space:]]sid[[:space:]]main[[:space:]]*$/d' {} +; \
+    fi \
+  && rm -f \
+      /etc/apt/trusted.gpg.d/debian-archive-keyring.gpg \
+      /etc/apt/trusted.gpg.d/debian-archive-security-keyring.gpg \
+  && rm -rf /var/lib/apt/lists/* /var/cache/apt/*
+USER ${SEL_UID}
+DOCKERFILE
+}
+
+# Supervisor 4.2.5 imports pkg_resources at startup. On Ubuntu Noble that module
+# is provided by python3-pkg-resources. Install it explicitly in the final image
+# and validate Supervisor while the image is still being built.
+append_supervisor_runtime_guard() {
+  local dockerfile="$1"
+
+  if grep -q 'CROWLER_SUPERVISOR_RUNTIME' "$dockerfile"; then
+    return 0
+  fi
+
+  cat >> "$dockerfile" <<'DOCKERFILE'
+
+# CROWLER_SUPERVISOR_RUNTIME
+USER root
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends --reinstall \
+      supervisor \
+      python3-pkg-resources \
+  && /usr/bin/python3 -c 'import pkg_resources; print(pkg_resources.__file__)' \
+  && /usr/bin/supervisord --version \
+  && rm -rf /var/lib/apt/lists/* /var/cache/apt/*
+USER ${SEL_UID}:${SEL_GID}
+DOCKERFILE
+}
+
+# Test the runtime from the completed local image before the workflow tags or
+# pushes it. This catches missing Python modules and broken Supervisor installs.
+verify_supervisor_runtime() {
+  local image="$1"
+  local platform="$2"
+
+  echo "Verifying Supervisor runtime in ${image} for ${platform}"
+
+  docker run --rm \
+    --pull=never \
+    --platform "$platform" \
+    --entrypoint /bin/bash \
+    "$image" \
+    -lc '
+      set -e
+      /usr/bin/python3 -c "import pkg_resources; print(pkg_resources.__file__)"
+      /usr/bin/supervisord --version
+    '
+}
+
 # Optional config sourcing
 if [ -f config.sh ]; then
   source config.sh
@@ -211,6 +287,13 @@ pushd ./docker-selenium >/dev/null
     echo "Verified NodeChromium merged-/usr compatibility fix for ${PLATFORM}"
   fi
 
+  # Chromium is installed from Debian Sid by this Selenium release. Remove the
+  # temporary repository before Standalone performs any later apt operation.
+  append_node_chromium_repo_cleanup "./NodeChromium/Dockerfile"
+
+  # Guarantee that Supervisor has the pkg_resources runtime it imports.
+  append_supervisor_runtime_guard "./Standalone/Dockerfile"
+
   # RBee + assets
   cp -r ../Rbee ./Standalone/
   cp ../selenium-patches/browserAutomation.conf ./Standalone/Rbee/browserAutomation.conf || true
@@ -285,16 +368,17 @@ pushd ./docker-selenium >/dev/null
   done < <(printf '%s\n' "$UBUNTU_TAGS")
   # ===== END mirror fallback =====
 
-  make standalone_chromium
-  rval=$?
+  rval=0
+  make standalone_chromium || rval=$?
 
 popd >/dev/null
 
 # If rval is 0 then the build succeeded, otherwise it failed. Exit with the same code.
-if [ $rval -eq 0 ]; then
-  echo "Selenium image build succeeded for ${PLATFORM} -> ${DOCKER_SELENIUM_IMAGE}"
+if [ "$rval" -eq 0 ]; then
+  verify_supervisor_runtime "$DOCKER_SELENIUM_IMAGE" "$PLATFORM"
+  echo "Selenium image build and runtime verification succeeded for ${PLATFORM} -> ${DOCKER_SELENIUM_IMAGE}"
 else
   echo "Selenium image build failed for ${PLATFORM} -> ${DOCKER_SELENIUM_IMAGE}" >&2
 fi
 
-exit $rval
+exit "$rval"
