@@ -368,6 +368,28 @@ pushd ./docker-selenium >/dev/null
   done < <(printf '%s\n' "$UBUNTU_TAGS")
   # ===== END mirror fallback =====
 
+  echo "===== GENERATED STANDALONE DOCKERFILE ====="
+  nl -ba ./Standalone/Dockerfile
+  echo "===== GENERATED NODECHROMIUM DOCKERFILE ====="
+  nl -ba ./NodeChromium/Dockerfile
+  echo "===== GENERATED BASE DOCKERFILE ====="
+  nl -ba ./Base/Dockerfile
+
+  grep -F 'FROM ${NAMESPACE}/base:${VERSION} AS builder' \
+    ./Standalone/Dockerfile >/dev/null || {
+      echo "Standalone builder is not using the clean Selenium Base image" >&2
+      exit 1
+    }
+
+  if sed -n \
+      '/AS builder/,/^FROM /p' \
+      ./Standalone/Dockerfile \
+      | grep -q 'FROM ${NAMESPACE}/${BASE}:${VERSION} AS builder'; then
+    echo "Standalone builder still inherits node-chromium" >&2
+    exit 1
+  fi
+
+  #=== Build the image ===
   rval=0
   make standalone_chromium || rval=$?
 
