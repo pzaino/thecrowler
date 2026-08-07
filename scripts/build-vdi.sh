@@ -31,9 +31,163 @@ sed_in_place() {
   fi
 }
 
-# Remove the temporary Debian Sid repository from the NodeChromium image after
-# Chromium has been installed. Leaving Sid enabled allows later apt operations
-# in derived images to mix Debian packages into the Ubuntu base image.
+
+# Rewrite Ubuntu package sources to HTTPS before the first apt operation. This
+# avoids transparent HTTP interception while retaining Ubuntu Noble packages.
+patch_base_apt_transport() {
+  local dockerfile="$1"
+  local insertion_line
+  local temporary_file
+
+  if grep -q 'CROWLER_APT_HTTPS' "$dockerfile"; then
+    return 0
+  fi
+
+  insertion_line="$(
+    grep -n '^RUN apt-get -qqy update' "$dockerfile" \
+      | head -n 1 \
+      | cut -d: -f1
+  )"
+
+  if [ -z "$insertion_line" ]; then
+    echo "Unable to locate the first Base apt operation in $dockerfile" >&2
+    exit 1
+  fi
+
+  temporary_file="${dockerfile}.tmp.$$"
+
+  {
+    if [ "$insertion_line" -gt 1 ]; then
+      sed -n "1,$((insertion_line - 1))p" "$dockerfile"
+    fi
+
+    cat <<'DOCKERFILE'
+# CROWLER_APT_HTTPS
+RUN set -eux; \
+    if [ -f /etc/apt/sources.list ]; then \
+      sed -i \
+        -e 's#http://archive.ubuntu.com#https://archive.ubuntu.com#g' \
+        -e 's#http://security.ubuntu.com#https://security.ubuntu.com#g' \
+        -e 's#http://ports.ubuntu.com#https://ports.ubuntu.com#g' \
+        /etc/apt/sources.list; \
+    fi; \
+    if [ -d /etc/apt/sources.list.d ]; then \
+      find /etc/apt/sources.list.d -type f \
+        \( -name '*.list' -o -name '*.sources' \) \
+        -exec sed -i \
+          -e 's#http://archive.ubuntu.com#https://archive.ubuntu.com#g' \
+          -e 's#http://security.ubuntu.com#https://security.ubuntu.com#g' \
+          -e 's#http://ports.ubuntu.com#https://ports.ubuntu.com#g' \
+          {} +; \
+    fi; \
+    printf '%s\n' \
+      'Acquire::Retries "5";' \
+      'Acquire::http::Timeout "30";' \
+      'Acquire::https::Timeout "30";' \
+      > /etc/apt/apt.conf.d/80crowler-network
+DOCKERFILE
+
+    sed -n "${insertion_line},\$p" "$dockerfile"
+  } > "$temporary_file"
+
+  mv "$temporary_file" "$dockerfile"
+}
+
+# Install packages needed by the final image while the package set is still
+# pure Ubuntu. NodeChromium later installs Chromium from Debian Sid, so the
+# Standalone stage must not run apt afterward.
+patch_base_runtime_packages() {
+  local dockerfile="$1"
+  local temporary_file
+
+  if grep -Eq '^[[:space:]]+python3-pkg-resources[[:space:]]+\\[[:space:]]*$' "$dockerfile" \
+      && grep -Eq '^[[:space:]]+feh[[:space:]]+\\[[:space:]]*$' "$dockerfile"; then
+    return 0
+  fi
+
+  temporary_file="${dockerfile}.tmp.$$"
+
+  if ! awk '
+    /^[[:space:]]+supervisor[[:space:]]+\\[[:space:]]*$/ && !inserted {
+      print
+      print "    python3-pkg-resources \\"
+      print "    feh \\"
+      inserted=1
+      next
+    }
+    { print }
+    END {
+      if (!inserted) {
+        exit 42
+      }
+    }
+  ' "$dockerfile" > "$temporary_file"; then
+    rm -f "$temporary_file"
+    echo "Unable to add runtime packages to $dockerfile" >&2
+    exit 1
+  fi
+
+  mv "$temporary_file" "$dockerfile"
+}
+
+# Modify the repository patch before applying it. The RBee builder must inherit
+# the clean Selenium Base image, not node-chromium with Debian Sid libc. The
+# final stage also must not call apt to install feh.
+prepare_standalone_patch() {
+  local patch_file="$1"
+  local temporary_file="${patch_file}.tmp.$$"
+
+  if grep -q 'FROM ${NAMESPACE}/base:${VERSION} AS builder' "$patch_file" \
+      && grep -q '^> RUN command -v feh >/dev/null$' "$patch_file"; then
+    return 0
+  fi
+
+  awk '
+    $0 == "> FROM ${NAMESPACE}/${BASE}:${VERSION} AS builder" {
+      print "> FROM ${NAMESPACE}/base:${VERSION} AS builder"
+      builder=1
+      next
+    }
+
+    $0 == "> LABEL authors=${AUTHORS}" {
+      print "> LABEL authors=\"ZFPSystems\""
+      authors=1
+      next
+    }
+
+    $0 == "> RUN sudo apt-get update && apt-get install -y feh" {
+      print "> RUN command -v feh >/dev/null"
+      feh=1
+      next
+    }
+
+    { print }
+
+    END {
+      if (!builder || !authors || !feh) {
+        exit 42
+      }
+    }
+  ' "$patch_file" > "$temporary_file" || {
+    rm -f "$temporary_file"
+    echo "Unable to prepare Standalone patch: $patch_file" >&2
+    exit 1
+  }
+
+  mv "$temporary_file" "$patch_file"
+}
+
+# Use HTTPS for the temporary Debian Chromium repository.
+patch_node_chromium_apt_transport() {
+  local dockerfile="$1"
+
+  sed_in_place \
+    's#ARG CHROMIUM_DEB_SITE="http://deb.debian.org/debian"#ARG CHROMIUM_DEB_SITE="https://deb.debian.org/debian"#' \
+    "$dockerfile"
+}
+
+# Remove the temporary Debian Sid repository once Chromium is installed. This
+# prevents accidental package mixing in later derived stages.
 append_node_chromium_repo_cleanup() {
   local dockerfile="$1"
 
@@ -44,14 +198,13 @@ append_node_chromium_repo_cleanup() {
   cat >> "$dockerfile" <<'DOCKERFILE'
 
 # CROWLER_REMOVE_DEBIAN_SID
-# Chromium is already installed. Restore the Ubuntu-only package sources before
-# downstream images run apt-get again.
 USER root
 RUN if [ -f /etc/apt/sources.list ]; then \
       sed -i '/[[:space:]]sid[[:space:]]main[[:space:]]*$/d' /etc/apt/sources.list; \
     fi \
   && if [ -d /etc/apt/sources.list.d ]; then \
-      find /etc/apt/sources.list.d -type f -name '*.list' \
+      find /etc/apt/sources.list.d -type f \
+        \( -name '*.list' -o -name '*.sources' \) \
         -exec sed -i '/[[:space:]]sid[[:space:]]main[[:space:]]*$/d' {} +; \
     fi \
   && rm -f \
@@ -62,10 +215,8 @@ USER ${SEL_UID}
 DOCKERFILE
 }
 
-# Supervisor 4.2.5 imports pkg_resources at startup. On Ubuntu Noble that module
-# is provided by python3-pkg-resources. Install it explicitly in the final image
-# and validate Supervisor while the image is still being built.
-append_supervisor_runtime_guard() {
+# Validate the runtime in the final Standalone stage without running apt there.
+append_standalone_runtime_guard() {
   local dockerfile="$1"
 
   if grep -q 'CROWLER_SUPERVISOR_RUNTIME' "$dockerfile"; then
@@ -76,19 +227,37 @@ append_supervisor_runtime_guard() {
 
 # CROWLER_SUPERVISOR_RUNTIME
 USER root
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends --reinstall \
-      supervisor \
-      python3-pkg-resources \
+RUN command -v feh >/dev/null \
   && /usr/bin/python3 -c 'import pkg_resources; print(pkg_resources.__file__)' \
-  && /usr/bin/supervisord --version \
-  && rm -rf /var/lib/apt/lists/* /var/cache/apt/*
+  && /usr/bin/supervisord --version
 USER ${SEL_UID}:${SEL_GID}
 DOCKERFILE
 }
 
-# Test the runtime from the completed local image before the workflow tags or
-# pushes it. This catches missing Python modules and broken Supervisor installs.
+verify_generated_dockerfiles() {
+  local standalone_dockerfile="$1"
+
+  grep -F 'FROM ${NAMESPACE}/base:${VERSION} AS builder' \
+    "$standalone_dockerfile" >/dev/null || {
+      echo "Standalone RBee builder is not using the clean Selenium Base image" >&2
+      sed -n '1,130p' "$standalone_dockerfile" >&2
+      exit 1
+    }
+
+  if grep -F 'RUN sudo apt-get update && apt-get install -y feh' \
+      "$standalone_dockerfile" >/dev/null; then
+    echo "Standalone still installs feh after Debian Sid was introduced" >&2
+    exit 1
+  fi
+
+  grep -F '# CROWLER_SUPERVISOR_RUNTIME' \
+    "$standalone_dockerfile" >/dev/null || {
+      echo "Standalone runtime validation was not added" >&2
+      exit 1
+    }
+}
+
+# Test the completed image before the workflow tags or publishes it.
 verify_supervisor_runtime() {
   local image="$1"
   local platform="$2"
@@ -102,6 +271,7 @@ verify_supervisor_runtime() {
     "$image" \
     -lc '
       set -e
+      command -v feh
       /usr/bin/python3 -c "import pkg_resources; print(pkg_resources.__file__)"
       /usr/bin/supervisord --version
     '
@@ -220,6 +390,7 @@ pushd ./docker-selenium >/dev/null
     if [ -f "../selenium-patches/${SELENIUM_VER_NUM}/Dockerfile_Standalone_multi_${SELENIUM_VER_NUM}.patch" ]; then
       pushd ./Standalone >/dev/null
         cp "../../selenium-patches/${SELENIUM_VER_NUM}/Dockerfile_Standalone_multi_${SELENIUM_VER_NUM}.patch" "./Dockerfile_Standalone.patch"
+        prepare_standalone_patch "./Dockerfile_Standalone.patch"
         patch Dockerfile ./Dockerfile_Standalone.patch || { echo "Failed to apply Standalone multi patch"; exit 1; }
       popd >/dev/null
     else
@@ -287,12 +458,15 @@ pushd ./docker-selenium >/dev/null
     echo "Verified NodeChromium merged-/usr compatibility fix for ${PLATFORM}"
   fi
 
-  # Chromium is installed from Debian Sid by this Selenium release. Remove the
-  # temporary repository before Standalone performs any later apt operation.
+  # Keep Ubuntu package installation in Base, before NodeChromium introduces
+  # Debian Sid packages. The Standalone patch has already been rewritten so its
+  # RBee builder uses this clean Base image.
+  patch_base_apt_transport "./Base/Dockerfile"
+  patch_base_runtime_packages "./Base/Dockerfile"
+  patch_node_chromium_apt_transport "./NodeChromium/Dockerfile"
   append_node_chromium_repo_cleanup "./NodeChromium/Dockerfile"
-
-  # Guarantee that Supervisor has the pkg_resources runtime it imports.
-  append_supervisor_runtime_guard "./Standalone/Dockerfile"
+  append_standalone_runtime_guard "./Standalone/Dockerfile"
+  verify_generated_dockerfiles "./Standalone/Dockerfile"
 
   # RBee + assets
   cp -r ../Rbee ./Standalone/
@@ -368,28 +542,7 @@ pushd ./docker-selenium >/dev/null
   done < <(printf '%s\n' "$UBUNTU_TAGS")
   # ===== END mirror fallback =====
 
-  echo "===== GENERATED STANDALONE DOCKERFILE ====="
-  nl -ba ./Standalone/Dockerfile
-  echo "===== GENERATED NODECHROMIUM DOCKERFILE ====="
-  nl -ba ./NodeChromium/Dockerfile
-  echo "===== GENERATED BASE DOCKERFILE ====="
-  nl -ba ./Base/Dockerfile
-
-  grep -F 'FROM ${NAMESPACE}/base:${VERSION} AS builder' \
-    ./Standalone/Dockerfile >/dev/null || {
-      echo "Standalone builder is not using the clean Selenium Base image" >&2
-      exit 1
-    }
-
-  if sed -n \
-      '/AS builder/,/^FROM /p' \
-      ./Standalone/Dockerfile \
-      | grep -q 'FROM ${NAMESPACE}/${BASE}:${VERSION} AS builder'; then
-    echo "Standalone builder still inherits node-chromium" >&2
-    exit 1
-  fi
-
-  #=== Build the image ===
+  # ==== Build the final image ====
   rval=0
   make standalone_chromium || rval=$?
 
