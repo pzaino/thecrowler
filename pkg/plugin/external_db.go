@@ -20,6 +20,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -451,6 +452,53 @@ func addJSAPIExternalDBExec(
 	)
 }
 
+func buildMongoDBURI(
+	dbType string,
+	host string,
+	port int,
+	user string,
+	password string,
+) (string, error) {
+	dbType = strings.ToLower(strings.TrimSpace(dbType))
+	host = strings.TrimSpace(host)
+
+	if host == "" {
+		return "", fmt.Errorf("MongoDB host is required")
+	}
+
+	var auth string
+	if user != "" && password != "" {
+		auth = url.UserPassword(user, password).String() + "@"
+	}
+
+	switch dbType {
+	case "mongodb":
+		if port <= 0 {
+			port = 27017
+		}
+
+		return fmt.Sprintf(
+			"mongodb://%s%s:%d",
+			auth,
+			host,
+			port,
+		), nil
+
+	case "mongodb+srv":
+		return fmt.Sprintf(
+			"mongodb+srv://%s%s",
+			auth,
+			host,
+		), nil
+
+	default:
+		return "", fmt.Errorf(
+			"unsupported MongoDB connection type: %s",
+			dbType,
+		)
+	}
+}
+
 /* example use with SnowFlake:
 // @name: push_to_snowflake
 // @description: Pushes collected CROWler data to Snowflake.
@@ -627,10 +675,6 @@ func addJSAPIExternalDBQuery(
 			password = strings.TrimSpace(fmt.Sprintf("%v", config["password"]))
 		}
 		dbname := externalDBName(config)
-		//sslmode := "disable"
-		//if config["sslmode"] != nil {
-		//	sslmode = strings.TrimSpace(fmt.Sprintf("%v", config["sslmode"]))
-		//}
 
 		// Switch among supported databases.
 		switch dbType {
@@ -706,23 +750,40 @@ func addJSAPIExternalDBQuery(
 		// MongoDB support.
 		case "mongodb", "mongodb+srv":
 			const mongoSelect = "find"
-			if port == 0 {
-				port = 27017
-			}
+
 			// Build MongoDB URI. If authentication is needed:
-			var mongoURI string
-			if user == "" || password == "" {
-				mongoURI = fmt.Sprintf(dbType+"://%s:%d", host, port)
-			} else {
-				mongoURI = fmt.Sprintf(dbType+"://%s:%s@%s:%d", user, password, host, port)
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			client, err := mongo.Connect(ctx, options.Client().ApplyURI(mongoURI))
+			mongoURI, err := buildMongoDBURI(
+				dbType,
+				host,
+				port,
+				user,
+				password,
+			)
 			if err != nil {
-				return returnError(vm, fmt.Sprintf("Error attempting to connect to '%s' db: %v", dbname, err))
+				return returnError(vm, err.Error())
 			}
-			defer client.Disconnect(ctx) // nolint:errcheck // We can't check error here it's a defer
+
+			ctx, cancel := context.WithTimeout(
+				context.Background(),
+				10*time.Second,
+			)
+			defer cancel()
+
+			client, err := mongo.Connect(
+				ctx,
+				options.Client().ApplyURI(mongoURI),
+			)
+			if err != nil {
+				return returnError(
+					vm,
+					fmt.Sprintf(
+						"Error attempting to connect to '%s' db: %v",
+						dbname,
+						err,
+					),
+				)
+			}
+			defer client.Disconnect(ctx) //nolint:errcheck // We can't check error here it's a defer
 
 			// Process the query object: { action: "find", filter: { name: "John" } }
 			var queryJSON map[string]interface{}

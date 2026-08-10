@@ -252,3 +252,74 @@ func TestExternalDBJSRegistrationAndErrorPath(t *testing.T) {
 		t.Fatalf("expected an unsupported database error, got %q", message)
 	}
 }
+
+func TestBuildMongoDBURI(t *testing.T) {
+	tests := []struct {
+		name     string
+		dbType   string
+		host     string
+		port     int
+		user     string
+		password string
+		want     string
+	}{
+		{
+			name:   "mongodb default port",
+			dbType: "mongodb",
+			host:   "localhost",
+			want:   "mongodb://localhost:27017",
+		},
+		{
+			name:     "mongodb authenticated",
+			dbType:   "mongodb",
+			host:     "db.example.com",
+			port:     27018,
+			user:     "crowler",
+			password: "secret",
+			want:     "mongodb://crowler:secret@db.example.com:27018",
+		},
+		{
+			name:     "mongodb escaped credentials",
+			dbType:   "mongodb",
+			host:     "db.example.com",
+			user:     "user@example.com",
+			password: "pa:ss/word",
+			want:     "mongodb://user%40example.com:pa%3Ass%2Fword@db.example.com:27017",
+		},
+		{
+			name:   "mongodb srv",
+			dbType: "mongodb+srv",
+			host:   "cluster.example.com",
+			port:   27017,
+			want:   "mongodb+srv://cluster.example.com",
+		},
+		{
+			name:     "mongodb srv authenticated",
+			dbType:   "mongodb+srv",
+			host:     "cluster.example.com",
+			port:     27017,
+			user:     "crowler",
+			password: "secret",
+			want:     "mongodb+srv://crowler:secret@cluster.example.com",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := buildMongoDBURI(
+				tt.dbType,
+				tt.host,
+				tt.port,
+				tt.user,
+				tt.password,
+			)
+			if err != nil {
+				t.Fatalf("buildMongoDBURI returned error: %v", err)
+			}
+
+			if got != tt.want {
+				t.Fatalf("expected %q, got %q", tt.want, got)
+			}
+		})
+	}
+}
