@@ -280,6 +280,11 @@ func openExternalSQLDB(config map[string]interface{}) (*sql.DB, error) {
 			dbname,
 		)
 
+		tlsMode := externalConfigString(config, "tls")
+		if tlsMode != "" {
+			dsn += "?tls=" + url.QueryEscape(tlsMode)
+		}
+
 		return sql.Open(mysqlDBMS, dsn)
 
 	case sqliteDBMS:
