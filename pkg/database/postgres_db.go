@@ -103,21 +103,23 @@ func determineConnectionLimits(c cfg.Config) (int, int) {
 	mxIdleConns := 2
 
 	optFor := strings.ToLower(strings.TrimSpace(c.Database.OptimizeFor))
-	switch optFor {
-	case "write":
-		mxConns = 10
-		mxIdleConns = 2
-	case "query":
-		mxConns = 12
-		mxIdleConns = 4
-	}
-
-	// Apply explicit caps, but never allow unsafe values
-	if (c.Database.MaxConns > 0) && (c.Database.MaxConns < mxConns) {
-		mxConns = c.Database.MaxConns
-	}
-	if (c.Database.MaxIdleConns > 0) && (c.Database.MaxIdleConns < mxIdleConns) {
-		mxIdleConns = c.Database.MaxIdleConns
+	if optFor != "" {
+		switch optFor {
+		case "write":
+			mxConns = 10
+			mxIdleConns = 2
+		case "query":
+			mxConns = 12
+			mxIdleConns = 4
+		}
+	} else {
+		// If OptimizeFor is not set, use explicit values from config if provided
+		if c.Database.MaxConns > 0 {
+			mxConns = c.Database.MaxConns
+		}
+		if c.Database.MaxIdleConns > 0 {
+			mxIdleConns = c.Database.MaxIdleConns
+		}
 	}
 
 	return mxConns, mxIdleConns
