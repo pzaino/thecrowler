@@ -146,7 +146,15 @@ CROWler exposes a rich set of helper functions in the JS environment for both th
 
 - **Database Functions:**
   - `dbQuery(config, query)`: Execute queries on the internal CROWler database.
-  - `externalDBQuery(config, query)`: Query external databases (PostgreSQL, MySQL, SQLite, MongoDB, Neo4J).
+  - `externalDBQuery(config, query, args)`:
+    Executes a result-producing query against an external database.
+    SQL backends support optional bind arguments.
+    Supported databases include PostgreSQL, MySQL, SQLite, Snowflake,
+    MongoDB and Neo4J.
+  - `externalDBExec(config, statement, args)`:
+    Executes SQL statements that do not require a result set.
+    Intended for INSERT, UPDATE, DELETE, MERGE and DDL operations.
+    Supported SQL backends include PostgreSQL, MySQL, SQLite and Snowflake.
 
 - **Data Conversion:**
   - `tableToJSON(data)`: Convert table-like results (array of objects) into a JSON string.
