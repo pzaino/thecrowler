@@ -700,3 +700,73 @@ func TestConvertBsonDatesRecursiveMixedFieldsAndRootOperator(t *testing.T) {
 		t.Fatal("expected $or operator to be preserved")
 	}
 }
+
+func TestExternalMongoFilter(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    interface{}
+		wantType string
+		wantErr  bool
+	}{
+		{
+			name: "ordinary filter",
+			input: map[string]interface{}{
+				"status": "new",
+			},
+			wantType: "M",
+		},
+		{
+			name: "root operator filter",
+			input: map[string]interface{}{
+				"$or": []interface{}{
+					map[string]interface{}{"status": "new"},
+					map[string]interface{}{"status": "pending"},
+				},
+			},
+			wantType: "D",
+		},
+		{
+			name:    "invalid scalar filter",
+			input:   "status=new",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filter, err := externalMongoFilter(tt.input)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected an error")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf(
+					"externalMongoFilter returned error: %v",
+					err,
+				)
+			}
+
+			switch tt.wantType {
+			case "M":
+				if _, ok := filter.(bson.M); !ok {
+					t.Fatalf(
+						"expected bson.M, got %T",
+						filter,
+					)
+				}
+
+			case "D":
+				if _, ok := filter.(bson.D); !ok {
+					t.Fatalf(
+						"expected bson.D, got %T",
+						filter,
+					)
+				}
+			}
+		})
+	}
+}
