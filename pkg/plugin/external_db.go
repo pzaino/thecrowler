@@ -803,7 +803,7 @@ func addJSAPIExternalDBQuery(
 				noCollection = true
 			}
 			if noCollection {
-				return returnError(vm, fmt.Sprintf("Error attempting to use '%s' db: %v", dbname, err))
+				return returnError(vm, fmt.Sprintf("MongoDB database '%s' requires a non-empty 'collection' field", dbname))
 			}
 			coll := client.Database(dbname).Collection(collectionName)
 
@@ -823,16 +823,10 @@ func addJSAPIExternalDBQuery(
 					// If the filter is not provided, default to an empty filter.
 					queryJSON["filter"] = map[string]interface{}{}
 				}
-				filterMap, ok := queryJSON["filter"].(map[string]interface{})
-				if !ok {
-					return returnError(vm, "Invalid format for 'filter' field")
-				}
 
-				filter, ok := convertBsonDatesRecursive(filterMap).(bson.M)
-				if !ok {
-					// If the filter is not provided, default to an empty filter.
-					cmn.DebugMsg(cmn.DbgLvlError, "[MONGODB] Problem converting MongoDB filter to BSON: %v", err)
-					filter = bson.M{}
+				filter, err := externalMongoFilter(queryJSON["filter"])
+				if err != nil {
+					return returnError(vm, err.Error())
 				}
 				cmn.DebugMsg(cmn.DbgLvlDebug5, "[MONGODB] MongoDB filter BSON Object: %v", filter)
 				cursor, err := coll.Find(ctx, filter)
@@ -882,10 +876,15 @@ func addJSAPIExternalDBQuery(
 				if queryJSON["filter"] == nil || queryJSON["update"] == nil {
 					return returnError(vm, "Missing 'filter' or 'update' field for updateOne operation")
 				}
-				filter, ok := convertBsonDatesRecursive(queryJSON["filter"].(map[string]interface{})).(bson.M)
-				if !ok {
-					cmn.DebugMsg(cmn.DbgLvlError, "[MONGODB] Problem converting MongoDB filter to BSON: %v", err)
-					filter = bson.M{}
+				filter, err := externalMongoFilter(queryJSON["filter"])
+				if err != nil {
+					return returnError(
+						vm,
+						fmt.Sprintf(
+							"Invalid filter for updateOne operation: %v",
+							err,
+						),
+					)
 				}
 				update, ok := queryJSON["update"].(map[string]interface{})
 				if !ok {
@@ -904,10 +903,15 @@ func addJSAPIExternalDBQuery(
 				if queryJSON["filter"] == nil || queryJSON["update"] == nil {
 					return returnError(vm, "Missing 'filter' or 'update' field for updateMany operation")
 				}
-				filter, ok := convertBsonDatesRecursive(queryJSON["filter"].(map[string]interface{})).(bson.M)
-				if !ok {
-					cmn.DebugMsg(cmn.DbgLvlError, "[MONGODB] Problem converting MongoDB filter to BSON: %v", err)
-					filter = bson.M{}
+				filter, err := externalMongoFilter(queryJSON["filter"])
+				if err != nil {
+					return returnError(
+						vm,
+						fmt.Sprintf(
+							"Invalid filter for updateMany operation: %v",
+							err,
+						),
+					)
 				}
 				update, ok := queryJSON["update"].(map[string]interface{})
 				if !ok {
@@ -926,10 +930,15 @@ func addJSAPIExternalDBQuery(
 				if queryJSON["filter"] == nil {
 					return returnError(vm, "Missing 'filter' field for deleteOne operation")
 				}
-				filter, ok := convertBsonDatesRecursive(queryJSON["filter"].(map[string]interface{})).(bson.M)
-				if !ok {
-					cmn.DebugMsg(cmn.DbgLvlError, "[MONGODB] Problem converting MongoDB filter to BSON: %v", err)
-					filter = bson.M{}
+				filter, err := externalMongoFilter(queryJSON["filter"])
+				if err != nil {
+					return returnError(
+						vm,
+						fmt.Sprintf(
+							"Invalid filter for deleteOne operation: %v",
+							err,
+						),
+					)
 				}
 				result, err := coll.DeleteOne(ctx, filter)
 				if err != nil {
@@ -941,10 +950,15 @@ func addJSAPIExternalDBQuery(
 				if queryJSON["filter"] == nil {
 					return returnError(vm, "Missing 'filter' field for deleteMany operation")
 				}
-				filter, ok := convertBsonDatesRecursive(queryJSON["filter"].(map[string]interface{})).(bson.M)
-				if !ok {
-					cmn.DebugMsg(cmn.DbgLvlError, "[MONGODB] Problem converting MongoDB filter to BSON: %v", err)
-					filter = bson.M{}
+				filter, err := externalMongoFilter(queryJSON["filter"])
+				if err != nil {
+					return returnError(
+						vm,
+						fmt.Sprintf(
+							"Invalid filter for deleteMany operation: %v",
+							err,
+						),
+					)
 				}
 				result, err := coll.DeleteMany(ctx, filter)
 				if err != nil {
@@ -1022,24 +1036,38 @@ func convertBsonDatesRecursive(obj interface{}) interface{} {
 			}
 		}
 
-		// Convert into bson.M (map) or bson.D (ordered list)
-		bsonMap := bson.M{}
-		bsonList := bson.D{}
-		for key, val := range v {
-			converted := convertBsonDatesRecursive(val)
-
-			// If key is an operator ($gte, $lte), enforce bson.D (MongoDB requires ordered operators)
+		// Check whether this document contains MongoDB operators.
+		// If it does, represent the entire document as bson.D so that
+		// operators remain ordered without dropping ordinary fields.
+		hasOperator := false
+		for key := range v {
 			if strings.HasPrefix(key, "$") {
-				bsonList = append(bsonList, bson.E{Key: key, Value: converted})
-			} else {
-				bsonMap[key] = converted
+				hasOperator = true
+				break
 			}
 		}
 
-		// If the map contains MongoDB operators (like $gte, $lte), return bson.D
-		if len(bsonList) > 0 {
-			return bsonList
+		if hasOperator {
+			bsonDoc := bson.D{}
+
+			for key, val := range v {
+				bsonDoc = append(
+					bsonDoc,
+					bson.E{
+						Key:   key,
+						Value: convertBsonDatesRecursive(val),
+					},
+				)
+			}
+
+			return bsonDoc
 		}
+
+		bsonMap := bson.M{}
+		for key, val := range v {
+			bsonMap[key] = convertBsonDatesRecursive(val)
+		}
+
 		return bsonMap
 	case []interface{}:
 		// Process arrays
@@ -1048,4 +1076,25 @@ func convertBsonDatesRecursive(obj interface{}) interface{} {
 		}
 	}
 	return obj
+}
+
+func externalMongoFilter(value interface{}) (interface{}, error) {
+	filterMap, ok := value.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf(
+			"invalid format for 'filter' field: expected an object",
+		)
+	}
+
+	filter := convertBsonDatesRecursive(filterMap)
+
+	switch filter.(type) {
+	case bson.M, bson.D:
+		return filter, nil
+	default:
+		return nil, fmt.Errorf(
+			"invalid MongoDB filter after BSON conversion: %T",
+			filter,
+		)
+	}
 }

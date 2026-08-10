@@ -10,6 +10,8 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/robertkrimen/otto"
 	gosnowflake "github.com/snowflakedb/gosnowflake/v2"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 func TestExternalConfigString(t *testing.T) {
@@ -321,5 +323,380 @@ func TestBuildMongoDBURI(t *testing.T) {
 				t.Fatalf("expected %q, got %q", tt.want, got)
 			}
 		})
+	}
+}
+
+func TestConvertBsonDatesRecursiveDateComparison(t *testing.T) {
+	const dateISO = "2026-01-01T00:00:00Z"
+
+	input := map[string]interface{}{
+		"created_at": map[string]interface{}{
+			"$gte": map[string]interface{}{
+				"$date": dateISO,
+			},
+		},
+	}
+
+	converted, ok := convertBsonDatesRecursive(input).(bson.M)
+	if !ok {
+		t.Fatalf(
+			"expected top-level bson.M, got %T",
+			convertBsonDatesRecursive(input),
+		)
+	}
+
+	dateFilter, ok := converted["created_at"].(bson.D)
+	if !ok {
+		t.Fatalf(
+			"expected created_at comparison operators to use bson.D, got %T",
+			converted["created_at"],
+		)
+	}
+
+	if len(dateFilter) != 1 {
+		t.Fatalf(
+			"expected one comparison operator, got %d",
+			len(dateFilter),
+		)
+	}
+
+	if dateFilter[0].Key != "$gte" {
+		t.Fatalf(
+			"expected $gte operator, got %q",
+			dateFilter[0].Key,
+		)
+	}
+
+	gotDate, ok := dateFilter[0].Value.(primitive.DateTime)
+	if !ok {
+		t.Fatalf(
+			"expected $date to become primitive.DateTime, got %T",
+			dateFilter[0].Value,
+		)
+	}
+
+	expectedTime, err := time.Parse(time.RFC3339, dateISO)
+	if err != nil {
+		t.Fatalf("failed to parse test date: %v", err)
+	}
+	expectedDate := primitive.DateTime(expectedTime.UnixMilli())
+
+	if gotDate != expectedDate {
+		t.Fatalf(
+			"expected BSON date %v, got %v",
+			expectedDate,
+			gotDate,
+		)
+	}
+}
+
+func TestConvertBsonDatesRecursiveDateRange(t *testing.T) {
+	const (
+		fromISO = "2026-01-01T00:00:00Z"
+		toISO   = "2026-12-31T23:59:59Z"
+	)
+
+	input := map[string]interface{}{
+		"created_at": map[string]interface{}{
+			"$gte": map[string]interface{}{
+				"$date": fromISO,
+			},
+			"$lte": map[string]interface{}{
+				"$date": toISO,
+			},
+		},
+	}
+
+	converted, ok := convertBsonDatesRecursive(input).(bson.M)
+	if !ok {
+		t.Fatalf(
+			"expected top-level bson.M, got %T",
+			convertBsonDatesRecursive(input),
+		)
+	}
+
+	dateFilter, ok := converted["created_at"].(bson.D)
+	if !ok {
+		t.Fatalf(
+			"expected date comparison operators to use bson.D, got %T",
+			converted["created_at"],
+		)
+	}
+
+	if len(dateFilter) != 2 {
+		t.Fatalf(
+			"expected two ordered comparison operators, got %d",
+			len(dateFilter),
+		)
+	}
+
+	got := make(map[string]primitive.DateTime, len(dateFilter))
+
+	for _, element := range dateFilter {
+		dateValue, ok := element.Value.(primitive.DateTime)
+		if !ok {
+			t.Fatalf(
+				"expected %s value to be primitive.DateTime, got %T",
+				element.Key,
+				element.Value,
+			)
+		}
+
+		got[element.Key] = dateValue
+	}
+
+	fromTime, err := time.Parse(time.RFC3339, fromISO)
+	if err != nil {
+		t.Fatalf("failed to parse from date: %v", err)
+	}
+
+	toTime, err := time.Parse(time.RFC3339, toISO)
+	if err != nil {
+		t.Fatalf("failed to parse to date: %v", err)
+	}
+
+	expectedFrom := primitive.DateTime(fromTime.UnixMilli())
+	expectedTo := primitive.DateTime(toTime.UnixMilli())
+
+	if got["$gte"] != expectedFrom {
+		t.Fatalf(
+			"expected $gte %v, got %v",
+			expectedFrom,
+			got["$gte"],
+		)
+	}
+
+	if got["$lte"] != expectedTo {
+		t.Fatalf(
+			"expected $lte %v, got %v",
+			expectedTo,
+			got["$lte"],
+		)
+	}
+}
+
+func TestConvertBsonDatesRecursiveRootLogicalOperator(t *testing.T) {
+	input := map[string]interface{}{
+		"$or": []interface{}{
+			map[string]interface{}{
+				"status": "new",
+			},
+			map[string]interface{}{
+				"status": "pending",
+			},
+		},
+	}
+
+	converted, ok := convertBsonDatesRecursive(input).(bson.D)
+	if !ok {
+		t.Fatalf(
+			"expected root operator document to use bson.D, got %T",
+			convertBsonDatesRecursive(input),
+		)
+	}
+
+	if len(converted) != 1 {
+		t.Fatalf(
+			"expected one root operator, got %d",
+			len(converted),
+		)
+	}
+
+	if converted[0].Key != "$or" {
+		t.Fatalf(
+			"expected $or operator, got %q",
+			converted[0].Key,
+		)
+	}
+
+	conditions, ok := converted[0].Value.([]interface{})
+	if !ok {
+		t.Fatalf(
+			"expected $or value to remain an array, got %T",
+			converted[0].Value,
+		)
+	}
+
+	if len(conditions) != 2 {
+		t.Fatalf(
+			"expected two $or conditions, got %d",
+			len(conditions),
+		)
+	}
+
+	first, ok := conditions[0].(bson.M)
+	if !ok {
+		t.Fatalf(
+			"expected first $or condition to be bson.M, got %T",
+			conditions[0],
+		)
+	}
+
+	second, ok := conditions[1].(bson.M)
+	if !ok {
+		t.Fatalf(
+			"expected second $or condition to be bson.M, got %T",
+			conditions[1],
+		)
+	}
+
+	if first["status"] != "new" {
+		t.Fatalf(
+			"expected first status to be new, got %#v",
+			first["status"],
+		)
+	}
+
+	if second["status"] != "pending" {
+		t.Fatalf(
+			"expected second status to be pending, got %#v",
+			second["status"],
+		)
+	}
+}
+
+func TestConvertBsonDatesRecursiveNestedLogicalDateOperators(t *testing.T) {
+	const (
+		fromISO = "2026-01-01T00:00:00Z"
+		toISO   = "2026-12-31T23:59:59Z"
+	)
+
+	input := map[string]interface{}{
+		"$or": []interface{}{
+			map[string]interface{}{
+				"created_at": map[string]interface{}{
+					"$gte": map[string]interface{}{
+						"$date": fromISO,
+					},
+				},
+			},
+			map[string]interface{}{
+				"created_at": map[string]interface{}{
+					"$lte": map[string]interface{}{
+						"$date": toISO,
+					},
+				},
+			},
+		},
+	}
+
+	converted, ok := convertBsonDatesRecursive(input).(bson.D)
+	if !ok {
+		t.Fatalf(
+			"expected root $or to use bson.D, got %T",
+			convertBsonDatesRecursive(input),
+		)
+	}
+
+	if len(converted) != 1 || converted[0].Key != "$or" {
+		t.Fatalf(
+			"expected a single $or operator, got %#v",
+			converted,
+		)
+	}
+
+	conditions, ok := converted[0].Value.([]interface{})
+	if !ok {
+		t.Fatalf(
+			"expected $or conditions array, got %T",
+			converted[0].Value,
+		)
+	}
+
+	if len(conditions) != 2 {
+		t.Fatalf(
+			"expected two $or conditions, got %d",
+			len(conditions),
+		)
+	}
+
+	for i, condition := range conditions {
+		conditionMap, ok := condition.(bson.M)
+		if !ok {
+			t.Fatalf(
+				"condition %d: expected bson.M, got %T",
+				i,
+				condition,
+			)
+		}
+
+		dateOps, ok := conditionMap["created_at"].(bson.D)
+		if !ok {
+			t.Fatalf(
+				"condition %d: expected created_at operators to use bson.D, got %T",
+				i,
+				conditionMap["created_at"],
+			)
+		}
+
+		if len(dateOps) != 1 {
+			t.Fatalf(
+				"condition %d: expected one date operator, got %d",
+				i,
+				len(dateOps),
+			)
+		}
+
+		if _, ok := dateOps[0].Value.(primitive.DateTime); !ok {
+			t.Fatalf(
+				"condition %d: expected BSON DateTime, got %T",
+				i,
+				dateOps[0].Value,
+			)
+		}
+	}
+}
+
+func TestConvertBsonDatesRecursiveMixedFieldsAndRootOperator(t *testing.T) {
+	input := map[string]interface{}{
+		"tenant": "acme",
+		"$or": []interface{}{
+			map[string]interface{}{
+				"status": "new",
+			},
+			map[string]interface{}{
+				"status": "pending",
+			},
+		},
+	}
+
+	converted, ok := convertBsonDatesRecursive(input).(bson.D)
+	if !ok {
+		t.Fatalf(
+			"expected mixed operator document to use bson.D, got %T",
+			convertBsonDatesRecursive(input),
+		)
+	}
+
+	var (
+		foundTenant bool
+		foundOr     bool
+	)
+
+	for _, element := range converted {
+		switch element.Key {
+		case "tenant":
+			foundTenant = true
+
+			if element.Value != "acme" {
+				t.Fatalf(
+					"expected tenant acme, got %#v",
+					element.Value,
+				)
+			}
+
+		case "$or":
+			foundOr = true
+		}
+	}
+
+	if !foundTenant {
+		t.Fatal(
+			"expected ordinary tenant field to be preserved alongside root operator",
+		)
+	}
+
+	if !foundOr {
+		t.Fatal("expected $or operator to be preserved")
 	}
 }
