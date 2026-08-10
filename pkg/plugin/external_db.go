@@ -457,7 +457,33 @@ func addJSAPIExternalDBExec(
 // @type: engine_plugin
 // @version: 1.0.0
 
-var sf = params.snowflake;
+var sf = {
+    db_type: "snowflake",
+    account: "myorg-myaccount",
+    user: "CROWLER_SERVICE",
+    password: "SECRET_FROM_RUNTIME",
+    db_name: "CROWLER",
+    schema: "CUSTOM_INGEST",
+    warehouse: "CROWLER_WH",
+    role: "CROWLER_INGEST",
+    authenticator: "snowflake",
+    timeout: 30
+};
+
+Or with a Snowflake Programmatic Access Token:
+
+{
+    db_type: "snowflake",
+    account: "myorg-myaccount",
+    user: "CROWLER_SERVICE",
+    token: "SECRET_FROM_RUNTIME",
+    db_name: "CROWLER",
+    schema: "CUSTOM_INGEST",
+    warehouse: "CROWLER_WH",
+    role: "CROWLER_INGEST",
+    authenticator: "programmatic_access_token",
+    timeout: 30
+}
 
 if (!sf) {
     result = {
