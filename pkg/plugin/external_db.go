@@ -768,9 +768,9 @@ func addJSAPIExternalDBQuery(
 				return returnError(vm, err.Error())
 			}
 
-			ctx, cancel := context.WithTimeout(
-				context.Background(),
-				10*time.Second,
+			ctx, cancel := externalDBCallContext(
+				pluginCtx,
+				config,
 			)
 			defer cancel()
 
@@ -788,7 +788,23 @@ func addJSAPIExternalDBQuery(
 					),
 				)
 			}
-			defer client.Disconnect(ctx) //nolint:errcheck // We can't check error here it's a defer
+
+			defer func() {
+				disconnectCtx, disconnectCancel := context.WithTimeout(
+					context.Background(),
+					5*time.Second,
+				)
+				defer disconnectCancel()
+
+				if err := client.Disconnect(disconnectCtx); err != nil {
+					cmn.DebugMsg(
+						cmn.DbgLvlError,
+						"[MONGODB] Error disconnecting from '%s' db: %v",
+						dbname,
+						err,
+					)
+				}
+			}()
 
 			// Process the query object: { action: "find", filter: { name: "John" } }
 			var queryJSON map[string]interface{}
