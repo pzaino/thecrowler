@@ -768,9 +768,9 @@ func addJSAPIExternalDBQuery(
 				return returnError(vm, err.Error())
 			}
 
-			ctx, cancel := context.WithTimeout(
-				context.Background(),
-				10*time.Second,
+			ctx, cancel := externalDBCallContext(
+				pluginCtx,
+				config,
 			)
 			defer cancel()
 
@@ -788,7 +788,23 @@ func addJSAPIExternalDBQuery(
 					),
 				)
 			}
-			defer client.Disconnect(ctx) //nolint:errcheck // We can't check error here it's a defer
+
+			defer func() {
+				disconnectCtx, disconnectCancel := context.WithTimeout(
+					context.Background(),
+					5*time.Second,
+				)
+				defer disconnectCancel()
+
+				if err := client.Disconnect(disconnectCtx); err != nil {
+					cmn.DebugMsg(
+						cmn.DbgLvlError,
+						"[MONGODB] Error disconnecting from '%s' db: %v",
+						dbname,
+						err,
+					)
+				}
+			}()
 
 			// Process the query object: { action: "find", filter: { name: "John" } }
 			var queryJSON map[string]interface{}
@@ -981,43 +997,142 @@ func addJSAPIExternalDBQuery(
 			if port == 0 {
 				port = 7687
 			}
-			// Use the neo4j:// protocol (or bolt:// if needed)
-			uri := fmt.Sprintf("neo4j://%s:%d", host, port)
-			ctx := context.Background()
-			driver, err := neo4j.NewDriverWithContext(uri, neo4j.BasicAuth(user, password, ""), nil)
-			if err != nil {
-				return returnError(vm, fmt.Sprintf("Error attempting to connect to neo4j '%s' db: %v", dbname, err))
-			}
-			defer driver.Close(ctx) // nolint:errcheck // We can't check error here it's a defer
 
-			// Create a session.
-			session := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
-			defer session.Close(ctx) // nolint:errcheck // We can't check error here it's a defer
+			// Use the neo4j:// protocol.
+			uri := fmt.Sprintf(
+				"neo4j://%s:%d",
+				host,
+				port,
+			)
+
+			ctx, cancel := externalDBCallContext(
+				pluginCtx,
+				config,
+			)
+			defer cancel()
+
+			driver, err := neo4j.NewDriverWithContext(
+				uri,
+				neo4j.BasicAuth(user, password, ""),
+				nil,
+			)
+			if err != nil {
+				return returnError(
+					vm,
+					fmt.Sprintf(
+						"Error attempting to connect to neo4j '%s' db: %v",
+						dbname,
+						err,
+					),
+				)
+			}
+
+			// Close the driver with an independent context because the operation
+			// context may already be cancelled or expired during deferred cleanup.
+			defer func() {
+				closeCtx, closeCancel := context.WithTimeout(
+					context.Background(),
+					5*time.Second,
+				)
+				defer closeCancel()
+
+				if err := driver.Close(closeCtx); err != nil {
+					cmn.DebugMsg(
+						cmn.DbgLvlError,
+						"[NEO4J] Error closing driver for '%s' db: %v",
+						dbname,
+						err,
+					)
+				}
+			}()
+
+			// Create a read-only session.
+			sessionConfig := neo4j.SessionConfig{
+				AccessMode: neo4j.AccessModeRead,
+			}
+
+			if dbname != "" {
+				sessionConfig.DatabaseName = dbname
+			}
+
+			session := driver.NewSession(
+				ctx,
+				sessionConfig,
+			)
+
+			// This defer is registered after the driver defer, so it executes first.
+			// Neo4j sessions must be closed before their driver.
+			defer func() {
+				closeCtx, closeCancel := context.WithTimeout(
+					context.Background(),
+					5*time.Second,
+				)
+				defer closeCancel()
+
+				if err := session.Close(closeCtx); err != nil {
+					cmn.DebugMsg(
+						cmn.DbgLvlError,
+						"[NEO4J] Error closing session for '%s' db: %v",
+						dbname,
+						err,
+					)
+				}
+			}()
 
 			// Execute the Cypher query.
-			records, err := session.Run(ctx, query, nil)
+			records, err := session.Run(
+				ctx,
+				query,
+				nil,
+			)
 			if err != nil {
-				return returnError(vm, fmt.Sprintf("Error executing Cypher query on '%s' db: %v", dbname, err))
+				return returnError(
+					vm,
+					fmt.Sprintf(
+						"Error executing Cypher query on '%s' db: %v",
+						dbname,
+						err,
+					),
+				)
 			}
 
 			var results []map[string]interface{}
+
 			for records.Next(ctx) {
 				record := records.Record()
 				recMap := make(map[string]interface{})
+
 				for _, key := range record.Keys {
 					if value, found := record.Get(key); found {
 						recMap[key] = value
 					}
 				}
+
 				results = append(results, recMap)
 			}
+
 			if err = records.Err(); err != nil {
-				return returnError(vm, fmt.Sprintf("Error processing Cypher query results on '%s' db: %v", dbname, err))
+				return returnError(
+					vm,
+					fmt.Sprintf(
+						"Error processing Cypher query results on '%s' db: %v",
+						dbname,
+						err,
+					),
+				)
 			}
+
 			jsResult, err := vm.ToValue(results)
 			if err != nil {
-				return returnError(vm, fmt.Sprintf("Error converting Neo4J results to a JS object: %v", err))
+				return returnError(
+					vm,
+					fmt.Sprintf(
+						"Error converting Neo4J results to a JS object: %v",
+						err,
+					),
+				)
 			}
+
 			return jsResult
 
 		default:
