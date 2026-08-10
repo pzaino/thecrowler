@@ -263,6 +263,9 @@ See [Ruleset architecture](ruleset_architecture.md).
 - **Engine and Event ETL APIs**: Plugins can log, hash data, make HTTP requests, query internal or external databases, convert JSON, CSV, and XML, and run reusable JSON transformations.
   - *Benefits*: Enables custom enrichment and integration pipelines close to the collected data.
 
+- **Plugins extensions for external DBs**: Plugins can query and update external databases, including PostgreSQL, MySQL, SQLite, Snowflake, MongoDB, and Neo4J.
+  - *Benefits*: Lets developers integrate with existing data stores without building a separate service.
+
 - **VDI Plugins**: Run inside the browser context with access to the DOM and browser APIs.
   - *Benefits*: Handles page-specific behavior that cannot be represented cleanly by built-in selectors or actions.
 
@@ -350,6 +353,12 @@ See [CROWler Agents User Guide](crowler_agents_reference.md).
 
 - **Console and Administrative Routes**: Optional privileged routes manage Sources, Information Seeds, categories, owners, authentication records, and selected configuration data.
   - *Benefits*: Enables operational tooling without direct database access.
+
+- **Customizable API Plugins**: Developers can add new routes, request and response schemas, and OpenAPI documentation through API plugins.
+  - *Benefits*: Lets organizations expose domain-specific services without modifying the Go core.
+
+- **Custom Events handlers**: Developers can add new event types, structured details, severity levels, and event-handling logic through event plugins.
+  - *Benefits*: Lets organizations encode domain-specific automation without modifying the Go core.
 
 See [API documentation](api.md) and [WebSocket API endpoints](api/websockets.md).
 
