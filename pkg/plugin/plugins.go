@@ -1817,10 +1817,6 @@ func setCrowlerJSAPI(ctx context.Context, vm *otto.Otto,
 
 	// External DBs interaction functions
 
-	//if err := addJSAPIExternalDBQuery(vm); err != nil {
-	//		return err
-	//}
-
 	if err := addJSAPIExternalDBQuery(ctx, vm); err != nil {
 		return err
 	}

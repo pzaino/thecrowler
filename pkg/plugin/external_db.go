@@ -626,10 +626,7 @@ func addJSAPIExternalDBQuery(
 		if config["password"] != nil {
 			password = strings.TrimSpace(fmt.Sprintf("%v", config["password"]))
 		}
-		var dbname string
-		if config["db_name"] != nil {
-			dbname = strings.TrimSpace(fmt.Sprintf("%v", config["db_name"]))
-		}
+		dbname := externalDBName(config)
 		//sslmode := "disable"
 		//if config["sslmode"] != nil {
 		//	sslmode = strings.TrimSpace(fmt.Sprintf("%v", config["sslmode"]))
@@ -787,7 +784,7 @@ func addJSAPIExternalDBQuery(
 					return returnError(vm, fmt.Sprintf("Error attempting to convert MongoDB results to a JS object: %v", err))
 				}
 
-			case "insertOne":
+			case "insertone": // insertOne
 				if queryJSON["document"] == nil {
 					return returnError(vm, "Missing 'document' field for insertOne operation")
 				}
@@ -801,7 +798,7 @@ func addJSAPIExternalDBQuery(
 				}
 				jsResult, _ = vm.ToValue(map[string]interface{}{"inserted_id": result.InsertedID})
 
-			case "insertMany":
+			case "insertmany": // insertMany
 				if queryJSON["documents"] == nil {
 					return returnError(vm, "Missing 'documents' field for insertMany operation")
 				}
@@ -815,7 +812,7 @@ func addJSAPIExternalDBQuery(
 				}
 				jsResult, _ = vm.ToValue(map[string]interface{}{"inserted_ids": result.InsertedIDs})
 
-			case "updateOne":
+			case "updateone": // updateOne
 				if queryJSON["filter"] == nil || queryJSON["update"] == nil {
 					return returnError(vm, "Missing 'filter' or 'update' field for updateOne operation")
 				}
@@ -837,7 +834,7 @@ func addJSAPIExternalDBQuery(
 					"modified_count": result.ModifiedCount,
 				})
 
-			case "updateMany":
+			case "updatemany": // updateMany
 				if queryJSON["filter"] == nil || queryJSON["update"] == nil {
 					return returnError(vm, "Missing 'filter' or 'update' field for updateMany operation")
 				}
@@ -859,7 +856,7 @@ func addJSAPIExternalDBQuery(
 					"modified_count": result.ModifiedCount,
 				})
 
-			case "deleteOne":
+			case "deleteone": // deleteOne
 				if queryJSON["filter"] == nil {
 					return returnError(vm, "Missing 'filter' field for deleteOne operation")
 				}
@@ -874,7 +871,7 @@ func addJSAPIExternalDBQuery(
 				}
 				jsResult, _ = vm.ToValue(map[string]interface{}{"deleted_count": result.DeletedCount})
 
-			case "deleteMany":
+			case "deletemany": // deleteMany
 				if queryJSON["filter"] == nil {
 					return returnError(vm, "Missing 'filter' field for deleteMany operation")
 				}
