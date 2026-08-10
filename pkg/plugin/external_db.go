@@ -762,7 +762,12 @@ func addJSAPIExternalDBQuery(
 					// If the filter is not provided, default to an empty filter.
 					queryJSON["filter"] = map[string]interface{}{}
 				}
-				filter, ok := convertBsonDatesRecursive(queryJSON["filter"].(map[string]interface{})).(bson.M)
+				filterMap, ok := queryJSON["filter"].(map[string]interface{})
+				if !ok {
+					return returnError(vm, "Invalid format for 'filter' field")
+				}
+
+				filter, ok := convertBsonDatesRecursive(filterMap).(bson.M)
 				if !ok {
 					// If the filter is not provided, default to an empty filter.
 					cmn.DebugMsg(cmn.DbgLvlError, "[MONGODB] Problem converting MongoDB filter to BSON: %v", err)
