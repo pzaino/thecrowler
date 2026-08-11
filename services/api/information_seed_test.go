@@ -896,6 +896,7 @@ func setupInformationSeedAPITestDB(t *testing.T) (cdb.Handler, func()) {
 			information_seed VARCHAR(256) NOT NULL,
 			status VARCHAR(50) DEFAULT 'new' NOT NULL,
 			priority VARCHAR(64) DEFAULT '' NOT NULL,
+			sub_priority INTEGER DEFAULT 0 NOT NULL,
 			engine VARCHAR(256) DEFAULT '' NOT NULL,
 			last_processed_at TIMESTAMP,
 			last_error TEXT,

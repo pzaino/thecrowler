@@ -90,7 +90,7 @@ func GetSourcesForInformationSeed(db *Handler, seedID uint64) ([]Source, error) 
 	}
 	placeholder := informationSeedPlaceholderForDBMS(dbms, 1)
 	query := fmt.Sprintf(`
-		SELECT source.source_id, source.priority, source.category_id, source.name,
+		SELECT source.source_id, source.priority, source.sub_priority, source.category_id, source.name,
 			source.usr_id, source.url, source.restricted, source.flags, source.config,
 			source.disabled
 		FROM Sources AS source
@@ -297,6 +297,7 @@ func scanInformationSeedSourceRows(rows *sql.Rows) ([]Source, error) {
 		if err := rows.Scan(
 			&source.ID,
 			&source.Priority,
+			&source.SubPriority,
 			&source.CategoryID,
 			&source.Name,
 			&source.UsrID,
@@ -340,7 +341,7 @@ func ListSourcesForInformationSeed(db *Handler, seedID uint64, filter Informatio
 	}
 	placeholders := newInformationSeedPlaceholders(dbms)
 	query := fmt.Sprintf(`
-		SELECT source.source_id, source.priority, source.category_id, source.name,
+		SELECT source.source_id, source.priority, source.sub_priority, source.category_id, source.name,
 			source.usr_id, source.url, source.restricted, source.flags, source.config,
 			source.disabled,
 			link.source_information_seed_id, link.source_id, link.information_seed_id,
@@ -377,6 +378,7 @@ func scanInformationSeedLinkedSourceRows(rows *sql.Rows) ([]InformationSeedLinke
 		if err := rows.Scan(
 			&item.Source.ID,
 			&item.Source.Priority,
+			&item.Source.SubPriority,
 			&item.Source.CategoryID,
 			&item.Source.Name,
 			&item.Source.UsrID,

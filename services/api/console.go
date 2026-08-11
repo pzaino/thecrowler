@@ -608,6 +608,7 @@ func informationSeedLinkedSourceRowFromDB(linked cdb.InformationSeedLinkedSource
 	return InformationSeedLinkedSourceRow{
 		SourceID:                   linked.Source.ID,
 		Priority:                   linked.Source.Priority,
+		SubPriority:                linked.Source.SubPriority,
 		CategoryID:                 linked.Source.CategoryID,
 		Name:                       linked.Source.Name,
 		UsrID:                      linked.Source.UsrID,
@@ -1066,6 +1067,7 @@ func sourceStatusRowsFromDB(rows []cdb.SourceStatusRow) []StatusResponseRow {
 			URL:           row.URL,
 			Status:        row.Status,
 			Priority:      row.Priority,
+			SubPriority:   row.SubPriority,
 			Engine:        row.Engine,
 			CreatedAt:     row.CreatedAt,
 			LastUpdatedAt: row.LastUpdatedAt,
@@ -1179,6 +1181,11 @@ func performUpdateSource(query string, qType int, db *cdb.Handler) (ConsoleRespo
 		existingData.Details = json.RawMessage("{}")
 	}
 
+	subPriority := existingData.SubPriority
+	if sqlParams.SubPriority != nil {
+		subPriority = *sqlParams.SubPriority
+	}
+
 	mergedConfig := srcConfig
 	if requestedConfig != nil {
 		mergedConfig = *requestedConfig
@@ -1188,7 +1195,7 @@ func performUpdateSource(query string, qType int, db *cdb.Handler) (ConsoleRespo
 	mergedData := cdb.UpdateSourceRequest{
 		SourceID:    sqlParams.SourceID,
 		URL:         coalesce(sqlParams.URL, existingData.URL),
-		SubPriority: coalesceInt(sqlParams.SubPriority, existingData.SubPriority),
+		SubPriority: subPriority,
 		Status:      coalesce(sqlParams.Status, existingData.Status),
 		Restricted:  coalesceInt(sqlParams.Restricted, existingData.Restricted),
 		Disabled:    coalesceBool(sqlParams.Disabled, existingData.Disabled),

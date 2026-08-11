@@ -319,6 +319,7 @@ func createInformationSeedTestSchema(t *testing.T, db *sql.DB) {
 			category_id INTEGER DEFAULT 0 NOT NULL,
 			url TEXT NOT NULL UNIQUE,
 			priority VARCHAR(64) DEFAULT '' NOT NULL,
+			sub_priority INTEGER DEFAULT 0 NOT NULL,
 			restricted INTEGER DEFAULT 2 NOT NULL,
 			disabled BOOLEAN DEFAULT FALSE,
 			flags INTEGER DEFAULT 0 NOT NULL,

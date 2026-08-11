@@ -103,7 +103,7 @@ func determineConnectionLimits(c cfg.Config) (int, int) {
 	mxIdleConns := 2
 
 	optFor := strings.ToLower(strings.TrimSpace(c.Database.OptimizeFor))
-	if optFor != "" {
+	if (optFor != "") && (optFor != "none") {
 		switch optFor {
 		case "write":
 			mxConns = 10
@@ -111,6 +111,8 @@ func determineConnectionLimits(c cfg.Config) (int, int) {
 		case "query":
 			mxConns = 12
 			mxIdleConns = 4
+		default:
+			cmn.DebugMsg(cmn.DbgLvlError, "Unknown OptimizeFor value: %s. Using defaults.", optFor)
 		}
 	} else {
 		// If OptimizeFor is not set, use explicit values from config if provided

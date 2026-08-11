@@ -357,7 +357,7 @@ func (response SourceConfigResponse) MarshalJSON() ([]byte, error) {
 type updateSourceRequest struct {
 	SourceID    int64                `json:"source_id,omitempty"`
 	URL         string               `json:"url,omitempty"`
-	SubPriority int                  `json:"sub_priority,omitempty"`
+	SubPriority *int                 `json:"sub_priority,omitempty"`
 	Status      string               `json:"status,omitempty"`
 	Restricted  int                  `json:"restricted,omitempty"`
 	Disabled    bool                 `json:"disabled,omitempty"`
