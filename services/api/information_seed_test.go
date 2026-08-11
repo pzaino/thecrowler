@@ -329,6 +329,9 @@ func TestInformationSeedSourcesHandlerSuccessNotFoundAndPagination(t *testing.T)
 	seedID := createInformationSeedAPITestSeed(t, &handler, "with sources", "pending", "high", 2, 20, false)
 	sourceOne := insertInformationSeedAPITestSource(t, handler.(*informationSeedAPITestHandler).db, "https://api-one.example", "api one")
 	sourceTwo := insertInformationSeedAPITestSource(t, handler.(*informationSeedAPITestHandler).db, "https://api-two.example", "api two")
+	if _, err := handler.(*informationSeedAPITestHandler).db.Exec(`UPDATE Sources SET sub_priority = 37 WHERE source_id = ?`, sourceOne); err != nil {
+		t.Fatalf("set linked source sub-priority: %v", err)
+	}
 	provider := "api-provider"
 	rank := 4
 	metadata := json.RawMessage(`{"api":true}`)
@@ -351,6 +354,9 @@ func TestInformationSeedSourcesHandlerSuccessNotFoundAndPagination(t *testing.T)
 	}
 	if len(resp.Items) != 1 || resp.Items[0].SourceID != sourceOne || resp.Items[0].SourceInformationSeedIndex.DiscoveryProvider != provider || resp.Items[0].SourceInformationSeedIndex.DiscoveryRank == nil || *resp.Items[0].SourceInformationSeedIndex.DiscoveryRank != rank {
 		t.Fatalf("unexpected linked source page: %#v", resp)
+	}
+	if resp.Items[0].SubPriority != 37 {
+		t.Fatalf("linked source sub_priority = %d, want 37; response: %s", resp.Items[0].SubPriority, rec.Body.String())
 	}
 
 	rec = httptest.NewRecorder()

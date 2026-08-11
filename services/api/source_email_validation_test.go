@@ -115,6 +115,48 @@ func TestSourceHandlersValidateEmailRequests(t *testing.T) {
 	})
 }
 
+func TestUpdateSourceSubPriorityPresence(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want int
+	}{
+		{name: "explicit zero resets value", body: `{"source_id":41,"sub_priority":0}`, want: 0},
+		{name: "omitted field preserves value", body: `{"source_id":41}`, want: 37},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler, cleanup := setupSourceAPITestDB(t)
+			defer cleanup()
+			dbHandler = handler
+			dbSemaphore = make(chan struct{}, 1)
+
+			_, err := handler.(*sourceAPITestHandler).db.Exec(`
+				INSERT INTO Sources (source_id, source_uid, url, sub_priority, details)
+				VALUES (41, 'source-41', 'https://source.example.test', 37, '{}')`)
+			if err != nil {
+				t.Fatalf("insert source: %v", err)
+			}
+
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, "/v1/source/update", strings.NewReader(tt.body))
+			updateSourceHandler(recorder, request)
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", recorder.Code, recorder.Body.String())
+			}
+
+			var got int
+			if err := handler.(*sourceAPITestHandler).db.QueryRow(`SELECT sub_priority FROM Sources WHERE source_id = 41`).Scan(&got); err != nil {
+				t.Fatalf("read persisted sub-priority: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("persisted sub_priority = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
 func assertSourceValidationError(t *testing.T, recorder *httptest.ResponseRecorder, detail string) {
 	t.Helper()
 	if recorder.Code != http.StatusBadRequest {
@@ -199,6 +241,7 @@ func setupSourceAPITestDB(t *testing.T) (cdb.Handler, func()) {
 			restricted INTEGER NOT NULL DEFAULT 0,
 			flags INTEGER NOT NULL DEFAULT 0,
 			config TEXT,
+			details TEXT,
 			disabled BOOLEAN NOT NULL DEFAULT FALSE,
 			status TEXT NOT NULL DEFAULT 'new',
 			last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP

@@ -1305,6 +1305,9 @@ func performUpdateSourceContext(ctx context.Context, query string, qType int, db
             details = $8::jsonb
         WHERE source_id = $9
     `
+	if (*db).DBMS() == cdb.DBSQLiteStr {
+		updateQuery = strings.ReplaceAll(updateQuery, "::jsonb", "")
+	}
 	_, err = (*db).ExecContext(ctx, updateQuery,
 		cmn.NormalizeURL(mergedData.URL),
 		mergedData.SubPriority,
