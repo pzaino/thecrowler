@@ -1229,7 +1229,7 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		results, err := performSearch(query, &dbHandler)
+		results, err := performSearch(r.Context(), query, &dbHandler)
 		results.SetHeaderFields(
 			"customsearch#search",
 			jsonResponse,
@@ -1277,7 +1277,7 @@ func webObjectHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		results, err := performWebObjectSearch(query, getQTypeFromName(r.Method), &dbHandler)
+		results, err := performWebObjectSearch(r.Context(), query, getQTypeFromName(r.Method), &dbHandler)
 		if results.IsEmpty() {
 			var retCode int
 			if config.API.Return404 {
@@ -1336,7 +1336,7 @@ func webCorrelatedSitesHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		results, err := performCorrelatedSitesSearch(query, getQTypeFromName(r.Method), &dbHandler)
+		results, err := performCorrelatedSitesSearch(r.Context(), query, getQTypeFromName(r.Method), &dbHandler)
 		if results.IsEmpty() {
 			var retCode int
 			if config.API.Return404 {
@@ -1396,7 +1396,7 @@ func webScrapedDataHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		results, err := performScrapedDataSearch(query, getQTypeFromName(r.Method), &dbHandler)
+		results, err := performScrapedDataSearch(r.Context(), query, getQTypeFromName(r.Method), &dbHandler)
 		if results.IsEmpty() {
 			var retCode int
 			if config.API.Return404 {
@@ -1456,7 +1456,7 @@ func scrImgSrchHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		results, err := performScreenshotSearch(query, getQTypeFromName(r.Method), &dbHandler)
+		results, err := performScreenshotSearch(r.Context(), query, getQTypeFromName(r.Method), &dbHandler)
 		if results == (ScreenshotResponse{}) {
 			var retCode int
 			if config.API.Return404 {
@@ -1498,7 +1498,7 @@ func netInfoHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		results, err := performNetInfoSearch(query, getQTypeFromName(r.Method), &dbHandler)
+		results, err := performNetInfoSearch(r.Context(), query, getQTypeFromName(r.Method), &dbHandler)
 		if results.isEmpty() {
 			var retCode int
 			if config.API.Return404 {
@@ -1558,7 +1558,7 @@ func httpInfoHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		results, err := performHTTPInfoSearch(query, getQTypeFromName(r.Method), &dbHandler)
+		results, err := performHTTPInfoSearch(r.Context(), query, getQTypeFromName(r.Method), &dbHandler)
 		if results.IsEmpty() {
 			var retCode int
 			if config.API.Return404 {

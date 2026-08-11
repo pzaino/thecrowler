@@ -178,6 +178,9 @@ func optionalCanonicalRawJSON(value json.RawMessage) (interface{}, error) {
 // QueryTimeSeriesObservations queries both seed-associated and direct-source
 // observations. Dimension subset matching is performed portably after SQL.
 func QueryTimeSeriesObservations(db *Handler, filter TimeSeriesQueryFilter) (TimeSeriesObservationQueryResult, error) {
+	return QueryTimeSeriesObservationsContext(context.Background(), db, filter)
+}
+func QueryTimeSeriesObservationsContext(ctx context.Context, db *Handler, filter TimeSeriesQueryFilter) (TimeSeriesObservationQueryResult, error) {
 	dbms, err := validateTimeSeriesDB(db)
 	if err != nil {
 		return TimeSeriesObservationQueryResult{}, err
@@ -200,7 +203,7 @@ func QueryTimeSeriesObservations(db *Handler, filter TimeSeriesQueryFilter) (Tim
 		query += ` LIMIT ` + p.Next() + ` OFFSET ` + p.Next()
 		args = append(args, sqlLimit, offset)
 	}
-	rows, err := (*db).ExecuteQuery(query, args...)
+	rows, err := (*db).QueryContext(ctx, query, args...)
 	if err != nil {
 		return TimeSeriesObservationQueryResult{}, fmt.Errorf("query time-series observations: %w", err)
 	}

@@ -15,6 +15,7 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -82,12 +83,17 @@ const sourceStatusSelect = `
 
 // GetSourceStatusByUID retrieves the source status row matching sourceUID.
 func GetSourceStatusByUID(db *Handler, sourceUID string) ([]SourceStatusRow, error) {
+	return GetSourceStatusByUIDContext(context.Background(), db, sourceUID)
+}
+
+// GetSourceStatusByUIDContext retrieves the source status using ctx.
+func GetSourceStatusByUIDContext(ctx context.Context, db *Handler, sourceUID string) ([]SourceStatusRow, error) {
 	if db == nil || *db == nil {
 		return nil, fmt.Errorf("database handler is nil")
 	}
 
 	query := sourceStatusSelect + "\n\tWHERE source_uid = " + sourceStatusPlaceholder(db)
-	rows, err := (*db).ExecuteQuery(query, sourceUID)
+	rows, err := (*db).QueryContext(ctx, query, sourceUID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve source status by UID: %w", err)
 	}

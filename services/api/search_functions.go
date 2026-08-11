@@ -264,11 +264,11 @@ func searchPagesFunctionHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func searchWebObjectsBySourceIDHandler(w http.ResponseWriter, r *http.Request) {
-	handleSearchFunctionEndpoint(w, r, "webobjects_by_source#search", "webobjects_by_source", "source_id", func(_ context.Context, query SearchFunctionQuery, db *cdb.Handler) (interface{}, error) {
+	handleSearchFunctionEndpoint(w, r, "webobjects_by_source#search", "webobjects_by_source", "source_id", func(ctx context.Context, query SearchFunctionQuery, db *cdb.Handler) (interface{}, error) {
 		if query.SourceID <= 0 {
 			return nil, newSearchFunctionBadRequest("query parameter 'source_id' is required and must be a positive BIGINT")
 		}
-		results, err := performWebObjectSearchBySourceID(query.SourceID, db)
+		results, err := performWebObjectSearchBySourceID(ctx, query.SourceID, db)
 		if err != nil {
 			return nil, err
 		}
@@ -277,12 +277,12 @@ func searchWebObjectsBySourceIDHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func searchWebObjectsBySourceUIDHandler(w http.ResponseWriter, r *http.Request) {
-	handleSearchFunctionEndpoint(w, r, "webobjects_by_source_uid#search", "webobjects_by_source_uid", "source_uid", func(_ context.Context, query SearchFunctionQuery, db *cdb.Handler) (interface{}, error) {
+	handleSearchFunctionEndpoint(w, r, "webobjects_by_source_uid#search", "webobjects_by_source_uid", "source_uid", func(ctx context.Context, query SearchFunctionQuery, db *cdb.Handler) (interface{}, error) {
 		sourceUID := strings.TrimSpace(query.SourceUID)
 		if sourceUID == "" {
 			return nil, newSearchFunctionBadRequest("query parameter 'source_uid' is required")
 		}
-		results, err := performWebObjectSearchBySourceUID(sourceUID, db)
+		results, err := performWebObjectSearchBySourceUID(ctx, sourceUID, db)
 		if err != nil {
 			return nil, err
 		}

@@ -57,6 +57,15 @@ type Handler interface {
 	NewListener() Listener
 }
 
+type contextQueryRower interface {
+	QueryRowContext(context.Context, string, ...interface{}) *sql.Row
+}
+
+// QueryRowContext executes a single-row query with cancellation support.
+func QueryRowContext(ctx context.Context, db *Handler, query string, args ...interface{}) *sql.Row {
+	return (*db).(contextQueryRower).QueryRowContext(ctx, query, args...)
+}
+
 // Listener is the interface that wraps the basic methods
 // to interact with the database listener.
 type Listener interface {

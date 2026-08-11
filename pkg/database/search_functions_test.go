@@ -128,6 +128,9 @@ func (h *searchFunctionTestHandler) Rollback(*sql.Tx) error {
 func (h *searchFunctionTestHandler) QueryRow(string, ...interface{}) *sql.Row {
 	return nil
 }
+func (h *searchFunctionTestHandler) QueryRowContext(context.Context, string, ...interface{}) *sql.Row {
+	return nil
+}
 func (h *searchFunctionTestHandler) QueryContext(_ context.Context, query string, args ...interface{}) (*sql.Rows, error) {
 	h.lastQuery = query
 	h.lastArgs = append([]interface{}(nil), args...)

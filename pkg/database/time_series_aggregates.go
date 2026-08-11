@@ -6,6 +6,7 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -94,6 +95,9 @@ func UpsertTimeSeriesAggregate(db *Handler, aggregate *TimeSeriesAggregate) (*Ti
 
 // GetTimeSeriesAggregateByHash retrieves one active aggregate grouping.
 func GetTimeSeriesAggregateByHash(db *Handler, hash string) (*TimeSeriesAggregate, error) {
+	return GetTimeSeriesAggregateByHashContext(context.Background(), db, hash)
+}
+func GetTimeSeriesAggregateByHashContext(ctx context.Context, db *Handler, hash string) (*TimeSeriesAggregate, error) {
 	dbms, err := validateTimeSeriesDB(db)
 	if err != nil {
 		return nil, err
@@ -101,7 +105,7 @@ func GetTimeSeriesAggregateByHash(db *Handler, hash string) (*TimeSeriesAggregat
 	if hash == "" {
 		return nil, fmt.Errorf("time-series aggregate hash is required")
 	}
-	row := (*db).QueryRow(`SELECT `+timeSeriesAggregateColumns+` FROM TimeSeriesAggregates WHERE aggregate_hash = `+informationSeedPlaceholderForDBMS(dbms, 1)+` AND deleted_at IS NULL`, hash)
+	row := QueryRowContext(ctx, db, `SELECT `+timeSeriesAggregateColumns+` FROM TimeSeriesAggregates WHERE aggregate_hash = `+informationSeedPlaceholderForDBMS(dbms, 1)+` AND deleted_at IS NULL`, hash)
 	a, err := scanTimeSeriesAggregate(row.Scan)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrTimeSeriesAggregateNotFound
@@ -115,6 +119,9 @@ func GetTimeSeriesAggregateByHash(db *Handler, hash string) (*TimeSeriesAggregat
 // QueryTimeSeriesAggregates applies the shared identity, bucket, metric, time
 // basis, time range, and portable dimension filters.
 func QueryTimeSeriesAggregates(db *Handler, filter TimeSeriesQueryFilter) (TimeSeriesAggregateQueryResult, error) {
+	return QueryTimeSeriesAggregatesContext(context.Background(), db, filter)
+}
+func QueryTimeSeriesAggregatesContext(ctx context.Context, db *Handler, filter TimeSeriesQueryFilter) (TimeSeriesAggregateQueryResult, error) {
 	dbms, err := validateTimeSeriesDB(db)
 	if err != nil {
 		return TimeSeriesAggregateQueryResult{}, err
@@ -220,7 +227,7 @@ func QueryTimeSeriesAggregates(db *Handler, filter TimeSeriesQueryFilter) (TimeS
 		query += ` LIMIT ` + p.Next() + ` OFFSET ` + p.Next()
 		args = append(args, sqlLimit, offset)
 	}
-	rows, err := (*db).ExecuteQuery(query, args...)
+	rows, err := (*db).QueryContext(ctx, query, args...)
 	if err != nil {
 		return TimeSeriesAggregateQueryResult{}, fmt.Errorf("query time-series aggregates: %w", err)
 	}

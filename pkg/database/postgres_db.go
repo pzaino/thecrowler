@@ -225,6 +225,10 @@ func (handler *PostgresHandler) QueryRow(query string, args ...interface{}) *sql
 	return handler.db.QueryRow(query, args...)
 }
 
+func (handler *PostgresHandler) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
+	return handler.db.QueryRowContext(ctx, query, args...)
+}
+
 // QueryContext executes a query with a context and returns the result
 func (handler *PostgresHandler) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
 	return handler.db.QueryContext(ctx, query, args...)

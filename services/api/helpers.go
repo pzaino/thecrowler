@@ -316,7 +316,8 @@ func handleNormalAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg.JS
 		"jsonData": jsonData,
 	}
 
-	result, err := plugin.Execute(
+	result, err := plugin.ExecuteContext(
+		r.Context(),
 		nil,
 		&dbHandler,
 		config.API.Plugins.Timeout,
@@ -410,7 +411,8 @@ func handleStreamingAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg
 			},
 		}
 
-		result, err := plugin.Execute(
+		result, err := plugin.ExecuteContext(
+			r.Context(),
 			nil,
 			&dbHandler,
 			config.API.Plugins.Timeout,

@@ -6,6 +6,7 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -147,6 +148,9 @@ func nullableString(value string) interface{} {
 
 // GetTimeSeriesMetricByID retrieves an active metric by ID.
 func GetTimeSeriesMetricByID(db *Handler, id uint64) (*TimeSeriesMetric, error) {
+	return GetTimeSeriesMetricByIDContext(context.Background(), db, id)
+}
+func GetTimeSeriesMetricByIDContext(ctx context.Context, db *Handler, id uint64) (*TimeSeriesMetric, error) {
 	dbms, err := validateTimeSeriesDB(db)
 	if err != nil {
 		return nil, err
@@ -154,11 +158,14 @@ func GetTimeSeriesMetricByID(db *Handler, id uint64) (*TimeSeriesMetric, error) 
 	if id == 0 {
 		return nil, fmt.Errorf("time-series metric ID is required")
 	}
-	return queryTimeSeriesMetric((*db).QueryRow(`SELECT `+timeSeriesMetricColumns+` FROM TimeSeriesMetrics WHERE metric_id = `+informationSeedPlaceholderForDBMS(dbms, 1)+` AND deleted_at IS NULL`, id))
+	return queryTimeSeriesMetric(QueryRowContext(ctx, db, `SELECT `+timeSeriesMetricColumns+` FROM TimeSeriesMetrics WHERE metric_id = `+informationSeedPlaceholderForDBMS(dbms, 1)+` AND deleted_at IS NULL`, id))
 }
 
 // GetTimeSeriesMetricByKey retrieves an active metric by stable key.
 func GetTimeSeriesMetricByKey(db *Handler, key string) (*TimeSeriesMetric, error) {
+	return GetTimeSeriesMetricByKeyContext(context.Background(), db, key)
+}
+func GetTimeSeriesMetricByKeyContext(ctx context.Context, db *Handler, key string) (*TimeSeriesMetric, error) {
 	dbms, err := validateTimeSeriesDB(db)
 	if err != nil {
 		return nil, err
@@ -167,7 +174,7 @@ func GetTimeSeriesMetricByKey(db *Handler, key string) (*TimeSeriesMetric, error
 	if key == "" {
 		return nil, fmt.Errorf("time-series metric key is required")
 	}
-	return queryTimeSeriesMetric((*db).QueryRow(`SELECT `+timeSeriesMetricColumns+` FROM TimeSeriesMetrics WHERE metric_key = `+informationSeedPlaceholderForDBMS(dbms, 1)+` AND deleted_at IS NULL`, key))
+	return queryTimeSeriesMetric(QueryRowContext(ctx, db, `SELECT `+timeSeriesMetricColumns+` FROM TimeSeriesMetrics WHERE metric_key = `+informationSeedPlaceholderForDBMS(dbms, 1)+` AND deleted_at IS NULL`, key))
 }
 
 func queryTimeSeriesMetric(row *sql.Row) (*TimeSeriesMetric, error) {
@@ -219,6 +226,9 @@ func scanTimeSeriesMetric(scan func(...interface{}) error) (*TimeSeriesMetric, e
 
 // ListTimeSeriesMetrics lists metric definitions in stable ID order.
 func ListTimeSeriesMetrics(db *Handler, filter TimeSeriesMetricFilter) ([]TimeSeriesMetric, error) {
+	return ListTimeSeriesMetricsContext(context.Background(), db, filter)
+}
+func ListTimeSeriesMetricsContext(ctx context.Context, db *Handler, filter TimeSeriesMetricFilter) ([]TimeSeriesMetric, error) {
 	dbms, err := validateTimeSeriesDB(db)
 	if err != nil {
 		return nil, err
@@ -251,7 +261,7 @@ func ListTimeSeriesMetrics(db *Handler, filter TimeSeriesMetricFilter) ([]TimeSe
 	}
 	query := `SELECT ` + timeSeriesMetricColumns + ` FROM TimeSeriesMetrics WHERE ` + strings.Join(conditions, " AND ") + ` ORDER BY metric_id ASC LIMIT ` + p.Next() + ` OFFSET ` + p.Next()
 	args = append(args, limit, offset)
-	rows, err := (*db).ExecuteQuery(query, args...)
+	rows, err := (*db).QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list time-series metrics: %w", err)
 	}

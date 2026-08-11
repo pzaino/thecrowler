@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -21,33 +22,37 @@ type fakeTimeSeriesAPIRepository struct {
 	observations cdb.TimeSeriesObservationQueryResult
 	aggregate    *cdb.TimeSeriesAggregate
 	lastFilter   cdb.TimeSeriesQueryFilter
+	lastContext  context.Context
 	err          error
 }
+type timeSeriesContextKey struct{}
 
-func (f *fakeTimeSeriesAPIRepository) MetricByID(uint64) (*cdb.TimeSeriesMetric, error) {
+func (f *fakeTimeSeriesAPIRepository) MetricByID(context.Context, uint64) (*cdb.TimeSeriesMetric, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
 	return f.metric, nil
 }
-func (f *fakeTimeSeriesAPIRepository) MetricByKey(string) (*cdb.TimeSeriesMetric, error) {
+func (f *fakeTimeSeriesAPIRepository) MetricByKey(ctx context.Context, _ string) (*cdb.TimeSeriesMetric, error) {
+	f.lastContext = ctx
 	if f.err != nil {
 		return nil, f.err
 	}
 	return f.metric, nil
 }
-func (f *fakeTimeSeriesAPIRepository) ListMetrics(cdb.TimeSeriesMetricFilter) ([]cdb.TimeSeriesMetric, error) {
+func (f *fakeTimeSeriesAPIRepository) ListMetrics(context.Context, cdb.TimeSeriesMetricFilter) ([]cdb.TimeSeriesMetric, error) {
 	return f.metrics, f.err
 }
-func (f *fakeTimeSeriesAPIRepository) QueryAggregates(filter cdb.TimeSeriesQueryFilter) (cdb.TimeSeriesAggregateQueryResult, error) {
+func (f *fakeTimeSeriesAPIRepository) QueryAggregates(ctx context.Context, filter cdb.TimeSeriesQueryFilter) (cdb.TimeSeriesAggregateQueryResult, error) {
+	f.lastContext = ctx
 	f.lastFilter = filter
 	return f.aggregates, f.err
 }
-func (f *fakeTimeSeriesAPIRepository) QueryObservations(filter cdb.TimeSeriesQueryFilter) (cdb.TimeSeriesObservationQueryResult, error) {
+func (f *fakeTimeSeriesAPIRepository) QueryObservations(_ context.Context, filter cdb.TimeSeriesQueryFilter) (cdb.TimeSeriesObservationQueryResult, error) {
 	f.lastFilter = filter
 	return f.observations, f.err
 }
-func (f *fakeTimeSeriesAPIRepository) AggregateByHash(string) (*cdb.TimeSeriesAggregate, error) {
+func (f *fakeTimeSeriesAPIRepository) AggregateByHash(context.Context, string) (*cdb.TimeSeriesAggregate, error) {
 	if f.aggregate == nil && f.err == nil {
 		return nil, errors.New("not found")
 	}
@@ -73,6 +78,7 @@ func TestTimeSeriesAggregateHandlerUsesAggregateRowsAndStableShape(t *testing.T)
 	useFakeTimeSeriesRepository(t, fake)
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/timeseries?metric_key=pages.changed&dimension=region=eu&aggregate=sum&from=2026-01-01T00:00:00Z&to=2026-01-02T00:00:00Z", nil)
+	req = req.WithContext(context.WithValue(req.Context(), timeSeriesContextKey{}, "request"))
 	res := httptest.NewRecorder()
 	timeSeriesAggregatesHandler(res, req)
 	if res.Code != http.StatusOK {
@@ -87,6 +93,9 @@ func TestTimeSeriesAggregateHandlerUsesAggregateRowsAndStableShape(t *testing.T)
 	}
 	if fake.lastFilter.MetricKey != metric.Key || fake.lastFilter.Dimensions["region"] != "eu" {
 		t.Fatalf("filters did not compose: %+v", fake.lastFilter)
+	}
+	if got := fake.lastContext.Value(timeSeriesContextKey{}); got != "request" {
+		t.Fatalf("repository did not receive request context: %v", got)
 	}
 }
 
@@ -104,7 +113,7 @@ func TestTimeSeriesQueryValidation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			values, _ := url.ParseQuery(tt.query)
 			raw := tt.name == "raw unbounded"
-			_, _, err := parseTimeSeriesQuery(values, timeSeriesObservationMaxLimit, timeSeriesRawMaxRange, raw)
+			_, _, err := parseTimeSeriesQuery(context.Background(), values, timeSeriesObservationMaxLimit, timeSeriesRawMaxRange, raw)
 			if err == nil {
 				t.Fatalf("expected validation error for %s", tt.query)
 			}
