@@ -265,7 +265,7 @@ func createSourcePostgres(ctx context.Context, db *Handler, source preparedSourc
 
 	err := (*db).QueryRowContext(ctx, query, source.args()...).Scan(&sourceID)
 	if err != nil {
-		return 0, fmt.Errorf("failed to create PostgreSQL source: %v", err)
+		return 0, fmt.Errorf("failed to create PostgreSQL source: %w", err)
 	}
 
 	return sourceID, nil
@@ -345,7 +345,7 @@ func createSourceSQLite(ctx context.Context, db *Handler, source preparedSourceI
 
 	err := (*db).QueryRowContext(ctx, query, source.args()...).Scan(&sourceID)
 	if err != nil {
-		return 0, fmt.Errorf("failed to create SQLite source: %v", err)
+		return 0, fmt.Errorf("failed to create SQLite source: %w", err)
 	}
 
 	return sourceID, nil
@@ -422,7 +422,7 @@ func createSourceMySQL(ctx context.Context, db *Handler, source preparedSourceIn
 
 	result, err := (*db).ExecContext(ctx, query, source.args()...)
 	if err != nil {
-		return 0, fmt.Errorf("failed to create MySQL source: %v", err)
+		return 0, fmt.Errorf("failed to create MySQL source: %w", err)
 	}
 	id, err := result.LastInsertId()
 	if err != nil {
