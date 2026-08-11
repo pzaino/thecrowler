@@ -67,12 +67,12 @@ func UpdateInformationSeedStatusContext(ctx context.Context, db *Handler, id uin
 	if _, err = tx.ExecContext(ctx, query, status, lastError, lastErrorAt, id); err != nil {
 		return fmt.Errorf("failed to update information seed %d status: %w", id, err)
 	}
-	seed, err := getInformationSeedByIDTx(tx, dbms, id)
+	seed, err := getInformationSeedByIDTxContext(ctx, tx, dbms, id)
 	if err != nil {
 		return err
 	}
 	if normalizedSelectorString(previous) != normalizedSelectorString(status) {
-		if err = emitInformationSeedLifecycleObservationsTx(tx, dbms, *seed, "status_changed", previous, status); err != nil {
+		if err = emitInformationSeedLifecycleObservationsTxContext(ctx, tx, dbms, *seed, "status_changed", previous, status); err != nil {
 			return err
 		}
 	}

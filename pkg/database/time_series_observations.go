@@ -82,6 +82,10 @@ func InsertTimeSeriesObservations(db *Handler, observations []TimeSeriesObservat
 }
 
 func insertTimeSeriesObservationTx(tx *sql.Tx, dbms string, o *TimeSeriesObservation) (TimeSeriesInsertResult, error) {
+	return insertTimeSeriesObservationTxContext(context.Background(), tx, dbms, o)
+}
+
+func insertTimeSeriesObservationTxContext(ctx context.Context, tx *sql.Tx, dbms string, o *TimeSeriesObservation) (TimeSeriesInsertResult, error) {
 	if o.MetricID == 0 {
 		return TimeSeriesInsertResult{}, fmt.Errorf("time-series observation metric ID is required")
 	}
@@ -137,7 +141,7 @@ func insertTimeSeriesObservationTx(tx *sql.Tx, dbms string, o *TimeSeriesObserva
 	} else {
 		query += ` ON CONFLICT (dedupe_key) DO NOTHING`
 	}
-	result, err := tx.Exec(query, args...)
+	result, err := tx.ExecContext(ctx, query, args...)
 	if err != nil {
 		return TimeSeriesInsertResult{}, fmt.Errorf("insert time-series observation: %w", err)
 	}
@@ -147,7 +151,7 @@ func insertTimeSeriesObservationTx(tx *sql.Tx, dbms string, o *TimeSeriesObserva
 	}
 	var id uint64
 	lookup := `SELECT observation_id FROM TimeSeriesObservations WHERE dedupe_key = ` + informationSeedPlaceholderForDBMS(dbms, 1)
-	if err = tx.QueryRow(lookup, o.DedupeKey).Scan(&id); err != nil {
+	if err = tx.QueryRowContext(ctx, lookup, o.DedupeKey).Scan(&id); err != nil {
 		return TimeSeriesInsertResult{}, fmt.Errorf("lookup inserted time-series observation: %w", err)
 	}
 	o.ID = id

@@ -6,6 +6,7 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -20,6 +21,11 @@ type TransactionTimeSeriesRepository struct {
 
 // ListMetrics lists metric definitions without leaving the caller's transaction.
 func (r TransactionTimeSeriesRepository) ListMetrics(filter TimeSeriesMetricFilter) ([]TimeSeriesMetric, error) {
+	return r.ListMetricsContext(context.Background(), filter)
+}
+
+// ListMetricsContext lists metric definitions using ctx.
+func (r TransactionTimeSeriesRepository) ListMetricsContext(ctx context.Context, filter TimeSeriesMetricFilter) ([]TimeSeriesMetric, error) {
 	if r.Tx == nil {
 		return nil, fmt.Errorf("time-series transaction is nil")
 	}
@@ -51,7 +57,7 @@ func (r TransactionTimeSeriesRepository) ListMetrics(filter TimeSeriesMetricFilt
 	}
 	query := `SELECT ` + timeSeriesMetricColumns + ` FROM TimeSeriesMetrics WHERE ` + strings.Join(conditions, " AND ") + ` ORDER BY metric_id ASC LIMIT ` + p.Next() + ` OFFSET ` + p.Next()
 	args = append(args, limit, offset)
-	rows, err := r.Tx.Query(query, args...)
+	rows, err := r.Tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list transaction time-series metrics: %w", err)
 	}
@@ -69,6 +75,11 @@ func (r TransactionTimeSeriesRepository) ListMetrics(filter TimeSeriesMetricFilt
 
 // PreviousObservation finds the prior comparable observation in the transaction.
 func (r TransactionTimeSeriesRepository) PreviousObservation(lookup TimeSeriesChangeLookup) (*TimeSeriesObservation, error) {
+	return r.PreviousObservationContext(context.Background(), lookup)
+}
+
+// PreviousObservationContext finds the prior comparable observation using ctx.
+func (r TransactionTimeSeriesRepository) PreviousObservationContext(ctx context.Context, lookup TimeSeriesChangeLookup) (*TimeSeriesObservation, error) {
 	if r.Tx == nil {
 		return nil, fmt.Errorf("time-series transaction is nil")
 	}
@@ -81,7 +92,7 @@ func (r TransactionTimeSeriesRepository) PreviousObservation(lookup TimeSeriesCh
 		return nil, err
 	}
 	query := `SELECT ` + prefixColumns(timeSeriesObservationColumns, "o") + ` FROM TimeSeriesObservations o WHERE ` + strings.Join(conditions, " AND ") + ` ORDER BY o.observed_at DESC, o.observation_id DESC`
-	rows, err := r.Tx.Query(query, args...)
+	rows, err := r.Tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("lookup previous transaction observation: %w", err)
 	}
@@ -103,8 +114,13 @@ func (r TransactionTimeSeriesRepository) PreviousObservation(lookup TimeSeriesCh
 
 // InsertObservation applies the idempotent Task 3 insert helper in the transaction.
 func (r TransactionTimeSeriesRepository) InsertObservation(observation *TimeSeriesObservation) (TimeSeriesInsertResult, error) {
+	return r.InsertObservationContext(context.Background(), observation)
+}
+
+// InsertObservationContext inserts an observation using ctx.
+func (r TransactionTimeSeriesRepository) InsertObservationContext(ctx context.Context, observation *TimeSeriesObservation) (TimeSeriesInsertResult, error) {
 	if r.Tx == nil {
 		return TimeSeriesInsertResult{}, fmt.Errorf("time-series transaction is nil")
 	}
-	return insertTimeSeriesObservationTx(r.Tx, r.DBMS, observation)
+	return insertTimeSeriesObservationTxContext(ctx, r.Tx, r.DBMS, observation)
 }

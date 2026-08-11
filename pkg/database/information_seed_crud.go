@@ -93,7 +93,7 @@ func CreateInformationSeedContext(ctx context.Context, db *Handler, seed *Inform
 	persisted.Priority = priority
 	persisted.Engine = engine
 	persisted.LastUpdatedAt = sql.NullTime{Time: time.Now().UTC(), Valid: true}
-	if err = emitInformationSeedLifecycleObservationsTx(tx, dbms, persisted, "created", "", status); err != nil {
+	if err = emitInformationSeedLifecycleObservationsTxContext(ctx, tx, dbms, persisted, "created", "", status); err != nil {
 		return 0, err
 	}
 	if err = tx.Commit(); err != nil {
@@ -163,12 +163,12 @@ func SetInformationSeedDisabledContext(ctx context.Context, db *Handler, id uint
 	if _, err = tx.ExecContext(ctx, `UPDATE InformationSeed SET disabled = `+p.Next()+` WHERE information_seed_id = `+p.Next(), disabled, id); err != nil {
 		return fmt.Errorf("failed to update information seed %d disabled flag: %w", id, err)
 	}
-	seed, err := getInformationSeedByIDTx(tx, dbms, id)
+	seed, err := getInformationSeedByIDTxContext(ctx, tx, dbms, id)
 	if err != nil {
 		return err
 	}
 	if previous != disabled {
-		if err = emitInformationSeedLifecycleObservationsTx(tx, dbms, *seed, "disabled_changed", fmt.Sprint(previous), fmt.Sprint(disabled)); err != nil {
+		if err = emitInformationSeedLifecycleObservationsTxContext(ctx, tx, dbms, *seed, "disabled_changed", fmt.Sprint(previous), fmt.Sprint(disabled)); err != nil {
 			return err
 		}
 	}
@@ -180,8 +180,12 @@ func SetInformationSeedDisabledContext(ctx context.Context, db *Handler, id uint
 }
 
 func getInformationSeedByIDTx(tx *sql.Tx, dbms string, id uint64) (*InformationSeed, error) {
+	return getInformationSeedByIDTxContext(context.Background(), tx, dbms, id)
+}
+
+func getInformationSeedByIDTxContext(ctx context.Context, tx *sql.Tx, dbms string, id uint64) (*InformationSeed, error) {
 	p := newInformationSeedPlaceholders(dbms)
-	row := tx.QueryRow(`SELECT `+informationSeedSelectColumns()+` FROM InformationSeed WHERE information_seed_id = `+p.Next(), id)
+	row := tx.QueryRowContext(ctx, `SELECT `+informationSeedSelectColumns()+` FROM InformationSeed WHERE information_seed_id = `+p.Next(), id)
 	seed, err := scanInformationSeedRow(row)
 	if err != nil {
 		return nil, fmt.Errorf("lookup persisted information seed %d: %w", id, err)
@@ -190,6 +194,10 @@ func getInformationSeedByIDTx(tx *sql.Tx, dbms string, id uint64) (*InformationS
 }
 
 func emitInformationSeedLifecycleObservationsTx(tx *sql.Tx, dbms string, seed InformationSeed, event, previous, current string) error {
+	return emitInformationSeedLifecycleObservationsTxContext(context.Background(), tx, dbms, seed, event, previous, current)
+}
+
+func emitInformationSeedLifecycleObservationsTxContext(ctx context.Context, tx *sql.Tx, dbms string, seed InformationSeed, event, previous, current string) error {
 	config := map[string]interface{}{}
 	if seed.Config != nil {
 		_ = json.Unmarshal(*seed.Config, &config)
@@ -202,7 +210,7 @@ func emitInformationSeedLifecycleObservationsTx(tx *sql.Tx, dbms string, seed In
 		"attempts": seed.Attempts, "category_id": seed.CategoryID, "user_id": seed.UsrID, "information_seed": seed.InformationSeed,
 		"previous": previous, "current": current, "config": config}
 	seedID := seed.ID
-	return emitInformationSeedObservationsTx(tx, dbms, informationSeedObservationEvent{SourceKind: cfg.TimeSeriesSourceInformationSeed,
+	return emitInformationSeedObservationsTxContext(ctx, tx, dbms, informationSeedObservationEvent{SourceKind: cfg.TimeSeriesSourceInformationSeed,
 		Event: event, Identity: fmt.Sprintf("seed:%d:%s:%s:%s", seed.ID, event, previous, current), ObservedAt: observedAt,
 		Scope:  TimeSeriesScope{InformationSeedID: &seedID, SubjectType: string(cfg.TimeSeriesSourceInformationSeed), SubjectID: &seedID},
 		Fields: fields, Provenance: map[string]interface{}{"information_seed_id": seed.ID, "transition": event,
@@ -257,11 +265,11 @@ func UpdateInformationSeedContext(ctx context.Context, db *Handler, seed *Inform
 	if rows, rowsErr := result.RowsAffected(); rowsErr == nil && rows == 0 {
 		return fmt.Errorf("no information seed found with ID %d", seed.ID)
 	}
-	persisted, err := getInformationSeedByIDTx(tx, dbms, seed.ID)
+	persisted, err := getInformationSeedByIDTxContext(ctx, tx, dbms, seed.ID)
 	if err != nil {
 		return err
 	}
-	if err = emitInformationSeedLifecycleObservationsTx(tx, dbms, *persisted, "updated", "", status); err != nil {
+	if err = emitInformationSeedLifecycleObservationsTxContext(ctx, tx, dbms, *persisted, "updated", "", status); err != nil {
 		return err
 	}
 	if err = tx.Commit(); err != nil {
