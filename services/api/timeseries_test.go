@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -176,7 +177,74 @@ func TestTimeSeriesDrilldownUsesServerAggregateScope(t *testing.T) {
 	}
 }
 
-func TestTimeSeriesDimensionComparisonEnforcesCardinality(t *testing.T) {
+func TestTimeSeriesDimensionComparisonAcrossAggregateChunks(t *testing.T) {
+	oldConfig := config
+	config.TimeSeries.Cardinality.MaxValuesPerDimension = 5
+	t.Cleanup(func() { config = oldConfig })
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	candidates := make([]cdb.TimeSeriesAggregate, 0, 10)
+	for i := 0; i < 10; i++ {
+		region := "ignored"
+		segment := "other"
+		if i == 1 || i == 5 || i == 7 || i == 9 {
+			segment = "selected"
+			region = map[int]string{1: "eu", 5: "us", 7: "eu", 9: "us"}[i]
+		}
+		value := int64(i + 1)
+		candidates = append(candidates, cdb.TimeSeriesAggregate{
+			ID: uint64(i + 1), MetricID: 7, BucketStart: base.Add(time.Duration(i) * time.Hour),
+			BucketEnd:  base.Add(time.Duration(i+1) * time.Hour),
+			Dimensions: map[string]interface{}{"region": region, "segment": segment},
+			ValueCount: value, AggregateHash: strings.Repeat(fmt.Sprintf("%x", i+1), 64)[:64],
+		})
+	}
+	metric := testTimeSeriesMetric()
+	metric.Dimensions = json.RawMessage(`[{"key":"region"},{"key":"segment"}]`)
+	fake := &fakeTimeSeriesAPIRepository{metric: metric, aggregateCandidates: candidates}
+	useFakeTimeSeriesRepository(t, fake)
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/timeseries/dimensions?metric_id=7&dimension_key=region&dimension=segment%3Dselected&limit=1&offset=9", nil)
+	timeSeriesDimensionsHandler(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", res.Code, res.Body.String())
+	}
+	if fake.lastFilter.Pagination.Limit != 10000 || fake.lastFilter.Pagination.Offset != 0 {
+		t.Fatalf("aggregate pagination = %+v, want limit 10000 and offset 0", fake.lastFilter.Pagination)
+	}
+	if fake.lastFilter.Dimensions["segment"] != "selected" || fake.aggregateChunks < 2 {
+		t.Fatalf("comparison filter/chunks = %+v/%d", fake.lastFilter.Dimensions, fake.aggregateChunks)
+	}
+	var body TimeSeriesDimensionComparisonResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.DimensionKey != "region" || body.Cardinality != 2 || body.Limit != 5 || len(body.Groups) != 2 {
+		t.Fatalf("unexpected comparison envelope: %+v", body)
+	}
+	if body.Groups[0].DimensionValue != "eu" || body.Groups[1].DimensionValue != "us" || len(body.Groups[0].Buckets) != 2 || len(body.Groups[1].Buckets) != 2 {
+		t.Fatalf("grouping content changed: %+v", body.Groups)
+	}
+	assertTimeSeriesDimensionSchema(t, res.Body.Bytes())
+}
+
+func TestTimeSeriesDimensionComparisonRejectsMoreThanPublicCeiling(t *testing.T) {
+	// QueryAggregates models the database's bounded chunk scan: the 10,001st
+	// matching row is represented by HasMore rather than returned to the API.
+	fake := &fakeTimeSeriesAPIRepository{metric: testTimeSeriesMetric(), aggregates: cdb.TimeSeriesAggregateQueryResult{
+		Aggregates: []cdb.TimeSeriesAggregate{{MetricID: 7, Dimensions: map[string]interface{}{"region": "eu"}}},
+		HasMore:    true,
+	}}
+	useFakeTimeSeriesRepository(t, fake)
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/timeseries/dimensions?metric_id=7&dimension_key=region", nil)
+	timeSeriesDimensionsHandler(res, req)
+	if fake.lastFilter.Pagination.Limit != 10000 || fake.lastFilter.Pagination.Offset != 0 {
+		t.Fatalf("aggregate pagination = %+v, want limit 10000 and offset 0", fake.lastFilter.Pagination)
+	}
+	assertTimeSeriesErrorResponse(t, res, http.StatusUnprocessableEntity, "dimension comparison scope exceeds the maximum of 10000 aggregate rows")
+}
+
+func TestTimeSeriesDimensionComparisonEnforcesCardinalityAfterRetrieval(t *testing.T) {
 	oldConfig := config
 	config.TimeSeries.Cardinality.MaxValuesPerDimension = 1
 	t.Cleanup(func() { config = oldConfig })
@@ -186,9 +254,60 @@ func TestTimeSeriesDimensionComparisonEnforcesCardinality(t *testing.T) {
 	res := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/timeseries/dimensions?metric_id=7&dimension_key=region", nil)
 	timeSeriesDimensionsHandler(res, req)
-	if res.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("status = %d, body=%s", res.Code, res.Body.String())
+	if fake.lastFilter.Pagination.Limit != 10000 || fake.lastFilter.Pagination.Offset != 0 {
+		t.Fatalf("aggregate pagination = %+v, want limit 10000 and offset 0", fake.lastFilter.Pagination)
 	}
+	assertTimeSeriesErrorResponse(t, res, http.StatusUnprocessableEntity, "dimension cardinality exceeds privacy limit of 1")
+}
+
+func assertTimeSeriesErrorResponse(t *testing.T, res *httptest.ResponseRecorder, status int, message string) {
+	t.Helper()
+	if res.Code != status {
+		t.Fatalf("status = %d, want %d, body=%s", res.Code, status, res.Body.String())
+	}
+	var body map[string]interface{}
+	if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]interface{}{"error_code": float64(status), "error": message, "message": "Invalid time-series request: %v"}
+	if !reflect.DeepEqual(body, want) {
+		t.Fatalf("error contract = %#v, want %#v", body, want)
+	}
+}
+
+func assertTimeSeriesDimensionSchema(t *testing.T, raw []byte) {
+	t.Helper()
+	var body map[string]interface{}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(sortedMapKeys(body), []string{"cardinality", "dimension_key", "groups", "limit"}) {
+		t.Fatalf("comparison schema changed: %s", raw)
+	}
+	groups, ok := body["groups"].([]interface{})
+	if !ok || len(groups) == 0 {
+		t.Fatalf("groups schema changed: %s", raw)
+	}
+	for _, rawGroup := range groups {
+		group, ok := rawGroup.(map[string]interface{})
+		if !ok || !reflect.DeepEqual(sortedMapKeys(group), []string{"buckets", "dimension_value"}) {
+			t.Fatalf("group schema changed: %#v", rawGroup)
+		}
+	}
+	for _, forbidden := range []string{"chunk_size", "chunk_count", "aggregate_chunks", "continuation_cursor", "cursor"} {
+		if strings.Contains(string(raw), `"`+forbidden+`"`) {
+			t.Fatalf("public comparison exposed %q: %s", forbidden, raw)
+		}
+	}
+}
+
+func sortedMapKeys(value map[string]interface{}) []string {
+	keys := make([]string, 0, len(value))
+	for key := range value {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // The API repository fake deliberately scans small bounded batches. This keeps
