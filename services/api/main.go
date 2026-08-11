@@ -2222,37 +2222,37 @@ func handleInformationSeedPathAction(w http.ResponseWriter, r *http.Request, act
 
 func addOwnerHandler(w http.ResponseWriter, r *http.Request) {
 	handleRequestWithDB(w, r, http.StatusCreated, func(query string, qType int, db *cdb.Handler) (interface{}, error) {
-		return performAddOwner(query, qType, db)
+		return performAddOwnerContext(r.Context(), query, qType, db)
 	})
 }
 
 func updateOwnerHandler(w http.ResponseWriter, r *http.Request) {
 	handleRequestWithDB(w, r, http.StatusNoContent, func(query string, qType int, db *cdb.Handler) (interface{}, error) {
-		return performUpdateOwner(query, qType, db)
+		return performUpdateOwnerContext(r.Context(), query, qType, db)
 	})
 }
 
 func removeOwnerHandler(w http.ResponseWriter, r *http.Request) {
 	handleRequestWithDB(w, r, http.StatusNoContent, func(query string, qType int, db *cdb.Handler) (interface{}, error) {
-		return performRemoveOwner(query, qType, db)
+		return performRemoveOwnerContext(r.Context(), query, qType, db)
 	})
 }
 
 func addCategoryHandler(w http.ResponseWriter, r *http.Request) {
 	handleRequestWithDB(w, r, http.StatusCreated, func(query string, qType int, db *cdb.Handler) (interface{}, error) {
-		return performAddCategory(query, qType, db)
+		return performAddCategoryContext(r.Context(), query, qType, db)
 	})
 }
 
 func updateCategoryHandler(w http.ResponseWriter, r *http.Request) {
 	handleRequestWithDB(w, r, http.StatusNoContent, func(query string, qType int, db *cdb.Handler) (interface{}, error) {
-		return performUpdateCategory(query, qType, db)
+		return performUpdateCategoryContext(r.Context(), query, qType, db)
 	})
 }
 
 func removeCategoryHandler(w http.ResponseWriter, r *http.Request) {
 	handleRequestWithDB(w, r, http.StatusNoContent, func(query string, qType int, db *cdb.Handler) (interface{}, error) {
-		return performRemoveCategory(query, qType, db)
+		return performRemoveCategoryContext(r.Context(), query, qType, db)
 	})
 }
 

@@ -1417,6 +1417,10 @@ func performVacuumSourceContext(ctx context.Context, query string, qType int, db
 }
 
 func performAddOwner(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
+	return performAddOwnerContext(context.Background(), query, qType, db)
+}
+
+func performAddOwnerContext(ctx context.Context, query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
 	var owner cdb.OwnerRequest // Define a struct for owner if not already present
 
 	if qType == getQuery {
@@ -1441,7 +1445,7 @@ func performAddOwner(query string, qType int, db *cdb.Handler) (ConsoleResponse,
 		RETURNING owner_id
 	`
 	var ownerID int64
-	err := (*db).QueryRow(queryStr, owner.Details).Scan(&ownerID)
+	err := (*db).QueryRowContext(ctx, queryStr, owner.Details).Scan(&ownerID)
 	if err != nil {
 		return ConsoleResponse{Message: "Failed to add owner"}, fmt.Errorf("error adding owner: %w", err)
 	}
@@ -1450,6 +1454,10 @@ func performAddOwner(query string, qType int, db *cdb.Handler) (ConsoleResponse,
 }
 
 func performAddCategory(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
+	return performAddCategoryContext(context.Background(), query, qType, db)
+}
+
+func performAddCategoryContext(ctx context.Context, query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
 	var category cdb.CategoryRequest // Define a struct for category if not already present
 
 	if qType == getQuery {
@@ -1473,7 +1481,7 @@ func performAddCategory(query string, qType int, db *cdb.Handler) (ConsoleRespon
 		RETURNING category_id
 	`
 	var categoryID int64
-	err := (*db).QueryRow(queryStr, category.Name, category.ParentID, category.Description).Scan(&categoryID)
+	err := (*db).QueryRowContext(ctx, queryStr, category.Name, category.ParentID, category.Description).Scan(&categoryID)
 	if err != nil {
 		return ConsoleResponse{Message: "Failed to add category"}, fmt.Errorf("error adding category: %w", err)
 	}
@@ -1482,6 +1490,10 @@ func performAddCategory(query string, qType int, db *cdb.Handler) (ConsoleRespon
 }
 
 func performUpdateOwner(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
+	return performUpdateOwnerContext(context.Background(), query, qType, db)
+}
+
+func performUpdateOwnerContext(ctx context.Context, query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
 	var owner cdb.OwnerRequest
 
 	if qType == getQuery {
@@ -1510,7 +1522,7 @@ func performUpdateOwner(query string, qType int, db *cdb.Handler) (ConsoleRespon
 		    details = COALESCE($2, details::jsonb)
 		WHERE owner_id = $3
 	`
-	_, err := (*db).Exec(queryStr, owner.DetailsHash, owner.Details, owner.OwnerID)
+	_, err := (*db).ExecContext(ctx, queryStr, owner.DetailsHash, owner.Details, owner.OwnerID)
 	if err != nil {
 		return ConsoleResponse{Message: "Failed to update owner"}, fmt.Errorf("error updating owner: %w", err)
 	}
@@ -1519,6 +1531,10 @@ func performUpdateOwner(query string, qType int, db *cdb.Handler) (ConsoleRespon
 }
 
 func performRemoveOwner(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
+	return performRemoveOwnerContext(context.Background(), query, qType, db)
+}
+
+func performRemoveOwnerContext(ctx context.Context, query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
 	var ownerID int64
 
 	if qType == getQuery {
@@ -1540,7 +1556,7 @@ func performRemoveOwner(query string, qType int, db *cdb.Handler) (ConsoleRespon
 
 	// Remove owner from the database
 	queryStr := `DELETE FROM Owners WHERE owner_id = $1`
-	_, err := (*db).Exec(queryStr, ownerID)
+	_, err := (*db).ExecContext(ctx, queryStr, ownerID)
 	if err != nil {
 		return ConsoleResponse{Message: "Failed to remove owner"}, fmt.Errorf("error removing owner: %w", err)
 	}
@@ -1549,6 +1565,10 @@ func performRemoveOwner(query string, qType int, db *cdb.Handler) (ConsoleRespon
 }
 
 func performUpdateCategory(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
+	return performUpdateCategoryContext(context.Background(), query, qType, db)
+}
+
+func performUpdateCategoryContext(ctx context.Context, query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
 	var category cdb.CategoryRequest
 
 	if qType == getQuery {
@@ -1577,7 +1597,7 @@ func performUpdateCategory(query string, qType int, db *cdb.Handler) (ConsoleRes
 		    description = COALESCE($3, description)
 		WHERE category_id = $4
 	`
-	_, err := (*db).Exec(queryStr, category.Name, category.ParentID, category.Description, category.CategoryID)
+	_, err := (*db).ExecContext(ctx, queryStr, category.Name, category.ParentID, category.Description, category.CategoryID)
 	if err != nil {
 		return ConsoleResponse{Message: "Failed to update category"}, fmt.Errorf("error updating category: %w", err)
 	}
@@ -1586,6 +1606,10 @@ func performUpdateCategory(query string, qType int, db *cdb.Handler) (ConsoleRes
 }
 
 func performRemoveCategory(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
+	return performRemoveCategoryContext(context.Background(), query, qType, db)
+}
+
+func performRemoveCategoryContext(ctx context.Context, query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
 	var categoryID int64
 
 	if qType == getQuery {
@@ -1607,7 +1631,7 @@ func performRemoveCategory(query string, qType int, db *cdb.Handler) (ConsoleRes
 
 	// Remove category from the database
 	queryStr := `DELETE FROM Categories WHERE category_id = $1`
-	_, err := (*db).Exec(queryStr, categoryID)
+	_, err := (*db).ExecContext(ctx, queryStr, categoryID)
 	if err != nil {
 		return ConsoleResponse{Message: "Failed to remove category"}, fmt.Errorf("error removing category: %w", err)
 	}
