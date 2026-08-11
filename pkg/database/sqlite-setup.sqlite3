@@ -96,6 +96,7 @@ CREATE TABLE IF NOT EXISTS Sources (
     category_id INTEGER DEFAULT 0 NOT NULL,      -- The category of the source.
     url TEXT NOT NULL UNIQUE,                   -- The Source URL.
     priority VARCHAR(64) DEFAULT '' NOT NULL,   -- The priority of the source (e.g., 'low', 'medium', 'high', or even custom strings).
+    sub_priority INTEGER DEFAULT 0 NOT NULL,    -- The sub_priority field
     status VARCHAR(50) DEFAULT 'new' NOT NULL,  -- All new sources are set to 'new' by default.
     engine VARCHAR(256) DEFAULT '' NOT NULL,    -- The engine crawling the source.
     last_crawled_at TIMESTAMP,                  -- The last time the source was crawled.
@@ -121,6 +122,12 @@ CREATE TABLE IF NOT EXISTS Sources (
                                                 -- data like the stage of the crawling for
                                                 -- multi-stage crawls etc.
 );
+
+CREATE INDEX IF NOT EXISTS idx_sources_priority_sub_priority
+ON Sources(priority, sub_priority DESC, source_id ASC);
+
+--------------------------------------------------------------------------------
+
 --------------------------------------------------------------------------------
 -- Durable email ingestion checkpoints and bounded message reconciliation state.
 CREATE TABLE IF NOT EXISTS EmailMailboxState (

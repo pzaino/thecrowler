@@ -228,7 +228,7 @@ func retrieveAvailableSources(db cdb.Handler, maxSources int) ([]cdb.Source, err
 		l.config
 	FROM
 		update_sources($1,$2,$3,$4,$5,$6,$7) AS l
-	ORDER BY l.last_updated_at ASC;`
+	ORDER BY l.sub_priority DESC, l.source_id ASC;`
 
 	// Execute the query within the transaction
 	if maxSources <= 0 {
@@ -247,7 +247,7 @@ func retrieveAvailableSources(db cdb.Handler, maxSources int) ([]cdb.Source, err
 	var sourcesToCrawl []cdb.Source
 	for rows.Next() {
 		var src cdb.Source
-		if err := rows.Scan(&src.ID, &src.UID, &src.URL, &src.Restricted, &src.Flags, &src.Config); err != nil {
+		if err := rows.Scan(&src.ID, &src.UID, &src.URL, &src.Restricted, &src.Flags, &src.Config, &src.SubPriority); err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "scanning rows: %v", err)
 			err2 := rows.Close()
 			if err2 != nil {

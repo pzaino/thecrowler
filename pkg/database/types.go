@@ -71,6 +71,10 @@ type Source struct {
 
 	// The following fields are not stored in the database but are used internally.
 	Status int
+
+	// SubPriority controls ordering within a priority group.
+	// Higher values are claimed before lower values.
+	SubPriority int
 }
 
 // GetConfigMap unmarshals the raw JSON Config into a map for flexible lookup.

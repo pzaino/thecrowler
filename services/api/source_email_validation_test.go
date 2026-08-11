@@ -68,12 +68,12 @@ func TestSourceHandlersValidateEmailRequests(t *testing.T) {
 		dbHandler = &sourceAPITestHandler{db: db}
 		dbSemaphore = make(chan struct{}, 1)
 
-		mock.ExpectQuery(`SELECT url, status, restricted, disabled, flags, config, details`).
+		mock.ExpectQuery(`SELECT url, sub_priority, status, restricted, disabled, flags, config, details`).
 			WithArgs(int64(41)).
-			WillReturnRows(sqlmock.NewRows([]string{"url", "status", "restricted", "disabled", "flags", "config", "details"}).
-				AddRow("https://source.example.test", "new", 2, false, 0, `{}`, `{}`))
+			WillReturnRows(sqlmock.NewRows([]string{"url", "sub_priority", "status", "restricted", "disabled", "flags", "config", "details"}).
+				AddRow("https://source.example.test", 0, "new", 2, false, 0, `{}`, `{}`))
 		mock.ExpectExec(`UPDATE Sources`).
-			WithArgs("https://source.example.test", "new", 2, false, 0, sqlmock.AnyArg(), sqlmock.AnyArg(), int64(41)).
+			WithArgs("https://source.example.test", 0, "new", 2, false, 0, sqlmock.AnyArg(), sqlmock.AnyArg(), int64(41)).
 			WillReturnResult(sqlmock.NewResult(0, 1))
 
 		body := `{"source_id":41,"config":` + emailSourceConfig("imap", "imaps://mail.example.test", "") + `}`
@@ -188,6 +188,7 @@ func setupSourceAPITestDB(t *testing.T) (cdb.Handler, func()) {
 			url TEXT NOT NULL UNIQUE,
 			name TEXT,
 			priority TEXT,
+			sub_priority INTEGER NOT NULL DEFAULT 0,
 			category_id INTEGER NOT NULL DEFAULT 0,
 			usr_id INTEGER NOT NULL DEFAULT 0,
 			restricted INTEGER NOT NULL DEFAULT 0,

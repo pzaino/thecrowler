@@ -32,7 +32,8 @@ func GetSourceByID(db *Handler, sourceID uint64) (*Source, error) {
 	source := &Source{}
 
 	// Query the database
-	err := (*db).QueryRow(`SELECT source_id, source_uid, url, name, category_id, usr_id, restricted, flags, config FROM Sources WHERE source_id = $1`, sourceID).Scan(&source.ID, &source.UID, &source.URL, &source.Name, &source.CategoryID, &source.UsrID, &source.Restricted, &source.Flags, &source.Config)
+	err := (*db).QueryRow(`SELECT source_id, source_uid, url, name, priority,
+        sub_priority, category_id, usr_id, restricted, flags, config FROM Sources WHERE source_id = $1`, sourceID).Scan(&source.ID, &source.UID, &source.URL, &source.Name, &source.Priority, &source.SubPriority, &source.CategoryID, &source.UsrID, &source.Restricted, &source.Flags, &source.Config)
 	if err != nil {
 		return nil, fmt.Errorf("no source found with ID %d", sourceID)
 	}
@@ -63,15 +64,16 @@ func CreateSource(db *Handler, source *Source, config cfg.SourceConfig) (uint64,
 	}
 
 	prepared := preparedSourceInsert{
-		URL:        NormalizeSourceURL(source.URL),
-		Name:       strings.TrimSpace(source.Name),
-		Priority:   strings.TrimSpace(source.Priority),
-		CategoryID: source.CategoryID,
-		UsrID:      source.UsrID,
-		Restricted: source.Restricted,
-		Flags:      source.Flags,
-		Config:     details,
-		Disabled:   source.Disabled,
+		URL:         NormalizeSourceURL(source.URL),
+		Name:        strings.TrimSpace(source.Name),
+		Priority:    strings.TrimSpace(source.Priority),
+		SubPriority: source.SubPriority,
+		CategoryID:  source.CategoryID,
+		UsrID:       source.UsrID,
+		Restricted:  source.Restricted,
+		Flags:       source.Flags,
+		Config:      details,
+		Disabled:    source.Disabled,
 	}
 	prepared.UID = CalculateSourceUID(prepared.Name, prepared.URL)
 	source.UID = prepared.UID
@@ -129,17 +131,18 @@ func decodeSearchableQueryCharacters(rawQuery string) string {
 }
 
 type preparedSourceInsert struct {
-	UID        string
-	URL        string
-	Name       string
-	Priority   string
-	CategoryID uint64
-	UsrID      uint64
-	Restricted uint
-	Flags      uint
-	Config     []byte
-	Disabled   bool
-	Status     string
+	UID         string
+	URL         string
+	Name        string
+	Priority    string
+	SubPriority int
+	CategoryID  uint64
+	UsrID       uint64
+	Restricted  uint
+	Flags       uint
+	Config      []byte
+	Disabled    bool
+	Status      string
 }
 
 func (source preparedSourceInsert) args() []interface{} {
@@ -147,6 +150,7 @@ func (source preparedSourceInsert) args() []interface{} {
 		source.URL,
 		source.Name,
 		source.Priority,
+		source.SubPriority,
 		source.CategoryID,
 		source.UsrID,
 		source.Restricted,
@@ -167,8 +171,8 @@ func createSourcePostgres(db *Handler, source preparedSourceInsert) (uint64, err
 
 	query := `
         INSERT INTO Sources
-            (url, name, priority, category_id, usr_id, restricted, flags, config, disabled, source_uid, status)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'new')
+            (url, name, priority, sub_priority, category_id, usr_id, restricted, flags, config, disabled, source_uid, status)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'new')
         ON CONFLICT (url) DO UPDATE
         SET
             -- update name only if not processing AND non-empty trimmed string
@@ -191,6 +195,13 @@ func createSourcePostgres(db *Handler, source preparedSourceInsert) (uint64, err
                 THEN EXCLUDED.priority
                 ELSE Sources.priority
             END,
+
+			-- update sub_priority only if not processing
+			sub_priority = CASE
+				WHEN Sources.status <> 'processing'
+				THEN EXCLUDED.sub_priority
+				ELSE Sources.sub_priority
+			END,
 
             -- update integers only if not processing
             category_id = CASE
@@ -259,8 +270,8 @@ func createSourceSQLite(db *Handler, source preparedSourceInsert) (uint64, error
 
 	query := `
 		INSERT INTO Sources
-			(url, name, priority, category_id, usr_id, restricted, flags, config, disabled, source_uid, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'new')
+			(url, name, priority, sub_priority, category_id, usr_id, restricted, flags, config, disabled, source_uid, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'new')
 		ON CONFLICT (url) DO UPDATE SET
 			name = CASE
 				WHEN Sources.status <> 'processing'
@@ -278,6 +289,11 @@ func createSourceSQLite(db *Handler, source preparedSourceInsert) (uint64, error
 					 AND TRIM(excluded.priority) <> ''
 				THEN excluded.priority
 				ELSE Sources.priority
+			END,
+			sub_priority = CASE
+				WHEN Sources.status <> 'processing'
+				THEN excluded.sub_priority
+				ELSE Sources.sub_priority
 			END,
 			category_id = CASE
 				WHEN Sources.status <> 'processing'
@@ -332,8 +348,8 @@ func createSourceSQLite(db *Handler, source preparedSourceInsert) (uint64, error
 func createSourceMySQL(db *Handler, source preparedSourceInsert) (uint64, error) {
 	query := `
 		INSERT INTO Sources
-			(url, name, priority, category_id, usr_id, restricted, flags, config, disabled, source_uid, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new')
+			(url, name, priority, sub_priority, category_id, usr_id, restricted, flags, config, disabled, source_uid, status)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new')
 		ON DUPLICATE KEY UPDATE
 			source_id = LAST_INSERT_ID(source_id),
 			name = CASE
@@ -352,6 +368,11 @@ func createSourceMySQL(db *Handler, source preparedSourceInsert) (uint64, error)
 					 AND TRIM(VALUES(priority)) <> ''
 				THEN VALUES(priority)
 				ELSE priority
+			END,
+			sub_priority = CASE
+				WHEN status <> 'processing'
+				THEN VALUES(sub_priority)
+				ELSE sub_priority
 			END,
 			category_id = CASE
 				WHEN status <> 'processing'

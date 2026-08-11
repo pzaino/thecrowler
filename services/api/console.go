@@ -746,14 +746,15 @@ func performAddSource(query string, qType int, db *cdb.Handler) (ConsoleResponse
 
 	// Convert request into cdb.Source struct
 	dbSource := cdb.Source{
-		URL:        params.URL,              // from addSourceRequest.URL
-		Name:       "",                      // console does not specify Name
-		Priority:   "",                      // console does not specify Priority
-		CategoryID: params.CategoryID,       // Source category ID (uint64)
-		UsrID:      params.UsrID,            // Source user ID (uint64)
-		Restricted: uint(params.Restricted), // nolint:gosec // This is a controlled value // Restriction level (int --> uint)
-		Disabled:   params.Disabled,         // bool (0 by default)
-		Flags:      uint(params.Flags),      // nolint:gosec // This is a controlled value // Source flags (int --> uint)
+		URL:         params.URL,              // from addSourceRequest.URL
+		Name:        "",                      // console does not specify Name
+		Priority:    params.Priority,         // Source Priority (string)
+		SubPriority: params.SubPriority,      // Source SubPriority (int)
+		CategoryID:  params.CategoryID,       // Source category ID (uint64)
+		UsrID:       params.UsrID,            // Source user ID (uint64)
+		Restricted:  uint(params.Restricted), // nolint:gosec // This is a controlled value // Restriction level (int --> uint)
+		Disabled:    params.Disabled,         // bool (0 by default)
+		Flags:       uint(params.Flags),      // nolint:gosec // This is a controlled value // Source flags (int --> uint)
 		// Status is intentionally NOT set from console
 	}
 
@@ -1144,12 +1145,13 @@ func performUpdateSource(query string, qType int, db *cdb.Handler) (ConsoleRespo
 	// Retrieve existing data for the source
 	var existingData cdb.UpdateSourceRequest
 	selectQuery := `
-        SELECT url, status, restricted, disabled, flags, config, details
+        SELECT url, sub_priority, status, restricted, disabled, flags, config, details
         FROM Sources
         WHERE source_id = $1
     `
 	err := (*db).QueryRow(selectQuery, sqlParams.SourceID).Scan(
 		&existingData.URL,
+		&existingData.SubPriority,
 		&existingData.Status,
 		&existingData.Restricted,
 		&existingData.Disabled,
@@ -1184,13 +1186,14 @@ func performUpdateSource(query string, qType int, db *cdb.Handler) (ConsoleRespo
 
 	// Merge existing data with provided updates
 	mergedData := cdb.UpdateSourceRequest{
-		SourceID:   sqlParams.SourceID,
-		URL:        coalesce(sqlParams.URL, existingData.URL),
-		Status:     coalesce(sqlParams.Status, existingData.Status),
-		Restricted: coalesceInt(sqlParams.Restricted, existingData.Restricted),
-		Disabled:   coalesceBool(sqlParams.Disabled, existingData.Disabled),
-		Flags:      coalesceInt(sqlParams.Flags, existingData.Flags),
-		Details:    coalesceJSON(sqlParams.Details, existingData.Details),
+		SourceID:    sqlParams.SourceID,
+		URL:         coalesce(sqlParams.URL, existingData.URL),
+		SubPriority: coalesceInt(sqlParams.SubPriority, existingData.SubPriority),
+		Status:      coalesce(sqlParams.Status, existingData.Status),
+		Restricted:  coalesceInt(sqlParams.Restricted, existingData.Restricted),
+		Disabled:    coalesceBool(sqlParams.Disabled, existingData.Disabled),
+		Flags:       coalesceInt(sqlParams.Flags, existingData.Flags),
+		Details:     coalesceJSON(sqlParams.Details, existingData.Details),
 	}
 
 	mergedConfigJSON, err := json.Marshal(mergedConfig)
@@ -1202,16 +1205,18 @@ func performUpdateSource(query string, qType int, db *cdb.Handler) (ConsoleRespo
 	updateQuery := `
         UPDATE Sources
         SET url = $1,
-            status = $2,
-            restricted = $3,
-            disabled = $4,
-            flags = $5,
-            config = $6::jsonb,
-            details = $7::jsonb
-        WHERE source_id = $8
+            sub_priority = $2,
+            status = $3,
+            restricted = $4,
+            disabled = $5,
+            flags = $6,
+            config = $7::jsonb,
+            details = $8::jsonb
+        WHERE source_id = $9
     `
 	_, err = (*db).Exec(updateQuery,
 		cmn.NormalizeURL(mergedData.URL),
+		mergedData.SubPriority,
 		mergedData.Status,
 		mergedData.Restricted,
 		mergedData.Disabled,

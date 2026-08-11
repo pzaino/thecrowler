@@ -31,6 +31,7 @@ type SourceStatusRow struct {
 	URL           sql.NullString
 	Status        sql.NullString
 	Priority      sql.NullString
+	SubPriority   int
 	Engine        sql.NullString
 	CreatedAt     sql.NullString
 	LastUpdatedAt sql.NullString
@@ -66,6 +67,7 @@ const sourceStatusSelect = `
 	       url,
 	       status,
 	       priority,
+		   sub_priority,
 	       engine,
 	       created_at,
 	       last_updated_at,
@@ -189,7 +191,7 @@ func scanSourceStatusRows(rows *sql.Rows) ([]SourceStatusRow, error) {
 	for rows.Next() {
 		var row SourceStatusRow
 		var configJSON []byte
-		if err := rows.Scan(&row.SourceID, &row.SourceUID, &row.URL, &row.Status, &row.Priority, &row.Engine, &row.CreatedAt, &row.LastUpdatedAt, &row.LastCrawledAt, &row.LastError, &row.LastErrorAt, &row.Restricted, &row.Disabled, &row.Flags, &configJSON); err != nil {
+		if err := rows.Scan(&row.SourceID, &row.SourceUID, &row.URL, &row.Status, &row.Priority, &row.SubPriority, &row.Engine, &row.CreatedAt, &row.LastUpdatedAt, &row.LastCrawledAt, &row.LastError, &row.LastErrorAt, &row.Restricted, &row.Disabled, &row.Flags, &configJSON); err != nil {
 			return nil, fmt.Errorf("failed to scan source status: %w", err)
 		}
 		if len(configJSON) > 0 {

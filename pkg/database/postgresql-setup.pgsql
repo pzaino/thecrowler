@@ -127,10 +127,10 @@ CREATE TABLE IF NOT EXISTS DBSchemaVersion (
 DO $$
 BEGIN
     IF NOT EXISTS (
-        SELECT 1 FROM DBSchemaVersion WHERE version = '1.8'
+        SELECT 1 FROM DBSchemaVersion WHERE version = '1.13'
     ) THEN
         INSERT INTO DBSchemaVersion (version, description)
-        VALUES ('1.8', 'CROWler DB schema version 1.8');
+        VALUES ('1.13', 'CROWler DB schema version 1.13');
     END IF;
 END
 $$;
@@ -280,6 +280,7 @@ CREATE TABLE IF NOT EXISTS Sources (
     category_id BIGINT DEFAULT 0 NOT NULL,      -- The category of the source.
     url TEXT NOT NULL UNIQUE,                   -- The Source URL.
     priority VARCHAR(64) DEFAULT '' NOT NULL,   -- The priority of the source (e.g., 'low', 'medium', 'high', or even custom strings).
+    sub_priority INTEGER DEFAULT 0 NOT NULL,    -- The sub-priority of the source, used for finer-grained prioritization within the update_source function.
     status VARCHAR(50) DEFAULT 'new' NOT NULL,  -- All new sources are set to 'new' by default.
     engine VARCHAR(256) DEFAULT '' NOT NULL,    -- The engine crawling the source.
     last_crawled_at TIMESTAMPTZ,                -- The last time the source was crawled.
@@ -305,6 +306,12 @@ CREATE TABLE IF NOT EXISTS Sources (
                                                 -- data like the stage of the crawling for
                                                 -- multi-stage crawls etc.
 );
+
+CREATE INDEX IF NOT EXISTS idx_sources_priority_sub_priority
+ON Sources(priority, sub_priority DESC, source_id ASC);
+
+--------------------------------------------------------------------------------
+
 --------------------------------------------------------------------------------
 -- Durable email ingestion checkpoints and bounded message reconciliation state.
 CREATE TABLE IF NOT EXISTS EmailMailboxState (
@@ -2832,7 +2839,7 @@ CREATE OR REPLACE FUNCTION update_sources(
     p_regular_crawling VARCHAR,
     p_processing_timeout VARCHAR
 )
-RETURNS TABLE(source_id BIGINT, source_uid TEXT, url TEXT, restricted INT, flags INT, config JSONB, last_updated_at TIMESTAMPTZ) AS
+RETURNS TABLE(source_id BIGINT, source_uid TEXT, url TEXT, restricted INT, flags INT, config JSONB, last_updated_at TIMESTAMPTZ, sub_priority INT) AS
 $$
 DECLARE
     priority_list TEXT[];
@@ -2884,7 +2891,7 @@ BEGIN
                     OR s.status IS NULL
                 )
               )
-        ORDER BY s.created_at ASC, s.source_id ASC
+        ORDER BY s.sub_priority DESC, s.source_id ASC
         FOR UPDATE SKIP LOCKED
         LIMIT limit_val
     )
@@ -2892,7 +2899,7 @@ BEGIN
     SET status = 'processing',
         engine = p_engineID
     WHERE Sources.source_id IN (SELECT SelectedSources.source_id FROM SelectedSources)
-    RETURNING Sources.source_id, Sources.source_uid::TEXT, Sources.url, Sources.restricted, Sources.flags, Sources.config, Sources.last_updated_at;
+    RETURNING Sources.source_id, Sources.source_uid::TEXT, Sources.url, Sources.restricted, Sources.flags, Sources.config, Sources.last_updated_at, Sources.sub_priority;
 END;
 $$
 LANGUAGE plpgsql;
