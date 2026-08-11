@@ -1354,6 +1354,10 @@ func coalesceJSON(newValue, existingValue json.RawMessage) json.RawMessage {
 }
 
 func performVacuumSource(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
+	return performVacuumSourceContext(context.Background(), query, qType, db)
+}
+
+func performVacuumSourceContext(ctx context.Context, query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
 	var filter cdb.SourceFilter
 
 	if qType == getQuery {
@@ -1369,7 +1373,7 @@ func performVacuumSource(query string, qType int, db *cdb.Handler) (ConsoleRespo
 
 	// Resolve sourceID if only URL is provided
 	if filter.SourceID == 0 && filter.URL != "" {
-		sourceID, err := cdb.GetSourceID(filter, db)
+		sourceID, err := cdb.GetSourceIDContext(ctx, filter, db)
 		if err != nil {
 			return ConsoleResponse{Message: "Failed to resolve Source ID"}, err
 		}
@@ -1378,7 +1382,7 @@ func performVacuumSource(query string, qType int, db *cdb.Handler) (ConsoleRespo
 		return ConsoleResponse{Message: "Source ID or URL must be provided"}, fmt.Errorf("missing Source ID or URL")
 	}
 
-	tx, err := (*db).Begin()
+	tx, err := (*db).BeginTx(ctx, nil)
 	if err != nil {
 		return ConsoleResponse{Message: "Failed to start transaction"}, err
 	}
@@ -1394,7 +1398,7 @@ func performVacuumSource(query string, qType int, db *cdb.Handler) (ConsoleRespo
 	}
 
 	for _, query := range queries {
-		_, err := tx.Exec(query, filter.SourceID)
+		_, err := tx.ExecContext(ctx, query, filter.SourceID)
 		if err != nil {
 			err2 := tx.Rollback() // Rollback if any query fails
 			if err2 != nil {

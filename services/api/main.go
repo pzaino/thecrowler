@@ -1716,7 +1716,7 @@ func vacuumSourceHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		results, err := performVacuumSource(query, getQTypeFromName(r.Method), &dbHandler)
+		results, err := performVacuumSourceContext(r.Context(), query, getQTypeFromName(r.Method), &dbHandler)
 		if err != nil {
 			totalErrors.Add(1)
 		} else {
