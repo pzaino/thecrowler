@@ -103,7 +103,7 @@ func GetSourceStatusByUIDContext(ctx context.Context, db *Handler, sourceUID str
 	if err != nil {
 		return nil, err
 	}
-	if err := attachSourceEmailStatuses(db, statuses); err != nil {
+	if err := attachSourceEmailStatuses(ctx, db, statuses); err != nil {
 		return nil, err
 	}
 	return statuses, nil
@@ -112,6 +112,11 @@ func GetSourceStatusByUIDContext(ctx context.Context, db *Handler, sourceUID str
 // GetSourceStatusByURL retrieves source status rows matching sourceURL.
 // The helper owns URL normalization so callers may pass raw user input.
 func GetSourceStatusByURL(db *Handler, sourceURL string) ([]SourceStatusRow, error) {
+	return GetSourceStatusByURLContext(context.Background(), db, sourceURL)
+}
+
+// GetSourceStatusByURLContext retrieves source status rows using ctx.
+func GetSourceStatusByURLContext(ctx context.Context, db *Handler, sourceURL string) ([]SourceStatusRow, error) {
 	if db == nil || *db == nil {
 		return nil, fmt.Errorf("database handler is nil")
 	}
@@ -120,7 +125,7 @@ func GetSourceStatusByURL(db *Handler, sourceURL string) ([]SourceStatusRow, err
 	cmn.DebugMsg(cmn.DbgLvlDebug5, "Source URL: %s", normalizedURL)
 
 	query := sourceStatusSelect + "\n\tWHERE url LIKE " + sourceStatusPlaceholder(db)
-	rows, err := (*db).ExecuteQuery(query, "%"+normalizedURL+"%")
+	rows, err := (*db).QueryContext(ctx, query, "%"+normalizedURL+"%")
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve source status by URL: %w", err)
 	}
@@ -130,7 +135,7 @@ func GetSourceStatusByURL(db *Handler, sourceURL string) ([]SourceStatusRow, err
 	if err != nil {
 		return nil, err
 	}
-	if err := attachSourceEmailStatuses(db, statuses); err != nil {
+	if err := attachSourceEmailStatuses(ctx, db, statuses); err != nil {
 		return nil, err
 	}
 	return statuses, nil
@@ -139,13 +144,18 @@ func GetSourceStatusByURL(db *Handler, sourceURL string) ([]SourceStatusRow, err
 // ListSourceStatusesByURLFilter retrieves source status rows whose URL contains urlFilter.
 // The filter is applied directly as a SQL LIKE contains match.
 func ListSourceStatusesByURLFilter(db *Handler, urlFilter string) ([]SourceStatusRow, error) {
+	return ListSourceStatusesByURLFilterContext(context.Background(), db, urlFilter)
+}
+
+// ListSourceStatusesByURLFilterContext lists filtered source statuses using ctx.
+func ListSourceStatusesByURLFilterContext(ctx context.Context, db *Handler, urlFilter string) ([]SourceStatusRow, error) {
 	if db == nil || *db == nil {
 		return nil, fmt.Errorf("database handler is nil")
 	}
 
 	filter := strings.TrimSpace(urlFilter)
 	query := sourceStatusSelect + "\n\tWHERE url LIKE " + sourceStatusPlaceholder(db)
-	rows, err := (*db).ExecuteQuery(query, "%"+filter+"%")
+	rows, err := (*db).QueryContext(ctx, query, "%"+filter+"%")
 	if err != nil {
 		return nil, fmt.Errorf("failed to list source statuses by URL filter: %w", err)
 	}
@@ -155,7 +165,7 @@ func ListSourceStatusesByURLFilter(db *Handler, urlFilter string) ([]SourceStatu
 	if err != nil {
 		return nil, err
 	}
-	if err := attachSourceEmailStatuses(db, statuses); err != nil {
+	if err := attachSourceEmailStatuses(ctx, db, statuses); err != nil {
 		return nil, err
 	}
 	return statuses, nil
@@ -163,11 +173,16 @@ func ListSourceStatusesByURLFilter(db *Handler, urlFilter string) ([]SourceStatu
 
 // ListSourceStatuses retrieves all source status rows.
 func ListSourceStatuses(db *Handler) ([]SourceStatusRow, error) {
+	return ListSourceStatusesContext(context.Background(), db)
+}
+
+// ListSourceStatusesContext lists all source statuses using ctx.
+func ListSourceStatusesContext(ctx context.Context, db *Handler) ([]SourceStatusRow, error) {
 	if db == nil || *db == nil {
 		return nil, fmt.Errorf("database handler is nil")
 	}
 
-	rows, err := (*db).ExecuteQuery(sourceStatusSelect)
+	rows, err := (*db).QueryContext(ctx, sourceStatusSelect)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list source statuses: %w", err)
 	}
@@ -177,7 +192,7 @@ func ListSourceStatuses(db *Handler) ([]SourceStatusRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := attachSourceEmailStatuses(db, statuses); err != nil {
+	if err := attachSourceEmailStatuses(ctx, db, statuses); err != nil {
 		return nil, err
 	}
 	return statuses, nil
@@ -244,13 +259,13 @@ const sourceEmailLastErrorsSelect = `
 	WHERE COALESCE(last_error, '') <> ''
 	ORDER BY source_id, last_updated_at DESC`
 
-func attachSourceEmailStatuses(db *Handler, statuses []SourceStatusRow) error {
+func attachSourceEmailStatuses(ctx context.Context, db *Handler, statuses []SourceStatusRow) error {
 	if len(statuses) == 0 {
 		return nil
 	}
 
 	bySourceID := make(map[uint64]*SourceEmailStatusRow, len(statuses))
-	rows, err := (*db).ExecuteQuery(sourceEmailStatusSelect)
+	rows, err := (*db).QueryContext(ctx, sourceEmailStatusSelect)
 	if err != nil {
 		return fmt.Errorf("failed to retrieve source email status: %w", err)
 	}
@@ -302,7 +317,7 @@ func attachSourceEmailStatuses(db *Handler, statuses []SourceStatusRow) error {
 	}
 
 	if len(bySourceID) != 0 {
-		if err := attachSourceEmailErrorCategories(db, bySourceID); err != nil {
+		if err := attachSourceEmailErrorCategories(ctx, db, bySourceID); err != nil {
 			return err
 		}
 	}
@@ -312,8 +327,8 @@ func attachSourceEmailStatuses(db *Handler, statuses []SourceStatusRow) error {
 	return nil
 }
 
-func attachSourceEmailErrorCategories(db *Handler, statuses map[uint64]*SourceEmailStatusRow) error {
-	rows, err := (*db).ExecuteQuery(sourceEmailLastErrorsSelect)
+func attachSourceEmailErrorCategories(ctx context.Context, db *Handler, statuses map[uint64]*SourceEmailStatusRow) error {
+	rows, err := (*db).QueryContext(ctx, sourceEmailLastErrorsSelect)
 	if err != nil {
 		return fmt.Errorf("failed to retrieve source email error categories: %w", err)
 	}

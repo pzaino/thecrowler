@@ -1682,7 +1682,7 @@ func updateSourceHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		results, err := performUpdateSource(query, getQTypeFromName(r.Method), &dbHandler)
+		results, err := performUpdateSourceContext(r.Context(), query, getQTypeFromName(r.Method), &dbHandler)
 		if err != nil {
 			totalErrors.Add(1)
 		} else {
@@ -1746,7 +1746,7 @@ func singleURLstatusHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		results, err := performGetURLStatus(query, getQTypeFromName(r.Method), &dbHandler)
+		results, err := performGetURLStatusContext(r.Context(), query, getQTypeFromName(r.Method), &dbHandler)
 		if err != nil {
 			totalErrors.Add(1)
 		} else {
@@ -1775,7 +1775,7 @@ func filteredURLstatusHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		results, err := performGetFilteredURLStatus(query, getQTypeFromName(r.Method), &dbHandler)
+		results, err := performGetFilteredURLStatusContext(r.Context(), query, getQTypeFromName(r.Method), &dbHandler)
 		if err != nil {
 			totalErrors.Add(1)
 		} else {
@@ -1799,7 +1799,7 @@ func allURLstatusHandler(w http.ResponseWriter, r *http.Request) {
 
 		successCode := http.StatusOK
 
-		results, err := performGetAllURLStatus(getQTypeFromName(r.Method), &dbHandler)
+		results, err := performGetAllURLStatusContext(r.Context(), getQTypeFromName(r.Method), &dbHandler)
 		if err != nil {
 			totalErrors.Add(1)
 		} else {
@@ -1857,7 +1857,7 @@ func informationSeedAddHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		results, err := performAddInformationSeed(query, postQuery, &dbHandler)
+		results, err := performAddInformationSeedContext(r.Context(), query, postQuery, &dbHandler)
 		if err != nil {
 			totalErrors.Add(1)
 			handleErrorAndRespond(w, err, results, "Error adding information seed: %v", informationSeedAddErrorStatus(err), http.StatusCreated)
@@ -1897,7 +1897,7 @@ func informationSeedStatusHandler(w http.ResponseWriter, r *http.Request) {
 	select {
 	case dbSemaphore <- struct{}{}:
 		defer func() { <-dbSemaphore }()
-		results, err := performGetInformationSeedStatus(id, &dbHandler)
+		results, err := performGetInformationSeedStatusContext(r.Context(), id, &dbHandler)
 		if err != nil {
 			totalErrors.Add(1)
 			status := http.StatusInternalServerError
@@ -1929,7 +1929,7 @@ func informationSeedListHandler(w http.ResponseWriter, r *http.Request) {
 
 		successCode := http.StatusOK
 
-		results, err := performListInformationSeeds(r.URL.Query(), &dbHandler)
+		results, err := performListInformationSeedsContext(r.Context(), r.URL.Query(), &dbHandler)
 		if err != nil {
 			totalErrors.Add(1)
 			status := http.StatusInternalServerError

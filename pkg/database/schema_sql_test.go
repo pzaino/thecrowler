@@ -58,6 +58,32 @@ func TestInformationSeedSchemaSQLContainsFreshInstallAndUpgradeCoverage(t *testi
 	}
 }
 
+func TestSourceSubPriorityFreshInstallAndUpgradeCoverage(t *testing.T) {
+	t.Parallel()
+	files := []string{
+		"postgresql-setup.pgsql", "mysql-setup.mysql", "sqlite-setup.sqlite3",
+		"db_migrations/postgresql-migration-v1.13.pgsql",
+		"db_migrations/mysql-migration-v1.13.mysql",
+		"db_migrations/sqlite-migration-v1.13.sqlite3",
+	}
+	for _, file := range files {
+		file := file
+		t.Run(file, func(t *testing.T) {
+			t.Parallel()
+			content, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatalf("read %s: %v", file, err)
+			}
+			upper := strings.ToUpper(string(content))
+			for _, fragment := range []string{"SUB_PRIORITY", "IDX_SOURCES_PRIORITY_SUB_PRIORITY"} {
+				if !strings.Contains(upper, fragment) {
+					t.Fatalf("%s missing schema fragment %q", file, fragment)
+				}
+			}
+		})
+	}
+}
+
 func TestPostgresInformationSeedClaimFunctionIsAtomicAndUpgradeSafe(t *testing.T) {
 	t.Parallel()
 

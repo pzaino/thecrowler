@@ -16,6 +16,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -51,6 +52,10 @@ const (
 )
 
 func performAddInformationSeed(query string, qType int, db *cdb.Handler) (InformationSeedResponse, error) {
+	return performAddInformationSeedContext(context.Background(), query, qType, db)
+}
+
+func performAddInformationSeedContext(ctx context.Context, query string, qType int, db *cdb.Handler) (InformationSeedResponse, error) {
 	var params informationSeedAddRequest
 	if qType == getQuery {
 		params.InformationSeed = strings.TrimSpace(query)
@@ -82,7 +87,7 @@ func performAddInformationSeed(query string, qType int, db *cdb.Handler) (Inform
 		params.Status = "new"
 	}
 
-	id, err := cdb.CreateInformationSeedAndNotify(nil, db, &cdb.InformationSeed{
+	id, err := cdb.CreateInformationSeedAndNotify(ctx, db, &cdb.InformationSeed{
 		CategoryID:      params.CategoryID,
 		UsrID:           params.UsrID,
 		InformationSeed: params.InformationSeed,
@@ -96,7 +101,7 @@ func performAddInformationSeed(query string, qType int, db *cdb.Handler) (Inform
 		return InformationSeedResponse{Message: "Failed to add information seed"}, err
 	}
 
-	row, err := informationSeedRowByID(db, id)
+	row, err := informationSeedRowByIDContext(ctx, db, id)
 	if err != nil {
 		return InformationSeedResponse{Message: "Failed to load added information seed"}, err
 	}
@@ -206,7 +211,11 @@ func isInformationSeedCredentialKey(key string) bool {
 }
 
 func performGetInformationSeedStatus(id uint64, db *cdb.Handler) (InformationSeedResponse, error) {
-	row, err := informationSeedRowByID(db, id)
+	return performGetInformationSeedStatusContext(context.Background(), id, db)
+}
+
+func performGetInformationSeedStatusContext(ctx context.Context, id uint64, db *cdb.Handler) (InformationSeedResponse, error) {
+	row, err := informationSeedRowByIDContext(ctx, db, id)
 	if err != nil {
 		return InformationSeedResponse{Message: "Failed to get information seed status"}, err
 	}
@@ -214,11 +223,15 @@ func performGetInformationSeedStatus(id uint64, db *cdb.Handler) (InformationSee
 }
 
 func performListInformationSeeds(values url.Values, db *cdb.Handler) (InformationSeedListResponse, error) {
+	return performListInformationSeedsContext(context.Background(), values, db)
+}
+
+func performListInformationSeedsContext(ctx context.Context, values url.Values, db *cdb.Handler) (InformationSeedListResponse, error) {
 	filter, err := informationSeedFilterFromValues(values)
 	if err != nil {
 		return InformationSeedListResponse{Message: "Invalid information seed filters"}, err
 	}
-	seeds, err := cdb.ListInformationSeedsWithStats(db, filter)
+	seeds, err := cdb.ListInformationSeedsWithStatsContext(ctx, db, filter)
 	if err != nil {
 		return InformationSeedListResponse{Message: "Failed to list information seeds"}, err
 	}
@@ -571,7 +584,11 @@ func parseInformationSeedEnableQueuePending(query string) (bool, error) {
 }
 
 func informationSeedRowByID(db *cdb.Handler, id uint64) (InformationSeedRow, error) {
-	seeds, err := cdb.ListInformationSeedsWithStats(db, cdb.InformationSeedFilter{ID: id, Limit: 1})
+	return informationSeedRowByIDContext(context.Background(), db, id)
+}
+
+func informationSeedRowByIDContext(ctx context.Context, db *cdb.Handler, id uint64) (InformationSeedRow, error) {
+	seeds, err := cdb.ListInformationSeedsWithStatsContext(ctx, db, cdb.InformationSeedFilter{ID: id, Limit: 1})
 	if err != nil {
 		return InformationSeedRow{}, err
 	}
@@ -974,6 +991,10 @@ type DBString struct {
 }
 
 func performGetURLStatus(query string, qType int, db *cdb.Handler) (StatusResponse, error) {
+	return performGetURLStatusContext(context.Background(), query, qType, db)
+}
+
+func performGetURLStatusContext(ctx context.Context, query string, qType int, db *cdb.Handler) (StatusResponse, error) {
 	var sourceURL string // Assuming the source URL is passed. Adjust as necessary based on input.
 
 	if qType == getQuery {
@@ -985,7 +1006,7 @@ func performGetURLStatus(query string, qType int, db *cdb.Handler) (StatusRespon
 		return StatusResponse{Message: "Invalid request"}, nil
 	}
 
-	results, err := getURLStatus(db, sourceURL)
+	results, err := getURLStatusContext(ctx, db, sourceURL)
 	if err != nil {
 		return StatusResponse{Message: "Failed to get the status"}, err
 	}
@@ -994,10 +1015,14 @@ func performGetURLStatus(query string, qType int, db *cdb.Handler) (StatusRespon
 }
 
 func getURLStatus(db *cdb.Handler, sourceURL string) (StatusResponse, error) {
+	return getURLStatusContext(context.Background(), db, sourceURL)
+}
+
+func getURLStatusContext(ctx context.Context, db *cdb.Handler, sourceURL string) (StatusResponse, error) {
 	var results StatusResponse
 	results.Message = "Failed to get the status"
 
-	statuses, err := cdb.GetSourceStatusByURL(db, sourceURL)
+	statuses, err := cdb.GetSourceStatusByURLContext(ctx, db, sourceURL)
 	if err != nil {
 		return results, err
 	}
@@ -1008,11 +1033,15 @@ func getURLStatus(db *cdb.Handler, sourceURL string) (StatusResponse, error) {
 }
 
 func performGetFilteredURLStatus(query string, qType int, db *cdb.Handler) (StatusResponse, error) {
+	return performGetFilteredURLStatusContext(context.Background(), query, qType, db)
+}
+
+func performGetFilteredURLStatusContext(ctx context.Context, query string, qType int, db *cdb.Handler) (StatusResponse, error) {
 	if qType != getQuery {
 		return StatusResponse{Message: "Invalid request"}, nil
 	}
 
-	results, err := getFilteredURLStatus(db, query)
+	results, err := getFilteredURLStatusContext(ctx, db, query)
 	if err != nil {
 		return StatusResponse{Message: "Failed to get filtered statuses"}, err
 	}
@@ -1021,10 +1050,14 @@ func performGetFilteredURLStatus(query string, qType int, db *cdb.Handler) (Stat
 }
 
 func getFilteredURLStatus(db *cdb.Handler, urlFilter string) (StatusResponse, error) {
+	return getFilteredURLStatusContext(context.Background(), db, urlFilter)
+}
+
+func getFilteredURLStatusContext(ctx context.Context, db *cdb.Handler, urlFilter string) (StatusResponse, error) {
 	var results StatusResponse
 	results.Message = "Failed to get filtered statuses"
 
-	statuses, err := cdb.ListSourceStatusesByURLFilter(db, urlFilter)
+	statuses, err := cdb.ListSourceStatusesByURLFilterContext(ctx, db, urlFilter)
 	if err != nil {
 		return results, err
 	}
@@ -1035,8 +1068,12 @@ func getFilteredURLStatus(db *cdb.Handler, urlFilter string) (StatusResponse, er
 }
 
 func performGetAllURLStatus(_ int, db *cdb.Handler) (StatusResponse, error) {
+	return performGetAllURLStatusContext(context.Background(), 0, db)
+}
+
+func performGetAllURLStatusContext(ctx context.Context, _ int, db *cdb.Handler) (StatusResponse, error) {
 	// using _ instead of qType because for now we don't need it
-	results, err := getAllURLStatus(db)
+	results, err := getAllURLStatusContext(ctx, db)
 	if err != nil {
 		return StatusResponse{Message: "Failed to get all statuses"}, err
 	}
@@ -1045,10 +1082,14 @@ func performGetAllURLStatus(_ int, db *cdb.Handler) (StatusResponse, error) {
 }
 
 func getAllURLStatus(db *cdb.Handler) (StatusResponse, error) {
+	return getAllURLStatusContext(context.Background(), db)
+}
+
+func getAllURLStatusContext(ctx context.Context, db *cdb.Handler) (StatusResponse, error) {
 	var results StatusResponse
 	results.Message = "Failed to get all statuses"
 
-	statuses, err := cdb.ListSourceStatuses(db)
+	statuses, err := cdb.ListSourceStatusesContext(ctx, db)
 	if err != nil {
 		return results, err
 	}
@@ -1109,6 +1150,10 @@ func sourceEmailStatusFromDB(status *cdb.SourceEmailStatusRow) *SourceEmailStatu
 }
 
 func performUpdateSource(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
+	return performUpdateSourceContext(context.Background(), query, qType, db)
+}
+
+func performUpdateSourceContext(ctx context.Context, query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
 	var sqlParams updateSourceRequest
 	var sourceConfig *string
 	var sourceDetails *string
@@ -1135,7 +1180,7 @@ func performUpdateSource(query string, qType int, db *cdb.Handler) (ConsoleRespo
 
 	// Resolve sourceID if only URL is provided
 	if sqlParams.SourceID == 0 && sqlParams.URL != "" {
-		sourceID, err := cdb.GetSourceID(cdb.SourceFilter{URL: sqlParams.URL}, db)
+		sourceID, err := cdb.GetSourceIDContext(ctx, cdb.SourceFilter{URL: sqlParams.URL}, db)
 		if err != nil {
 			return ConsoleResponse{Message: "Failed to resolve Source ID"}, err
 		}
@@ -1151,7 +1196,7 @@ func performUpdateSource(query string, qType int, db *cdb.Handler) (ConsoleRespo
         FROM Sources
         WHERE source_id = $1
     `
-	err := (*db).QueryRow(selectQuery, sqlParams.SourceID).Scan(
+	err := (*db).QueryRowContext(ctx, selectQuery, sqlParams.SourceID).Scan(
 		&existingData.URL,
 		&existingData.SubPriority,
 		&existingData.Status,
@@ -1221,7 +1266,7 @@ func performUpdateSource(query string, qType int, db *cdb.Handler) (ConsoleRespo
             details = $8::jsonb
         WHERE source_id = $9
     `
-	_, err = (*db).Exec(updateQuery,
+	_, err = (*db).ExecContext(ctx, updateQuery,
 		cmn.NormalizeURL(mergedData.URL),
 		mergedData.SubPriority,
 		mergedData.Status,

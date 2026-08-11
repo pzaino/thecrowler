@@ -1,0 +1,6 @@
+-- Add fine-grained source ordering to existing installations.
+ALTER TABLE Sources
+ADD COLUMN sub_priority INT DEFAULT 0 NOT NULL;
+
+CREATE INDEX idx_sources_priority_sub_priority
+ON Sources(priority, sub_priority DESC, source_id ASC);

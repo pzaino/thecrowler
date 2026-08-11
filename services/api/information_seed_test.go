@@ -142,11 +142,16 @@ func (h *informationSeedAPITestHandler) Rollback(tx *sql.Tx) error { return tx.R
 func (h *informationSeedAPITestHandler) QueryRow(query string, args ...interface{}) *sql.Row {
 	return h.db.QueryRow(query, args...)
 }
+func (h *informationSeedAPITestHandler) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
+	return h.db.QueryRowContext(ctx, query, args...)
+}
 func (h *informationSeedAPITestHandler) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
 	return h.db.QueryContext(ctx, query, args...)
 }
 func (h *informationSeedAPITestHandler) CheckConnection(cfg.Config) error { return nil }
 func (h *informationSeedAPITestHandler) NewListener() cdb.Listener        { return nil }
+
+var _ cdb.Handler = (*informationSeedAPITestHandler)(nil)
 
 func TestInformationSeedAddHandlerValidRequest(t *testing.T) {
 	handler, cleanup := setupInformationSeedAPITestDB(t)

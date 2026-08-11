@@ -15,6 +15,7 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -97,6 +98,11 @@ func ListInformationSeeds(db *Handler, filter InformationSeedFilter) ([]Informat
 // computed in the database with a single LEFT JOIN aggregate so callers do not
 // have to fetch sources one seed at a time.
 func ListInformationSeedsWithStats(db *Handler, filters ...InformationSeedFilter) ([]InformationSeedWithStats, error) {
+	return ListInformationSeedsWithStatsContext(context.Background(), db, filters...)
+}
+
+// ListInformationSeedsWithStatsContext lists information seeds using ctx.
+func ListInformationSeedsWithStatsContext(ctx context.Context, db *Handler, filters ...InformationSeedFilter) ([]InformationSeedWithStats, error) {
 	if db == nil || *db == nil {
 		return nil, fmt.Errorf("database handler is nil")
 	}
@@ -180,7 +186,7 @@ func ListInformationSeedsWithStats(db *Handler, filters ...InformationSeedFilter
 		args = append(args, filter.Offset)
 	}
 
-	rows, err := (*db).ExecuteQuery(query, args...)
+	rows, err := (*db).QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list information seeds with stats: %w", err)
 	}

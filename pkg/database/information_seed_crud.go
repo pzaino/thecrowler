@@ -15,6 +15,7 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -99,6 +100,11 @@ func CreateInformationSeed(db *Handler, seed *InformationSeed) (uint64, error) {
 
 // GetInformationSeedByID retrieves an information seed by its ID.
 func GetInformationSeedByID(db *Handler, id uint64) (*InformationSeed, error) {
+	return GetInformationSeedByIDContext(context.Background(), db, id)
+}
+
+// GetInformationSeedByIDContext retrieves an information seed using ctx.
+func GetInformationSeedByIDContext(ctx context.Context, db *Handler, id uint64) (*InformationSeed, error) {
 	if db == nil || *db == nil {
 		return nil, fmt.Errorf("database handler is nil")
 	}
@@ -111,7 +117,7 @@ func GetInformationSeedByID(db *Handler, id uint64) (*InformationSeed, error) {
 		return nil, fmt.Errorf("unsupported database type for information seed retrieval: %s", (*db).DBMS())
 	}
 	placeholder := informationSeedPlaceholderForDBMS(dbms, 1)
-	row := (*db).QueryRow(fmt.Sprintf(`
+	row := (*db).QueryRowContext(ctx, fmt.Sprintf(`
 		SELECT %s
 		FROM InformationSeed
 		WHERE information_seed_id = %s`, informationSeedSelectColumns(), placeholder), id)

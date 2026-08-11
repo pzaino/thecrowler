@@ -52,18 +52,15 @@ type Handler interface {
 	Commit(tx *sql.Tx) error
 	Rollback(tx *sql.Tx) error
 	QueryRow(query string, args ...interface{}) *sql.Row
+	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
 	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
 	CheckConnection(c cfg.Config) error
 	NewListener() Listener
 }
 
-type contextQueryRower interface {
-	QueryRowContext(context.Context, string, ...interface{}) *sql.Row
-}
-
 // QueryRowContext executes a single-row query with cancellation support.
 func QueryRowContext(ctx context.Context, db *Handler, query string, args ...interface{}) *sql.Row {
-	return (*db).(contextQueryRower).QueryRowContext(ctx, query, args...)
+	return (*db).QueryRowContext(ctx, query, args...)
 }
 
 // Listener is the interface that wraps the basic methods

@@ -168,11 +168,16 @@ func (h *sourceAPITestHandler) Rollback(tx *sql.Tx) error { return tx.Rollback()
 func (h *sourceAPITestHandler) QueryRow(query string, args ...interface{}) *sql.Row {
 	return h.db.QueryRow(query, args...)
 }
+func (h *sourceAPITestHandler) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
+	return h.db.QueryRowContext(ctx, query, args...)
+}
 func (h *sourceAPITestHandler) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
 	return h.db.QueryContext(ctx, query, args...)
 }
 func (h *sourceAPITestHandler) CheckConnection(cfg.Config) error { return nil }
 func (h *sourceAPITestHandler) NewListener() cdb.Listener        { return nil }
+
+var _ cdb.Handler = (*sourceAPITestHandler)(nil)
 
 func setupSourceAPITestDB(t *testing.T) (cdb.Handler, func()) {
 	t.Helper()
