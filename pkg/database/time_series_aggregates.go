@@ -12,7 +12,10 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
+
+const timeSeriesAggregateDimensionChunkSize = 1000
 
 const timeSeriesAggregateColumns = `aggregate_id, metric_id, bucket_start, bucket_end,
 	information_seed_id, information_seed_candidate_id, source_id, source_information_seed_id,
@@ -222,47 +225,110 @@ func QueryTimeSeriesAggregatesContext(ctx context.Context, db *Handler, filter T
 	if filter.Descending {
 		direction = "DESC"
 	}
-	query := `SELECT ` + prefixColumns(timeSeriesAggregateColumns, "a") + ` FROM TimeSeriesAggregates a WHERE ` + strings.Join(c, " AND ") + ` ORDER BY a.bucket_start ` + direction + `,a.aggregate_id ` + direction
+	baseQuery := `SELECT ` + prefixColumns(timeSeriesAggregateColumns, "a") + ` FROM TimeSeriesAggregates a WHERE ` + strings.Join(c, " AND ")
 	if len(filter.Dimensions) == 0 {
+		query := baseQuery + ` ORDER BY a.bucket_start ` + direction + `,a.aggregate_id ` + direction
 		query += ` LIMIT ` + p.Next() + ` OFFSET ` + p.Next()
 		args = append(args, sqlLimit, offset)
-	}
-	rows, err := (*db).QueryContext(ctx, query, args...)
-	if err != nil {
-		return TimeSeriesAggregateQueryResult{}, fmt.Errorf("query time-series aggregates: %w", err)
-	}
-	defer rows.Close()
-	all := []TimeSeriesAggregate{}
-	for rows.Next() {
-		a, e := scanTimeSeriesAggregate(rows.Scan)
-		if e != nil {
-			return TimeSeriesAggregateQueryResult{}, e
+		rows, queryErr := (*db).QueryContext(ctx, query, args...)
+		if queryErr != nil {
+			return TimeSeriesAggregateQueryResult{}, fmt.Errorf("query time-series aggregates: %w", queryErr)
 		}
-		if dimensionsContain(a.Dimensions, filter.Dimensions) {
-			all = append(all, *a)
+		defer rows.Close()
+		all := []TimeSeriesAggregate{}
+		for rows.Next() {
+			a, scanErr := scanTimeSeriesAggregate(rows.Scan)
+			if scanErr != nil {
+				return TimeSeriesAggregateQueryResult{}, scanErr
+			}
+			if dimensionsContain(a.Dimensions, filter.Dimensions) {
+				all = append(all, *a)
+			}
 		}
-	}
-	if err = rows.Err(); err != nil {
-		return TimeSeriesAggregateQueryResult{}, err
-	}
-	if len(filter.Dimensions) > 0 {
-		start := filter.Pagination.Offset
-		if start > len(all) {
-			start = len(all)
+		if rowsErr := rows.Err(); rowsErr != nil {
+			return TimeSeriesAggregateQueryResult{}, rowsErr
 		}
-		end := start + limit
-		if end > len(all) {
-			end = len(all)
+		hasMore := len(all) > limit
+		if hasMore {
+			all = all[:limit]
 		}
-		hasMore := end < len(all)
-		all = all[start:end]
 		return TimeSeriesAggregateQueryResult{Aggregates: all, Count: len(all), HasMore: hasMore}, nil
 	}
-	hasMore := len(all) > limit
-	if hasMore {
-		all = all[:limit]
+
+	matches := make([]TimeSeriesAggregate, 0, limit+1)
+	matchingOffset := offset
+	var cursorBucketStart time.Time
+	var cursorAggregateID uint64
+	hasCursor := false
+
+	for len(matches) < limit+1 {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return TimeSeriesAggregateQueryResult{}, ctxErr
+		}
+
+		chunkPlaceholders := newInformationSeedPlaceholders(dbms)
+		for range args {
+			chunkPlaceholders.Next()
+		}
+		chunkQuery := baseQuery
+		chunkArgs := append([]interface{}{}, args...)
+		if hasCursor {
+			comparison := ">"
+			if filter.Descending {
+				comparison = "<"
+			}
+			bucketComparisonPlaceholder := chunkPlaceholders.Next()
+			bucketEqualityPlaceholder := chunkPlaceholders.Next()
+			aggregateIDPlaceholder := chunkPlaceholders.Next()
+			chunkQuery += ` AND (a.bucket_start ` + comparison + ` ` + bucketComparisonPlaceholder +
+				` OR (a.bucket_start = ` + bucketEqualityPlaceholder + ` AND a.aggregate_id ` + comparison + ` ` + aggregateIDPlaceholder + `))`
+			chunkArgs = append(chunkArgs, cursorBucketStart, cursorBucketStart, cursorAggregateID)
+		}
+		chunkQuery += ` ORDER BY a.bucket_start ` + direction + `,a.aggregate_id ` + direction + ` LIMIT ` + chunkPlaceholders.Next()
+		chunkArgs = append(chunkArgs, timeSeriesAggregateDimensionChunkSize)
+
+		rows, queryErr := (*db).QueryContext(ctx, chunkQuery, chunkArgs...)
+		if queryErr != nil {
+			return TimeSeriesAggregateQueryResult{}, fmt.Errorf("query time-series aggregates: %w", queryErr)
+		}
+		rawCount := 0
+		for rows.Next() {
+			a, scanErr := scanTimeSeriesAggregate(rows.Scan)
+			if scanErr != nil {
+				_ = rows.Close()
+				return TimeSeriesAggregateQueryResult{}, scanErr
+			}
+			rawCount++
+			cursorBucketStart = a.BucketStart
+			cursorAggregateID = a.ID
+			hasCursor = true
+			if !dimensionsContain(a.Dimensions, filter.Dimensions) {
+				continue
+			}
+			if matchingOffset > 0 {
+				matchingOffset--
+				continue
+			}
+			matches = append(matches, *a)
+			if len(matches) == limit+1 {
+				break
+			}
+		}
+		rowsErr := rows.Err()
+		_ = rows.Close()
+		if rowsErr != nil {
+			return TimeSeriesAggregateQueryResult{}, rowsErr
+		}
+		if len(matches) == limit+1 || rawCount < timeSeriesAggregateDimensionChunkSize {
+			break
+		}
 	}
-	return TimeSeriesAggregateQueryResult{Aggregates: all, Count: len(all), HasMore: hasMore}, nil
+
+	hasMore := len(matches) > limit
+	if hasMore {
+		matches = matches[:limit]
+	}
+	return TimeSeriesAggregateQueryResult{Aggregates: matches, Count: len(matches), HasMore: hasMore}, nil
 }
 
 func scanTimeSeriesAggregate(scan func(...interface{}) error) (*TimeSeriesAggregate, error) {
