@@ -15,6 +15,7 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -113,7 +114,11 @@ type InformationSeedLinkedSourceFilter struct {
 }
 
 func sourceInformationSeedDeletedAtJoinFilter(db *Handler) (string, error) {
-	exists, err := tableColumnExists(db, "SourceInformationSeedIndex", "deleted_at")
+	return sourceInformationSeedDeletedAtJoinFilterContext(context.Background(), db)
+}
+
+func sourceInformationSeedDeletedAtJoinFilterContext(ctx context.Context, db *Handler) (string, error) {
+	exists, err := tableColumnExistsContext(ctx, db, "SourceInformationSeedIndex", "deleted_at")
 	if err != nil {
 		return "", err
 	}
@@ -124,6 +129,10 @@ func sourceInformationSeedDeletedAtJoinFilter(db *Handler) (string, error) {
 }
 
 func tableColumnExists(db *Handler, tableName, columnName string) (bool, error) {
+	return tableColumnExistsContext(context.Background(), db, tableName, columnName)
+}
+
+func tableColumnExistsContext(ctx context.Context, db *Handler, tableName, columnName string) (bool, error) {
 	var query string
 	var args []interface{}
 	switch normalizeInformationSeedDBMS((*db).DBMS()) {
@@ -147,7 +156,7 @@ func tableColumnExists(db *Handler, tableName, columnName string) (bool, error) 
 	}
 
 	var count int
-	if err := (*db).QueryRow(query, args...).Scan(&count); err != nil {
+	if err := (*db).QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
 		return false, fmt.Errorf("failed to inspect column %s.%s: %w", tableName, columnName, err)
 	}
 	return count > 0, nil

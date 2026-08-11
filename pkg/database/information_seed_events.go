@@ -49,7 +49,7 @@ func ListInformationSeedEventsContext(ctx context.Context, db *Handler, seedID u
 		filter.Limit = 100
 	}
 
-	detailsColumn, err := informationSeedEventDetailsColumn(db)
+	detailsColumn, err := informationSeedEventDetailsColumnContext(ctx, db)
 	if err != nil {
 		return nil, err
 	}
@@ -86,14 +86,18 @@ func ListInformationSeedEventsContext(ctx context.Context, db *Handler, seedID u
 }
 
 func informationSeedEventDetailsColumn(db *Handler) (string, error) {
-	exists, err := tableColumnExists(db, "Events", "details")
+	return informationSeedEventDetailsColumnContext(context.Background(), db)
+}
+
+func informationSeedEventDetailsColumnContext(ctx context.Context, db *Handler) (string, error) {
+	exists, err := tableColumnExistsContext(ctx, db, "Events", "details")
 	if err != nil {
 		return "", err
 	}
 	if exists {
 		return "details", nil
 	}
-	exists, err = tableColumnExists(db, "Events", "event_details")
+	exists, err = tableColumnExistsContext(ctx, db, "Events", "event_details")
 	if err != nil {
 		return "", err
 	}

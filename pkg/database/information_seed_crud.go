@@ -286,7 +286,7 @@ func RemoveInformationSeedContext(ctx context.Context, db *Handler, id uint64) e
 	if !isSupportedInformationSeedDBMS(dbms) {
 		return fmt.Errorf("unsupported database type for information seed removal: %s", (*db).DBMS())
 	}
-	hasDeletedAt, err := tableColumnExists(db, "InformationSeed", "deleted_at")
+	hasDeletedAt, err := tableColumnExistsContext(ctx, db, "InformationSeed", "deleted_at")
 	if err != nil {
 		return err
 	}

@@ -24,6 +24,11 @@ import (
 
 // ListInformationSeeds retrieves information seeds matching the supplied filter.
 func ListInformationSeeds(db *Handler, filter InformationSeedFilter) ([]InformationSeed, error) {
+	return ListInformationSeedsContext(context.Background(), db, filter)
+}
+
+// ListInformationSeedsContext retrieves information seeds using ctx.
+func ListInformationSeedsContext(ctx context.Context, db *Handler, filter InformationSeedFilter) ([]InformationSeed, error) {
 	if db == nil || *db == nil {
 		return nil, fmt.Errorf("database handler is nil")
 	}
@@ -36,7 +41,7 @@ func ListInformationSeeds(db *Handler, filter InformationSeedFilter) ([]Informat
 	query := fmt.Sprintf("SELECT %s FROM InformationSeed", informationSeedSelectColumns())
 	conditions := []string{}
 	args := []interface{}{}
-	if hasDeletedAt, err := tableColumnExists(db, "InformationSeed", "deleted_at"); err != nil {
+	if hasDeletedAt, err := tableColumnExistsContext(ctx, db, "InformationSeed", "deleted_at"); err != nil {
 		return nil, err
 	} else if hasDeletedAt {
 		conditions = append(conditions, "deleted_at IS NULL")
@@ -86,7 +91,7 @@ func ListInformationSeeds(db *Handler, filter InformationSeedFilter) ([]Informat
 		args = append(args, filter.Offset)
 	}
 
-	rows, err := (*db).ExecuteQuery(query, args...)
+	rows, err := (*db).QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list information seeds: %w", err)
 	}
@@ -115,7 +120,7 @@ func ListInformationSeedsWithStatsContext(ctx context.Context, db *Handler, filt
 		return nil, fmt.Errorf("limit and offset must be non-negative")
 	}
 
-	joinDeletedFilter, err := sourceInformationSeedDeletedAtJoinFilter(db)
+	joinDeletedFilter, err := sourceInformationSeedDeletedAtJoinFilterContext(ctx, db)
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +131,7 @@ func ListInformationSeedsWithStatsContext(ctx context.Context, db *Handler, filt
 	placeholders := newInformationSeedPlaceholders(dbms)
 	conditions := []string{}
 	args := []interface{}{}
-	if hasDeletedAt, err := tableColumnExists(db, "InformationSeed", "deleted_at"); err != nil {
+	if hasDeletedAt, err := tableColumnExistsContext(ctx, db, "InformationSeed", "deleted_at"); err != nil {
 		return nil, err
 	} else if hasDeletedAt {
 		conditions = append(conditions, "seed.deleted_at IS NULL")

@@ -336,7 +336,7 @@ func ListSourcesForInformationSeedContext(ctx context.Context, db *Handler, seed
 		return nil, fmt.Errorf("limit and offset must be non-negative")
 	}
 
-	joinDeletedFilter, err := sourceInformationSeedDeletedAtJoinFilter(db)
+	joinDeletedFilter, err := sourceInformationSeedDeletedAtJoinFilterContext(ctx, db)
 	if err != nil {
 		return nil, err
 	}
