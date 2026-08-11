@@ -931,6 +931,7 @@ func setupInformationSeedAPITestDB(t *testing.T) (cdb.Handler, func()) {
 			category_id INTEGER DEFAULT 0 NOT NULL,
 			url TEXT NOT NULL UNIQUE,
 			priority VARCHAR(64) DEFAULT '' NOT NULL,
+			sub_priority INTEGER DEFAULT 0 NOT NULL,
 			status VARCHAR(50) DEFAULT 'new' NOT NULL,
 			restricted INTEGER DEFAULT 2 NOT NULL,
 			disabled BOOLEAN DEFAULT FALSE,
