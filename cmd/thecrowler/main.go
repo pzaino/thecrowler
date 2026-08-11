@@ -226,7 +226,7 @@ func retrieveAvailableSources(db cdb.Handler, maxSources int) ([]cdb.Source, err
 		l.restricted,
 		l.flags,
 		l.config,
-		l.sub_priority,
+		l.sub_priority
 	FROM
 		update_sources($1,$2,$3,$4,$5,$6,$7) AS l
 	ORDER BY l.sub_priority DESC, l.source_id ASC;`
