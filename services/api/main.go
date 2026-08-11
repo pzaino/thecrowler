@@ -1618,7 +1618,7 @@ func addSourceHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		results, err := performAddSource(query, getQTypeFromName(r.Method), &dbHandler)
+		results, err := performAddSourceContext(r.Context(), query, getQTypeFromName(r.Method), &dbHandler)
 		if err != nil {
 			totalErrors.Add(1)
 		} else {
@@ -1652,7 +1652,7 @@ func removeSourceHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		results, err := performRemoveSource(query, getQTypeFromName(r.Method), &dbHandler)
+		results, err := performRemoveSourceContext(r.Context(), query, getQTypeFromName(r.Method), &dbHandler)
 		if err != nil {
 			totalErrors.Add(1)
 		} else {
@@ -1964,7 +1964,7 @@ func informationSeedSourcesHandler(w http.ResponseWriter, r *http.Request) {
 	select {
 	case dbSemaphore <- struct{}{}:
 		defer func() { <-dbSemaphore }()
-		results, err := performListInformationSeedSources(id, r.URL.Query(), &dbHandler)
+		results, err := performListInformationSeedSourcesContext(r.Context(), id, r.URL.Query(), &dbHandler)
 		if err != nil {
 			totalErrors.Add(1)
 			status := http.StatusInternalServerError
@@ -1999,7 +1999,7 @@ func informationSeedCandidateDecisionsHandler(w http.ResponseWriter, r *http.Req
 	select {
 	case dbSemaphore <- struct{}{}:
 		defer func() { <-dbSemaphore }()
-		results, err := performListInformationSeedCandidateDecisions(id, r.URL.Query(), &dbHandler)
+		results, err := performListInformationSeedCandidateDecisionsContext(r.Context(), id, r.URL.Query(), &dbHandler)
 		if err != nil {
 			totalErrors.Add(1)
 			status := http.StatusInternalServerError
@@ -2035,7 +2035,7 @@ func informationSeedRetryHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	handleRequestWithDB(w, r, http.StatusOK, func(query string, _ int, db *cdb.Handler) (interface{}, error) {
-		return performRetryInformationSeed(query, db)
+		return performRetryInformationSeedContext(r.Context(), query, db)
 	})
 }
 
@@ -2046,7 +2046,7 @@ func informationSeedDisableHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	handleRequestWithDB(w, r, http.StatusOK, func(query string, _ int, db *cdb.Handler) (interface{}, error) {
-		return performDisableInformationSeed(query, db)
+		return performDisableInformationSeedContext(r.Context(), query, db)
 	})
 }
 
@@ -2057,7 +2057,7 @@ func informationSeedUpdateHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	handleRequestWithDB(w, r, http.StatusOK, func(query string, qType int, db *cdb.Handler) (interface{}, error) {
-		return performUpdateInformationSeed(query, qType, db)
+		return performUpdateInformationSeedContext(r.Context(), query, qType, db)
 	})
 }
 
@@ -2068,7 +2068,7 @@ func informationSeedRemoveHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	handleRequestWithDB(w, r, http.StatusOK, func(query string, qType int, db *cdb.Handler) (interface{}, error) {
-		return performRemoveInformationSeed(query, qType, db)
+		return performRemoveInformationSeedContext(r.Context(), query, qType, db)
 	})
 }
 
@@ -2084,7 +2084,7 @@ func informationSeedRerunHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	handleInformationSeedPathAction(w, r, func(_ string, db *cdb.Handler) (interface{}, error) {
-		return performRerunInformationSeedByID(id, db)
+		return performRerunInformationSeedByIDContext(r.Context(), id, db)
 	})
 }
 
@@ -2100,7 +2100,7 @@ func informationSeedPathDisableHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	handleInformationSeedPathAction(w, r, func(_ string, db *cdb.Handler) (interface{}, error) {
-		return performDisableInformationSeedByID(id, db)
+		return performDisableInformationSeedByIDContext(r.Context(), id, db)
 	})
 }
 
@@ -2116,7 +2116,7 @@ func informationSeedEnableHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	handleInformationSeedPathAction(w, r, func(query string, db *cdb.Handler) (interface{}, error) {
-		return performEnableInformationSeedByID(id, query, db)
+		return performEnableInformationSeedByIDContext(r.Context(), id, query, db)
 	})
 }
 
@@ -2134,7 +2134,7 @@ func informationSeedEventsHandler(w http.ResponseWriter, r *http.Request) {
 	select {
 	case dbSemaphore <- struct{}{}:
 		defer func() { <-dbSemaphore }()
-		results, err := performListInformationSeedEvents(id, r.URL.Query(), &dbHandler)
+		results, err := performListInformationSeedEventsContext(r.Context(), id, r.URL.Query(), &dbHandler)
 		if err != nil {
 			totalErrors.Add(1)
 			status := http.StatusInternalServerError
@@ -2169,7 +2169,7 @@ func informationSeedDiagnosticsHandler(w http.ResponseWriter, r *http.Request) {
 	select {
 	case dbSemaphore <- struct{}{}:
 		defer func() { <-dbSemaphore }()
-		results, err := performGetInformationSeedDiagnostics(id, &dbHandler)
+		results, err := performGetInformationSeedDiagnosticsContext(r.Context(), id, &dbHandler)
 		if err != nil {
 			totalErrors.Add(1)
 			status := http.StatusInternalServerError

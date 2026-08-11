@@ -27,6 +27,11 @@ import (
 
 // CreateInformationSeed inserts a new information seed and returns its database ID.
 func CreateInformationSeed(db *Handler, seed *InformationSeed) (uint64, error) {
+	return CreateInformationSeedContext(context.Background(), db, seed)
+}
+
+// CreateInformationSeedContext inserts a seed in a transaction bound to ctx.
+func CreateInformationSeedContext(ctx context.Context, db *Handler, seed *InformationSeed) (uint64, error) {
 	if db == nil || *db == nil {
 		return 0, fmt.Errorf("database handler is nil")
 	}
@@ -50,7 +55,7 @@ func CreateInformationSeed(db *Handler, seed *InformationSeed) (uint64, error) {
 	if !isSupportedInformationSeedDBMS(dbms) {
 		return 0, fmt.Errorf("unsupported database type for information seed creation: %s", (*db).DBMS())
 	}
-	tx, err := (*db).Begin()
+	tx, err := (*db).BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
@@ -60,14 +65,14 @@ func CreateInformationSeed(db *Handler, seed *InformationSeed) (uint64, error) {
 	var id uint64
 	switch dbms {
 	case DBPostgresStr:
-		err = tx.QueryRow(`INSERT INTO InformationSeed (category_id, usr_id, information_seed, status, priority, engine, disabled, config)
+		err = tx.QueryRowContext(ctx, `INSERT INTO InformationSeed (category_id, usr_id, information_seed, status, priority, engine, disabled, config)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb) RETURNING information_seed_id`, args...).Scan(&id)
 	case DBSQLiteStr:
-		err = tx.QueryRow(`INSERT INTO InformationSeed (category_id, usr_id, information_seed, status, priority, engine, disabled, config)
+		err = tx.QueryRowContext(ctx, `INSERT INTO InformationSeed (category_id, usr_id, information_seed, status, priority, engine, disabled, config)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING information_seed_id`, args...).Scan(&id)
 	case DBMySQLStr:
 		var result sql.Result
-		result, err = tx.Exec(`INSERT INTO InformationSeed (category_id, usr_id, information_seed, status, priority, engine, disabled, config)
+		result, err = tx.ExecContext(ctx, `INSERT INTO InformationSeed (category_id, usr_id, information_seed, status, priority, engine, disabled, config)
 			VALUES (?,?,?,?,?,?,?,?)`, args...)
 		if err == nil {
 			var inserted int64
@@ -130,6 +135,9 @@ func GetInformationSeedByIDContext(ctx context.Context, db *Handler, id uint64) 
 
 // SetInformationSeedDisabled updates whether an information seed is disabled.
 func SetInformationSeedDisabled(db *Handler, id uint64, disabled bool) error {
+	return SetInformationSeedDisabledContext(context.Background(), db, id, disabled)
+}
+func SetInformationSeedDisabledContext(ctx context.Context, db *Handler, id uint64, disabled bool) error {
 	if db == nil || *db == nil {
 		return fmt.Errorf("database handler is nil")
 	}
@@ -140,7 +148,7 @@ func SetInformationSeedDisabled(db *Handler, id uint64, disabled bool) error {
 	if !isSupportedInformationSeedDBMS(dbms) {
 		return fmt.Errorf("unsupported database type for information seed disabled update: %s", (*db).DBMS())
 	}
-	tx, err := (*db).Begin()
+	tx, err := (*db).BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -148,11 +156,11 @@ func SetInformationSeedDisabled(db *Handler, id uint64, disabled bool) error {
 	defer rollbackIfUncommitted(tx, &committed)
 	p := newInformationSeedPlaceholders(dbms)
 	var previous bool
-	if err = tx.QueryRow(`SELECT disabled FROM InformationSeed WHERE information_seed_id = `+p.Next(), id).Scan(&previous); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT disabled FROM InformationSeed WHERE information_seed_id = `+p.Next(), id).Scan(&previous); err != nil {
 		return fmt.Errorf("no information seed found with ID %d: %w", id, err)
 	}
 	p = newInformationSeedPlaceholders(dbms)
-	if _, err = tx.Exec(`UPDATE InformationSeed SET disabled = `+p.Next()+` WHERE information_seed_id = `+p.Next(), disabled, id); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE InformationSeed SET disabled = `+p.Next()+` WHERE information_seed_id = `+p.Next(), disabled, id); err != nil {
 		return fmt.Errorf("failed to update information seed %d disabled flag: %w", id, err)
 	}
 	seed, err := getInformationSeedByIDTx(tx, dbms, id)
@@ -204,6 +212,9 @@ func emitInformationSeedLifecycleObservationsTx(tx *sql.Tx, dbms string, seed In
 
 // UpdateInformationSeed replaces mutable fields for an existing information seed.
 func UpdateInformationSeed(db *Handler, seed *InformationSeed) error {
+	return UpdateInformationSeedContext(context.Background(), db, seed)
+}
+func UpdateInformationSeedContext(ctx context.Context, db *Handler, seed *InformationSeed) error {
 	if db == nil || *db == nil {
 		return fmt.Errorf("database handler is nil")
 	}
@@ -227,7 +238,7 @@ func UpdateInformationSeed(db *Handler, seed *InformationSeed) error {
 	if !isSupportedInformationSeedDBMS(dbms) {
 		return fmt.Errorf("unsupported database type for information seed update: %s", (*db).DBMS())
 	}
-	tx, err := (*db).Begin()
+	tx, err := (*db).BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -239,7 +250,7 @@ func UpdateInformationSeed(db *Handler, seed *InformationSeed) error {
 		query += `::jsonb`
 	}
 	query += `, last_updated_at = CURRENT_TIMESTAMP WHERE information_seed_id = ` + p.Next()
-	result, err := tx.Exec(query, seed.CategoryID, seed.UsrID, seedText, status, priority, engine, seed.Disabled, config, seed.ID)
+	result, err := tx.ExecContext(ctx, query, seed.CategoryID, seed.UsrID, seedText, status, priority, engine, seed.Disabled, config, seed.ID)
 	if err != nil {
 		return fmt.Errorf("failed to update information seed %d: %w", seed.ID, err)
 	}
@@ -262,6 +273,9 @@ func UpdateInformationSeed(db *Handler, seed *InformationSeed) error {
 
 // RemoveInformationSeed marks an information seed deleted when supported.
 func RemoveInformationSeed(db *Handler, id uint64) error {
+	return RemoveInformationSeedContext(context.Background(), db, id)
+}
+func RemoveInformationSeedContext(ctx context.Context, db *Handler, id uint64) error {
 	if db == nil || *db == nil {
 		return fmt.Errorf("database handler is nil")
 	}
@@ -284,9 +298,9 @@ func RemoveInformationSeed(db *Handler, id uint64) error {
 	}
 	var result sql.Result
 	if hasDeletedAt {
-		result, err = (*db).Exec(query, true, id)
+		result, err = (*db).ExecContext(ctx, query, true, id)
 	} else {
-		result, err = (*db).Exec(query, id)
+		result, err = (*db).ExecContext(ctx, query, id)
 	}
 	if err != nil {
 		return fmt.Errorf("failed to remove information seed %d: %w", id, err)

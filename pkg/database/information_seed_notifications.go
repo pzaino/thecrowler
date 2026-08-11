@@ -71,7 +71,12 @@ func NotifyInformationSeedCreated(ctx context.Context, db *Handler, seedID uint6
 // CreateInformationSeedAndNotify inserts a seed and wakes enabled seed
 // schedulers when the newly-created row is immediately claimable.
 func CreateInformationSeedAndNotify(ctx context.Context, db *Handler, seed *InformationSeed) (uint64, error) {
-	id, err := CreateInformationSeed(db, seed)
+	// Preserve the historical nil-context behavior of this convenience API.
+	// database/sql requires a non-nil context and may panic in BeginTx otherwise.
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	id, err := CreateInformationSeedContext(ctx, db, seed)
 	if err != nil {
 		return 0, err
 	}

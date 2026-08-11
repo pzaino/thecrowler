@@ -15,6 +15,7 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -321,6 +322,10 @@ func scanInformationSeedSourceRows(rows *sql.Rows) ([]Source, error) {
 // ListSourcesForInformationSeed returns linked sources with per-link discovery
 // provenance in stable source-ID order and with optional pagination.
 func ListSourcesForInformationSeed(db *Handler, seedID uint64, filter InformationSeedLinkedSourceFilter) ([]InformationSeedLinkedSource, error) {
+	return ListSourcesForInformationSeedContext(context.Background(), db, seedID, filter)
+}
+
+func ListSourcesForInformationSeedContext(ctx context.Context, db *Handler, seedID uint64, filter InformationSeedLinkedSourceFilter) ([]InformationSeedLinkedSource, error) {
 	if db == nil || *db == nil {
 		return nil, fmt.Errorf("database handler is nil")
 	}
@@ -362,7 +367,7 @@ func ListSourcesForInformationSeed(db *Handler, seedID uint64, filter Informatio
 		query += " OFFSET " + placeholders.Next()
 		args = append(args, filter.Offset)
 	}
-	rows, err := (*db).ExecuteQuery(query, args...)
+	rows, err := (*db).QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list sources for information seed %d: %w", seedID, err)
 	}

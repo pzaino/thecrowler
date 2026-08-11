@@ -16,6 +16,7 @@
 package database
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -43,6 +44,11 @@ func GetSourceByID(db *Handler, sourceID uint64) (*Source, error) {
 
 // CreateSource inserts a new source into the database with detailed configuration validation and marshaling.
 func CreateSource(db *Handler, source *Source, config cfg.SourceConfig) (uint64, error) {
+	return CreateSourceContext(context.Background(), db, source, config)
+}
+
+// CreateSourceContext inserts a source using the caller's lifecycle context.
+func CreateSourceContext(ctx context.Context, db *Handler, source *Source, config cfg.SourceConfig) (uint64, error) {
 	if db == nil || *db == nil {
 		return 0, fmt.Errorf("database handler is nil")
 	}
@@ -80,11 +86,11 @@ func CreateSource(db *Handler, source *Source, config cfg.SourceConfig) (uint64,
 
 	switch normalizeInformationSeedDBMS((*db).DBMS()) {
 	case DBPostgresStr:
-		return createSourcePostgres(db, prepared)
+		return createSourcePostgres(ctx, db, prepared)
 	case DBSQLiteStr:
-		return createSourceSQLite(db, prepared)
+		return createSourceSQLite(ctx, db, prepared)
 	case DBMySQLStr:
-		return createSourceMySQL(db, prepared)
+		return createSourceMySQL(ctx, db, prepared)
 	default:
 		return 0, fmt.Errorf("unsupported database type for source creation: %s", (*db).DBMS())
 	}
@@ -166,7 +172,7 @@ func (source preparedSourceInsert) argsWithStatus() []interface{} {
 	return append(args, source.Status)
 }
 
-func createSourcePostgres(db *Handler, source preparedSourceInsert) (uint64, error) {
+func createSourcePostgres(ctx context.Context, db *Handler, source preparedSourceInsert) (uint64, error) {
 	var sourceID uint64
 
 	query := `
@@ -257,7 +263,7 @@ func createSourcePostgres(db *Handler, source preparedSourceInsert) (uint64, err
         RETURNING source_id;
     `
 
-	err := (*db).QueryRow(query, source.args()...).Scan(&sourceID)
+	err := (*db).QueryRowContext(ctx, query, source.args()...).Scan(&sourceID)
 	if err != nil {
 		return 0, fmt.Errorf("failed to create PostgreSQL source: %v", err)
 	}
@@ -265,7 +271,7 @@ func createSourcePostgres(db *Handler, source preparedSourceInsert) (uint64, err
 	return sourceID, nil
 }
 
-func createSourceSQLite(db *Handler, source preparedSourceInsert) (uint64, error) {
+func createSourceSQLite(ctx context.Context, db *Handler, source preparedSourceInsert) (uint64, error) {
 	var sourceID uint64
 
 	query := `
@@ -337,7 +343,7 @@ func createSourceSQLite(db *Handler, source preparedSourceInsert) (uint64, error
 			last_updated_at = CURRENT_TIMESTAMP
 		RETURNING source_id`
 
-	err := (*db).QueryRow(query, source.args()...).Scan(&sourceID)
+	err := (*db).QueryRowContext(ctx, query, source.args()...).Scan(&sourceID)
 	if err != nil {
 		return 0, fmt.Errorf("failed to create SQLite source: %v", err)
 	}
@@ -345,7 +351,7 @@ func createSourceSQLite(db *Handler, source preparedSourceInsert) (uint64, error
 	return sourceID, nil
 }
 
-func createSourceMySQL(db *Handler, source preparedSourceInsert) (uint64, error) {
+func createSourceMySQL(ctx context.Context, db *Handler, source preparedSourceInsert) (uint64, error) {
 	query := `
 		INSERT INTO Sources
 			(url, name, priority, sub_priority, category_id, usr_id, restricted, flags, config, disabled, source_uid, status)
@@ -414,7 +420,7 @@ func createSourceMySQL(db *Handler, source preparedSourceInsert) (uint64, error)
 			END,
 			last_updated_at = CURRENT_TIMESTAMP`
 
-	result, err := (*db).Exec(query, source.args()...)
+	result, err := (*db).ExecContext(ctx, query, source.args()...)
 	if err != nil {
 		return 0, fmt.Errorf("failed to create MySQL source: %v", err)
 	}

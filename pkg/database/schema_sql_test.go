@@ -348,21 +348,22 @@ func TestPostgresSourceClaimFunctionIsAtomic(t *testing.T) {
 
 func TestPostgresSourceClaimUsesSubPriorityOrdering(t *testing.T) {
 	t.Parallel()
-
-	content, err := os.ReadFile("postgresql-setup.pgsql")
-	if err != nil {
-		t.Fatalf("read PostgreSQL setup: %v", err)
-	}
-
-	upper := strings.ToUpper(string(content))
-
-	for _, fragment := range []string{
-		"SUB_PRIORITY INTEGER DEFAULT 0 NOT NULL",
-		"ORDER BY S.SUB_PRIORITY DESC, S.SOURCE_ID ASC",
-		"FOR UPDATE SKIP LOCKED",
-	} {
-		if !strings.Contains(upper, fragment) {
-			t.Fatalf("PostgreSQL source scheduling missing %q", fragment)
+	for _, file := range []string{"postgresql-setup.pgsql", "db_migrations/postgresql-migration-v1.13.pgsql"} {
+		content, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read %s: %v", file, err)
+		}
+		upper := strings.ToUpper(string(content))
+		for _, fragment := range []string{
+			"CREATE OR REPLACE FUNCTION UPDATE_SOURCES(",
+			"ORDER BY S.SUB_PRIORITY DESC, S.SOURCE_ID ASC",
+			"FOR UPDATE SKIP LOCKED",
+			"RETURNING",
+			"SOURCES.SUB_PRIORITY",
+		} {
+			if !strings.Contains(upper, fragment) {
+				t.Fatalf("%s source scheduling missing %q", file, fragment)
+			}
 		}
 	}
 }

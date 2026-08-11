@@ -245,14 +245,17 @@ func performListInformationSeedsContext(ctx context.Context, values url.Values, 
 }
 
 func performListInformationSeedSources(seedID uint64, values url.Values, db *cdb.Handler) (InformationSeedLinkedSourceListResponse, error) {
-	if _, err := cdb.GetInformationSeedByID(db, seedID); err != nil {
+	return performListInformationSeedSourcesContext(context.Background(), seedID, values, db)
+}
+func performListInformationSeedSourcesContext(ctx context.Context, seedID uint64, values url.Values, db *cdb.Handler) (InformationSeedLinkedSourceListResponse, error) {
+	if _, err := cdb.GetInformationSeedByIDContext(ctx, db, seedID); err != nil {
 		return InformationSeedLinkedSourceListResponse{Message: "Information seed not found", InformationSeedID: seedID}, err
 	}
 	pagination, err := informationSeedPaginationFromValues(values)
 	if err != nil {
 		return InformationSeedLinkedSourceListResponse{Message: "Invalid linked source filters", InformationSeedID: seedID}, err
 	}
-	linked, err := cdb.ListSourcesForInformationSeed(db, seedID, cdb.InformationSeedLinkedSourceFilter{Limit: pagination.Limit, Offset: pagination.Offset})
+	linked, err := cdb.ListSourcesForInformationSeedContext(ctx, db, seedID, cdb.InformationSeedLinkedSourceFilter{Limit: pagination.Limit, Offset: pagination.Offset})
 	if err != nil {
 		return InformationSeedLinkedSourceListResponse{Message: "Failed to list linked information seed sources", InformationSeedID: seedID}, err
 	}
@@ -264,14 +267,17 @@ func performListInformationSeedSources(seedID uint64, values url.Values, db *cdb
 }
 
 func performListInformationSeedCandidateDecisions(seedID uint64, values url.Values, db *cdb.Handler) (InformationSeedCandidateListResponse, error) {
-	if _, err := cdb.GetInformationSeedByID(db, seedID); err != nil {
+	return performListInformationSeedCandidateDecisionsContext(context.Background(), seedID, values, db)
+}
+func performListInformationSeedCandidateDecisionsContext(ctx context.Context, seedID uint64, values url.Values, db *cdb.Handler) (InformationSeedCandidateListResponse, error) {
+	if _, err := cdb.GetInformationSeedByIDContext(ctx, db, seedID); err != nil {
 		return InformationSeedCandidateListResponse{Message: "Information seed not found", InformationSeedID: seedID}, err
 	}
 	pagination, err := informationSeedPaginationFromValues(values)
 	if err != nil {
 		return InformationSeedCandidateListResponse{Message: "Invalid candidate decision filters", InformationSeedID: seedID}, err
 	}
-	candidates, err := cdb.ListInformationSeedCandidateDecisions(db, seedID, cdb.InformationSeedCandidateFilter{Limit: pagination.Limit, Offset: pagination.Offset})
+	candidates, err := cdb.ListInformationSeedCandidateDecisionsContext(ctx, db, seedID, cdb.InformationSeedCandidateFilter{Limit: pagination.Limit, Offset: pagination.Offset})
 	if err != nil {
 		return InformationSeedCandidateListResponse{Message: "Failed to list information seed candidate decisions", InformationSeedID: seedID}, err
 	}
@@ -283,10 +289,13 @@ func performListInformationSeedCandidateDecisions(seedID uint64, values url.Valu
 }
 
 func performGetInformationSeedDiagnostics(seedID uint64, db *cdb.Handler) (InformationSeedDiagnosticsResponse, error) {
-	if _, err := cdb.GetInformationSeedByID(db, seedID); err != nil {
+	return performGetInformationSeedDiagnosticsContext(context.Background(), seedID, db)
+}
+func performGetInformationSeedDiagnosticsContext(ctx context.Context, seedID uint64, db *cdb.Handler) (InformationSeedDiagnosticsResponse, error) {
+	if _, err := cdb.GetInformationSeedByIDContext(ctx, db, seedID); err != nil {
 		return InformationSeedDiagnosticsResponse{Message: "Information seed not found", InformationSeedID: seedID, ProviderRequests: map[string]int{}, RejectionStages: map[string]map[string]int{}}, err
 	}
-	events, err := cdb.ListInformationSeedEvents(db, seedID, cdb.InformationSeedEventFilter{Limit: 25})
+	events, err := cdb.ListInformationSeedEventsContext(ctx, db, seedID, cdb.InformationSeedEventFilter{Limit: 25})
 	if err != nil {
 		return InformationSeedDiagnosticsResponse{Message: "Failed to load information seed diagnostics", InformationSeedID: seedID, ProviderRequests: map[string]int{}, RejectionStages: map[string]map[string]int{}}, err
 	}
@@ -408,18 +417,24 @@ func intFromDiagnostic(raw interface{}) int {
 }
 
 func performRetryInformationSeed(query string, db *cdb.Handler) (InformationSeedResponse, error) {
+	return performRetryInformationSeedContext(context.Background(), query, db)
+}
+func performRetryInformationSeedContext(ctx context.Context, query string, db *cdb.Handler) (InformationSeedResponse, error) {
 	id, err := parseInformationSeedIDFromJSON(query)
 	if err != nil {
 		return InformationSeedResponse{Message: "Invalid information seed retry request"}, err
 	}
-	return performRerunInformationSeedByID(id, db)
+	return performRerunInformationSeedByIDContext(ctx, id, db)
 }
 
 func performRerunInformationSeedByID(id uint64, db *cdb.Handler) (InformationSeedResponse, error) {
-	if err := cdb.RerunInformationSeed(db, id); err != nil {
+	return performRerunInformationSeedByIDContext(context.Background(), id, db)
+}
+func performRerunInformationSeedByIDContext(ctx context.Context, id uint64, db *cdb.Handler) (InformationSeedResponse, error) {
+	if err := cdb.RerunInformationSeedContext(ctx, db, id); err != nil {
 		return InformationSeedResponse{Message: "Failed to rerun information seed"}, err
 	}
-	row, err := informationSeedRowByID(db, id)
+	row, err := informationSeedRowByIDContext(ctx, db, id)
 	if err != nil {
 		return InformationSeedResponse{Message: "Failed to load rerun information seed"}, err
 	}
@@ -427,18 +442,24 @@ func performRerunInformationSeedByID(id uint64, db *cdb.Handler) (InformationSee
 }
 
 func performDisableInformationSeed(query string, db *cdb.Handler) (InformationSeedResponse, error) {
+	return performDisableInformationSeedContext(context.Background(), query, db)
+}
+func performDisableInformationSeedContext(ctx context.Context, query string, db *cdb.Handler) (InformationSeedResponse, error) {
 	id, err := parseInformationSeedIDFromJSON(query)
 	if err != nil {
 		return InformationSeedResponse{Message: "Invalid information seed disable request"}, err
 	}
-	return performDisableInformationSeedByID(id, db)
+	return performDisableInformationSeedByIDContext(ctx, id, db)
 }
 
 func performDisableInformationSeedByID(id uint64, db *cdb.Handler) (InformationSeedResponse, error) {
-	if err := cdb.DisableInformationSeed(db, id); err != nil {
+	return performDisableInformationSeedByIDContext(context.Background(), id, db)
+}
+func performDisableInformationSeedByIDContext(ctx context.Context, id uint64, db *cdb.Handler) (InformationSeedResponse, error) {
+	if err := cdb.DisableInformationSeedContext(ctx, db, id); err != nil {
 		return InformationSeedResponse{Message: "Failed to disable information seed"}, err
 	}
-	row, err := informationSeedRowByID(db, id)
+	row, err := informationSeedRowByIDContext(ctx, db, id)
 	if err != nil {
 		return InformationSeedResponse{Message: "Failed to load disabled information seed"}, err
 	}
@@ -446,14 +467,17 @@ func performDisableInformationSeedByID(id uint64, db *cdb.Handler) (InformationS
 }
 
 func performEnableInformationSeedByID(id uint64, query string, db *cdb.Handler) (InformationSeedResponse, error) {
+	return performEnableInformationSeedByIDContext(context.Background(), id, query, db)
+}
+func performEnableInformationSeedByIDContext(ctx context.Context, id uint64, query string, db *cdb.Handler) (InformationSeedResponse, error) {
 	queuePending, err := parseInformationSeedEnableQueuePending(query)
 	if err != nil {
 		return InformationSeedResponse{Message: "Invalid information seed enable request"}, err
 	}
-	if err := cdb.EnableInformationSeed(db, id, queuePending); err != nil {
+	if err := cdb.EnableInformationSeedContext(ctx, db, id, queuePending); err != nil {
 		return InformationSeedResponse{Message: "Failed to enable information seed"}, err
 	}
-	row, err := informationSeedRowByID(db, id)
+	row, err := informationSeedRowByIDContext(ctx, db, id)
 	if err != nil {
 		return InformationSeedResponse{Message: "Failed to load enabled information seed"}, err
 	}
@@ -461,14 +485,17 @@ func performEnableInformationSeedByID(id uint64, query string, db *cdb.Handler) 
 }
 
 func performListInformationSeedEvents(seedID uint64, values url.Values, db *cdb.Handler) (InformationSeedEventListResponse, error) {
-	if _, err := cdb.GetInformationSeedByID(db, seedID); err != nil {
+	return performListInformationSeedEventsContext(context.Background(), seedID, values, db)
+}
+func performListInformationSeedEventsContext(ctx context.Context, seedID uint64, values url.Values, db *cdb.Handler) (InformationSeedEventListResponse, error) {
+	if _, err := cdb.GetInformationSeedByIDContext(ctx, db, seedID); err != nil {
 		return InformationSeedEventListResponse{Message: "Information seed not found", InformationSeedID: seedID}, err
 	}
 	pagination, err := informationSeedPaginationFromValues(values)
 	if err != nil {
 		return InformationSeedEventListResponse{Message: "Invalid information seed event filters", InformationSeedID: seedID}, err
 	}
-	events, err := cdb.ListInformationSeedEvents(db, seedID, cdb.InformationSeedEventFilter{Limit: pagination.Limit, Offset: pagination.Offset})
+	events, err := cdb.ListInformationSeedEventsContext(ctx, db, seedID, cdb.InformationSeedEventFilter{Limit: pagination.Limit, Offset: pagination.Offset})
 	if err != nil {
 		return InformationSeedEventListResponse{Message: "Failed to list information seed events", InformationSeedID: seedID}, err
 	}
@@ -731,6 +758,10 @@ func nullStringString(value sql.NullString) string {
 }
 
 func performAddSource(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
+	return performAddSourceContext(context.Background(), query, qType, db)
+}
+
+func performAddSourceContext(ctx context.Context, query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
 	var params addSourceRequest
 
 	if qType == getQuery {
@@ -777,7 +808,7 @@ func performAddSource(query string, qType int, db *cdb.Handler) (ConsoleResponse
 	}
 
 	// Use your new SAFE CreateSource() logic
-	sourceID, err := cdb.CreateSource(db, &dbSource, params.Config)
+	sourceID, err := cdb.CreateSourceContext(ctx, db, &dbSource, params.Config)
 	if err != nil {
 		return ConsoleResponse{
 			Message: "Failed to add the source",
@@ -873,6 +904,10 @@ func validateAndReformatConfig(config *cfg.SourceConfig) error {
 }
 
 func performRemoveSource(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
+	return performRemoveSourceContext(context.Background(), query, qType, db)
+}
+
+func performRemoveSourceContext(ctx context.Context, query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
 	var results ConsoleResponse
 	var sourceURL string // Assuming the source URL is passed. Adjust as necessary based on input.
 
@@ -886,13 +921,13 @@ func performRemoveSource(query string, qType int, db *cdb.Handler) (ConsoleRespo
 	}
 
 	// Start a transaction
-	tx, err := (*db).Begin()
+	tx, err := (*db).BeginTx(ctx, nil)
 	if err != nil {
 		return ConsoleResponse{Message: errFailedToStartTransaction}, err
 	}
 
 	// Proceed with deleting the source using the obtained source_id
-	results, err = removeSource(tx, sourceURL)
+	results, err = removeSourceContext(ctx, tx, sourceURL)
 	if err != nil {
 		return ConsoleResponse{Message: "Failed to remove source and related data"}, err
 	}
@@ -908,18 +943,22 @@ func performRemoveSource(query string, qType int, db *cdb.Handler) (ConsoleRespo
 }
 
 func removeSource(tx *sql.Tx, sourceURL string) (ConsoleResponse, error) {
+	return removeSourceContext(context.Background(), tx, sourceURL)
+}
+
+func removeSourceContext(ctx context.Context, tx *sql.Tx, sourceURL string) (ConsoleResponse, error) {
 	var results ConsoleResponse
 	results.Message = "Failed to remove the source"
 
 	// First, get the source_id for the given URL to ensure it exists and to use in cascading deletes if necessary
 	var sourceID uint64
-	err := tx.QueryRow("SELECT source_id FROM Sources WHERE url = $1", sourceURL).Scan(&sourceID)
+	err := tx.QueryRowContext(ctx, "SELECT source_id FROM Sources WHERE url = $1", sourceURL).Scan(&sourceID)
 	if err != nil {
 		return results, err
 	}
 
 	// Proceed with deleting the source using the obtained source_id
-	_, err = tx.Exec("DELETE FROM Sources WHERE source_id = $1", sourceID)
+	_, err = tx.ExecContext(ctx, "DELETE FROM Sources WHERE source_id = $1", sourceID)
 	if err != nil {
 		err2 := tx.Rollback() // Rollback in case of error
 		if err2 != nil {
@@ -927,7 +966,7 @@ func removeSource(tx *sql.Tx, sourceURL string) (ConsoleResponse, error) {
 		}
 		return ConsoleResponse{Message: "Failed to delete source and related data"}, err
 	}
-	_, err = tx.Exec("SELECT cleanup_orphaned_httpinfo();")
+	_, err = tx.ExecContext(ctx, "SELECT cleanup_orphaned_httpinfo();")
 	if err != nil {
 		err2 := tx.Rollback() // Rollback in case of error
 		if err2 != nil {
@@ -935,7 +974,7 @@ func removeSource(tx *sql.Tx, sourceURL string) (ConsoleResponse, error) {
 		}
 		return ConsoleResponse{Message: "Failed to cleanup orphaned httpinfo"}, err
 	}
-	_, err = tx.Exec("SELECT cleanup_orphaned_netinfo();")
+	_, err = tx.ExecContext(ctx, "SELECT cleanup_orphaned_netinfo();")
 	if err != nil {
 		err2 := tx.Rollback() // Rollback in case of error
 		if err2 != nil {
@@ -1573,6 +1612,9 @@ func performRemoveCategory(query string, qType int, db *cdb.Handler) (ConsoleRes
 }
 
 func performUpdateInformationSeed(query string, _ int, db *cdb.Handler) (InformationSeedResponse, error) {
+	return performUpdateInformationSeedContext(context.Background(), query, 0, db)
+}
+func performUpdateInformationSeedContext(ctx context.Context, query string, _ int, db *cdb.Handler) (InformationSeedResponse, error) {
 	if err := rejectInformationSeedRequestCredentials([]byte(query)); err != nil {
 		return InformationSeedResponse{Message: "Provider credentials are not accepted in information seed requests"}, err
 	}
@@ -1583,7 +1625,7 @@ func performUpdateInformationSeed(query string, _ int, db *cdb.Handler) (Informa
 	if req.InformationSeedID == 0 {
 		return InformationSeedResponse{Message: "Information seed ID is required"}, fmt.Errorf("information_seed_id is required")
 	}
-	existing, err := cdb.GetInformationSeedByID(db, req.InformationSeedID)
+	existing, err := cdb.GetInformationSeedByIDContext(ctx, db, req.InformationSeedID)
 	if err != nil {
 		return InformationSeedResponse{Message: "Failed to load information seed"}, err
 	}
@@ -1621,10 +1663,10 @@ func performUpdateInformationSeed(query string, _ int, db *cdb.Handler) (Informa
 		}
 		existing.Config = raw
 	}
-	if err := cdb.UpdateInformationSeed(db, existing); err != nil {
+	if err := cdb.UpdateInformationSeedContext(ctx, db, existing); err != nil {
 		return InformationSeedResponse{Message: "Failed to update information seed"}, err
 	}
-	row, err := informationSeedRowByID(db, req.InformationSeedID)
+	row, err := informationSeedRowByIDContext(ctx, db, req.InformationSeedID)
 	if err != nil {
 		return InformationSeedResponse{Message: "Failed to load updated information seed"}, err
 	}
@@ -1636,11 +1678,14 @@ func performUpdateInformationSeed(query string, _ int, db *cdb.Handler) (Informa
 }
 
 func performRemoveInformationSeed(query string, _ int, db *cdb.Handler) (ConsoleResponse, error) {
+	return performRemoveInformationSeedContext(context.Background(), query, 0, db)
+}
+func performRemoveInformationSeedContext(ctx context.Context, query string, _ int, db *cdb.Handler) (ConsoleResponse, error) {
 	id, err := parseInformationSeedIDFromJSON(query)
 	if err != nil {
 		return ConsoleResponse{Message: "Invalid information seed remove request"}, err
 	}
-	if err := cdb.RemoveInformationSeed(db, id); err != nil {
+	if err := cdb.RemoveInformationSeedContext(ctx, db, id); err != nil {
 		return ConsoleResponse{Message: "Failed to remove information seed"}, err
 	}
 	return ConsoleResponse{Message: "Information seed removed successfully"}, nil

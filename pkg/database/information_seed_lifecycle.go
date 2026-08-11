@@ -15,6 +15,7 @@
 package database
 
 import (
+	"context"
 	"fmt"
 	"strings"
 )
@@ -24,14 +25,17 @@ import (
 // mutated, but schedulers are still woken so pending work can be claimed without
 // waiting for the next poll.
 func RerunInformationSeed(db *Handler, id uint64) error {
-	seed, err := GetInformationSeedByID(db, id)
+	return RerunInformationSeedContext(context.Background(), db, id)
+}
+func RerunInformationSeedContext(ctx context.Context, db *Handler, id uint64) error {
+	seed, err := GetInformationSeedByIDContext(ctx, db, id)
 	if err != nil {
 		return err
 	}
 
 	switch strings.ToLower(strings.TrimSpace(seed.Status)) {
 	case "completed", "error":
-		if err := UpdateInformationSeedStatus(db, id, "pending", ""); err != nil {
+		if err := UpdateInformationSeedStatusContext(ctx, db, id, "pending", ""); err != nil {
 			return err
 		}
 	case "new", "pending", "processing":
@@ -48,17 +52,23 @@ func RerunInformationSeed(db *Handler, id uint64) error {
 
 // DisableInformationSeed prevents a seed from being claimed by schedulers.
 func DisableInformationSeed(db *Handler, id uint64) error {
-	return SetInformationSeedDisabled(db, id, true)
+	return DisableInformationSeedContext(context.Background(), db, id)
+}
+func DisableInformationSeedContext(ctx context.Context, db *Handler, id uint64) error {
+	return SetInformationSeedDisabledContext(ctx, db, id, true)
 }
 
 // EnableInformationSeed clears the disabled flag. When queuePending is true, the
 // seed is also moved to pending so the scheduler can claim it immediately.
 func EnableInformationSeed(db *Handler, id uint64, queuePending bool) error {
-	if err := SetInformationSeedDisabled(db, id, false); err != nil {
+	return EnableInformationSeedContext(context.Background(), db, id, queuePending)
+}
+func EnableInformationSeedContext(ctx context.Context, db *Handler, id uint64, queuePending bool) error {
+	if err := SetInformationSeedDisabledContext(ctx, db, id, false); err != nil {
 		return err
 	}
 	if queuePending {
-		if err := UpdateInformationSeedStatus(db, id, "pending", ""); err != nil {
+		if err := UpdateInformationSeedStatusContext(ctx, db, id, "pending", ""); err != nil {
 			return err
 		}
 	}
