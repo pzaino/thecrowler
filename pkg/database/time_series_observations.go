@@ -25,6 +25,8 @@ const timeSeriesObservationColumns = `observation_id, metric_id, observed_at, ef
 	is_changed, change_type, change_delta_numeric, change_detected_at, dedupe_key, dimensions,
 	provenance, provenance_hash, created_at, deleted_at, last_updated_at`
 
+const timeSeriesObservationDimensionChunkSize = 1000
+
 // InsertTimeSeriesObservation inserts one fact. A duplicate dedupe_key returns a
 // successful result with Duplicate=true and the existing observation ID.
 func InsertTimeSeriesObservation(db *Handler, observation *TimeSeriesObservation) (TimeSeriesInsertResult, error) {
@@ -206,43 +208,106 @@ func QueryTimeSeriesObservationsContext(ctx context.Context, db *Handler, filter
 	if len(filter.Dimensions) == 0 {
 		query += ` LIMIT ` + p.Next() + ` OFFSET ` + p.Next()
 		args = append(args, sqlLimit, offset)
-	}
-	rows, err := (*db).QueryContext(ctx, query, args...)
-	if err != nil {
-		return TimeSeriesObservationQueryResult{}, fmt.Errorf("query time-series observations: %w", err)
-	}
-	defer rows.Close()
-	all := []TimeSeriesObservation{}
-	for rows.Next() {
-		o, e := scanTimeSeriesObservation(rows.Scan)
-		if e != nil {
-			return TimeSeriesObservationQueryResult{}, e
+		rows, queryErr := (*db).QueryContext(ctx, query, args...)
+		if queryErr != nil {
+			return TimeSeriesObservationQueryResult{}, fmt.Errorf("query time-series observations: %w", queryErr)
 		}
-		if dimensionsContain(o.Dimensions, filter.Dimensions) {
-			all = append(all, *o)
+		defer rows.Close()
+		all := []TimeSeriesObservation{}
+		for rows.Next() {
+			o, scanErr := scanTimeSeriesObservation(rows.Scan)
+			if scanErr != nil {
+				return TimeSeriesObservationQueryResult{}, scanErr
+			}
+			if dimensionsContain(o.Dimensions, filter.Dimensions) {
+				all = append(all, *o)
+			}
 		}
-	}
-	if err = rows.Err(); err != nil {
-		return TimeSeriesObservationQueryResult{}, err
-	}
-	if len(filter.Dimensions) > 0 {
-		start := filter.Pagination.Offset
-		if start > len(all) {
-			start = len(all)
+		if rowsErr := rows.Err(); rowsErr != nil {
+			return TimeSeriesObservationQueryResult{}, rowsErr
 		}
-		end := start + limit
-		if end > len(all) {
-			end = len(all)
+		hasMore := len(all) > limit
+		if hasMore {
+			all = all[:limit]
 		}
-		hasMore := end < len(all)
-		all = all[start:end]
 		return TimeSeriesObservationQueryResult{Observations: all, Count: len(all), HasMore: hasMore}, nil
 	}
-	hasMore := len(all) > limit
-	if hasMore {
-		all = all[:limit]
+
+	baseQuery := `SELECT ` + prefixColumns(timeSeriesObservationColumns, "o") + ` FROM TimeSeriesObservations o WHERE ` + strings.Join(conditions, " AND ")
+	matches := make([]TimeSeriesObservation, 0, limit+1)
+	matchingOffset := offset
+	var cursorObservedAt time.Time
+	var cursorObservationID uint64
+	hasCursor := false
+
+	for len(matches) < limit+1 {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return TimeSeriesObservationQueryResult{}, ctxErr
+		}
+
+		chunkPlaceholders := newInformationSeedPlaceholders(dbms)
+		for range args {
+			chunkPlaceholders.Next()
+		}
+		chunkQuery := baseQuery
+		chunkArgs := append([]interface{}{}, args...)
+		if hasCursor {
+			comparison := ">"
+			if filter.Descending {
+				comparison = "<"
+			}
+			observedAtComparisonPlaceholder := chunkPlaceholders.Next()
+			observedAtEqualityPlaceholder := chunkPlaceholders.Next()
+			observationIDPlaceholder := chunkPlaceholders.Next()
+			chunkQuery += ` AND (o.observed_at ` + comparison + ` ` + observedAtComparisonPlaceholder +
+				` OR (o.observed_at = ` + observedAtEqualityPlaceholder + ` AND o.observation_id ` + comparison + ` ` + observationIDPlaceholder + `))`
+			chunkArgs = append(chunkArgs, cursorObservedAt, cursorObservedAt, cursorObservationID)
+		}
+		chunkQuery += ` ORDER BY o.observed_at ` + direction + `, o.observation_id ` + direction + ` LIMIT ` + chunkPlaceholders.Next()
+		chunkArgs = append(chunkArgs, timeSeriesObservationDimensionChunkSize)
+
+		rows, queryErr := (*db).QueryContext(ctx, chunkQuery, chunkArgs...)
+		if queryErr != nil {
+			return TimeSeriesObservationQueryResult{}, fmt.Errorf("query time-series observations: %w", queryErr)
+		}
+		rawCount := 0
+		for rows.Next() {
+			o, scanErr := scanTimeSeriesObservation(rows.Scan)
+			if scanErr != nil {
+				_ = rows.Close()
+				return TimeSeriesObservationQueryResult{}, scanErr
+			}
+			rawCount++
+			cursorObservedAt = o.ObservedAt
+			cursorObservationID = o.ID
+			hasCursor = true
+			if !dimensionsContain(o.Dimensions, filter.Dimensions) {
+				continue
+			}
+			if matchingOffset > 0 {
+				matchingOffset--
+				continue
+			}
+			matches = append(matches, *o)
+			if len(matches) == limit+1 {
+				break
+			}
+		}
+		rowsErr := rows.Err()
+		_ = rows.Close()
+		if rowsErr != nil {
+			return TimeSeriesObservationQueryResult{}, rowsErr
+		}
+		if len(matches) == limit+1 || rawCount < timeSeriesObservationDimensionChunkSize {
+			break
+		}
 	}
-	return TimeSeriesObservationQueryResult{Observations: all, Count: len(all), HasMore: hasMore}, nil
+
+	hasMore := len(matches) > limit
+	if hasMore {
+		matches = matches[:limit]
+	}
+	return TimeSeriesObservationQueryResult{Observations: matches, Count: len(matches), HasMore: hasMore}, nil
 }
 
 func buildTimeSeriesQueryConditions(dbms string, f TimeSeriesQueryFilter, alias string) ([]string, []interface{}, *informationSeedPlaceholders, error) {
