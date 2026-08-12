@@ -160,6 +160,7 @@ func TestInformationSeedAddHandlerValidRequest(t *testing.T) {
 	dbSemaphore = make(chan struct{}, 1)
 
 	body := []byte(`{"information_seed":"api add seed","category_id":4,"user_id":9,"priority":"high","config":{"providers":["public_json"],"max_candidates":3}}`)
+	withAPIRequestBodyLimit(t, int64(len(body)))
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/information_seed/add", bytes.NewReader(body))
 	informationSeedAddHandler(rec, req)
@@ -175,6 +176,37 @@ func TestInformationSeedAddHandlerValidRequest(t *testing.T) {
 	}
 	if resp.Item.Config == nil || !json.Valid(*resp.Item.Config) {
 		t.Fatalf("expected valid config in add response: %#v", resp.Item.Config)
+	}
+}
+
+func TestInformationSeedAddHandlerRejectsOversizedBodies(t *testing.T) {
+	handler, cleanup := setupInformationSeedAPITestDB(t)
+	defer cleanup()
+	dbHandler = handler
+	dbSemaphore = make(chan struct{}, 1)
+	withAPIRequestBodyLimit(t, 8)
+
+	for _, unknownLength := range []bool{false, true} {
+		name := "known Content-Length"
+		if unknownLength {
+			name = "unknown chunked length"
+		}
+		t.Run(name, func(t *testing.T) {
+			secret := "seed-body-secret"
+			req := httptest.NewRequest(http.MethodPost, "/v1/information_seed/add", strings.NewReader(secret))
+			if unknownLength {
+				req.ContentLength = -1
+				req.TransferEncoding = []string{"chunked"}
+			}
+			rec := httptest.NewRecorder()
+			informationSeedAddHandler(rec, req)
+			if rec.Code != http.StatusRequestEntityTooLarge {
+				t.Fatalf("status = %d, want 413; body=%s", rec.Code, rec.Body.String())
+			}
+			if !json.Valid(rec.Body.Bytes()) || strings.Contains(rec.Body.String(), secret) {
+				t.Fatalf("oversized response is unsafe or not JSON: %s", rec.Body.String())
+			}
+		})
 	}
 }
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	infoseeddiag "github.com/pzaino/thecrowler/pkg/infoseed"
 	mailconfig "github.com/pzaino/thecrowler/pkg/mail/config"
 	plg "github.com/pzaino/thecrowler/pkg/plugin"
+	"github.com/pzaino/thecrowler/pkg/vdi"
 )
 
 const sourceConfigRedactionMarker = mailconfig.RedactedValue
@@ -334,6 +336,17 @@ func makeAPIPluginHandler(plugin plg.JSPlugin) http.HandlerFunc {
 }
 
 func handleNormalAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg.JSPlugin) {
+	handleNormalAPIPluginWithExecutor(w, r, plugin, plugin.ExecuteContext)
+}
+
+// handleNormalAPIPluginWithExecutor keeps body admission ahead of execution and
+// gives regression tests an observable boundary around plugin invocation.
+func handleNormalAPIPluginWithExecutor(
+	w http.ResponseWriter,
+	r *http.Request,
+	plugin plg.JSPlugin,
+	execute func(context.Context, *vdi.WebDriver, *cdb.Handler, int, map[string]interface{}) (map[string]interface{}, error),
+) {
 	jsonData, httpCtx, err := extractAPIPluginData(r)
 	defer r.Body.Close() // nolint: errcheck // we don't care about this error code
 	if err != nil {
@@ -353,7 +366,7 @@ func handleNormalAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg.JS
 		"jsonData": jsonData,
 	}
 
-	result, err := plugin.ExecuteContext(
+	result, err := execute(
 		r.Context(),
 		nil,
 		&dbHandler,

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,7 +14,9 @@ import (
 	"testing"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
+	cdb "github.com/pzaino/thecrowler/pkg/database"
 	plg "github.com/pzaino/thecrowler/pkg/plugin"
+	"github.com/pzaino/thecrowler/pkg/vdi"
 )
 
 func withAPIRequestBodyLimit(t *testing.T, limit int64) {
@@ -145,6 +148,157 @@ func TestNormalAPIPluginRejectsOversizeWithJSON413(t *testing.T) {
 	var response map[string]interface{}
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatalf("response is not the normal JSON error envelope: %v", err)
+	}
+}
+
+func TestAPIPluginRequestBodyLimitBoundariesAndExecution(t *testing.T) {
+	const limit = int64(16)
+	tests := []struct {
+		name          string
+		body          string
+		unknownLength bool
+		wantStatus    int
+		wantExecuted  int
+	}{
+		{name: "below limit JSON", body: `{"input":"ok"}`, wantStatus: http.StatusOK, wantExecuted: 1},
+		{name: "exact limit raw fallback", body: strings.Repeat("r", int(limit)), wantStatus: http.StatusOK, wantExecuted: 1},
+		{name: "known length one over", body: strings.Repeat("known-secret", 2), wantStatus: http.StatusRequestEntityTooLarge},
+		{name: "chunked one over", body: strings.Repeat("chunk-secret", 2), unknownLength: true, wantStatus: http.StatusRequestEntityTooLarge},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			withAPIRequestBodyLimit(t, limit)
+			executed := 0
+			executor := func(_ context.Context, _ *vdi.WebDriver, _ *cdb.Handler, _ int, params map[string]interface{}) (map[string]interface{}, error) {
+				executed++
+				if params["http"] == nil || params["jsonData"] == nil {
+					t.Fatal("plugin did not receive parsed data and HTTP context")
+				}
+				return map[string]interface{}{"executed": true}, nil
+			}
+			req := httptest.NewRequest(http.MethodPost, "/v1/plugin/test", strings.NewReader(tc.body))
+			if tc.unknownLength {
+				req.ContentLength = -1
+				req.TransferEncoding = []string{"chunked"}
+			}
+			rec := httptest.NewRecorder()
+			handleNormalAPIPluginWithExecutor(rec, req, plg.JSPlugin{}, executor)
+
+			if rec.Code != tc.wantStatus || executed != tc.wantExecuted {
+				t.Fatalf("status/executions = %d/%d, want %d/%d; body=%s", rec.Code, executed, tc.wantStatus, tc.wantExecuted, rec.Body.String())
+			}
+			if tc.wantStatus == http.StatusRequestEntityTooLarge {
+				if !json.Valid(rec.Body.Bytes()) || strings.Contains(rec.Body.String(), tc.body) || !strings.Contains(rec.Body.String(), errAPIRequestBodyTooLarge.Error()) {
+					t.Fatalf("unsafe or non-JSON oversized response: %s", rec.Body.String())
+				}
+			}
+		})
+	}
+}
+
+func TestAPIPluginUnlimitedModeDoesNotApplyApplicationCeiling(t *testing.T) {
+	withAPIRequestBodyLimit(t, 0)
+	largeBody := strings.Repeat("x", 17)
+	executed := 0
+	executor := func(_ context.Context, _ *vdi.WebDriver, _ *cdb.Handler, _ int, _ map[string]interface{}) (map[string]interface{}, error) {
+		executed++
+		return map[string]interface{}{"accepted": true}, nil
+	}
+	rec := httptest.NewRecorder()
+	handleNormalAPIPluginWithExecutor(rec, httptest.NewRequest(http.MethodPost, "/v1/plugin/test", strings.NewReader(largeBody)), plg.JSPlugin{}, executor)
+	if rec.Code == http.StatusRequestEntityTooLarge || strings.Contains(rec.Body.String(), errAPIRequestBodyTooLarge.Error()) || executed != 1 {
+		t.Fatalf("unlimited mode unexpectedly enforced body ceiling: status=%d executions=%d body=%s", rec.Code, executed, rec.Body.String())
+	}
+}
+
+func TestStandardPOSTRouteRequestBodyLimit(t *testing.T) {
+	oldSemaphore := dbSemaphore
+	dbSemaphore = make(chan struct{}, 1)
+	t.Cleanup(func() { dbSemaphore = oldSemaphore })
+
+	for _, tc := range []struct {
+		name          string
+		body          string
+		unknownLength bool
+		wantStatus    int
+		wantCalls     int
+	}{
+		{name: "below", body: "1234", wantStatus: http.StatusOK, wantCalls: 1},
+		{name: "boundary", body: "12345", wantStatus: http.StatusOK, wantCalls: 1},
+		{name: "known one over", body: "private", wantStatus: http.StatusRequestEntityTooLarge},
+		{name: "chunked one over", body: "secret", unknownLength: true, wantStatus: http.StatusRequestEntityTooLarge},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withAPIRequestBodyLimit(t, 5)
+			calls := 0
+			req := httptest.NewRequest(http.MethodPost, "/v1/search/general", strings.NewReader(tc.body))
+			if tc.unknownLength {
+				req.ContentLength = -1
+				req.TransferEncoding = []string{"chunked"}
+			}
+			rec := httptest.NewRecorder()
+			handleRequestWithDB(rec, req, http.StatusOK, func(query string, qType int, _ *cdb.Handler) (interface{}, error) {
+				calls++
+				if query != tc.body || qType != postQuery {
+					t.Fatalf("downstream query/type = %q/%d", query, qType)
+				}
+				replayed, err := io.ReadAll(req.Body)
+				if err != nil || string(replayed) != tc.body {
+					t.Fatalf("downstream replay = %q, %v", replayed, err)
+				}
+				return ExampleResults{Message: "accepted"}, nil
+			})
+			if rec.Code != tc.wantStatus || calls != tc.wantCalls {
+				t.Fatalf("status/calls = %d/%d, want %d/%d; body=%s", rec.Code, calls, tc.wantStatus, tc.wantCalls, rec.Body.String())
+			}
+			if tc.wantStatus == http.StatusRequestEntityTooLarge && (!json.Valid(rec.Body.Bytes()) || strings.Contains(rec.Body.String(), tc.body)) {
+				t.Fatalf("oversized response is unsafe or not JSON: %s", rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestInformationSeedLifecycleBodyLimit(t *testing.T) {
+	oldSemaphore := dbSemaphore
+	dbSemaphore = make(chan struct{}, 1)
+	t.Cleanup(func() { dbSemaphore = oldSemaphore })
+	withAPIRequestBodyLimit(t, 5)
+
+	for _, tc := range []struct {
+		name          string
+		body          string
+		unknownLength bool
+		wantStatus    int
+		wantCalls     int
+	}{
+		{name: "below", body: `{}`, wantStatus: http.StatusOK, wantCalls: 1},
+		{name: "boundary", body: `12345`, wantStatus: http.StatusOK, wantCalls: 1},
+		{name: "known one over", body: `seed-secret`, wantStatus: http.StatusRequestEntityTooLarge},
+		{name: "chunked one over", body: `seed-private`, unknownLength: true, wantStatus: http.StatusRequestEntityTooLarge},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			req := httptest.NewRequest(http.MethodPost, "/v1/information_seed/1/enable", strings.NewReader(tc.body))
+			if tc.unknownLength {
+				req.ContentLength = -1
+				req.TransferEncoding = []string{"chunked"}
+			}
+			rec := httptest.NewRecorder()
+			handleInformationSeedPathAction(rec, req, func(body string, _ *cdb.Handler) (interface{}, error) {
+				calls++
+				if body != tc.body {
+					t.Fatalf("parsed lifecycle body = %q, want %q", body, tc.body)
+				}
+				return InformationSeedResponse{Message: "accepted"}, nil
+			})
+			if rec.Code != tc.wantStatus || calls != tc.wantCalls {
+				t.Fatalf("status/calls = %d/%d, want %d/%d; body=%s", rec.Code, calls, tc.wantStatus, tc.wantCalls, rec.Body.String())
+			}
+			if tc.wantStatus == http.StatusRequestEntityTooLarge && (!json.Valid(rec.Body.Bytes()) || strings.Contains(rec.Body.String(), tc.body)) {
+				t.Fatalf("oversized response is unsafe or not JSON: %s", rec.Body.String())
+			}
+		})
 	}
 }
 

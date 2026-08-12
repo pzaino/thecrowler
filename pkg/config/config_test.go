@@ -78,6 +78,9 @@ func TestLoadConfig(t *testing.T) {
 	if config.Database.Password != "testpassword" {
 		t.Errorf("Expected testpassword, got %v", config.Database.Password)
 	}
+	if config.API.MaxRequestBodySize != 0 {
+		t.Errorf("Expected fixture API body enforcement to be unlimited, got %d bytes", config.API.MaxRequestBodySize)
+	}
 }
 
 // Test LoadConfigInvalidFile
@@ -731,13 +734,14 @@ func TestValidateAPI(t *testing.T) {
 
 func TestAPIMaxRequestBodySize(t *testing.T) {
 	tests := []struct {
-		name    string
-		yaml    string
-		want    int64
-		wantErr bool
+		name      string
+		yaml      string
+		want      int64
+		unlimited bool
+		wantErr   bool
 	}{
-		{name: "omitted", yaml: "api:\n  host: localhost\n", want: 0},
-		{name: "explicit zero", yaml: "api:\n  max_request_body_size: 0\n", want: 0},
+		{name: "omitted", yaml: "api:\n  host: localhost\n", want: 0, unlimited: true},
+		{name: "explicit zero", yaml: "api:\n  max_request_body_size: 0\n", want: 0, unlimited: true},
 		{name: "positive bytes", yaml: "api:\n  max_request_body_size: 1048577\n", want: 1048577},
 		{name: "negative", yaml: "api:\n  max_request_body_size: -1\n", want: -1, wantErr: true},
 	}
@@ -756,6 +760,9 @@ func TestAPIMaxRequestBodySize(t *testing.T) {
 			}
 			if cfg.API.MaxRequestBodySize != tt.want {
 				t.Errorf("MaxRequestBodySize = %d, want %d", cfg.API.MaxRequestBodySize, tt.want)
+			}
+			if gotUnlimited := cfg.API.MaxRequestBodySize == 0; gotUnlimited != tt.unlimited {
+				t.Errorf("unlimited = %t, want %t", gotUnlimited, tt.unlimited)
 			}
 		})
 	}
