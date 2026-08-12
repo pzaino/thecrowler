@@ -1180,6 +1180,10 @@ func updateEventHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // Handle the notification received
+var enqueueNotificationEvent = func(event cdb.Event) bool {
+	return enqueueWithTimeout(jobQueue, event, 500*time.Millisecond)
+}
+
 func handleNotification(payload string) {
 	var event cdb.Event
 	mEventsTotalReceived.With(prometheus.Labels{"engine": cmn.GetMicroServiceName()}).Inc()
@@ -1193,7 +1197,7 @@ func handleNotification(payload string) {
 			eventsWSHub.Broadcast("event", event)
 		}
 		// Put the event in the jobQueue
-		if !enqueueWithTimeout(jobQueue, event, 500*time.Millisecond) {
+		if !enqueueNotificationEvent(event) {
 			cmn.DebugMsg(cmn.DbgLvlWarn, "Job queue full; dropping event %s (type=%s)", event.ID, event.Type)
 			mEventsTotalDropped.With(prometheus.Labels{"engine": cmn.GetMicroServiceName()}).Inc()
 			return
