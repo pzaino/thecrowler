@@ -9,6 +9,8 @@ ON Sources(priority, sub_priority DESC, source_id ASC);
 -- replace the old source SET NULL rule while retaining every row and index.
 PRAGMA foreign_keys = OFF;
 
+BEGIN IMMEDIATE;
+
 ALTER TABLE TimeSeriesAggregates RENAME TO TimeSeriesAggregates_v112;
 ALTER TABLE TimeSeriesObservations RENAME TO TimeSeriesObservations_v112;
 
@@ -142,5 +144,7 @@ CREATE INDEX IF NOT EXISTS idx_timeseriesaggregates_subject ON TimeSeriesAggrega
 CREATE INDEX IF NOT EXISTS idx_timeseriesaggregates_object ON TimeSeriesAggregates(object_type, object_id, bucket_start);
 CREATE INDEX IF NOT EXISTS idx_timeseriesaggregates_correlation_rule ON TimeSeriesAggregates(correlation_rule_id, bucket_start);
 CREATE INDEX IF NOT EXISTS idx_timeseriesaggregates_aggregate_hash ON TimeSeriesAggregates(aggregate_hash);
+
+COMMIT;
 
 PRAGMA foreign_keys = ON;
