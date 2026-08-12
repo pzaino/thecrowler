@@ -89,6 +89,35 @@ var (
 	eventsWSHub  *ws.Hub
 )
 
+type eventNotificationHandler func(string)
+
+// eventsStartupPlan keeps the one scalable responsibility (receiving database
+// notifications) separate from the responsibilities owned only by the master.
+type eventsStartupPlan struct {
+	notificationHandler           eventNotificationHandler
+	ownsSingletonResponsibilities bool
+}
+
+func planEventsStartup(isMaster bool) eventsStartupPlan {
+	if isMaster {
+		return eventsStartupPlan{
+			notificationHandler:           handleNotification,
+			ownsSingletonResponsibilities: true,
+		}
+	}
+
+	return eventsStartupPlan{notificationHandler: handleReplicaNotification}
+}
+
+func startEventsNotificationListener(
+	db *cdb.Handler,
+	timeout time.Duration,
+	plan eventsStartupPlan,
+	listen func(*cdb.Handler, func(string), time.Duration),
+) {
+	listen(db, plan.notificationHandler, timeout)
+}
+
 func setSysReady(newStatus int) {
 	if newStatus < 0 || newStatus > 2 {
 		return
@@ -274,14 +303,16 @@ func main() {
 	config.Events.MasterEventsManager = strings.ToLower(strings.TrimSpace(config.Events.MasterEventsManager))
 
 	notifyTimeout := parseDuration(config.Events.HeartbeatTimeout)
+	startup := planEventsStartup(instance == config.Events.MasterEventsManager)
+
+	// Every instance owns exactly one database notification listener. The
+	// selected callback limits replicas to heartbeat responses.
+	go startEventsNotificationListener(&dbHandler, notifyTimeout, startup, cdb.ListenForEvents)
 
 	// Start the event janitor (cleans up expired events from the DB)
-	if instance == config.Events.MasterEventsManager {
+	if startup.ownsSingletonResponsibilities {
 		// We are on the Master Instance, start the events janitor
 		go startEventJanitor(&dbHandler, time.Minute, config)
-
-		// Start the event listener (on a separate go routine)
-		go cdb.ListenForEvents(&dbHandler, handleNotification, notifyTimeout)
 
 		// Provider listeners are singleton lifecycle owners. Their durable crawl
 		// requests are claimed atomically by one of the scalable crawler engines.
@@ -297,10 +328,6 @@ func main() {
 		if config.Events.HeartbeatEnabled {
 			go startHeartbeatLoop(&dbHandler, config)
 		}
-	} else {
-		// Replicas listen only so they can answer heartbeat requests. Their
-		// callback deliberately ignores every other event type.
-		go cdb.ListenForEvents(&dbHandler, handleReplicaNotification, notifyTimeout)
 	}
 
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting server on %s:%d", config.Events.Host, config.Events.Port)
