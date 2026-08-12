@@ -330,6 +330,8 @@ api:
   port: 8080
   # Request timeout (seconds)
   timeout: 30
+  # Maximum accepted request body size in bytes (0 disables API-layer enforcement)
+  max_request_body_size: 0
   # Disable default API endpoints
   disable_default: false
   # Enable API docs endpoint

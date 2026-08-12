@@ -1365,6 +1365,13 @@
           "type": "integer",
           "minimum": 10
         },
+        "max_request_body_size": {
+          "title": "CROWler General/Search API Maximum Request Body Size",
+          "description": "Maximum accepted API request body size in bytes. A value of 0 disables API-layer request-body size enforcement.",
+          "type": "integer",
+          "minimum": 0,
+          "default": 0
+        },
         "idle_timeout": {
           "title": "CROWler General/Search API Idle Timeout",
           "description": "This is the idle timeout for the API. It is the maximum amount of time that the CROWler will keep a connection to the API open if there are no requests.",

@@ -638,7 +638,9 @@ func (c *Config) Validate() error {
 		return err
 	}
 	c.validateDatabase()
-	c.validateAPI()
+	if err := c.validateAPI(); err != nil {
+		return err
+	}
 	c.validateEvents()
 	c.validateVDI()
 	c.validatePrometheus()
@@ -1349,7 +1351,11 @@ func (c *Config) validateDatabase() {
 	}
 }
 
-func (c *Config) validateAPI() {
+func (c *Config) validateAPI() error {
+	if c.API.MaxRequestBodySize < 0 {
+		return fmt.Errorf("api.max_request_body_size must be greater than or equal to 0")
+	}
+
 	// Check API
 	if strings.TrimSpace(c.API.Host) == "" {
 		c.API.Host = stdHost
@@ -1379,6 +1385,7 @@ func (c *Config) validateAPI() {
 	if c.API.WriteTimeout < 1 {
 		c.API.WriteTimeout = 30
 	}
+	return nil
 }
 
 func (c *Config) validateEvents() {
