@@ -1853,7 +1853,7 @@ func informationSeedAddHandler(w http.ResponseWriter, r *http.Request) {
 		defer r.Body.Close() // nolint:errcheck // best effort close after body extraction
 		if err != nil {
 			totalErrors.Add(1)
-			handleErrorAndRespond(w, err, nil, "Invalid information seed add request", http.StatusBadRequest, http.StatusCreated)
+			handleErrorAndRespond(w, err, nil, "Invalid information seed add request", apiRequestBodyErrorStatus(err), http.StatusCreated)
 			return
 		}
 
@@ -2192,10 +2192,10 @@ func handleInformationSeedPathAction(w http.ResponseWriter, r *http.Request, act
 	select {
 	case dbSemaphore <- struct{}{}:
 		defer func() { <-dbSemaphore }()
-		bodyBytes, err := io.ReadAll(r.Body)
+		bodyBytes, err := readAPIRequestBody(r)
 		defer r.Body.Close() // nolint:errcheck // best effort close after body extraction
 		if err != nil {
-			handleErrorAndRespond(w, err, nil, "Invalid information seed request", http.StatusBadRequest, http.StatusOK)
+			handleErrorAndRespond(w, err, nil, "Invalid information seed request", apiRequestBodyErrorStatus(err), http.StatusOK)
 			return
 		}
 		results, err := action(string(bodyBytes), &dbHandler)

@@ -2,13 +2,151 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+
+	cfg "github.com/pzaino/thecrowler/pkg/config"
+	plg "github.com/pzaino/thecrowler/pkg/plugin"
 )
+
+func withAPIRequestBodyLimit(t *testing.T, limit int64) {
+	t.Helper()
+	oldConfig := config
+	config = cfg.Config{}
+	config.API.MaxRequestBodySize = limit
+	t.Cleanup(func() { config = oldConfig })
+}
+
+func TestReadAPIRequestBodyLimit(t *testing.T) {
+	t.Run("zero keeps unlimited reads", func(t *testing.T) {
+		withAPIRequestBodyLimit(t, 0)
+		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("unlimited"))
+		body, err := readAPIRequestBody(req)
+		if err != nil || string(body) != "unlimited" {
+			t.Fatalf("readAPIRequestBody() = %q, %v", body, err)
+		}
+	})
+
+	for _, tc := range []struct {
+		name    string
+		body    string
+		unknown bool
+		wantErr bool
+	}{
+		{name: "known exactly at limit", body: "12345"},
+		{name: "known one byte over", body: "123456", wantErr: true},
+		{name: "unknown exactly at limit", body: "12345", unknown: true},
+		{name: "unknown one byte over", body: "123456", unknown: true, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withAPIRequestBodyLimit(t, 5)
+			req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(tc.body))
+			if tc.unknown {
+				req.ContentLength = -1
+			}
+			body, err := readAPIRequestBody(req)
+			if tc.wantErr {
+				if !errors.Is(err, errAPIRequestBodyTooLarge) {
+					t.Fatalf("error = %v, want oversized-body error", err)
+				}
+				if body != nil {
+					t.Fatalf("oversized body was returned: %q", body)
+				}
+				return
+			}
+			if err != nil || string(body) != tc.body {
+				t.Fatalf("readAPIRequestBody() = %q, %v", body, err)
+			}
+		})
+	}
+}
+
+type readFailer struct{ read bool }
+
+func (r *readFailer) Read([]byte) (int, error) { r.read = true; return 0, io.EOF }
+func (*readFailer) Close() error               { return nil }
+
+func TestReadAPIRequestBodyRejectsKnownOversizeWithoutReading(t *testing.T) {
+	withAPIRequestBodyLimit(t, 5)
+	body := &readFailer{}
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req.Body = body
+	req.ContentLength = 6
+
+	_, err := readAPIRequestBody(req)
+	if !errors.Is(err, errAPIRequestBodyTooLarge) {
+		t.Fatalf("error = %v, want oversized-body error", err)
+	}
+	if body.read {
+		t.Fatal("known oversized request body was read")
+	}
+}
+
+func TestReadAPIRequestBodyMaxInt64DoesNotOverflow(t *testing.T) {
+	withAPIRequestBodyLimit(t, math.MaxInt64)
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("body"))
+	body, err := readAPIRequestBody(req)
+	if err != nil || string(body) != "body" {
+		t.Fatalf("readAPIRequestBody() = %q, %v", body, err)
+	}
+}
+
+func TestExtractQueryOrBodyOversizePreservesSafeError(t *testing.T) {
+	withAPIRequestBodyLimit(t, 5)
+	secret := "secret-payload"
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(secret))
+	_, err := extractQueryOrBody(req)
+	if !errors.Is(err, errAPIRequestBodyTooLarge) {
+		t.Fatalf("error = %v, want oversized-body error", err)
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("oversized-body error leaked request data: %v", err)
+	}
+}
+
+func TestExtractQueryOrBodyReplaysAcceptedBody(t *testing.T) {
+	withAPIRequestBodyLimit(t, 5)
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("12345"))
+	if _, err := extractQueryOrBody(req); err != nil {
+		t.Fatalf("extractQueryOrBody() error = %v", err)
+	}
+	replayed, err := io.ReadAll(req.Body)
+	if err != nil || string(replayed) != "12345" {
+		t.Fatalf("replayed body = %q, %v", replayed, err)
+	}
+}
+
+func TestNormalAPIPluginRejectsOversizeWithJSON413(t *testing.T) {
+	withAPIRequestBodyLimit(t, 5)
+	secret := "secret-payload"
+	req := httptest.NewRequest(http.MethodPost, "/v1/plugin/test", strings.NewReader(secret))
+	rec := httptest.NewRecorder()
+
+	// A zero-value plugin cannot execute successfully, so a clean 413 also
+	// verifies that request classification happens before plugin execution.
+	handleNormalAPIPlugin(rec, req, plg.JSPlugin{})
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusRequestEntityTooLarge, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("Content-Type = %q, want application/json", got)
+	}
+	if strings.Contains(rec.Body.String(), secret) {
+		t.Fatalf("error envelope leaked request body: %s", rec.Body.String())
+	}
+	var response map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("response is not the normal JSON error envelope: %v", err)
+	}
+}
 
 // Example results struct for success scenario
 type ExampleResults struct {

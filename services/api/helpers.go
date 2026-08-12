@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -20,6 +22,41 @@ import (
 )
 
 const sourceConfigRedactionMarker = mailconfig.RedactedValue
+
+var errAPIRequestBodyTooLarge = errors.New("API request body exceeds configured maximum size")
+
+// readAPIRequestBody reads an inbound API-owned request body while enforcing
+// the configured application limit. A zero limit deliberately preserves the
+// historical unlimited behavior.
+func readAPIRequestBody(r *http.Request) ([]byte, error) {
+	limit := config.API.MaxRequestBodySize
+	if limit <= 0 {
+		return io.ReadAll(r.Body)
+	}
+	if r.ContentLength > limit {
+		return nil, errAPIRequestBodyTooLarge
+	}
+
+	readLimit := limit
+	if limit < math.MaxInt64 {
+		readLimit++
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, readLimit))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) > limit {
+		return nil, errAPIRequestBodyTooLarge
+	}
+	return body, nil
+}
+
+func apiRequestBodyErrorStatus(err error) int {
+	if errors.Is(err, errAPIRequestBodyTooLarge) {
+		return http.StatusRequestEntityTooLarge
+	}
+	return http.StatusBadRequest
+}
 
 // marshalRedactedSourceConfig serializes a source configuration after replacing
 // secret values and secret-store references in its email envelope. Email
@@ -49,7 +86,7 @@ func handleRequestWithDB(w http.ResponseWriter, r *http.Request, successCode int
 		query, err := extractQueryOrBody(r)
 		defer r.Body.Close() // nolint: errcheck // we don't care about this error code
 		if err != nil {
-			handleErrorAndRespond(w, err, nil, "Invalid query", http.StatusBadRequest, successCode)
+			handleErrorAndRespond(w, err, nil, "Invalid query", apiRequestBodyErrorStatus(err), successCode)
 			return
 		}
 
@@ -117,7 +154,7 @@ func handleErrorAndRespond(w http.ResponseWriter, err error, results interface{}
 // extractQueryOrBody extracts the query parameter for GET requests or the body for POST requests.
 func extractQueryOrBody(r *http.Request) (string, error) {
 	if r.Method == http.MethodPost {
-		bodyBytes, err := io.ReadAll(r.Body)
+		bodyBytes, err := readAPIRequestBody(r)
 		if err != nil {
 			return "", err
 		}
@@ -222,7 +259,7 @@ func extractAPIPluginData(r *http.Request) (interface{}, map[string]interface{},
 		return data, httpCtx, nil
 	}
 
-	bodyBytes, err := io.ReadAll(r.Body)
+	bodyBytes, err := readAPIRequestBody(r)
 	if err != nil {
 		return nil, httpCtx, err
 	}
@@ -305,7 +342,7 @@ func handleNormalAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg.JS
 			err,
 			nil,
 			"Invalid request",
-			http.StatusBadRequest,
+			apiRequestBodyErrorStatus(err),
 			0,
 		)
 		return
@@ -364,7 +401,7 @@ func handleStreamingAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg
 	jsonData, httpCtx, err := extractAPIPluginData(r)
 	defer r.Body.Close() // nolint: errcheck // we don't care about this error code
 	if err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+		handleErrorAndRespond(w, err, nil, "Invalid request", apiRequestBodyErrorStatus(err), 0)
 		return
 	}
 
