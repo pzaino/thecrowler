@@ -26,17 +26,17 @@ alt="OpenSSF Security Best Practices badge"></a> //-->
 ![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/pzaino/thecrowler)
 ![GitHub Tag](https://img.shields.io/github/v/tag/pzaino/thecrowler)
 
-Please consider supporting this project! The CROWler is empowering thousands of users (mostly professionals and enterprises) to build their own content discovery and intelligence based solutions, and it's growing fast. If you want to support the project, you can do it by:
+**Please consider supporting this project!** The CROWler is already empowering thousands of users (mostly professionals and enterprises) to build their own security, content discovery and intelligence based solutions, and it's growing fast. If you want to support the project, you can do it by:
 
 - Clicking the support button on the GitHub page
 - Buying some official merchandise from the [CROWler Merch Store](https://www.redbubble.com/shop/ap/181179394)
 - Contacting the author for consultancies, paid support, or custom development.
 
-<b>Important note</b>: From release 2.0.0, the section `selenium` in the configuration file has been renamed to `vdi`. Please update your configuration file accordingly. The old `selenium` section is no longer supported.
+**Important note:** From release 2.0.0, the section `selenium` in the configuration file has been renamed to `vdi`. Please update your configuration file accordingly. The old `selenium` section is no longer supported.
 
 ## What is it?
 
-The CROWler is a self-hosted, event-driven Content Discovery and Intelligence development platform designed for advanced web, email, APIs (both REST and WebSockets), filesystems, network crawling, scraping, detection, and automation using real browsers, rulesets, plugins, and agents.
+The CROWler is a self-hosted, event-driven Content Discovery and Intelligence development platform designed for advanced web, email, APIs (both REST and WebSockets), filesystems, network, vulnerability crawling, scraping, detection, and automation using real browsers, rulesets, plugins, and agents. Not only that, but the CROWler is also designed to become the core of your own security, content discovery, and intelligence solutions.
 
 **Project status:** Still under active development (WIP). Most components are usable.
 Beta testers welcome. Full [daily progress stats](https://githubtracker.com/pzaino/thecrowler).
