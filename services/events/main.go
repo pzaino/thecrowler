@@ -1153,6 +1153,11 @@ func handleNotification(payload string) {
 	var event cdb.Event
 	mEventsTotalReceived.With(prometheus.Labels{"engine": cmn.GetMicroServiceName()}).Inc()
 	if err := json.Unmarshal([]byte(payload), &event); err == nil {
+		if strings.EqualFold(strings.TrimSpace(event.Type), "crowler_heartbeat") {
+			if _, err := respondToHeartbeat(&dbHandler, event); err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "HEARTBEAT: failed to persist response to %s: %v", event.ID, err)
+			}
+		}
 		if eventsWSHub != nil {
 			eventsWSHub.Broadcast("event", event)
 		}

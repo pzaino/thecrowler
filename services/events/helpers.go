@@ -21,6 +21,10 @@ import (
 var heartbeatMu sync.Mutex
 var activeHeartbeat *HeartbeatState
 
+// createHeartbeatEvent is shared by heartbeat requests and responses. Keeping
+// persistence behind this seam lets focused tests inspect the event without a database.
+var createHeartbeatEvent = cdb.CreateEventWithRetries
+
 var durationUnits = map[string]time.Duration{
 	"s":       time.Second,
 	"sec":     time.Second,
@@ -147,7 +151,7 @@ func startHeartbeat(db *cdb.Handler, config cfg.Config) {
 		},
 	}
 
-	uid, err := cdb.CreateEventWithRetries(db, event)
+	uid, err := createHeartbeatEvent(db, event)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "HEARTBEAT: failed to create event: %v", err)
 		heartbeatMu.Lock()
@@ -160,6 +164,37 @@ func startHeartbeat(db *cdb.Handler, config cfg.Config) {
 
 	// Start timeout watcher
 	go heartbeatTimeoutWatcher(db, state)
+}
+
+// respondToHeartbeat persists this instance's response to an incoming
+// heartbeat. Master selection deliberately belongs to the caller so any
+// instance that receives a heartbeat notification can use this responder.
+func respondToHeartbeat(db *cdb.Handler, heartbeat cdb.Event) (string, error) {
+	if strings.ToLower(strings.TrimSpace(heartbeat.Type)) != "crowler_heartbeat" {
+		return "", fmt.Errorf("cannot respond to event type %q", heartbeat.Type)
+	}
+	if strings.TrimSpace(heartbeat.ID) == "" {
+		return "", fmt.Errorf("cannot respond to heartbeat without an event ID")
+	}
+
+	now := time.Now().Format(time.RFC3339)
+	response := cdb.Event{
+		Type:          "crowler_heartbeat_response",
+		Severity:      "crowler_system_info",
+		Timestamp:     now,
+		CreatedAt:     now,
+		LastUpdatedAt: now,
+		Details: map[string]interface{}{
+			"parent_event_id": heartbeat.ID,
+			"origin_type":     "crowler-events",
+			"origin_name":     cmn.GetMicroServiceName(),
+			"origin_time":     now,
+			"status":          "ok",
+			"type":            "heartbeat_response",
+		},
+	}
+
+	return createHeartbeatEvent(db, response)
 }
 
 func heartbeatTimeoutWatcher(db *cdb.Handler, state *HeartbeatState) {
