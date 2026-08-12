@@ -4,6 +4,18 @@ ADD COLUMN IF NOT EXISTS sub_priority INTEGER DEFAULT 0 NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_sources_priority_sub_priority
 ON Sources(priority, sub_priority DESC, source_id ASC);
 
+-- A Source owns its time-series history. Other provenance references retain
+-- their non-destructive deletion rules.
+ALTER TABLE TimeSeriesObservations
+    DROP CONSTRAINT IF EXISTS timeseriesobservations_source_id_fkey,
+    ADD CONSTRAINT timeseriesobservations_source_id_fkey
+        FOREIGN KEY (source_id) REFERENCES Sources(source_id) ON DELETE CASCADE;
+
+ALTER TABLE TimeSeriesAggregates
+    DROP CONSTRAINT IF EXISTS timeseriesaggregates_source_id_fkey,
+    ADD CONSTRAINT timeseriesaggregates_source_id_fkey
+        FOREIGN KEY (source_id) REFERENCES Sources(source_id) ON DELETE CASCADE;
+
 DROP FUNCTION IF EXISTS update_sources(
     INTEGER,
     VARCHAR,

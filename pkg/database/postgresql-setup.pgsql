@@ -2185,8 +2185,8 @@ CREATE TABLE IF NOT EXISTS TimeSeriesMetrics (
     last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- TimeSeriesObservations is append-only history. Optional references are nulled
--- when operational records are removed so historical measurements survive.
+-- Time-series rows are owned by their Source. Other optional operational
+-- references are nulled when those records are removed so history survives.
 CREATE TABLE IF NOT EXISTS TimeSeriesObservations (
     observation_id BIGSERIAL PRIMARY KEY,
     metric_id BIGINT NOT NULL REFERENCES TimeSeriesMetrics(metric_id) ON DELETE RESTRICT,
@@ -2198,7 +2198,7 @@ CREATE TABLE IF NOT EXISTS TimeSeriesObservations (
     bucket_end TIMESTAMPTZ NOT NULL,
     information_seed_id BIGINT REFERENCES InformationSeed(information_seed_id) ON DELETE SET NULL,
     information_seed_candidate_id BIGINT REFERENCES InformationSeedCandidate(information_seed_candidate_id) ON DELETE SET NULL,
-    source_id BIGINT REFERENCES Sources(source_id) ON DELETE SET NULL,
+    source_id BIGINT REFERENCES Sources(source_id) ON DELETE CASCADE,
     source_information_seed_id BIGINT REFERENCES SourceInformationSeedIndex(source_information_seed_id) ON DELETE SET NULL,
     index_id BIGINT REFERENCES SearchIndex(index_id) ON DELETE SET NULL,
     entity_id BIGINT REFERENCES Entities(entity_id) ON DELETE SET NULL,
@@ -2240,7 +2240,7 @@ CREATE TABLE IF NOT EXISTS TimeSeriesAggregates (
     bucket_end TIMESTAMPTZ NOT NULL,
     information_seed_id BIGINT REFERENCES InformationSeed(information_seed_id) ON DELETE SET NULL,
     information_seed_candidate_id BIGINT REFERENCES InformationSeedCandidate(information_seed_candidate_id) ON DELETE SET NULL,
-    source_id BIGINT REFERENCES Sources(source_id) ON DELETE SET NULL,
+    source_id BIGINT REFERENCES Sources(source_id) ON DELETE CASCADE,
     source_information_seed_id BIGINT REFERENCES SourceInformationSeedIndex(source_information_seed_id) ON DELETE SET NULL,
     index_id BIGINT REFERENCES SearchIndex(index_id) ON DELETE SET NULL,
     entity_id BIGINT REFERENCES Entities(entity_id) ON DELETE SET NULL,

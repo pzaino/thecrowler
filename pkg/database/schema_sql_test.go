@@ -54,7 +54,39 @@ func TestInformationSeedSchemaSQLContainsFreshInstallAndUpgradeCoverage(t *testi
 					t.Fatalf("%s missing schema fragment %q", file, fragment)
 				}
 			}
+			for _, table := range []string{"TimeSeriesObservations", "TimeSeriesAggregates"} {
+				start := strings.Index(upperContent, "CREATE TABLE IF NOT EXISTS "+strings.ToUpper(table))
+				if start < 0 {
+					t.Fatalf("%s missing %s", file, table)
+				}
+				end := strings.Index(upperContent[start:], ");")
+				if end < 0 || !strings.Contains(upperContent[start:start+end], "SOURCE_ID") ||
+					!strings.Contains(upperContent[start:start+end], "REFERENCES SOURCES(SOURCE_ID) ON DELETE CASCADE") {
+					t.Fatalf("%s %s source_id is not owned with ON DELETE CASCADE", file, table)
+				}
+			}
 		})
+	}
+}
+
+func TestTimeSeriesRelease113MigrationsReplaceSourceOwnership(t *testing.T) {
+	t.Parallel()
+	files := []string{
+		"db_migrations/postgresql-migration-v1.13.pgsql",
+		"db_migrations/mysql-migration-v1.13.mysql",
+		"db_migrations/sqlite-migration-v1.13.sqlite3",
+	}
+	for _, file := range files {
+		content, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read %s: %v", file, err)
+		}
+		upper := strings.ToUpper(string(content))
+		for _, table := range []string{"TIMESERIESOBSERVATIONS", "TIMESERIESAGGREGATES"} {
+			if !strings.Contains(upper, table) || !strings.Contains(upper, "REFERENCES SOURCES(SOURCE_ID) ON DELETE CASCADE") {
+				t.Fatalf("%s does not migrate %s source ownership", file, table)
+			}
+		}
 	}
 }
 

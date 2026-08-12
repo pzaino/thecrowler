@@ -756,8 +756,8 @@ CREATE TABLE IF NOT EXISTS TimeSeriesMetrics (
     KEY idx_timeseriesmetrics_enabled (enabled, deleted_at)
 ) ENGINE=InnoDB;
 
--- TimeSeriesObservations is append-only history. Optional references are nulled
--- when operational records are removed so historical measurements survive.
+-- Time-series rows are owned by their Source. Other optional operational
+-- references are nulled when those records are removed so history survives.
 CREATE TABLE IF NOT EXISTS TimeSeriesObservations (
     observation_id BIGINT AUTO_INCREMENT PRIMARY KEY,
     metric_id BIGINT NOT NULL,
@@ -816,7 +816,7 @@ CREATE TABLE IF NOT EXISTS TimeSeriesObservations (
     CONSTRAINT fk_timeseriesobservations_metric FOREIGN KEY (metric_id) REFERENCES TimeSeriesMetrics(metric_id) ON DELETE RESTRICT,
     CONSTRAINT fk_timeseriesobservations_seed FOREIGN KEY (information_seed_id) REFERENCES InformationSeed(information_seed_id) ON DELETE SET NULL,
     CONSTRAINT fk_timeseriesobservations_seed_candidate FOREIGN KEY (information_seed_candidate_id) REFERENCES InformationSeedCandidate(information_seed_candidate_id) ON DELETE SET NULL,
-    CONSTRAINT fk_timeseriesobservations_source FOREIGN KEY (source_id) REFERENCES Sources(source_id) ON DELETE SET NULL,
+    CONSTRAINT fk_timeseriesobservations_source FOREIGN KEY (source_id) REFERENCES Sources(source_id) ON DELETE CASCADE,
     CONSTRAINT fk_timeseriesobservations_source_seed FOREIGN KEY (source_information_seed_id) REFERENCES SourceInformationSeedIndex(source_information_seed_id) ON DELETE SET NULL,
     CONSTRAINT fk_timeseriesobservations_index FOREIGN KEY (index_id) REFERENCES SearchIndex(index_id) ON DELETE SET NULL,
     CONSTRAINT fk_timeseriesobservations_entity FOREIGN KEY (entity_id) REFERENCES Entities(entity_id) ON DELETE SET NULL,
@@ -891,7 +891,7 @@ CREATE TABLE IF NOT EXISTS TimeSeriesAggregates (
     CONSTRAINT fk_timeseriesaggregates_metric FOREIGN KEY (metric_id) REFERENCES TimeSeriesMetrics(metric_id) ON DELETE RESTRICT,
     CONSTRAINT fk_timeseriesaggregates_seed FOREIGN KEY (information_seed_id) REFERENCES InformationSeed(information_seed_id) ON DELETE SET NULL,
     CONSTRAINT fk_timeseriesaggregates_seed_candidate FOREIGN KEY (information_seed_candidate_id) REFERENCES InformationSeedCandidate(information_seed_candidate_id) ON DELETE SET NULL,
-    CONSTRAINT fk_timeseriesaggregates_source FOREIGN KEY (source_id) REFERENCES Sources(source_id) ON DELETE SET NULL,
+    CONSTRAINT fk_timeseriesaggregates_source FOREIGN KEY (source_id) REFERENCES Sources(source_id) ON DELETE CASCADE,
     CONSTRAINT fk_timeseriesaggregates_source_seed FOREIGN KEY (source_information_seed_id) REFERENCES SourceInformationSeedIndex(source_information_seed_id) ON DELETE SET NULL,
     CONSTRAINT fk_timeseriesaggregates_index FOREIGN KEY (index_id) REFERENCES SearchIndex(index_id) ON DELETE SET NULL,
     CONSTRAINT fk_timeseriesaggregates_entity FOREIGN KEY (entity_id) REFERENCES Entities(entity_id) ON DELETE SET NULL,

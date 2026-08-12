@@ -457,6 +457,14 @@ For index-owned artifacts, the resolver starts at `index_id`, follows source own
 
 Lifecycle sources set their native scope directly: seed/candidate IDs, discovery source/link IDs, entity IDs, object IDs/types, and correlation rule/object pairs. Scope columns remain nullable because not every persisted fact belongs to every identity family.
 
+### Historical lifecycle and ownership
+
+Time-series observations are historical records, independent of the operational objects from which their values were extracted. Deleting or replacing a `WebObjects`, `HTTPInfo`, `NetInfo`, or other indexed-artifact row does not delete its observations. The polymorphic `object_type`/`object_id` and `subject_type`/`subject_id` fields are provenance, not lifecycle-owning foreign keys; other optional operational references retain their non-destructive behavior.
+
+`Source` is the deliberate ownership boundary. Deleting a source cascades to all of that source's `TimeSeriesObservations` and materialized `TimeSeriesAggregates`, without affecting observations owned by another source even when both describe the same underlying artifact.
+
+Age-based cleanup is separate from ownership cleanup. Use `PruneTimeSeriesRetention` directly, or invoke it from an operational janitor process, to enforce raw and aggregate retention policies without deleting the source.
+
 Entity assignment is **immediate** when the resolver can see an `EntityMemberships` row as the observation is emitted. It is **delayed** when membership is persisted later. `BackfillObservationEntities`/`RunEntityObservationBackfillJob` fill only missing `entity_id` values by object identity, preserve existing confidence, append membership evidence to provenance, and report the affected observed-time range. Existing entity assignments are never overwritten.
 
 ## Aggregation, late data, reaggregation, and retention
