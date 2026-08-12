@@ -273,12 +273,12 @@ func main() {
 
 	config.Events.MasterEventsManager = strings.ToLower(strings.TrimSpace(config.Events.MasterEventsManager))
 
+	notifyTimeout := parseDuration(config.Events.HeartbeatTimeout)
+
 	// Start the event janitor (cleans up expired events from the DB)
 	if instance == config.Events.MasterEventsManager {
 		// We are on the Master Instance, start the events janitor
 		go startEventJanitor(&dbHandler, time.Minute, config)
-
-		notifyTimeout := parseDuration(config.Events.HeartbeatTimeout)
 
 		// Start the event listener (on a separate go routine)
 		go cdb.ListenForEvents(&dbHandler, handleNotification, notifyTimeout)
@@ -297,6 +297,10 @@ func main() {
 		if config.Events.HeartbeatEnabled {
 			go startHeartbeatLoop(&dbHandler, config)
 		}
+	} else {
+		// Replicas listen only so they can answer heartbeat requests. Their
+		// callback deliberately ignores every other event type.
+		go cdb.ListenForEvents(&dbHandler, handleReplicaNotification, notifyTimeout)
 	}
 
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Starting server on %s:%d", config.Events.Host, config.Events.Port)
@@ -1170,6 +1174,31 @@ func handleNotification(payload string) {
 	} else {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to decode notification: %v", err)
 		mEventsTotalDropped.With(prometheus.Labels{"engine": cmn.GetMicroServiceName()}).Inc()
+	}
+}
+
+var replicaHeartbeatResponder = func(event cdb.Event) error {
+	_, err := respondToHeartbeat(&dbHandler, event)
+	return err
+}
+
+// handleReplicaNotification accepts only heartbeat requests. Replica listeners
+// must never feed the master event-processing paths.
+func handleReplicaNotification(payload string) {
+	var event cdb.Event
+	if err := json.Unmarshal([]byte(payload), &event); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Failed to decode replica notification: %v", err)
+		return
+	}
+
+	switch strings.ToLower(strings.TrimSpace(event.Type)) {
+	case "crowler_heartbeat":
+		if err := replicaHeartbeatResponder(event); err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "HEARTBEAT: replica failed to persist response to %s: %v", event.ID, err)
+		}
+		return
+	default:
+		return
 	}
 }
 
