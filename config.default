@@ -35,7 +35,7 @@ database:
   sslmode: disable
   # Optimize for workload pattern: write | query | none | "" – pick for workload pattern
   optimize_for: write
-  # Max open connections (≥25)
+  # Max open connections (≥25) (to use max_conns and max_idle_conns, set `optimize_for` to "none")
   max_conns: 50
   # Idle pool size (≥25; ~25–30% of max_conns is typical)
   max_idle_conns: 30
