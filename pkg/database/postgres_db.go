@@ -86,7 +86,7 @@ func (handler *PostgresHandler) Connect(c cfg.Config) error {
 	}
 
 	// Set connection parameters (open and idle connections)
-	mxConns, mxIdleConns := determineConnectionLimits(c)
+	mxConns, mxIdleConns := DetermineConnectionLimits(c)
 	//handler.db.SetConnMaxLifetime(time.Minute * 5)
 	handler.db.SetConnMaxLifetime(90 * time.Second)
 	handler.db.SetConnMaxIdleTime(30 * time.Second)
@@ -98,6 +98,12 @@ func (handler *PostgresHandler) Connect(c cfg.Config) error {
 
 // determineConnectionLimits calculates connection limits based on config
 func determineConnectionLimits(c cfg.Config) (int, int) {
+	return DetermineConnectionLimits(c)
+}
+
+// DetermineConnectionLimits calculates the PostgreSQL pool limits from config.
+// It is shared by pool initialization and fleet budget coordination.
+func DetermineConnectionLimits(c cfg.Config) (int, int) {
 	// Safe defaults per engine
 	mxConns := 8
 	mxIdleConns := 2
