@@ -133,6 +133,14 @@ func DetermineConnectionLimits(c cfg.Config) (int, int) {
 	return mxConns, mxIdleConns
 }
 
+// ResolveEffectiveMaxOpenConnections returns the maximum-open setting which
+// PostgreSQL pool initialization will actually apply. Fleet coordinators must
+// use this resolver rather than interpreting configuration independently.
+func ResolveEffectiveMaxOpenConnections(c cfg.Config) int {
+	maximum, _ := DetermineConnectionLimits(c)
+	return maximum
+}
+
 func buildConnectionString(c cfg.Config) string {
 	var dbPort int
 	if c.Database.Port == 0 {

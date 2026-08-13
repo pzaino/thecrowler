@@ -29,16 +29,16 @@ type HeartbeatState struct {
 	ParentID  string
 	SentAt    time.Time
 	Timeout   time.Duration
-	Responses map[string]cdb.Event // keyed by agent or source
+	Responses map[cdb.FleetMember]cdb.Event // keyed by the complete responder identity
 	DoneChan  chan struct{}
 }
 
 // HeartbeatReport is the structure of the heartbeat report.
 type HeartbeatReport struct {
-	ParentID   string      `json:"parent_id"`
-	Total      int         `json:"total"`
-	Responders []string    `json:"responders"`
-	Raw        []cdb.Event `json:"raw_responses"`
+	ParentID   string            `json:"parent_id"`
+	Total      int               `json:"total"`
+	Responders []cdb.FleetMember `json:"responders"`
+	Raw        []cdb.Event       `json:"raw_responses"`
 }
 
 // ScheduleEventRequest represents a request to schedule an event.

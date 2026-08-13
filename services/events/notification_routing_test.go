@@ -225,7 +225,7 @@ func TestMasterHeartbeatResponseRetainsAggregationInterception(t *testing.T) {
 
 	heartbeatMu.Lock()
 	oldActive := activeHeartbeat
-	activeHeartbeat = &HeartbeatState{ParentID: "active-parent", Responses: make(map[string]cdb.Event)}
+	activeHeartbeat = &HeartbeatState{ParentID: "active-parent", Responses: make(map[cdb.FleetMember]cdb.Event)}
 	heartbeatMu.Unlock()
 	t.Cleanup(func() {
 		heartbeatMu.Lock()
@@ -234,7 +234,7 @@ func TestMasterHeartbeatResponseRetainsAggregationInterception(t *testing.T) {
 	})
 
 	event := cdb.Event{ID: "response-id", Type: "crowler_heartbeat_response", Details: map[string]interface{}{
-		"parent_event_id": "active-parent", "origin_name": "crowler-events-1",
+		"parent_event_id": "active-parent", "origin_type": "crowler-events", "origin_name": "crowler-events-1",
 	}}
 	handleNotification(eventPayload(t, event))
 	if len(dispatched) != 1 {
@@ -244,7 +244,7 @@ func TestMasterHeartbeatResponseRetainsAggregationInterception(t *testing.T) {
 		t.Fatal("active heartbeat response was not intercepted")
 	}
 	heartbeatMu.Lock()
-	got := activeHeartbeat.Responses["crowler-events-1"]
+	got := activeHeartbeat.Responses[cdb.FleetMember{OriginType: "crowler-events", OriginName: "crowler-events-1"}]
 	heartbeatMu.Unlock()
 	if got.ID != event.ID {
 		t.Errorf("aggregated response ID = %q, want %q", got.ID, event.ID)

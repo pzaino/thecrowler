@@ -67,7 +67,7 @@ func NormalizeFleetMembers(members []FleetMember) []FleetMember {
 	for _, member := range members {
 		member.OriginType = strings.ToLower(strings.TrimSpace(member.OriginType))
 		member.OriginName = strings.TrimSpace(member.OriginName)
-		if !recognizedFleetMemberType(member.OriginType) {
+		if member.OriginName == "" || !recognizedFleetMemberType(member.OriginType) {
 			continue
 		}
 		unique[member] = struct{}{}
