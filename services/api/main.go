@@ -129,8 +129,14 @@ func initAll(configFile *string, config *cfg.Config, lmt **rate.Limiter) error {
 	}
 	*lmt = rate.NewLimiter(rate.Limit(rl), bl)
 
-	// Set the database semaphore
-	dbAdmission = newDBAdmissionGate(config.Database.MaxConns - 3)
+	// Configure database admission. Heartbeats are the existing switch for
+	// dynamic fleet budgeting; no separate API setting is needed.
+	configureAPIQuota(*config)
+	if config.Events.HeartbeatEnabled {
+		dbAdmission = newDBAdmissionGate(1)
+	} else {
+		dbAdmission = newDBAdmissionGate(config.Database.MaxConns - 3)
+	}
 
 	// Initialize the database
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Initializing database connection...")
@@ -147,6 +153,9 @@ func initAll(configFile *string, config *cfg.Config, lmt **rate.Limiter) error {
 				continue
 			}
 			connected = true
+		}
+		if err = applyAPIQuotaAfterConnect(*config); err != nil {
+			return fmt.Errorf("apply API database quota: %w", err)
 		}
 		cmn.DebugMsg(cmn.DbgLvlInfo, "Database connection established")
 	}
@@ -389,6 +398,9 @@ func handleNotification(payload string) {
 	case "crowler_heartbeat":
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "API: Received event of type '%s'", eventType)
 		processHeartbeatEvent(event)
+	case "crowler_heartbeat_report":
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "API: Received event of type '%s'", eventType)
+		processHeartbeatReport(event)
 	default:
 		if apiWSHub != nil {
 			apiWSHub.Broadcast("event", event)
