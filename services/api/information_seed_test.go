@@ -157,7 +157,7 @@ func TestInformationSeedAddHandlerValidRequest(t *testing.T) {
 	handler, cleanup := setupInformationSeedAPITestDB(t)
 	defer cleanup()
 	dbHandler = handler
-	dbSemaphore = make(chan struct{}, 1)
+	dbAdmission = newDBAdmissionGate(1)
 
 	body := []byte(`{"information_seed":"api add seed","category_id":4,"user_id":9,"priority":"high","config":{"providers":["public_json"],"max_candidates":3}}`)
 	withAPIRequestBodyLimit(t, int64(len(body)))
@@ -183,7 +183,7 @@ func TestInformationSeedAddHandlerRejectsOversizedBodies(t *testing.T) {
 	handler, cleanup := setupInformationSeedAPITestDB(t)
 	defer cleanup()
 	dbHandler = handler
-	dbSemaphore = make(chan struct{}, 1)
+	dbAdmission = newDBAdmissionGate(1)
 	withAPIRequestBodyLimit(t, 8)
 
 	for _, unknownLength := range []bool{false, true} {
@@ -214,7 +214,7 @@ func TestInformationSeedAddHandlerInvalidRequests(t *testing.T) {
 	handler, cleanup := setupInformationSeedAPITestDB(t)
 	defer cleanup()
 	dbHandler = handler
-	dbSemaphore = make(chan struct{}, 1)
+	dbAdmission = newDBAdmissionGate(1)
 
 	tests := []struct {
 		name string
@@ -240,7 +240,7 @@ func TestInformationSeedStatusHandlerLookup(t *testing.T) {
 	handler, cleanup := setupInformationSeedAPITestDB(t)
 	defer cleanup()
 	dbHandler = handler
-	dbSemaphore = make(chan struct{}, 1)
+	dbAdmission = newDBAdmissionGate(1)
 
 	seedID := createInformationSeedAPITestSeed(t, &handler, "status api", "pending", "normal", 5, 6, false)
 	rec := httptest.NewRecorder()
@@ -279,7 +279,7 @@ func TestInformationSeedHyphenatedListAlias(t *testing.T) {
 	config.API.EnableAPIDocs = false
 	config.API.Plugins.Enabled = false
 	dbHandler = handler
-	dbSemaphore = make(chan struct{}, 1)
+	dbAdmission = newDBAdmissionGate(1)
 	t.Cleanup(func() {
 		cleanup()
 		http.DefaultServeMux = oldMux
@@ -310,7 +310,7 @@ func TestInformationSeedListHandlerFiltersAndPagination(t *testing.T) {
 	handler, cleanup := setupInformationSeedAPITestDB(t)
 	defer cleanup()
 	dbHandler = handler
-	dbSemaphore = make(chan struct{}, 1)
+	dbAdmission = newDBAdmissionGate(1)
 
 	seedOne := createInformationSeedAPITestSeed(t, &handler, "first", "pending", "high", 2, 20, false)
 	createInformationSeedAPITestSeed(t, &handler, "second", "pending", "high", 2, 20, true)
@@ -342,7 +342,7 @@ func TestInformationSeedListHandlerBadFilters(t *testing.T) {
 	handler, cleanup := setupInformationSeedAPITestDB(t)
 	defer cleanup()
 	dbHandler = handler
-	dbSemaphore = make(chan struct{}, 1)
+	dbAdmission = newDBAdmissionGate(1)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/information_seed/list?disabled=maybe", nil)
@@ -356,7 +356,7 @@ func TestInformationSeedSourcesHandlerSuccessNotFoundAndPagination(t *testing.T)
 	handler, cleanup := setupInformationSeedAPITestDB(t)
 	defer cleanup()
 	dbHandler = handler
-	dbSemaphore = make(chan struct{}, 1)
+	dbAdmission = newDBAdmissionGate(1)
 
 	seedID := createInformationSeedAPITestSeed(t, &handler, "with sources", "pending", "high", 2, 20, false)
 	sourceOne := insertInformationSeedAPITestSource(t, handler.(*informationSeedAPITestHandler).db, "https://api-one.example", "api one")
@@ -403,7 +403,7 @@ func TestInformationSeedCandidateDecisionsHandlerSuccess(t *testing.T) {
 	handler, cleanup := setupInformationSeedAPITestDB(t)
 	defer cleanup()
 	dbHandler = handler
-	dbSemaphore = make(chan struct{}, 1)
+	dbAdmission = newDBAdmissionGate(1)
 
 	seedID := createInformationSeedAPITestSeed(t, &handler, "candidate api", "pending", "high", 2, 20, false)
 	if err := cdb.UpsertInformationSeedCandidateDecisions(&handler, []cdb.InformationSeedCandidate{{InformationSeedID: seedID, NormalizedURL: "https://candidate.example/", Host: "candidate.example", Provider: "unit", Query: "seed", Rank: 1, Score: 0.8, DecisionStatus: cdb.InformationSeedCandidateDecisionAccepted, RunAttempt: 1}}); err != nil {
@@ -429,7 +429,7 @@ func TestInformationSeedPathLifecycleHandlers(t *testing.T) {
 	handler, cleanup := setupInformationSeedAPITestDB(t)
 	defer cleanup()
 	dbHandler = handler
-	dbSemaphore = make(chan struct{}, 1)
+	dbAdmission = newDBAdmissionGate(1)
 
 	seedID := createInformationSeedAPITestSeed(t, &handler, "path lifecycle", "completed", "high", 2, 20, false)
 	rec := httptest.NewRecorder()
@@ -477,7 +477,7 @@ func TestInformationSeedEventsHandlerPagination(t *testing.T) {
 	handler, cleanup := setupInformationSeedAPITestDB(t)
 	defer cleanup()
 	dbHandler = handler
-	dbSemaphore = make(chan struct{}, 1)
+	dbAdmission = newDBAdmissionGate(1)
 
 	seedID := createInformationSeedAPITestSeed(t, &handler, "events api", "completed", "", 0, 0, false)
 	otherID := createInformationSeedAPITestSeed(t, &handler, "other events api", "completed", "", 0, 0, false)
@@ -513,7 +513,7 @@ func TestInformationSeedEndToEndTyrellProviderPluginAndAPIs(t *testing.T) {
 	oldLimiter := limiter
 	oldConfig := config
 	oldDBHandler := dbHandler
-	oldDBSemaphore := dbSemaphore
+	oldDBSemaphore := dbAdmission
 	oldSysReady := getSysReady()
 
 	handler, cleanup := setupInformationSeedAPITestDB(t)
@@ -563,7 +563,7 @@ func TestInformationSeedEndToEndTyrellProviderPluginAndAPIs(t *testing.T) {
 		},
 	}
 	dbHandler = handler
-	dbSemaphore = make(chan struct{}, 1)
+	dbAdmission = newDBAdmissionGate(1)
 	setSysReady(2)
 	t.Cleanup(func() {
 		cleanup()
@@ -571,7 +571,7 @@ func TestInformationSeedEndToEndTyrellProviderPluginAndAPIs(t *testing.T) {
 		limiter = oldLimiter
 		config = oldConfig
 		dbHandler = oldDBHandler
-		dbSemaphore = oldDBSemaphore
+		dbAdmission = oldDBSemaphore
 		setSysReady(oldSysReady)
 	})
 
@@ -1043,7 +1043,7 @@ func TestInformationSeedDiagnosticsHandlerRedactsSecrets(t *testing.T) {
 	handler, cleanup := setupInformationSeedAPITestDB(t)
 	defer cleanup()
 	dbHandler = handler
-	dbSemaphore = make(chan struct{}, 1)
+	dbAdmission = newDBAdmissionGate(1)
 
 	seedID := createInformationSeedAPITestSeed(t, &handler, "diagnostics api", "completed", "", 0, 0, false)
 	db := handler.(*informationSeedAPITestHandler).db

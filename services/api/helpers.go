@@ -81,26 +81,21 @@ func marshalRedactedSourceConfig(sourceConfig cfg.SourceConfig) ([]byte, error) 
 }
 
 func handleRequestWithDB(w http.ResponseWriter, r *http.Request, successCode int, action func(string, int, *cdb.Handler) (interface{}, error)) {
-	select {
-	case dbSemaphore <- struct{}{}:
-		defer func() { <-dbSemaphore }()
-
-		query, err := extractQueryOrBody(r)
-		defer r.Body.Close() // nolint: errcheck // we don't care about this error code
-		if err != nil {
-			handleErrorAndRespond(w, err, nil, "Invalid query", apiRequestBodyErrorStatus(err), successCode)
-			return
-		}
-
-		results, err := action(query, getQTypeFromName(r.Method), &dbHandler)
-		handleErrorAndRespond(w, err, results, "Error performing action: %v", http.StatusInternalServerError, successCode)
-
-	case <-time.After(5 * time.Second):
-		healthStatus := HealthCheck{
-			Status: "DB is overloaded, please try again later",
-		}
-		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+	if !acquireDBAdmission(w, false) {
+		return
 	}
+	defer dbAdmission.Release()
+
+	query, err := extractQueryOrBody(r)
+	defer r.Body.Close() // nolint: errcheck // we don't care about this error code
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Invalid query", apiRequestBodyErrorStatus(err), successCode)
+		return
+	}
+
+	results, err := action(query, getQTypeFromName(r.Method), &dbHandler)
+	handleErrorAndRespond(w, err, results, "Error performing action: %v", http.StatusInternalServerError, successCode)
+
 }
 
 // handleErrorAndRespond encapsulates common error handling and JSON response logic.

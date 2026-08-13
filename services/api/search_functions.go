@@ -447,37 +447,33 @@ func executeObjectAttributeSearch(ctx context.Context, query SearchFunctionQuery
 }
 
 func handleSearchFunctionEndpoint(w http.ResponseWriter, r *http.Request, kind, templateKind, searchParam string, executor searchFunctionExecutor) {
-	select {
-	case dbSemaphore <- struct{}{}:
-		defer func() { <-dbSemaphore }()
-
-		query, err := parseSearchFunctionQuery(r)
-		defer r.Body.Close() //nolint:errcheck // best-effort cleanup after optional POST body parsing
-		if err != nil {
-			totalErrors.Add(1)
-			handleErrorAndRespond(w, err, nil, "Invalid search-function request: %v", http.StatusBadRequest, http.StatusOK)
-			return
-		}
-
-		items, err := executor(r.Context(), query, &dbHandler)
-		if err != nil {
-			totalErrors.Add(1)
-			errCode := http.StatusInternalServerError
-			if isSearchFunctionBadRequest(err) {
-				errCode = http.StatusBadRequest
-			}
-			handleErrorAndRespond(w, err, nil, "Error performing search-function request: %v", errCode, http.StatusOK)
-			return
-		}
-
-		response := newSearchFunctionResponse(kind, templateKind, r.Method, query, searchParam, items)
-		totalSuccess.Add(1)
-		handleErrorAndRespond(w, nil, response, "", http.StatusInternalServerError, http.StatusOK)
-	case <-time.After(5 * time.Second):
-		totalErrors.Add(1)
-		healthStatus := HealthCheck{Status: "DB is overloaded, please try again later"}
-		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+	if !acquireDBAdmission(w, true) {
+		return
 	}
+	defer dbAdmission.Release()
+
+	query, err := parseSearchFunctionQuery(r)
+	defer r.Body.Close() //nolint:errcheck // best-effort cleanup after optional POST body parsing
+	if err != nil {
+		totalErrors.Add(1)
+		handleErrorAndRespond(w, err, nil, "Invalid search-function request: %v", http.StatusBadRequest, http.StatusOK)
+		return
+	}
+
+	items, err := executor(r.Context(), query, &dbHandler)
+	if err != nil {
+		totalErrors.Add(1)
+		errCode := http.StatusInternalServerError
+		if isSearchFunctionBadRequest(err) {
+			errCode = http.StatusBadRequest
+		}
+		handleErrorAndRespond(w, err, nil, "Error performing search-function request: %v", errCode, http.StatusOK)
+		return
+	}
+
+	response := newSearchFunctionResponse(kind, templateKind, r.Method, query, searchParam, items)
+	totalSuccess.Add(1)
+	handleErrorAndRespond(w, nil, response, "", http.StatusInternalServerError, http.StatusOK)
 }
 
 func parseSearchFunctionQuery(r *http.Request) (SearchFunctionQuery, error) {

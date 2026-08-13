@@ -18,17 +18,17 @@ import (
 
 func TestSourceHandlersValidateEmailRequests(t *testing.T) {
 	oldDBHandler := dbHandler
-	oldDBSemaphore := dbSemaphore
+	oldDBSemaphore := dbAdmission
 	t.Cleanup(func() {
 		dbHandler = oldDBHandler
-		dbSemaphore = oldDBSemaphore
+		dbAdmission = oldDBSemaphore
 	})
 
 	t.Run("create accepts valid email source", func(t *testing.T) {
 		handler, cleanup := setupSourceAPITestDB(t)
 		defer cleanup()
 		dbHandler = handler
-		dbSemaphore = make(chan struct{}, 1)
+		dbAdmission = newDBAdmissionGate(1)
 
 		recorder := httptest.NewRecorder()
 		request := httptest.NewRequest(http.MethodPost, "/v1/source/add", strings.NewReader(emailSourceRequest("imap", "imaps://mail.example.test", "")))
@@ -51,7 +51,7 @@ func TestSourceHandlersValidateEmailRequests(t *testing.T) {
 	})
 
 	t.Run("create rejects invalid email source", func(t *testing.T) {
-		dbSemaphore = make(chan struct{}, 1)
+		dbAdmission = newDBAdmissionGate(1)
 		recorder := httptest.NewRecorder()
 		request := httptest.NewRequest(http.MethodPost, "/v1/source/add", strings.NewReader(emailSourceRequest("smtp", "smtp://mail.example.test", "")))
 		addSourceHandler(recorder, request)
@@ -66,7 +66,7 @@ func TestSourceHandlersValidateEmailRequests(t *testing.T) {
 		}
 		defer db.Close()
 		dbHandler = &sourceAPITestHandler{db: db}
-		dbSemaphore = make(chan struct{}, 1)
+		dbAdmission = newDBAdmissionGate(1)
 
 		mock.ExpectQuery(`SELECT url, sub_priority, status, restricted, disabled, flags, config, details`).
 			WithArgs(int64(41)).
@@ -91,7 +91,7 @@ func TestSourceHandlersValidateEmailRequests(t *testing.T) {
 
 	t.Run("update rejects invalid email source before database access", func(t *testing.T) {
 		dbHandler = nil
-		dbSemaphore = make(chan struct{}, 1)
+		dbAdmission = newDBAdmissionGate(1)
 		body := `{"source_id":41,"config":` + emailSourceConfig("smtp", "smtp://mail.example.test", "") + `}`
 		recorder := httptest.NewRecorder()
 		request := httptest.NewRequest(http.MethodPost, "/v1/source/update", strings.NewReader(body))
@@ -102,7 +102,7 @@ func TestSourceHandlersValidateEmailRequests(t *testing.T) {
 
 	t.Run("validation response redacts request secrets", func(t *testing.T) {
 		dbHandler = nil
-		dbSemaphore = make(chan struct{}, 1)
+		dbAdmission = newDBAdmissionGate(1)
 		const secret = "SHOULD_NOT_LEAK"
 		recorder := httptest.NewRecorder()
 		request := httptest.NewRequest(http.MethodPost, "/v1/source/add", strings.NewReader(emailSourceRequest("smtp", "smtp://mail.example.test", secret)))
@@ -130,7 +130,7 @@ func TestUpdateSourceSubPriorityPresence(t *testing.T) {
 			handler, cleanup := setupSourceAPITestDB(t)
 			defer cleanup()
 			dbHandler = handler
-			dbSemaphore = make(chan struct{}, 1)
+			dbAdmission = newDBAdmissionGate(1)
 
 			_, err := handler.(*sourceAPITestHandler).db.Exec(`
 				INSERT INTO Sources (source_id, source_uid, url, sub_priority, details)

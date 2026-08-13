@@ -213,9 +213,9 @@ func TestAPIPluginUnlimitedModeDoesNotApplyApplicationCeiling(t *testing.T) {
 }
 
 func TestStandardPOSTRouteRequestBodyLimit(t *testing.T) {
-	oldSemaphore := dbSemaphore
-	dbSemaphore = make(chan struct{}, 1)
-	t.Cleanup(func() { dbSemaphore = oldSemaphore })
+	oldSemaphore := dbAdmission
+	dbAdmission = newDBAdmissionGate(1)
+	t.Cleanup(func() { dbAdmission = oldSemaphore })
 
 	for _, tc := range []struct {
 		name          string
@@ -260,9 +260,9 @@ func TestStandardPOSTRouteRequestBodyLimit(t *testing.T) {
 }
 
 func TestInformationSeedLifecycleBodyLimit(t *testing.T) {
-	oldSemaphore := dbSemaphore
-	dbSemaphore = make(chan struct{}, 1)
-	t.Cleanup(func() { dbSemaphore = oldSemaphore })
+	oldSemaphore := dbAdmission
+	dbAdmission = newDBAdmissionGate(1)
+	t.Cleanup(func() { dbAdmission = oldSemaphore })
 	withAPIRequestBodyLimit(t, 5)
 
 	for _, tc := range []struct {
