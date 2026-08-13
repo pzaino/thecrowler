@@ -45,6 +45,35 @@ type PostgresHandler struct {
 	connStr string
 }
 
+// SetConnectionLimits adjusts the existing PostgreSQL connection pool. The
+// database/sql package naturally closes excess idle connections and lets busy
+// connections converge to a lowered limit as they are returned to the pool.
+func (handler *PostgresHandler) SetConnectionLimits(maxOpen, maxIdle int) error {
+	if maxOpen <= 0 {
+		return fmt.Errorf("maximum open connections must be greater than zero: %d", maxOpen)
+	}
+	if handler == nil || handler.db == nil {
+		return fmt.Errorf("cannot set connection limits: PostgreSQL connection pool is not initialized")
+	}
+	if maxIdle < 0 {
+		maxIdle = 0
+	}
+	if maxIdle > maxOpen {
+		maxIdle = maxOpen
+	}
+	handler.db.SetMaxOpenConns(maxOpen)
+	handler.db.SetMaxIdleConns(maxIdle)
+	return nil
+}
+
+// ConnectionStats returns statistics for the existing PostgreSQL pool.
+func (handler *PostgresHandler) ConnectionStats() sql.DBStats {
+	if handler == nil || handler.db == nil {
+		return sql.DBStats{}
+	}
+	return handler.db.Stats()
+}
+
 // Connect connects to the database
 func (handler *PostgresHandler) Connect(c cfg.Config) error {
 	connectionString := buildConnectionString(c)
