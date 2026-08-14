@@ -161,5 +161,5 @@ require (
 	github.com/andybalholm/cascadia v1.3.4 // indirect
 	github.com/blang/semver v3.5.1+incompatible // indirect
 	golang.org/x/net v0.57.0
-	golang.org/x/text v0.40.0
+	golang.org/x/text v0.41.0
 )
