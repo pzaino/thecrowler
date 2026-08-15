@@ -562,6 +562,7 @@ func initAll(configFile *string, config *cfg.Config, lmt **rate.Limiter) error {
 
 	// Initialize the database
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Initializing database...")
+	configureEventsQuota(*config)
 	connected := false
 	dbHandler, err = cdb.NewHandler(*config)
 	if err != nil {
@@ -575,6 +576,9 @@ func initAll(configFile *string, config *cfg.Config, lmt **rate.Limiter) error {
 				continue
 			}
 			connected = true
+		}
+		if err = applyEventsQuotaAfterConnect(*config); err != nil {
+			return fmt.Errorf("apply Events database quota: %w", err)
 		}
 		cmn.DebugMsg(cmn.DbgLvlInfo, "Database connection established")
 	}
@@ -1188,6 +1192,10 @@ func handleNotification(payload string) {
 	var event cdb.Event
 	mEventsTotalReceived.With(prometheus.Labels{"engine": cmn.GetMicroServiceName()}).Inc()
 	if err := json.Unmarshal([]byte(payload), &event); err == nil {
+		if strings.EqualFold(strings.TrimSpace(event.Type), "crowler_heartbeat_report") {
+			processEventsHeartbeatReport(event)
+			return
+		}
 		if strings.EqualFold(strings.TrimSpace(event.Type), "crowler_heartbeat") {
 			if _, err := respondToHeartbeat(&dbHandler, event); err != nil {
 				cmn.DebugMsg(cmn.DbgLvlError, "HEARTBEAT: failed to persist response to %s: %v", event.ID, err)
@@ -1213,7 +1221,7 @@ var replicaHeartbeatResponder = func(event cdb.Event) error {
 	return err
 }
 
-// handleReplicaNotification accepts only heartbeat requests. Replica listeners
+// handleReplicaNotification accepts only fleet-control heartbeat traffic. Replica listeners
 // must never feed the master event-processing paths.
 func handleReplicaNotification(payload string) {
 	var event cdb.Event
@@ -1227,6 +1235,9 @@ func handleReplicaNotification(payload string) {
 		if err := replicaHeartbeatResponder(event); err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "HEARTBEAT: replica failed to persist response to %s: %v", event.ID, err)
 		}
+		return
+	case "crowler_heartbeat_report":
+		processEventsHeartbeatReport(event)
 		return
 	default:
 		return

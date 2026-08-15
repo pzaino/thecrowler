@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"testing"
+	"time"
 
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 )
@@ -67,6 +68,25 @@ func TestMasterAndReplicaOrdinaryNotificationRouting(t *testing.T) {
 	}
 	if after := queueState(); after != before {
 		t.Errorf("worker queue state changed from %v to %v", before, after)
+	}
+}
+
+func TestMasterAndReplicaReportsBypassNormalRouting(t *testing.T) {
+	t.Setenv("MICROSERVICE_NAME", "events-routing")
+	normalCalls, heartbeatCalls, _ := installNotificationObservers(t)
+	calls := installEventsQuotaTest(t, true, 10, 5)
+	details := eventsQuotaDetails(t, "routing-round", time.Now().UTC(),
+		cdb.FleetMemberAllocation{OriginType: cdb.FleetMemberCrowlerEvents, OriginName: "events-routing", MaxConnections: 2})
+	payload := eventPayload(t, cdb.Event{Type: "crowler_heartbeat_report", Details: details})
+	handleNotification(payload)
+	if *normalCalls != 0 || *heartbeatCalls != 0 || len(*calls) != 1 {
+		t.Fatalf("master report routing: normal=%d heartbeat=%d quota=%v", *normalCalls, *heartbeatCalls, *calls)
+	}
+	// The same report is a duplicate at the replica listener, but is still
+	// consumed locally and never admitted to master-owned processing.
+	handleReplicaNotification(payload)
+	if *normalCalls != 0 || *heartbeatCalls != 0 || len(*calls) != 1 {
+		t.Fatalf("replica report routing: normal=%d heartbeat=%d quota=%v", *normalCalls, *heartbeatCalls, *calls)
 	}
 }
 

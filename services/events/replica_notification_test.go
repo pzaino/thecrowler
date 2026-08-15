@@ -55,7 +55,6 @@ func TestHandleReplicaNotificationIgnoresAllOtherEventCategories(t *testing.T) {
 		{name: "application dispatch", eventType: "source_created"},
 		{name: "plugin execution", eventType: "plugin_event"},
 		{name: "agent execution", eventType: "agent_event"},
-		{name: "future heartbeat report", eventType: "crowler_heartbeat_report"},
 		{name: "unknown", eventType: "unexpected_event_type"},
 	}
 	for _, test := range tests {
