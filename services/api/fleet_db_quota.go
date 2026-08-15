@@ -28,6 +28,10 @@ type apiDBQuotaState struct {
 
 var apiDBQuota apiDBQuotaState
 
+// Kept behind a variable so quota transitions can be tested without opening a
+// database connection.
+var setAPIConnectionLimits = cdb.SetConnectionLimits
+
 func configureAPIQuota(c cfg.Config) {
 	_, maxIdle := cdb.DetermineConnectionLimits(c)
 	apiDBQuota.mu.Lock()
@@ -60,7 +64,7 @@ func applyAPIQuotaLocked(quota int) error {
 	if idle > quota {
 		idle = quota
 	}
-	if err := cdb.SetConnectionLimits(&dbHandler, quota, idle); err != nil {
+	if err := setAPIConnectionLimits(&dbHandler, quota, idle); err != nil {
 		return err
 	}
 	dbAdmission.SetLimit(quota)

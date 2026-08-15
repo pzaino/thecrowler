@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -272,9 +273,17 @@ func finishHeartbeatState(state *HeartbeatState) HeartbeatReport {
 
 	const running = "running"
 
-	for k, v := range state.Responses {
+	for k := range state.Responses {
 		names = append(names, k)
-		res = append(res, v)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		if names[i].OriginType != names[j].OriginType {
+			return names[i].OriginType < names[j].OriginType
+		}
+		return names[i].OriginName < names[j].OriginName
+	})
+	for _, identity := range names {
+		res = append(res, state.Responses[identity])
 	}
 
 	// Update the active_fleet_nodes metric
