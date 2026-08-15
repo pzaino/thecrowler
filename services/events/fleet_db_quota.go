@@ -26,6 +26,7 @@ type eventsDBQuotaState struct {
 }
 
 var eventsDBQuota eventsDBQuotaState
+var eventsDBMetrics = cdb.NewFleetDBMetrics(cdb.FleetMemberCrowlerEvents, cmn.GetMicroServiceName())
 
 // This narrow seam keeps pool policy testable without weakening the database
 // package's runtime pool-controller contract.
@@ -109,13 +110,18 @@ func processEventsHeartbeatReport(event cdb.Event) {
 		(generated.Equal(eventsDBQuota.lastGeneratedAt) && report.ParentEventID <= eventsDBQuota.lastParentEventID) {
 		return
 	}
+	previous := eventsDBQuota.quota
 	if err := applyEventsQuotaLocked(quota); err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "EVENTS: failed to apply heartbeat quota: %v", err)
 		return
 	}
+	eventsDBMetrics.ApplyReport(quota, report)
 	eventsDBQuota.lastGeneratedAt = generated
 	eventsDBQuota.lastParentEventID = report.ParentEventID
 	eventsDBQuota.hasValidReport = true
+	if previous != quota {
+		cmn.DebugMsg(cmn.DbgLvlInfo, "database quota changed service_type=%s instance=%s previous_quota=%d new_quota=%d fleet_members=%d effective_max=%d usable_fleet_capacity=%d heartbeat_parent_id=%s report_generated_at=%s", cdb.FleetMemberCrowlerEvents, localName, previous, quota, report.MemberCount, report.EffectiveMaxOpen, report.UsableConnections, report.ParentEventID, generated.Format(time.RFC3339Nano))
+	}
 }
 
 func decodeEventsFleetDBReport(details map[string]any) (cdb.FleetDBHeartbeatReport, error) {

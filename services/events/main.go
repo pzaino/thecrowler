@@ -2150,6 +2150,9 @@ func registerMetrics() {
 		mSysReady,
 		mActiveFleetNodes,
 	)
+	for _, collector := range eventsDBMetrics.Collectors() {
+		prometheus.MustRegister(collector)
+	}
 }
 
 func updateMetrics() {
@@ -2171,6 +2174,9 @@ func updateMetrics() {
 
 	// Ready state
 	mSysReady.With(labels).Set(float64(getSysReady()))
+	if stats, err := cdb.ConnectionStats(&dbHandler); err == nil {
+		eventsDBMetrics.UpdatePool(stats)
+	}
 
 	// Pushgateway
 	url := "http://" + config.Prometheus.Host + ":" + strconv.Itoa(config.Prometheus.Port)
@@ -2189,6 +2195,9 @@ func updateMetrics() {
 		Collector(mEventsTotalErrors).
 		Collector(mEventsTotalDropped).
 		Collector(mActiveFleetNodes)
+	for _, collector := range eventsDBMetrics.Collectors() {
+		p = p.Collector(collector)
+	}
 
 	if err := p.Push(); err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "EventsAPI Prometheus push failed: %v", err)

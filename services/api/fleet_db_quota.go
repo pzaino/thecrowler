@@ -27,6 +27,7 @@ type apiDBQuotaState struct {
 }
 
 var apiDBQuota apiDBQuotaState
+var apiDBMetrics = cdb.NewFleetDBMetrics(cdb.FleetMemberCrowlerAPI, cmn.GetMicroServiceName())
 
 // Kept behind a variable so quota transitions can be tested without opening a
 // database connection.
@@ -100,13 +101,18 @@ func processHeartbeatReport(event cdb.Event) {
 		(generated.Equal(apiDBQuota.lastGeneratedAt) && report.ParentEventID <= apiDBQuota.lastParentEventID) {
 		return
 	}
+	previous := apiDBQuota.quota
 	if err := applyAPIQuotaLocked(quota); err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "API: failed to apply heartbeat quota: %v", err)
 		return
 	}
+	apiDBMetrics.ApplyReport(quota, report)
 	apiDBQuota.lastGeneratedAt = generated
 	apiDBQuota.lastParentEventID = report.ParentEventID
 	apiDBQuota.hasValidReport = true
+	if previous != quota {
+		cmn.DebugMsg(cmn.DbgLvlInfo, "database quota changed service_type=%s instance=%s previous_quota=%d new_quota=%d fleet_members=%d effective_max=%d usable_fleet_capacity=%d heartbeat_parent_id=%s report_generated_at=%s", cdb.FleetMemberCrowlerAPI, localName, previous, quota, report.MemberCount, report.EffectiveMaxOpen, report.UsableConnections, report.ParentEventID, generated.Format(time.RFC3339Nano))
+	}
 }
 
 func decodeFleetDBReport(details map[string]any) (cdb.FleetDBHeartbeatReport, error) {

@@ -1193,6 +1193,9 @@ func updateMetrics(status *crowler.Status) {
 		"pipeline_id": pid,
 		"source":      status.Source,
 	}
+	if stats, err := cdb.ConnectionStats(&dbHandler); err == nil {
+		engineDBMetrics.UpdatePool(stats)
+	}
 
 	// Update all metrics from Status
 	gaugeTotalPages.With(labels).Set(float64(status.TotalPages.Load()))
@@ -1233,6 +1236,9 @@ func updateMetrics(status *crowler.Status) {
 		Collector(gaugeHTTPInfoRunning).
 		Collector(gaugeDetectedState).
 		Collector(totalPipelinesRunning)
+	for _, collector := range engineDBMetrics.Collectors() {
+		p = p.Collector(collector)
+	}
 
 	// Push metrics
 	if err := p.Push(); err != nil {
@@ -1358,6 +1364,9 @@ func initAll(configFile *string, config *cfg.Config,
 		prometheus.MustRegister(totalPages)
 		prometheus.MustRegister(totalLinks)
 		prometheus.MustRegister(totalErrors)
+		for _, collector := range engineDBMetrics.Collectors() {
+			prometheus.MustRegister(collector)
+		}
 	}
 
 	// Start the crawler

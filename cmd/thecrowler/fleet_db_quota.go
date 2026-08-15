@@ -24,6 +24,7 @@ var engineDBQuota struct {
 	effectiveMaxIdle  int
 	hasValidReport    bool
 }
+var engineDBMetrics = cdb.NewFleetDBMetrics(cdb.FleetMemberCrowlerEngine, cmn.GetMicroServiceName())
 
 // Kept as a variable so quota state transitions can be tested without opening
 // a real database. Production always uses the shared pool helper.
@@ -102,13 +103,18 @@ func processEngineHeartbeatReport(event cdb.Event) {
 		(generated.Equal(engineDBQuota.lastGeneratedAt) && report.ParentEventID <= engineDBQuota.lastParentEventID) {
 		return
 	}
+	previous := engineDBQuota.quota
 	if err := applyEngineDBQuotaLocked(quota); err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "Engine: failed to apply heartbeat quota: %v", err)
 		return
 	}
+	engineDBMetrics.ApplyReport(quota, report)
 	engineDBQuota.lastGeneratedAt = generated
 	engineDBQuota.lastParentEventID = report.ParentEventID
 	engineDBQuota.hasValidReport = true
+	if previous != quota {
+		cmn.DebugMsg(cmn.DbgLvlInfo, "database quota changed service_type=%s instance=%s previous_quota=%d new_quota=%d fleet_members=%d effective_max=%d usable_fleet_capacity=%d heartbeat_parent_id=%s report_generated_at=%s", cdb.FleetMemberCrowlerEngine, self.OriginName, previous, quota, report.MemberCount, report.EffectiveMaxOpen, report.UsableConnections, report.ParentEventID, generated.Format(time.RFC3339Nano))
+	}
 }
 
 func decodeEngineFleetDBReport(details map[string]any) (cdb.FleetDBHeartbeatReport, error) {

@@ -539,6 +539,9 @@ func init() {
 		gaugeSearchTotalErrors,
 		gaugeSearchTotalSuccess,
 	)
+	for _, collector := range apiDBMetrics.Collectors() {
+		prometheus.MustRegister(collector)
+	}
 }
 
 func updateMetrics() {
@@ -556,11 +559,17 @@ func updateMetrics() {
 	gaugeSearchTotalRequests.With(labels).Set(float64(totalRequests.Load()))
 	gaugeSearchTotalErrors.With(labels).Set(float64(totalErrors.Load()))
 	gaugeSearchTotalSuccess.With(labels).Set(float64(totalSuccess.Load()))
+	if stats, err := cdb.ConnectionStats(&dbHandler); err == nil {
+		apiDBMetrics.UpdatePool(stats)
+	}
 
 	p := push.New(url, "crowler_search_api").
 		Collector(gaugeSearchTotalRequests).
 		Collector(gaugeSearchTotalErrors).
 		Collector(gaugeSearchTotalSuccess)
+	for _, collector := range apiDBMetrics.Collectors() {
+		p = p.Collector(collector)
+	}
 
 	if err := p.Push(); err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "SearchAPI: Could not push metrics: %v", err)
