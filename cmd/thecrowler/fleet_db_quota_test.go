@@ -195,6 +195,46 @@ func TestHeartbeatDisabledLeavesStaticPoolUntouched(t *testing.T) {
 	}
 }
 
+func TestEngineQuotaDynamicStaticDynamicResetsReportAuthority(t *testing.T) {
+	t.Setenv("MICROSERVICE_NAME", "engine-a")
+	calls := resetEngineQuotaForTest(t)
+	dynamic := cfg.Config{Database: cfg.Database{MaxConns: 20, MaxIdleConns: 6}}
+	dynamic.Events.HeartbeatEnabled = true
+	configureEngineDBQuota(dynamic)
+	processEngineHeartbeatReport(cdb.Event{Details: validEngineQuotaDetails()})
+
+	configureEngineDBQuota(dynamic)
+	if err := applyEngineDBQuotaAfterConnect(dynamic); err != nil {
+		t.Fatal(err)
+	}
+	if got := (*calls)[len(*calls)-1]; got.open != 4 || got.idle != 4 {
+		t.Fatalf("dynamic reload limits = %+v, want open=4 idle=4", got)
+	}
+
+	static := dynamic
+	static.Events.HeartbeatEnabled = false
+	configureEngineDBQuota(static)
+	if engineDBQuota.hasValidReport || !engineDBQuota.lastGeneratedAt.IsZero() || engineDBQuota.lastParentEventID != "" {
+		t.Fatalf("dynamic-to-static transition retained report authority: %+v", engineDBQuota)
+	}
+	configureEngineDBQuota(static)
+	configureEngineDBQuota(dynamic)
+	if err := applyEngineDBQuotaAfterConnect(dynamic); err != nil {
+		t.Fatal(err)
+	}
+	if got := (*calls)[len(*calls)-1]; got.open != 1 || got.idle != 1 {
+		t.Fatalf("dynamic re-entry limits = %+v, want bootstrap open=1 idle=1", got)
+	}
+
+	newPeriod := validEngineQuotaDetails()
+	newPeriod["parent_event_id"] = "new-period"
+	newPeriod["generated_at"] = time.Date(2026, 8, 12, 1, 2, 3, 0, time.UTC)
+	processEngineHeartbeatReport(cdb.Event{Details: newPeriod})
+	if got := (*calls)[len(*calls)-1]; got.open != 4 || got.idle != 4 {
+		t.Fatalf("new-period report limits = %+v, want open=4 idle=4", got)
+	}
+}
+
 func TestHeartbeatResponseIdentityUnchanged(t *testing.T) {
 	t.Setenv("MICROSERVICE_NAME", "engine-a")
 	oldStatus := sysPipelineStatus

@@ -56,12 +56,15 @@ func configureEventsQuota(c cfg.Config) {
 func applyEventsQuotaAfterConnect(c cfg.Config) error {
 	eventsDBQuota.mu.Lock()
 	defer eventsDBQuota.mu.Unlock()
-	quota := eventsDBQuota.quota
-	if eventsDBQuota.dynamic && !eventsDBQuota.hasValidReport {
-		quota = 1
-	}
 	if !eventsDBQuota.dynamic {
-		quota = cdb.ResolveEffectiveMaxOpenConnections(c)
+		// Connect owns static pool configuration; runtime pool control is an
+		// optional backend capability required only by fleet budgeting.
+		eventsDBQuota.quota = cdb.ResolveEffectiveMaxOpenConnections(c)
+		return nil
+	}
+	quota := eventsDBQuota.quota
+	if !eventsDBQuota.hasValidReport {
+		quota = 1
 	}
 	return applyEventsQuotaLocked(quota)
 }

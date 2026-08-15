@@ -135,7 +135,7 @@ func TestEventsQuotaStaticModeIgnoresReports(t *testing.T) {
 	}
 	processEventsHeartbeatReport(cdb.Event{Details: eventsQuotaDetails(t, "round", time.Now().UTC(),
 		cdb.FleetMemberAllocation{OriginType: cdb.FleetMemberCrowlerEvents, OriginName: "events-a", MaxConnections: 2})})
-	if len(*calls) != 1 || (*calls)[0] != [2]int{14, 6} {
-		t.Fatalf("static pool changes = %v, want configured limits", *calls)
+	if len(*calls) != 0 {
+		t.Fatalf("static mode applied runtime pool limits: %v", *calls)
 	}
 }

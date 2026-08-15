@@ -34,10 +34,16 @@ func configureEngineDBQuota(c cfg.Config) {
 	maxOpen, maxIdle := cdb.DetermineConnectionLimits(c)
 	engineDBQuota.mu.Lock()
 	defer engineDBQuota.mu.Unlock()
+	wasDynamic := engineDBQuota.dynamic
 	engineDBQuota.dynamic = c.Events.HeartbeatEnabled
 	engineDBQuota.effectiveMaxIdle = maxIdle
 	if !engineDBQuota.dynamic {
 		engineDBQuota.quota = maxOpen
+		if wasDynamic {
+			engineDBQuota.hasValidReport = false
+			engineDBQuota.lastGeneratedAt = time.Time{}
+			engineDBQuota.lastParentEventID = ""
+		}
 	}
 }
 

@@ -171,3 +171,71 @@ func TestAPIQuotaConcurrentReportDeliveryAndGateUse(t *testing.T) {
 		t.Fatalf("latest concurrent quota = %d, want 24", dbAdmission.Limit())
 	}
 }
+
+func TestAPIQuotaStaticModeLeavesPoolUntouchedAndSetsReservedAdmission(t *testing.T) {
+	calls := installAPIQuotaTest(t)
+	c := cfg.Config{Database: cfg.Database{MaxConns: 14, MaxIdleConns: 6}}
+	configureAPIQuota(c)
+	gate := dbAdmission
+	if err := applyAPIQuotaAfterConnect(c); err != nil {
+		t.Fatal(err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("static mode applied runtime pool limits: %v", *calls)
+	}
+	if dbAdmission != gate {
+		t.Fatal("static quota application replaced the admission gate")
+	}
+	if want := 14 - cdb.FleetDBReservedConnections; dbAdmission.Limit() != want {
+		t.Fatalf("static admission limit = %d, want %d", dbAdmission.Limit(), want)
+	}
+
+	c.Database.OptimizeFor = "query"
+	configureAPIQuota(c)
+	if err := applyAPIQuotaAfterConnect(c); err != nil {
+		t.Fatal(err)
+	}
+	if want := 12 - cdb.FleetDBReservedConnections; dbAdmission.Limit() != want {
+		t.Fatalf("query-optimized admission limit = %d, want %d", dbAdmission.Limit(), want)
+	}
+}
+
+func TestAPIQuotaDynamicStaticDynamicResetsReportAuthority(t *testing.T) {
+	t.Setenv("MICROSERVICE_NAME", "api-a")
+	calls := installAPIQuotaTest(t)
+	dynamic := cfg.Config{Database: cfg.Database{MaxConns: 20, MaxIdleConns: 8}}
+	dynamic.Events.HeartbeatEnabled = true
+	configureAPIQuota(dynamic)
+	oldTime := time.Date(2026, 8, 15, 8, 0, 0, 0, time.UTC)
+	processHeartbeatReport(cdb.Event{Details: quotaDetailsForAPI(t, "old-period", oldTime, 5)})
+
+	// An ordinary dynamic reload preserves the authoritative allocation.
+	configureAPIQuota(dynamic)
+	if err := applyAPIQuotaAfterConnect(dynamic); err != nil {
+		t.Fatal(err)
+	}
+	if got := (*calls)[len(*calls)-1]; got != [2]int{5, 5} {
+		t.Fatalf("dynamic reload limits = %v, want [5 5]", got)
+	}
+
+	static := dynamic
+	static.Events.HeartbeatEnabled = false
+	configureAPIQuota(static)
+	if apiDBQuota.hasValidReport || !apiDBQuota.lastGeneratedAt.IsZero() || apiDBQuota.lastParentEventID != "" {
+		t.Fatalf("dynamic-to-static transition retained report authority: %+v", apiDBQuota)
+	}
+	configureAPIQuota(static) // static-to-static remains static
+	configureAPIQuota(dynamic)
+	if err := applyAPIQuotaAfterConnect(dynamic); err != nil {
+		t.Fatal(err)
+	}
+	if got := (*calls)[len(*calls)-1]; got != [2]int{1, 1} {
+		t.Fatalf("dynamic re-entry limits = %v, want bootstrap [1 1]", got)
+	}
+
+	// Ordering metadata from the old period must not reject the first report.
+	processHeartbeatReport(cdb.Event{Details: quotaDetailsForAPI(t, "new-period", oldTime.Add(-time.Hour), 3)})
+	if got := (*calls)[len(*calls)-1]; got != [2]int{3, 3} {
+		t.Fatalf("new-period report limits = %v, want [3 3]", got)
+	}
+}

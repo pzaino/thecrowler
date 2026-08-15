@@ -37,10 +37,16 @@ func configureAPIQuota(c cfg.Config) {
 	_, maxIdle := cdb.DetermineConnectionLimits(c)
 	apiDBQuota.mu.Lock()
 	defer apiDBQuota.mu.Unlock()
+	wasDynamic := apiDBQuota.dynamic
 	apiDBQuota.dynamic = c.Events.HeartbeatEnabled
 	apiDBQuota.effectiveMaxIdle = maxIdle
 	if !apiDBQuota.dynamic {
 		apiDBQuota.quota = cdb.ResolveEffectiveMaxOpenConnections(c)
+		if wasDynamic {
+			apiDBQuota.hasValidReport = false
+			apiDBQuota.lastGeneratedAt = time.Time{}
+			apiDBQuota.lastParentEventID = ""
+		}
 	}
 }
 
@@ -50,12 +56,21 @@ func configureAPIQuota(c cfg.Config) {
 func applyAPIQuotaAfterConnect(c cfg.Config) error {
 	apiDBQuota.mu.Lock()
 	defer apiDBQuota.mu.Unlock()
-	quota := apiDBQuota.quota
-	if apiDBQuota.dynamic && !apiDBQuota.hasValidReport {
-		quota = 1
-	}
 	if !apiDBQuota.dynamic {
-		quota = cdb.ResolveEffectiveMaxOpenConnections(c)
+		// Connect owns the backend's static pool setup. Only retain API's
+		// existing reserved-capacity admission policy here.
+		quota := cdb.ResolveEffectiveMaxOpenConnections(c)
+		admissionLimit := quota - cdb.FleetDBReservedConnections
+		if admissionLimit < 1 {
+			admissionLimit = 1
+		}
+		dbAdmission.SetLimit(admissionLimit)
+		apiDBQuota.quota = quota
+		return nil
+	}
+	quota := apiDBQuota.quota
+	if !apiDBQuota.hasValidReport {
+		quota = 1
 	}
 	return applyAPIQuotaLocked(quota)
 }
