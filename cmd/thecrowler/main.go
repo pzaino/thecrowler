@@ -1291,6 +1291,7 @@ func initAll(configFile *string, config *cfg.Config,
 	if err != nil {
 		return fmt.Errorf("loading configuration file: %s", err)
 	}
+	configureEngineDBQuota(*config)
 
 	// Reset Key-Value Store
 	cmn.KVStore = nil
@@ -1451,6 +1452,11 @@ func main() {
 					closeResources(db, &vdiInstances) // Release resources
 					cmn.DebugMsg(cmn.DbgLvlFatal, "connecting to the database: %v", err)
 				}
+				if err = applyEngineDBQuotaAfterConnect(config); err != nil {
+					configMutex.Unlock()
+					closeResources(db, &vdiInstances)
+					cmn.DebugMsg(cmn.DbgLvlFatal, "applying engine database quota: %v", err)
+				}
 				if err = cdb.SyncConfiguredTimeSeriesMetrics(&db, config.TimeSeries); err != nil {
 					configMutex.Unlock()
 					closeResources(db, &vdiInstances) // Release resources
@@ -1478,6 +1484,10 @@ func main() {
 	if err != nil {
 		closeResources(db, &vdiInstances) // Release resources
 		cmn.DebugMsg(cmn.DbgLvlFatal, "connecting to the database: %v", err)
+	}
+	if err = applyEngineDBQuotaAfterConnect(config); err != nil {
+		closeResources(db, &vdiInstances)
+		cmn.DebugMsg(cmn.DbgLvlFatal, "applying engine database quota: %v", err)
 	}
 	if err = cdb.SyncConfiguredTimeSeriesMetrics(&db, config.TimeSeries); err != nil {
 		closeResources(db, &vdiInstances) // Release resources
@@ -1590,6 +1600,8 @@ func processEvent(event cdb.Event) {
 	case "crowler_heartbeat":
 		// Heartbeat event
 		processHeartbeatEvent(event)
+	case "crowler_heartbeat_report":
+		processEngineHeartbeatReport(event)
 	case "system_event":
 		// System event
 		processSystemEvent(event)
@@ -1628,9 +1640,13 @@ func processSystemEvent(event cdb.Event) {
 // processHeartbeatEvent will generate a new event with a response which contains the current pipeline status
 func processHeartbeatEvent(event cdb.Event) {
 	//cmn.DebugMsg(cmn.DbgLvlDebug4, "Processing heartbeat event: %+v", event)
+	responseEvent := newHeartbeatResponseEvent(event, time.Now())
 
-	// Prepare the response event
-	now := time.Now()
+	// Send the response event to the database
+	createEvent(dbHandler, responseEvent, 1)
+}
+
+func newHeartbeatResponseEvent(event cdb.Event, now time.Time) cdb.Event {
 	responseEvent := cdb.Event{
 		Type:      "crowler_heartbeat_response",
 		Severity:  "crowler_system_info",
@@ -1648,9 +1664,7 @@ func processHeartbeatEvent(event cdb.Event) {
 	responseEvent.Details["pipeline_status"] = pipelineStatusJSON(sysPipelineStatus)
 
 	responseEvent.Action = "new"
-
-	// Send the response event to the database
-	createEvent(dbHandler, responseEvent, 1)
+	return responseEvent
 }
 
 func pipelineStatusJSON(PipelineStatus *[]crowler.Status) []PipelineStatusReport {
