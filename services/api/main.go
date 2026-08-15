@@ -132,10 +132,20 @@ func initAll(configFile *string, config *cfg.Config, lmt **rate.Limiter) error {
 	// Configure database admission. Heartbeats are the existing switch for
 	// dynamic fleet budgeting; no separate API setting is needed.
 	configureAPIQuota(*config)
-	if config.Events.HeartbeatEnabled {
-		dbAdmission = newDBAdmissionGate(1)
-	} else {
-		dbAdmission = newDBAdmissionGate(config.Database.MaxConns - 3)
+
+	if dbAdmission == nil {
+		effectiveMaxOpen := cdb.ResolveEffectiveMaxOpenConnections(*config)
+
+		targetLimit := effectiveMaxOpen - cdb.FleetDBReservedConnections
+		if config.Events.HeartbeatEnabled {
+			targetLimit = 1
+		}
+
+		if targetLimit <= 0 {
+			targetLimit = 1
+		}
+
+		dbAdmission = newDBAdmissionGate(targetLimit)
 	}
 
 	// Initialize the database
