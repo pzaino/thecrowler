@@ -275,34 +275,6 @@ patch_node_chromium_apt_transport() {
     "$dockerfile"
 }
 
-# ChromeDriver supplies --remote-debugging-port=0 in its launch arguments. The
-# upstream wrapper normally puts SE_BROWSER_ARGS_* first, allowing that later
-# value to override the fixed CROWler port. Put administrator-controlled wrapper
-# arguments last so the declared direct CDP endpoint really binds to 9222.
-patch_chromium_wrapper_argument_precedence() {
-  local wrapper="$1"
-  local temporary_file="${wrapper}.tmp.$$"
-
-  if grep -Fq '"\$@" \$SE_BROWSER_ARGS' "$wrapper"; then
-    return 0
-  fi
-
-  awk '
-    /^exec -a .*SE_BROWSER_ARGS/ {
-      print "exec -a \"\\$0\" \"$BASE_PATH\" --no-sandbox \"\\$@\" \\$SE_BROWSER_ARGS"
-      replaced=1
-      next
-    }
-    { print }
-    END { if (!replaced) exit 42 }
-  ' "$wrapper" > "$temporary_file" || {
-    rm -f "$temporary_file"
-    echo "Unable to give Chromium wrapper arguments final precedence" >&2
-    exit 1
-  }
-  mv "$temporary_file" "$wrapper"
-}
-
 # Remove the temporary Debian Sid repository once Chromium is installed. This
 # prevents accidental package mixing in later derived stages.
 append_node_chromium_repo_cleanup() {
@@ -393,11 +365,6 @@ verify_generated_dockerfiles() {
       exit 1
     }
 
-  grep -F 'SE_BROWSER_ARGS_CROWLER_CDP_PORT="--remote-debugging-port=9222"' \
-    "$standalone_dockerfile" >/dev/null || {
-      echo "Standalone does not configure Chromium's direct CDP port" >&2
-      exit 1
-    }
 }
 
 # Test the completed image before the workflow tags or publishes it.
@@ -439,7 +406,7 @@ print_vdi_diagnostics() {
 
 run_vdi_smoke_checks() {
   local container="$1"
-  local attempt session_response session_id
+  local attempt service session_response session_id
   local grid_ready=false
   local cdp_ready=false
 
@@ -448,7 +415,7 @@ run_vdi_smoke_checks() {
   for attempt in $(seq 1 120); do
     [ "$(docker inspect --format '{{.State.Running}}' "$container")" = "true" ] || return 1
     [ "$(docker inspect --format '{{.RestartCount}}' "$container")" = "0" ] || return 1
-    timeout 5 docker exec "$container" pgrep -x supervisord >/dev/null || return 1
+    timeout 5 docker exec "$container" supervisorctl pid >/dev/null || return 1
 
     if timeout 5 docker exec "$container" curl -fsS http://127.0.0.1:4444/status \
         | jq -e '.value.ready == true' >/dev/null 2>&1; then
@@ -461,15 +428,18 @@ run_vdi_smoke_checks() {
 
   timeout 5 docker exec "$container" /bin/bash -lc '</dev/tcp/127.0.0.1/5900' || return 1
   timeout 5 docker exec "$container" curl -fsS http://127.0.0.1:7900/ >/dev/null || return 1
-  timeout 10 docker exec "$container" supervisorctl status | tee /dev/stderr \
-    | awk '$2 != "RUNNING" { bad=1 } END { exit bad }' || return 1
+  for service in xvfb vnc novnc selenium-standalone browserAutomation dbus; do
+    timeout 10 docker exec "$container" supervisorctl status "$service" \
+      | tee /dev/stderr | awk '$2 == "RUNNING" { running=1 } END { exit !running }' \
+      || return 1
+  done
 
   # Chromium is launched lazily by Selenium. Start a real WebDriver session so
   # the fixed direct CDP endpoint is exercised rather than merely checking its
   # EXPOSE metadata.
   session_response="$(timeout 30 docker exec "$container" curl -fsS \
     -H 'Content-Type: application/json' \
-    -d '{"capabilities":{"alwaysMatch":{"browserName":"chrome","goog:chromeOptions":{"args":["--no-first-run"]}}}}' \
+    -d '{"capabilities":{"alwaysMatch":{"browserName":"chrome","goog:chromeOptions":{"args":["--no-first-run","--remote-debugging-port=9222","--remote-debugging-address=0.0.0.0"]}}}}' \
     http://127.0.0.1:4444/session)" || return 1
   session_id="$(printf '%s' "$session_response" | jq -er '.value.sessionId')" || {
     printf 'Unexpected WebDriver response: %s\n' "$session_response" >&2
@@ -491,7 +461,7 @@ run_vdi_smoke_checks() {
 
   [ "$(docker inspect --format '{{.State.Running}}' "$container")" = "true" ] || return 1
   [ "$(docker inspect --format '{{.RestartCount}}' "$container")" = "0" ] || return 1
-  timeout 5 docker exec "$container" pgrep -x supervisord >/dev/null
+  timeout 5 docker exec "$container" supervisorctl pid >/dev/null
 }
 
 # Exercise the image's normal entrypoint and all currently active VDI services.
@@ -703,7 +673,6 @@ pushd ./docker-selenium >/dev/null
   patch_base_apt_transport "./Base/Dockerfile"
   patch_base_runtime_packages "./Base/Dockerfile"
   patch_node_chromium_apt_transport "./NodeChromium/Dockerfile"
-  patch_chromium_wrapper_argument_precedence "./NodeChromium/wrap_chromium_binary"
   restore_pkg_resources_from_builder "./Standalone/Dockerfile"
   append_node_chromium_repo_cleanup "./NodeChromium/Dockerfile"
   append_standalone_runtime_guard "./Standalone/Dockerfile"

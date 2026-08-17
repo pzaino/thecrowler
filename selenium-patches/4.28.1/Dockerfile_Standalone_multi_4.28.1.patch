@@ -117,13 +117,9 @@
 > COPY --from=builder --chown="${SEL_UID}:${SEL_GID}" /src/browserAutomation.conf /etc/supervisor/conf.d/browserAutomation.conf
 > 
 > #====================================
-34a151,159
+34a151,155
 > # CROWler VDI service contract. Keep this explicit in the final Standalone
 > # stage rather than relying on metadata inherited from Selenium base images.
 > EXPOSE 4444 5900 7900 9222
-> # A Standalone container permits one browser session, so Chromium can expose
-> # that session's DevTools endpoint on the stable CROWler integration port.
-> ENV SE_BROWSER_ARGS_CROWLER_CDP_PORT="--remote-debugging-port=9222" \
->     SE_BROWSER_ARGS_CROWLER_CDP_ADDRESS="--remote-debugging-address=0.0.0.0"
 > # Reserved for the future RBee API. Not published by default yet.
 > EXPOSE 3000
