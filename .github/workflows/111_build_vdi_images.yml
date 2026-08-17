@@ -150,6 +150,18 @@ jobs:
           docker image inspect "$IMG" \
             --format 'ID={{.Id}} OS={{.Os}} Architecture={{.Architecture}}'
 
+          # Metadata is checked independently from build-vdi.sh's live service
+          # smoke test: EXPOSE declarations do not prove that a listener works.
+          metadata="$(docker image inspect "$IMG")"
+          for port in 4444 5900 7900 9222 3000; do
+            jq -e --arg port "${port}/tcp" \
+              '.[0].Config.ExposedPorts[$port] != null' \
+              <<<"$metadata" >/dev/null || {
+                echo "Missing required exposed port ${port}/tcp in $IMG" >&2
+                exit 1
+              }
+          done
+
       - name: Tag CI staging image
         if: ${{ !inputs.dry_run }}
         env:

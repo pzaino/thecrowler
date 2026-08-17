@@ -581,8 +581,6 @@ $(emit_limits "    " "${cpu_limit_vdi:-1.0}" "${mem_limit_vdi_pct:-2g}")
       - "$HOST_PORT_START4:9222"
     volumes:
       - /dev/shm:/dev/shm
-    expose:
-      - "$HOST_PORT_START4"
     networks:
       - $NETWORK_NAME
     restart: unless-stopped
