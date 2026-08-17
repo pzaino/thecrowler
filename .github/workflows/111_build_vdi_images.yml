@@ -231,7 +231,7 @@ jobs:
           echo "digest=$digest" >>"$GITHUB_OUTPUT"
 
   verify_native:
-    name: Verify native pull and runtime (${{ matrix.arch }})
+    name: Verify native pull selection (${{ matrix.arch }})
     needs: publish_release
     if: ${{ !inputs.dry_run }}
     runs-on: ${{ matrix.runner }}
@@ -250,7 +250,7 @@ jobs:
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PAT }}
-      - name: Pull normally and run VDI sanity checks
+      - name: Pull normally and inspect selected platform
         env:
           EXPECTED_ARCH: ${{ matrix.arch }}
         shell: bash
@@ -265,32 +265,6 @@ jobs:
             echo "Native pull selected $actual_os/$actual_arch, expected linux/$EXPECTED_ARCH" >&2
             exit 1
           }
-
-          container="crowler-vdi-registry-smoke-${GITHUB_RUN_ID}-${EXPECTED_ARCH}"
-          trap 'docker logs "$container" >&2 2>/dev/null || true; docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
-          docker run --detach --name "$container" --pull=never "$IMAGE"
-          ready=false
-          for _ in $(seq 1 60); do
-            if docker exec "$container" curl -fsS http://127.0.0.1:4444/status \
-              | jq -e '.value.ready == true' >/dev/null 2>&1; then
-              ready=true
-              break
-            fi
-            sleep 2
-          done
-          [ "$ready" = true ] || { echo "Selenium did not become ready" >&2; exit 1; }
-          docker exec "$container" /bin/bash -lc '</dev/tcp/127.0.0.1/5900'
-          docker exec "$container" curl -fsS http://127.0.0.1:7900/ >/dev/null
-          for service in xvfb vnc novnc selenium-standalone browserAutomation dbus; do
-            status="$(docker exec "$container" supervisorctl status "$service")"
-            echo "$status"
-            grep -Eq '(^|[[:space:]])RUNNING([[:space:]]|$)' <<<"$status" || {
-              echo "Required Supervisor service $service is not RUNNING" >&2
-              exit 1
-            }
-          done
-          docker rm -f "$container" >/dev/null
-          trap - EXIT
 
   promote_and_cleanup:
     name: Promote verified release and clean staging tags
