@@ -350,6 +350,21 @@ verify_generated_dockerfiles() {
       echo "Standalone runtime validation was not added" >&2
       exit 1
     }
+
+  # This must be declared by the final Standalone Dockerfile itself. Inherited
+  # EXPOSE metadata is deliberately insufficient for the CROWler VDI contract.
+  grep -Eq '^[[:space:]]*EXPOSE[[:space:]]+4444[[:space:]]+5900[[:space:]]+7900[[:space:]]+9222[[:space:]]*$' \
+    "$standalone_dockerfile" || {
+      echo "Standalone does not explicitly expose the CROWler VDI service ports" >&2
+      exit 1
+    }
+
+  grep -Eq '^[[:space:]]*EXPOSE[[:space:]]+3000[[:space:]]*$' \
+    "$standalone_dockerfile" || {
+      echo "Standalone does not reserve port 3000 for the future RBee API" >&2
+      exit 1
+    }
+
 }
 
 # Test the completed image before the workflow tags or publishes it.
@@ -370,6 +385,104 @@ verify_supervisor_runtime() {
       /usr/bin/python3 -c "import pkg_resources; print(pkg_resources.__file__)"
       /usr/bin/supervisord --version
     '
+}
+
+print_vdi_diagnostics() {
+  local container="$1"
+
+  echo "===== docker inspect =====" >&2
+  docker inspect --format \
+    'status={{.State.Status}} running={{.State.Running}} restarting={{.State.Restarting}} restart_count={{.RestartCount}} exit={{.State.ExitCode}} error={{.State.Error}}' \
+    "$container" >&2 2>/dev/null || true
+  echo "===== docker logs =====" >&2
+  docker logs "$container" >&2 2>/dev/null || true
+  echo "===== supervisor status =====" >&2
+  timeout 10 docker exec "$container" supervisorctl status >&2 2>/dev/null || true
+  echo "===== listeners =====" >&2
+  timeout 10 docker exec "$container" /bin/bash -lc \
+    'command -v ss >/dev/null && ss -lntp || (command -v netstat >/dev/null && netstat -lntp) || true' \
+    >&2 2>/dev/null || true
+}
+
+run_vdi_smoke_checks() {
+  local container="$1"
+  local attempt service session_response session_id
+  local grid_ready=false
+  local cdp_ready=false
+
+  # Wait for the Grid readiness response while continuously ensuring that the
+  # normal entrypoint and Supervisor have not died or restarted.
+  for attempt in $(seq 1 120); do
+    [ "$(docker inspect --format '{{.State.Running}}' "$container")" = "true" ] || return 1
+    [ "$(docker inspect --format '{{.RestartCount}}' "$container")" = "0" ] || return 1
+    timeout 5 docker exec "$container" supervisorctl pid >/dev/null || return 1
+
+    if timeout 5 docker exec "$container" curl -fsS http://127.0.0.1:4444/status \
+        | jq -e '.value.ready == true' >/dev/null 2>&1; then
+      grid_ready=true
+      break
+    fi
+    sleep 1
+  done
+  [ "$grid_ready" = true ] || return 1
+
+  timeout 5 docker exec "$container" /bin/bash -lc '</dev/tcp/127.0.0.1/5900' || return 1
+  timeout 5 docker exec "$container" curl -fsS http://127.0.0.1:7900/ >/dev/null || return 1
+  for service in xvfb vnc novnc selenium-standalone browserAutomation dbus; do
+    timeout 10 docker exec "$container" supervisorctl status "$service" \
+      | tee /dev/stderr | awk '$2 == "RUNNING" { running=1 } END { exit !running }' \
+      || return 1
+  done
+
+  # Chromium is launched lazily by Selenium. Start a real WebDriver session so
+  # the fixed direct CDP endpoint is exercised rather than merely checking its
+  # EXPOSE metadata.
+  session_response="$(timeout 30 docker exec "$container" curl -fsS \
+    -H 'Content-Type: application/json' \
+    -d '{"capabilities":{"alwaysMatch":{"browserName":"chrome","goog:chromeOptions":{"args":["--no-first-run","--remote-debugging-port=9222","--remote-debugging-address=0.0.0.0"]}}}}' \
+    http://127.0.0.1:4444/session)" || return 1
+  session_id="$(printf '%s' "$session_response" | jq -er '.value.sessionId')" || {
+    printf 'Unexpected WebDriver response: %s\n' "$session_response" >&2
+    return 1
+  }
+
+  for attempt in $(seq 1 30); do
+    if timeout 5 docker exec "$container" curl -fsS http://127.0.0.1:9222/json/version \
+        | jq -e '.Browser and .webSocketDebuggerUrl' >/dev/null 2>&1; then
+      cdp_ready=true
+      break
+    fi
+    sleep 1
+  done
+
+  timeout 5 docker exec "$container" curl -fsS -X DELETE \
+    "http://127.0.0.1:4444/session/${session_id}" >/dev/null || true
+  [ "$cdp_ready" = true ] || return 1
+
+  [ "$(docker inspect --format '{{.State.Running}}' "$container")" = "true" ] || return 1
+  [ "$(docker inspect --format '{{.RestartCount}}' "$container")" = "0" ] || return 1
+  timeout 5 docker exec "$container" supervisorctl pid >/dev/null
+}
+
+# Exercise the image's normal entrypoint and all currently active VDI services.
+verify_vdi_runtime() {
+  local image="$1"
+  local platform="$2"
+  local container="crowler-vdi-smoke-$$"
+  local result=0
+
+  echo "Running VDI entrypoint smoke test in ${image} for ${platform}"
+  docker run --detach --name "$container" --pull=never --platform "$platform" \
+    --shm-size=2g "$image" >/dev/null
+
+  run_vdi_smoke_checks "$container" || result=$?
+  if [ "$result" -ne 0 ]; then
+    echo "VDI runtime smoke test failed for ${image} (${platform})" >&2
+    print_vdi_diagnostics "$container"
+  fi
+
+  docker rm --force "$container" >/dev/null 2>&1 || true
+  return "$result"
 }
 
 # Optional config sourcing
@@ -648,6 +761,7 @@ popd >/dev/null
 # If rval is 0 then the build succeeded, otherwise it failed. Exit with the same code.
 if [ "$rval" -eq 0 ]; then
   verify_supervisor_runtime "$DOCKER_SELENIUM_IMAGE" "$PLATFORM"
+  verify_vdi_runtime "$DOCKER_SELENIUM_IMAGE" "$PLATFORM"
   echo "Selenium image build and runtime verification succeeded for ${PLATFORM} -> ${DOCKER_SELENIUM_IMAGE}"
 else
   echo "Selenium image build failed for ${PLATFORM} -> ${DOCKER_SELENIUM_IMAGE}" >&2
