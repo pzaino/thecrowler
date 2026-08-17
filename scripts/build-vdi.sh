@@ -404,35 +404,99 @@ print_vdi_diagnostics() {
     >&2 2>/dev/null || true
 }
 
-run_vdi_smoke_checks() {
+wait_for_supervisor() {
   local container="$1"
-  local attempt service session_response session_id
-  local grid_ready=false
-  local cdp_ready=false
+  local attempt
 
-  # Wait for the Grid readiness response while continuously ensuring that the
-  # normal entrypoint and Supervisor have not died or restarted.
-  for attempt in $(seq 1 120); do
-    [ "$(docker inspect --format '{{.State.Running}}' "$container")" = "true" ] || return 1
-    [ "$(docker inspect --format '{{.RestartCount}}' "$container")" = "0" ] || return 1
-    timeout 5 docker exec "$container" supervisorctl pid >/dev/null || return 1
-
-    if timeout 5 docker exec "$container" curl -fsS http://127.0.0.1:4444/status \
-        | jq -e '.value.ready == true' >/dev/null 2>&1; then
-      grid_ready=true
-      break
+  for ((attempt = 1; attempt <= 60; attempt++)); do
+    if [ "$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null || true)" != "true" ]; then
+      echo "Container stopped while waiting for Supervisor" >&2
+      return 1
+    fi
+    if timeout 5 docker exec "$container" supervisorctl pid >/dev/null 2>&1; then
+      return 0
     fi
     sleep 1
   done
-  [ "$grid_ready" = true ] || return 1
 
-  timeout 5 docker exec "$container" /bin/bash -lc '</dev/tcp/127.0.0.1/5900' || return 1
-  timeout 5 docker exec "$container" curl -fsS http://127.0.0.1:7900/ >/dev/null || return 1
-  for service in xvfb vnc novnc selenium-standalone browserAutomation dbus; do
-    timeout 10 docker exec "$container" supervisorctl status "$service" \
-      | tee /dev/stderr | awk '$2 == "RUNNING" { running=1 } END { exit !running }' \
-      || return 1
+  echo "Supervisor did not become responsive within 60 seconds" >&2
+  return 1
+}
+
+wait_for_supervisor_service() {
+  local container="$1"
+  local service="$2"
+  local attempt status
+
+  for ((attempt = 1; attempt <= 60; attempt++)); do
+    status="$(timeout 5 docker exec "$container" supervisorctl status "$service" 2>/dev/null || true)"
+    if grep -Eq '(^|[[:space:]])RUNNING([[:space:]]|$)' <<<"$status"; then
+      echo "$status"
+      return 0
+    fi
+    sleep 1
   done
+
+  echo "Supervisor service did not become RUNNING within 60 seconds: $service" >&2
+  [ -z "$status" ] || echo "Last status: $status" >&2
+  return 1
+}
+
+wait_for_tcp() {
+  local container="$1"
+  local host="$2"
+  local port="$3"
+  local attempt
+
+  for ((attempt = 1; attempt <= 60; attempt++)); do
+    if timeout 5 docker exec "$container" /bin/bash -lc \
+        "</dev/tcp/${host}/${port}" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  echo "TCP endpoint did not accept a connection within 60 seconds: ${host}:${port}" >&2
+  return 1
+}
+
+wait_for_http() {
+  local container="$1"
+  local url="$2"
+  local jq_filter="${3:-}"
+  local attempt
+
+  for ((attempt = 1; attempt <= 60; attempt++)); do
+    if [ -n "$jq_filter" ]; then
+      if timeout 5 docker exec "$container" curl -fsS "$url" 2>/dev/null \
+          | jq -e "$jq_filter" >/dev/null 2>&1; then
+        return 0
+      fi
+    elif timeout 5 docker exec "$container" curl -fsS "$url" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  echo "HTTP endpoint did not become ready within 60 seconds: $url" >&2
+  return 1
+}
+
+run_vdi_smoke_checks() {
+  local container="$1"
+  local attempt service session_response session_id
+  local cdp_ready=false
+
+  wait_for_supervisor "$container" || return 1
+  for service in xvfb vnc novnc selenium-standalone browserAutomation dbus; do
+    wait_for_supervisor_service "$container" "$service" || return 1
+  done
+
+  # RUNNING means the processes survived Supervisor's start interval, not that
+  # their sockets are already bound. Poll every public endpoint independently.
+  wait_for_http "$container" http://127.0.0.1:4444/status '.value.ready == true' || return 1
+  wait_for_tcp "$container" 127.0.0.1 5900 || return 1
+  wait_for_http "$container" http://127.0.0.1:7900/ || return 1
 
   # Chromium is launched lazily by Selenium. Start a real WebDriver session so
   # the fixed direct CDP endpoint is exercised rather than merely checking its
@@ -446,7 +510,7 @@ run_vdi_smoke_checks() {
     return 1
   }
 
-  for attempt in $(seq 1 30); do
+  for ((attempt = 1; attempt <= 30; attempt++)); do
     if timeout 5 docker exec "$container" curl -fsS http://127.0.0.1:9222/json/version \
         | jq -e '.Browser and .webSocketDebuggerUrl' >/dev/null 2>&1; then
       cdp_ready=true
