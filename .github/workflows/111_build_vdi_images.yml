@@ -79,7 +79,7 @@ jobs:
             staging_slot: p1
     steps:
       - name: Harden the runner
-        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c
         with:
           egress-policy: audit
           allowed-endpoints: >
@@ -171,7 +171,7 @@ jobs:
       digest: ${{ steps.release.outputs.digest }}
     steps:
       - name: Harden the runner
-        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c
         with:
           egress-policy: audit
           allowed-endpoints: >
