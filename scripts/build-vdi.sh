@@ -588,12 +588,12 @@ resolve_chromium_version() {
   case "${SELENIUM_VER_NUM}" in
     4.27.0)
       # Replace with the exact full version from the known-good 135.0 image.
-      CHROMIUM_VERSION="135.0.7049.114-1"
+      CHROMIUM_VERSION="135.0.7049.114"
       ;;
 
     4.28.1)
       # Replace with the exact full version from the known-good 138.0 image.
-      CHROMIUM_VERSION="138.0.7204.183-1~deb12u1"
+      CHROMIUM_VERSION="138.0.7204.183"
       ;;
 
     *)
