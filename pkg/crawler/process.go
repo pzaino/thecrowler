@@ -158,6 +158,11 @@ func (ctx *ProcessContext) performanceLogSnapshot() ([]log.Message, bool) {
 	if len(ctx.performanceLogs.entries) == 0 {
 		err := ingestPerformanceLogs(ctx) // Attempt to ingest logs if empty
 		if err != nil {
+			cmn.DebugMsg(
+				cmn.DbgLvlError,
+				"retrieving performance logs: %v",
+				err,
+			)
 			return nil, false
 		}
 		if len(ctx.performanceLogs.entries) == 0 {
