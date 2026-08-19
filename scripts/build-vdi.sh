@@ -289,6 +289,10 @@ patch_node_chromium_apt_transport() {
     sed_in_place \
       's#echo "deb ${CHROMIUM_DEB_SITE}/ sid main"#echo "deb [check-valid-until=no] ${CHROMIUM_DEB_SITE}/ sid main"#' \
       "$dockerfile"
+
+    sed_in_place \
+      's#echo "deb ${CHROMIUM_DEB_SITE}/ stable main"#echo "deb [check-valid-until=no] ${CHROMIUM_DEB_SITE}/ stable main"#' \
+      "$dockerfile"
   fi
 }
 
@@ -306,12 +310,12 @@ append_node_chromium_repo_cleanup() {
 # CROWLER_REMOVE_DEBIAN_SID
 USER root
 RUN if [ -f /etc/apt/sources.list ]; then \
-      sed -i '/[[:space:]]sid[[:space:]]main[[:space:]]*$/d' /etc/apt/sources.list; \
+      sed -i '/[[:space:]]\(sid\|stable\)[[:space:]]main[[:space:]]*$/d' /etc/apt/sources.list; \
     fi \
   && if [ -d /etc/apt/sources.list.d ]; then \
       find /etc/apt/sources.list.d -type f \
         \( -name '*.list' -o -name '*.sources' \) \
-        -exec sed -i '/[[:space:]]sid[[:space:]]main[[:space:]]*$/d' {} +; \
+        -exec sed -i '/[[:space:]]\(sid\|stable\)[[:space:]]main[[:space:]]*$/d' {} +; \
     fi \
   && rm -f \
       /etc/apt/trusted.gpg.d/debian-archive-keyring.gpg \
@@ -607,6 +611,17 @@ resolve_chromium_version() {
       CHROMIUM_VERSION="132.0.6834.159"
       CHROMIUM_DEB_SITE="https://snapshot.debian.org/archive/debian/20250202T205652Z"
       ;;
+
+    4.29.0)
+      CHROMIUM_VERSION="133.0.6943.126"
+      CHROMIUM_DEB_SITE="https://snapshot.debian.org/archive/debian/20250226T235959Z"
+      ;;
+
+    4.30.0)
+      CHROMIUM_VERSION="134.0.6998.117"
+      CHROMIUM_DEB_SITE="https://snapshot.debian.org/archive/debian/20250323T235959Z"
+      ;;
+
 
     *)
       echo "No pinned Chromium version is defined for Selenium ${SELENIUM_VER_NUM}" >&2

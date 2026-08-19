@@ -96,6 +96,10 @@ jobs:
             security.ubuntu.com:80
             security.ubuntu.com:443
             ppa.launchpadcontent.net:443
+            snapshot.debian.org:443
+            ftp-master.debian.org:443
+            go.dev:443
+            dl.google.com:443
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       # The Docker driver makes build-vdi.sh's result available locally. QEMU is
