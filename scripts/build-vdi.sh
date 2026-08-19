@@ -708,11 +708,10 @@ resolve_chromium_version() {
       ;;
 
     4.30.0)
-      CHROMIUM_VERSION="134.0.6998.117"
+      CHROMIUM_VERSION="134.0.6998.88"
       CHROMIUM_DEB_SITE="https://snapshot.debian.org/archive/debian/20250323T235959Z"
-      CHROMIUM_DEB_SUITE="sid"
+      CHROMIUM_DEB_SUITE="testing"
       ;;
-
 
     *)
       echo "No pinned Chromium version is defined for Selenium ${SELENIUM_VER_NUM}" >&2
