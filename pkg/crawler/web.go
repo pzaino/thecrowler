@@ -1112,6 +1112,53 @@ func collectLoadedWebPage(ctx *ProcessContext, wd vdi.WebDriver, pageURL string,
 	return pageInfo, currentURL, htmlContent, nil
 }
 
+func logNavigationFailures(wd vdi.WebDriver) {
+	logs, err := wd.Log("performance")
+	if err != nil {
+		cmn.DebugMsg(
+			cmn.DbgLvlError,
+			"[NAV-FAIL] unable to retrieve performance log: %v",
+			err,
+		)
+		return
+	}
+
+	type loadingFailedEvent struct {
+		Message struct {
+			Method string `json:"method"`
+			Params struct {
+				RequestID     string `json:"requestId"`
+				Type          string `json:"type"`
+				ErrorText     string `json:"errorText"`
+				BlockedReason string `json:"blockedReason"`
+				Canceled      bool   `json:"canceled"`
+			} `json:"params"`
+		} `json:"message"`
+	}
+
+	for _, entry := range logs {
+		var event loadingFailedEvent
+
+		if err := json.Unmarshal([]byte(entry.Message), &event); err != nil {
+			continue
+		}
+
+		if event.Message.Method != "Network.loadingFailed" {
+			continue
+		}
+
+		cmn.DebugMsg(
+			cmn.DbgLvlError,
+			"[NAV-FAIL] requestID=%s type=%s error=%s blockedReason=%s canceled=%v",
+			event.Message.Params.RequestID,
+			event.Message.Params.Type,
+			event.Message.Params.ErrorText,
+			event.Message.Params.BlockedReason,
+			event.Message.Params.Canceled,
+		)
+	}
+}
+
 // getURLContent is responsible for retrieving the HTML content of a page
 // from Selenium and returning it as a vdi.WebDriver object
 func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext, id string) (vdi.WebDriver, string, error) {
@@ -1254,6 +1301,9 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 		PageLoadOk := false
 		ctx.Status.LastRetry.Add(1) // Increment the report retry count
 		if err := getWithTimeout(&wd, url, getPageTimeout); err != nil {
+			// Log Navigation error first:
+			logNavigationFailures(wd)
+			// Determine what to do next:
 			if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "unable to find session with id") {
 				// If the session is not found, create a new one
 				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: WebDriver session not found, creating a new one...", id)
