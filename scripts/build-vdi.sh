@@ -337,26 +337,26 @@ patch_node_chromium_apt_transport() {
   }
 }
 
-# Remove the temporary Debian Sid repository once Chromium is installed. This
-# prevents accidental package mixing in later derived stages.
+# Remove the temporary Debian Chromium repository once Chromium is installed.
+# This prevents accidental Debian/Ubuntu package mixing in later stages.
 append_node_chromium_repo_cleanup() {
   local dockerfile="$1"
 
-  if grep -q 'CROWLER_REMOVE_DEBIAN_SID' "$dockerfile"; then
+  if grep -q 'CROWLER_REMOVE_DEBIAN_CHROMIUM_REPO' "$dockerfile"; then
     return 0
   fi
 
   cat >> "$dockerfile" <<'DOCKERFILE'
 
-# CROWLER_REMOVE_DEBIAN_SID
+# CROWLER_REMOVE_DEBIAN_CHROMIUM_REPO
 USER root
 RUN if [ -f /etc/apt/sources.list ]; then \
-      sed -i '/[[:space:]]\(sid\|stable\)[[:space:]]main[[:space:]]*$/d' /etc/apt/sources.list; \
+      sed -i '/[[:space:]]\(sid\|stable\|testing\)[[:space:]]main[[:space:]]*$/d' /etc/apt/sources.list; \
     fi \
   && if [ -d /etc/apt/sources.list.d ]; then \
       find /etc/apt/sources.list.d -type f \
         \( -name '*.list' -o -name '*.sources' \) \
-        -exec sed -i '/[[:space:]]\(sid\|stable\)[[:space:]]main[[:space:]]*$/d' {} +; \
+        -exec sed -i '/[[:space:]]\(sid\|stable\|testing\)[[:space:]]main[[:space:]]*$/d' {} +; \
     fi \
   && rm -f \
       /etc/apt/trusted.gpg.d/debian-archive-keyring.gpg \
@@ -820,6 +820,8 @@ resolve_ffmpeg_base
 
 echo "Selenium release : ${SELENIUM_RELEASE}"
 echo "Chromium version : ${CHROMIUM_VERSION}"
+echo "Chromium source  : ${CHROMIUM_DEB_SITE}"
+echo "Chromium suite   : ${CHROMIUM_DEB_SUITE}"
 
 CURRENT_DATE=$(date +%Y%m%d)
 export SELENIUM_PROD_RELEASE="${SELENIUM_VER_NUM}-${CURRENT_DATE}"
@@ -923,14 +925,19 @@ pushd ./docker-selenium >/dev/null
     echo "No patches found for Selenium ${SELENIUM_VER_NUM}, continuing…"
   fi
 
-  # Older docker-selenium releases install Chromium from Debian sid on top of
-  # Ubuntu. Debian base-files 14's merged-/usr diversions conflict with the
-  # diversions already present in Ubuntu unless they are removed first. Keep
-  # this as a version-independent guardrail: local .env files may select a
-  # release for which the repository has no dedicated NodeChromium patch.
-  if grep -q 'deb ${CHROMIUM_DEB_SITE}/ sid main' ./NodeChromium/Dockerfile \
-      && ! grep -q 'dpkg-divert --package base-files --no-rename --remove' ./NodeChromium/Dockerfile; then
+    # docker-selenium installs Chromium from a Debian repository on top of
+  # Ubuntu. Debian base-files merged-/usr diversions can conflict with the
+  # diversions already present in Ubuntu. Apply the guard independently of
+  # which Debian suite the selected Selenium release originally used.
+  if grep -Eq \
+      'deb( \[check-valid-until=no\])? \$\{CHROMIUM_DEB_SITE\}/ (sid|stable|testing) main' \
+      ./NodeChromium/Dockerfile \
+      && ! grep -q \
+        'dpkg-divert --package base-files --no-rename --remove' \
+        ./NodeChromium/Dockerfile; then
+
     echo "Applying built-in NodeChromium merged-/usr compatibility fix for ${PLATFORM}"
+
     dockerfile="./NodeChromium/Dockerfile"
     temporary_file="${dockerfile}.tmp.$$"
 
@@ -948,12 +955,20 @@ pushd ./docker-selenium >/dev/null
     mv "$temporary_file" "$dockerfile"
   fi
 
-  if grep -q 'deb ${CHROMIUM_DEB_SITE}/ sid main' ./NodeChromium/Dockerfile \
-      && ! grep -q 'dpkg-divert --package base-files --no-rename --remove' ./NodeChromium/Dockerfile; then
+  if grep -Eq \
+      'deb( \[check-valid-until=no\])? \$\{CHROMIUM_DEB_SITE\}/ (sid|stable|testing) main' \
+      ./NodeChromium/Dockerfile \
+      && ! grep -q \
+        'dpkg-divert --package base-files --no-rename --remove' \
+        ./NodeChromium/Dockerfile; then
+
     echo "Failed to install the Chromium merged-/usr compatibility fix" >&2
     exit 1
   fi
-  if grep -q 'deb ${CHROMIUM_DEB_SITE}/ sid main' ./NodeChromium/Dockerfile; then
+
+  if grep -Eq \
+      'deb( \[check-valid-until=no\])? \$\{CHROMIUM_DEB_SITE\}/ (sid|stable|testing) main' \
+      ./NodeChromium/Dockerfile; then
     echo "Verified NodeChromium merged-/usr compatibility fix for ${PLATFORM}"
   fi
 
