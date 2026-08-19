@@ -659,7 +659,7 @@ resolve_chromium_version() {
       ;;
 
     4.29.0)
-      CHROMIUM_VERSION="133.0.6943.126"
+      CHROMIUM_VERSION="133.0.6943.98"
       CHROMIUM_DEB_SITE="https://snapshot.debian.org/archive/debian/20250226T235959Z"
       ;;
 
