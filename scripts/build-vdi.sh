@@ -87,9 +87,18 @@ patch_base_apt_transport() {
   fi
 
   insertion_line="$(
-    grep -n '^RUN apt-get -qqy update' "$dockerfile" \
-      | head -n 1 \
-      | cut -d: -f1
+    awk '
+      /^RUN[[:space:]]/ {
+        run_line = NR
+      }
+
+      /apt-get[[:space:]]+(-[^[:space:]]+[[:space:]]+)*update/ {
+        if (run_line > 0) {
+          print run_line
+          exit
+        }
+      }
+    ' "$dockerfile"
   )"
 
   if [ -z "$insertion_line" ]; then
@@ -320,6 +329,25 @@ RUN command -v feh >/dev/null \
   && /usr/bin/python3 -c 'import pkg_resources; print(pkg_resources.__file__)' \
   && /usr/bin/supervisord --version
 USER ${SEL_UID}:${SEL_GID}
+DOCKERFILE
+}
+
+append_standalone_vdi_ports() {
+  local dockerfile="$1"
+
+  if grep -Eq \
+      '^[[:space:]]*EXPOSE[[:space:]]+4444[[:space:]]+5900[[:space:]]+7900[[:space:]]+9222[[:space:]]*$' \
+      "$dockerfile"; then
+    return 0
+  fi
+
+  cat >> "$dockerfile" <<'DOCKERFILE'
+
+# CROWLER_VDI_PORTS
+# CROWler VDI service contract.
+EXPOSE 4444 5900 7900 9222
+# Reserved for the future RBee API.
+EXPOSE 3000
 DOCKERFILE
 }
 
@@ -740,6 +768,7 @@ pushd ./docker-selenium >/dev/null
   restore_pkg_resources_from_builder "./Standalone/Dockerfile"
   append_node_chromium_repo_cleanup "./NodeChromium/Dockerfile"
   append_standalone_runtime_guard "./Standalone/Dockerfile"
+  append_standalone_vdi_ports "./Standalone/Dockerfile"
   verify_generated_dockerfiles "./Standalone/Dockerfile"
 
   # RBee + assets
