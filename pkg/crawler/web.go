@@ -798,24 +798,44 @@ func changeUserAgentCDP(pctx *ProcessContext, userAgent string) error {
 }
 
 func blockCDPURLs(wd vdi.WebDriver, ctx *ProcessContext) error {
-	// Check if we have any blocked URLs configured
-	if len((*ctx).userURLBlockPatterns) == 0 {
-		return nil // No patterns to block
+	// Enable the Network domain first.
+	if err := vdi.EnableNetwork(wd, getCDPDelay(ctx.config), nil); err != nil {
+		return fmt.Errorf("failed to enable Network domain: %w", err)
 	}
 
-	// Extract patterns from the configuration
+	// DIAGNOSTIC:
+	// Explicitly clear any URL blocking state already associated with
+	// this Chromium/CDP target before applying the CROWler configuration.
+	_, err := vdi.ExecuteCDPCommand(
+		wd,
+		getCDPDelay(ctx.config),
+		"Network.setBlockedURLs",
+		map[string]interface{}{
+			"urls":        []string{},
+			"urlPatterns": []interface{}{},
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to clear blocked URLs: %w", err)
+	}
+
 	patterns := make([]string, 0)
-	for _, pattern := range (*ctx).userURLBlockPatterns {
+	for _, pattern := range ctx.userURLBlockPatterns {
+		pattern = strings.TrimSpace(pattern)
 		if pattern != "" {
 			patterns = append(patterns, pattern)
 		}
 	}
 
-	// First: enable the Network domain
-	err := vdi.EnableNetwork(wd, getCDPDelay(ctx.config), nil)
-	if err != nil {
-		return fmt.Errorf("failed to enable Network domain: %w", err)
+	if len(patterns) == 0 {
+		return nil
 	}
+
+	cmn.DebugMsg(
+		cmn.DbgLvlDebug2,
+		"[DEBUG-CDP-BLOCK] target block patterns: %#v",
+		patterns,
+	)
 
 	// Then: set the blocked URL patterns
 	err = vdi.SetBlockedURLs(wd, getCDPDelay(ctx.config), patterns)
