@@ -682,6 +682,41 @@ resolve_chromium_version() {
   echo "Resolved Chromium ${CHROMIUM_VERSION} for Selenium ${SELENIUM_VER_NUM}"
 }
 
+resolve_ffmpeg_base() {
+  # Explicit overrides win.
+  if [ -n "${FFMPEG_BASED_TAG:-}" ]; then
+    FFMPEG_BASED_NAME="${FFMPEG_BASED_NAME:-selenium}"
+
+    export FFMPEG_BASED_NAME
+    export FFMPEG_BASED_TAG
+
+    echo "Using explicitly requested FFmpeg base: ${FFMPEG_BASED_NAME}/ffmpeg:${FFMPEG_BASED_TAG}"
+    return 0
+  fi
+
+  case "${SELENIUM_VER_NUM}" in
+    4.29.0)
+      FFMPEG_BASED_NAME="selenium"
+      FFMPEG_BASED_TAG="7.1-20250303"
+      ;;
+
+    4.30.0)
+      FFMPEG_BASED_NAME="selenium"
+      FFMPEG_BASED_TAG="7.1-20250322"
+      ;;
+
+    *)
+      # Selenium <= 4.28 does not require the Video image in the
+      # standalone Chromium dependency chain we use.
+      return 0
+      ;;
+  esac
+
+  export FFMPEG_BASED_NAME
+  export FFMPEG_BASED_TAG
+
+  echo "Resolved FFmpeg base ${FFMPEG_BASED_NAME}/ffmpeg:${FFMPEG_BASED_TAG} for Selenium ${SELENIUM_VER_NUM}"
+}
 
 ##############################
 # "MAIN" SCRIPT STARTS HERE
@@ -735,6 +770,7 @@ resolve_selenium_build_id
 export SELENIUM_RELEASE="${SELENIUM_VER_NUM}-${SELENIUM_BUILDID}"
 
 resolve_chromium_version
+resolve_ffmpeg_base
 
 echo "Selenium release : ${SELENIUM_RELEASE}"
 echo "Chromium version : ${CHROMIUM_VERSION}"
