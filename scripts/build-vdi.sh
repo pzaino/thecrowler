@@ -930,11 +930,24 @@ pushd ./docker-selenium >/dev/null
   mkdir -p ./Standalone/images
   cp -r ../images/crowler-vdi-bg.png ./Standalone/images/ || true
 
-  # --- Guardrail: if Makefile still contains --attest/--sbom, strip them for docker driver ---
-  if grep -q -- '--attest' Makefile || grep -Eq -- '--sbom(=| )' Makefile; then
+  # --- Guardrail: strip BuildKit attestations unsupported by the docker driver ---
+  if grep -q -- '--attest' Makefile || grep -q -- '--sbom' Makefile; then
     echo "Stripping --attest/--sbom flags from Selenium Makefile for docker driver compatibility…"
-    sed_in_place 's/--attest[^ ]*//g' Makefile
-    sed_in_place 's/--sbom[= ][^ ]*//g' Makefile
+
+    sed_in_place -E \
+      -e 's/[[:space:]]+--attest[[:space:]]+[^[:space:]]+//g' \
+      -e 's/[[:space:]]+--attest=[^[:space:]]+//g' \
+      -e 's/[[:space:]]+--sbom[[:space:]]+[^[:space:]]+//g' \
+      -e 's/[[:space:]]+--sbom=[^[:space:]]+//g' \
+      Makefile
+  fi
+
+  if grep -q -- '--attest' Makefile \
+      || grep -q -- '--sbom' Makefile \
+      || grep -q -- 'type=provenance,mode=max' Makefile; then
+    echo "Failed to remove BuildKit attest/SBOM arguments from Selenium Makefile" >&2
+    grep -nE -- '--attest|--sbom|type=provenance,mode=max' Makefile >&2
+    exit 1
   fi
 
   # ===== Docker Hub mirror fallback for library images (ubuntu:*) =====
