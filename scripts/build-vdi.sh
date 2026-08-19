@@ -589,11 +589,57 @@ verify_vdi_runtime() {
   return "$result"
 }
 
+resolve_selenium_build_id() {
+  # Explicit override always wins.
+  if [ -n "${SELENIUM_BUILDID:-}" ]; then
+    echo "Using explicitly requested Selenium build ID: ${SELENIUM_BUILDID}"
+    export SELENIUM_BUILDID
+    return 0
+  fi
+
+  case "${SELENIUM_VER_NUM}" in
+    4.27.0)
+      SELENIUM_BUILDID="20241204"
+      ;;
+
+    4.28.1)
+      SELENIUM_BUILDID="20250202"
+      ;;
+
+    4.29.0)
+      SELENIUM_BUILDID="20250303"
+      ;;
+
+    4.30.0)
+      SELENIUM_BUILDID="20250323"
+      ;;
+
+    *)
+      echo "No Docker-Selenium build ID is defined for Selenium ${SELENIUM_VER_NUM}" >&2
+      echo "Set SELENIUM_BUILDID explicitly or add this Selenium release to the compatibility map." >&2
+      return 1
+      ;;
+  esac
+
+  export SELENIUM_BUILDID
+
+  echo "Resolved Selenium build ID ${SELENIUM_BUILDID} for Selenium ${SELENIUM_VER_NUM}"
+}
+
 resolve_chromium_version() {
   # Explicit override always wins.
   if [ -n "${CHROMIUM_VERSION:-}" ]; then
-    echo "Using explicitly requested Chromium version: ${CHROMIUM_VERSION}"
+    if [ "$CHROMIUM_VERSION" = "latest" ]; then
+      CHROMIUM_DEB_SITE="${CHROMIUM_DEB_SITE:-https://deb.debian.org/debian}"
+    else
+      : "${CHROMIUM_DEB_SITE:?CHROMIUM_DEB_SITE must be set when overriding CHROMIUM_VERSION}"
+    fi
+
     export CHROMIUM_VERSION
+    export CHROMIUM_DEB_SITE
+
+    echo "Using explicitly requested Chromium version: ${CHROMIUM_VERSION}"
+    echo "Using Chromium repository: ${CHROMIUM_DEB_SITE}"
     return 0
   fi
 
@@ -683,7 +729,9 @@ export DOCKER_POSTGRES_IMAGE="$POSTGRES_IMAGE"
 
 # Selenium version pins
 export SELENIUM_VER_NUM="${SELENIUM_VER_NUM:-4.28.1}"
-export SELENIUM_BUILDID="${SELENIUM_BUILDID:-20250202}"
+
+resolve_selenium_build_id
+
 export SELENIUM_RELEASE="${SELENIUM_VER_NUM}-${SELENIUM_BUILDID}"
 
 resolve_chromium_version
