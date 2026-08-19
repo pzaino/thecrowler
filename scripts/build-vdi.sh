@@ -87,9 +87,18 @@ patch_base_apt_transport() {
   fi
 
   insertion_line="$(
-    grep -n '^RUN apt-get -qqy update' "$dockerfile" \
-      | head -n 1 \
-      | cut -d: -f1
+    awk '
+      /^RUN[[:space:]]/ {
+        run_line = NR
+      }
+
+      /apt-get[[:space:]]+(-[^[:space:]]+[[:space:]]+)*update/ {
+        if (run_line > 0) {
+          print run_line
+          exit
+        }
+      }
+    ' "$dockerfile"
   )"
 
   if [ -z "$insertion_line" ]; then
