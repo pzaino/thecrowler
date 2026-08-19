@@ -585,17 +585,19 @@ resolve_chromium_version() {
     return 0
   fi
 
-  # chromium version must be compatible with the selenium version. 
+  # chromium version must be compatible with the selenium version.
   # also the chromium version we use is xxx.yyy.zzz.aaa.
   case "${SELENIUM_VER_NUM}" in
     4.27.0)
       # Replace with the exact full version from the known-good 135.0 image.
-      CHROMIUM_VERSION="135.0.7049.114"
+      CHROMIUM_VERSION="131.0.6778.85"
+      CHROMIUM_DEB_SITE="https://snapshot.debian.org/archive/debian/20241204T204112Z"
       ;;
 
     4.28.1)
       # Replace with the exact full version from the known-good 138.0 image.
-      CHROMIUM_VERSION="138.0.7204.183"
+      CHROMIUM_VERSION="132.0.6834.159"
+      CHROMIUM_DEB_SITE="https://snapshot.debian.org/archive/debian/20250202T205652Z"
       ;;
 
     *)
@@ -606,6 +608,7 @@ resolve_chromium_version() {
   esac
 
   export CHROMIUM_VERSION
+  export CHROMIUM_DEB_SITE
 
   echo "Resolved Chromium ${CHROMIUM_VERSION} for Selenium ${SELENIUM_VER_NUM}"
 }
