@@ -279,9 +279,17 @@ restore_pkg_resources_from_builder() {
 patch_node_chromium_apt_transport() {
   local dockerfile="$1"
 
+  # Keep the default Selenium Debian source on HTTPS.
   sed_in_place \
     's#ARG CHROMIUM_DEB_SITE="http://deb.debian.org/debian"#ARG CHROMIUM_DEB_SITE="https://deb.debian.org/debian"#' \
     "$dockerfile"
+
+  # Historical Debian snapshots have expired Release metadata.
+  if [[ "${CHROMIUM_DEB_SITE:-}" == https://snapshot.debian.org/* ]]; then
+    sed_in_place \
+      's#echo "deb ${CHROMIUM_DEB_SITE}/ sid main"#echo "deb [check-valid-until=no] ${CHROMIUM_DEB_SITE}/ sid main"#' \
+      "$dockerfile"
+  fi
 }
 
 # Remove the temporary Debian Sid repository once Chromium is installed. This
@@ -892,6 +900,10 @@ pushd ./docker-selenium >/dev/null
   # ===== END mirror fallback =====
 
   # ==== Build the final image ====
+  # Selenium's Makefile forwards CHROMIUM_VERSION itself, but it does not
+  # forward CHROMIUM_DEB_SITE. Add the repository as a generic Docker build arg.
+  export BUILD_ARGS="${BUILD_ARGS:-} --build-arg CHROMIUM_DEB_SITE=${CHROMIUM_DEB_SITE}"
+
   rval=0
   make standalone_chromium || rval=$?
 
