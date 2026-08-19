@@ -585,6 +585,8 @@ resolve_chromium_version() {
     return 0
   fi
 
+  # chromium version must be compatible with the selenium version. 
+  # also the chromium version we use is xxx.yyy.zzz.aaa.
   case "${SELENIUM_VER_NUM}" in
     4.27.0)
       # Replace with the exact full version from the known-good 135.0 image.
