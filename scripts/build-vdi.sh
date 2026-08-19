@@ -279,9 +279,17 @@ restore_pkg_resources_from_builder() {
 patch_node_chromium_apt_transport() {
   local dockerfile="$1"
 
+  # Keep the default Selenium Debian source on HTTPS.
   sed_in_place \
     's#ARG CHROMIUM_DEB_SITE="http://deb.debian.org/debian"#ARG CHROMIUM_DEB_SITE="https://deb.debian.org/debian"#' \
     "$dockerfile"
+
+  # Historical Debian snapshots have expired Release metadata.
+  if [[ "${CHROMIUM_DEB_SITE:-}" == https://snapshot.debian.org/* ]]; then
+    sed_in_place \
+      's#echo "deb ${CHROMIUM_DEB_SITE}/ sid main"#echo "deb [check-valid-until=no] ${CHROMIUM_DEB_SITE}/ sid main"#' \
+      "$dockerfile"
+  fi
 }
 
 # Remove the temporary Debian Sid repository once Chromium is installed. This
@@ -577,6 +585,47 @@ verify_vdi_runtime() {
   return "$result"
 }
 
+resolve_chromium_version() {
+  # Explicit override always wins.
+  if [ -n "${CHROMIUM_VERSION:-}" ]; then
+    echo "Using explicitly requested Chromium version: ${CHROMIUM_VERSION}"
+    export CHROMIUM_VERSION
+    return 0
+  fi
+
+  # chromium version must be compatible with the selenium version.
+  # also the chromium version we use is xxx.yyy.zzz.aaa.
+  case "${SELENIUM_VER_NUM}" in
+    4.27.0)
+      # Replace with the exact full version from the known-good 135.0 image.
+      CHROMIUM_VERSION="131.0.6778.85"
+      CHROMIUM_DEB_SITE="https://snapshot.debian.org/archive/debian/20241204T204112Z"
+      ;;
+
+    4.28.1)
+      # Replace with the exact full version from the known-good 138.0 image.
+      CHROMIUM_VERSION="132.0.6834.159"
+      CHROMIUM_DEB_SITE="https://snapshot.debian.org/archive/debian/20250202T205652Z"
+      ;;
+
+    *)
+      echo "No pinned Chromium version is defined for Selenium ${SELENIUM_VER_NUM}" >&2
+      echo "Set CHROMIUM_VERSION explicitly or add this Selenium release to the compatibility map." >&2
+      return 1
+      ;;
+  esac
+
+  export CHROMIUM_VERSION
+  export CHROMIUM_DEB_SITE
+
+  echo "Resolved Chromium ${CHROMIUM_VERSION} for Selenium ${SELENIUM_VER_NUM}"
+}
+
+
+##############################
+# "MAIN" SCRIPT STARTS HERE
+##############################
+
 # Optional config sourcing
 if [ -f config.sh ]; then
   source config.sh
@@ -615,12 +664,17 @@ case "$REQUESTED_PLATFORM" in
 esac
 export PLATFORMS="$PLATFORM"
 export DOCKER_DEFAULT_PLATFORM="$PLATFORM"
-export DOCKER_POSTRGES_IMAGE="$POSTGRES_IMAGE"
+export DOCKER_POSTGRES_IMAGE="$POSTGRES_IMAGE"
 
 # Selenium version pins
 export SELENIUM_VER_NUM="${SELENIUM_VER_NUM:-4.28.1}"
 export SELENIUM_BUILDID="${SELENIUM_BUILDID:-20250202}"
 export SELENIUM_RELEASE="${SELENIUM_VER_NUM}-${SELENIUM_BUILDID}"
+
+resolve_chromium_version
+
+echo "Selenium release : ${SELENIUM_RELEASE}"
+echo "Chromium version : ${CHROMIUM_VERSION}"
 
 CURRENT_DATE=$(date +%Y%m%d)
 export SELENIUM_PROD_RELEASE="${SELENIUM_VER_NUM}-${CURRENT_DATE}"
@@ -846,6 +900,10 @@ pushd ./docker-selenium >/dev/null
   # ===== END mirror fallback =====
 
   # ==== Build the final image ====
+  # Selenium's Makefile forwards CHROMIUM_VERSION itself, but it does not
+  # forward CHROMIUM_DEB_SITE. Add the repository as a generic Docker build arg.
+  export BUILD_ARGS="${BUILD_ARGS:-} --build-arg CHROMIUM_DEB_SITE=${CHROMIUM_DEB_SITE}"
+
   rval=0
   make standalone_chromium || rval=$?
 
