@@ -1090,7 +1090,7 @@ func collectLoadedWebPage(ctx *ProcessContext, wd vdi.WebDriver, pageURL string,
 	_ = vdi.Refresh(ctx)
 
 	if ctx.config.Crawler.CollectPageEvents {
-		collectPageLogs(&wd, pageInfo)
+		collectPageLogs(ctx, pageInfo)
 	}
 	if ctx.RefreshCrawlingTimer != nil {
 		ctx.RefreshCrawlingTimer()
@@ -2159,10 +2159,10 @@ func collectXHR(ctx *ProcessContext, pageInfo *PageInfo) {
 }
 
 // Collects the page logs from the browser
-func collectPageLogs(pageSource *vdi.WebDriver, pageInfo *PageInfo) {
-	logs, err := (*pageSource).Log("performance")
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Failed to retrieve performance logs: %v", err)
+func collectPageLogs(ctx *ProcessContext, pageInfo *PageInfo) {
+	logs, ok := ctx.performanceLogSnapshot()
+	if !ok {
+		cmn.DebugMsg(cmn.DbgLvlError, "Failed to retrieve performance logs")
 		return
 	}
 
