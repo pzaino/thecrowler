@@ -144,6 +144,12 @@ func logNavigationFailureEntry(entry log.Message) {
 	)
 }
 
+func (ctx *ProcessContext) clearPerformanceLogs() {
+	ctx.performanceLogs.mu.Lock()
+	defer ctx.performanceLogs.mu.Unlock()
+	ctx.performanceLogs.entries = nil
+}
+
 func (ctx *ProcessContext) performanceLogSnapshot() ([]log.Message, bool) {
 	ctx.performanceLogs.mu.Lock()
 	defer ctx.performanceLogs.mu.Unlock()

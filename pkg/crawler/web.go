@@ -1234,6 +1234,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 	// Tracking validation retries (if any)
 	validationRetryBudget := make(map[string]int)
 	ctx.Status.LastRetry.Store(0)
+	ctx.clearPerformanceLogs() // Clear performance logs before navigation
 	for retries := 0; retries <= maxRetries; retries++ {
 		if ctx.VDIReturned {
 			// If the VDI session is returned, return the WebDriver
