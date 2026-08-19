@@ -332,6 +332,25 @@ USER ${SEL_UID}:${SEL_GID}
 DOCKERFILE
 }
 
+append_standalone_vdi_ports() {
+  local dockerfile="$1"
+
+  if grep -Eq \
+      '^[[:space:]]*EXPOSE[[:space:]]+4444[[:space:]]+5900[[:space:]]+7900[[:space:]]+9222[[:space:]]*$' \
+      "$dockerfile"; then
+    return 0
+  fi
+
+  cat >> "$dockerfile" <<'DOCKERFILE'
+
+# CROWLER_VDI_PORTS
+# CROWler VDI service contract.
+EXPOSE 4444 5900 7900 9222
+# Reserved for the future RBee API.
+EXPOSE 3000
+DOCKERFILE
+}
+
 verify_generated_dockerfiles() {
   local standalone_dockerfile="$1"
 
@@ -749,6 +768,7 @@ pushd ./docker-selenium >/dev/null
   restore_pkg_resources_from_builder "./Standalone/Dockerfile"
   append_node_chromium_repo_cleanup "./NodeChromium/Dockerfile"
   append_standalone_runtime_guard "./Standalone/Dockerfile"
+  append_standalone_vdi_ports "./Standalone/Dockerfile"
   verify_generated_dockerfiles "./Standalone/Dockerfile"
 
   # RBee + assets
