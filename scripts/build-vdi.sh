@@ -999,6 +999,18 @@ pushd ./docker-selenium >/dev/null
   # ===== END mirror fallback =====
 
   # ==== Build the final image ====
+
+  if [ -n "${FFMPEG_BASED_TAG:-}" ]; then
+    echo "Checking FFmpeg base image ${FFMPEG_BASED_NAME}/ffmpeg:${FFMPEG_BASED_TAG}"
+
+    docker buildx imagetools inspect \
+      "${FFMPEG_BASED_NAME}/ffmpeg:${FFMPEG_BASED_TAG}" >/dev/null || {
+        echo "Pinned FFmpeg base image does not exist:" >&2
+        echo "  ${FFMPEG_BASED_NAME}/ffmpeg:${FFMPEG_BASED_TAG}" >&2
+        exit 1
+      }
+  fi
+
   # Selenium's Makefile forwards CHROMIUM_VERSION itself, but it does not
   # forward CHROMIUM_DEB_SITE. Add the repository as a generic Docker build arg.
   export BUILD_ARGS="${BUILD_ARGS:-} --build-arg CHROMIUM_DEB_SITE=${CHROMIUM_DEB_SITE}"
