@@ -95,7 +95,10 @@ func (ctx *ProcessContext) ingestPerformanceLogs() error {
 	}
 
 	ctx.performanceLogs.mu.Lock()
-	ctx.performanceLogs.entries = append(ctx.performanceLogs.entries, logs...)
+	ctx.performanceLogs.entries = append(
+		ctx.performanceLogs.entries,
+		logs...,
+	)
 	ctx.performanceLogs.mu.Unlock()
 
 	for _, entry := range logs {
@@ -155,7 +158,13 @@ func (ctx *ProcessContext) performanceLogSnapshot() ([]log.Message, bool) {
 	defer ctx.performanceLogs.mu.Unlock()
 
 	if len(ctx.performanceLogs.entries) == 0 {
-		return nil, false
+		err := ctx.ingestPerformanceLogs() // Attempt to ingest logs if empty
+		if err != nil {
+			return nil, false
+		}
+		if len(ctx.performanceLogs.entries) == 0 {
+			return nil, false
+		}
 	}
 
 	entries := make([]log.Message, len(ctx.performanceLogs.entries))
