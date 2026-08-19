@@ -276,24 +276,65 @@ restore_pkg_resources_from_builder() {
 }
 
 # Use HTTPS for the temporary Debian Chromium repository.
+# Configure the temporary Debian repository used to install Chromium.
 patch_node_chromium_apt_transport() {
   local dockerfile="$1"
+  local temporary_file
 
   # Keep the default Selenium Debian source on HTTPS.
   sed_in_place \
     's#ARG CHROMIUM_DEB_SITE="http://deb.debian.org/debian"#ARG CHROMIUM_DEB_SITE="https://deb.debian.org/debian"#' \
     "$dockerfile"
 
-  # Historical Debian snapshots have expired Release metadata.
-  if [[ "${CHROMIUM_DEB_SITE:-}" == https://snapshot.debian.org/* ]]; then
-    sed_in_place \
-      's#echo "deb ${CHROMIUM_DEB_SITE}/ sid main"#echo "deb [check-valid-until=no] ${CHROMIUM_DEB_SITE}/ sid main"#' \
-      "$dockerfile"
+  # Add a configurable Debian suite immediately after CHROMIUM_DEB_SITE.
+  if ! grep -q '^ARG CHROMIUM_DEB_SUITE=' "$dockerfile"; then
+    temporary_file="${dockerfile}.tmp.$$"
 
-    sed_in_place \
-      's#echo "deb ${CHROMIUM_DEB_SITE}/ stable main"#echo "deb [check-valid-until=no] ${CHROMIUM_DEB_SITE}/ stable main"#' \
+    awk '
+      {
+        print
+      }
+
+      /^ARG CHROMIUM_DEB_SITE=/ && !inserted {
+        print "ARG CHROMIUM_DEB_SUITE=\"sid\""
+        inserted=1
+      }
+
+      END {
+        if (!inserted) {
+          exit 42
+        }
+      }
+    ' "$dockerfile" > "$temporary_file" || {
+      rm -f "$temporary_file"
+      echo "Unable to add CHROMIUM_DEB_SUITE to $dockerfile" >&2
+      exit 1
+    }
+
+    mv "$temporary_file" "$dockerfile"
+  fi
+
+  # Normalize Selenium versions which hard-code sid, stable, or testing.
+  if [[ "${CHROMIUM_DEB_SITE:-}" == https://snapshot.debian.org/* ]]; then
+    sed_in_place -E \
+      's#echo "deb( \[check-valid-until=no\])? \$\{CHROMIUM_DEB_SITE\}/ (sid|stable|testing) main"#echo "deb [check-valid-until=no] ${CHROMIUM_DEB_SITE}/ ${CHROMIUM_DEB_SUITE} main"#' \
+      "$dockerfile"
+  else
+    sed_in_place -E \
+      's#echo "deb( \[check-valid-until=no\])? \$\{CHROMIUM_DEB_SITE\}/ (sid|stable|testing) main"#echo "deb ${CHROMIUM_DEB_SITE}/ ${CHROMIUM_DEB_SUITE} main"#' \
       "$dockerfile"
   fi
+
+  grep -F 'ARG CHROMIUM_DEB_SUITE=' "$dockerfile" >/dev/null || {
+    echo "CHROMIUM_DEB_SUITE was not added to $dockerfile" >&2
+    exit 1
+  }
+
+  grep -F '${CHROMIUM_DEB_SITE}/ ${CHROMIUM_DEB_SUITE} main' "$dockerfile" >/dev/null || {
+    echo "Chromium Debian repository suite was not normalized in $dockerfile" >&2
+    sed -n '1,40p' "$dockerfile" >&2
+    exit 1
+  }
 }
 
 # Remove the temporary Debian Sid repository once Chromium is installed. This
@@ -650,22 +691,26 @@ resolve_chromium_version() {
       # Replace with the exact full version from the known-good 135.0 image.
       CHROMIUM_VERSION="131.0.6778.85"
       CHROMIUM_DEB_SITE="https://snapshot.debian.org/archive/debian/20241204T204112Z"
+      CHROMIUM_DEB_SUITE="sid"
       ;;
 
     4.28.1)
       # Replace with the exact full version from the known-good 138.0 image.
       CHROMIUM_VERSION="132.0.6834.159"
       CHROMIUM_DEB_SITE="https://snapshot.debian.org/archive/debian/20250202T205652Z"
+      CHROMIUM_DEB_SUITE="sid"
       ;;
 
     4.29.0)
       CHROMIUM_VERSION="133.0.6943.98"
-      CHROMIUM_DEB_SITE="https://snapshot.debian.org/archive/debian/20250226T235959Z"
+      CHROMIUM_DEB_SITE="https://snapshot.debian.org/archive/debian/20250225T235959Z"
+      CHROMIUM_DEB_SUITE="testing"
       ;;
 
     4.30.0)
       CHROMIUM_VERSION="134.0.6998.117"
       CHROMIUM_DEB_SITE="https://snapshot.debian.org/archive/debian/20250323T235959Z"
+      CHROMIUM_DEB_SUITE="sid"
       ;;
 
 
@@ -678,6 +723,7 @@ resolve_chromium_version() {
 
   export CHROMIUM_VERSION
   export CHROMIUM_DEB_SITE
+  export CHROMIUM_DEB_SUITE
 
   echo "Resolved Chromium ${CHROMIUM_VERSION} for Selenium ${SELENIUM_VER_NUM}"
 }
@@ -1026,7 +1072,9 @@ pushd ./docker-selenium >/dev/null
 
   # Selenium's Makefile forwards CHROMIUM_VERSION itself, but it does not
   # forward CHROMIUM_DEB_SITE. Add the repository as a generic Docker build arg.
-  export BUILD_ARGS="${BUILD_ARGS:-} --build-arg CHROMIUM_DEB_SITE=${CHROMIUM_DEB_SITE}"
+  export BUILD_ARGS="${BUILD_ARGS:-} \
+      --build-arg CHROMIUM_DEB_SITE=${CHROMIUM_DEB_SITE} \
+      --build-arg CHROMIUM_DEB_SUITE=${CHROMIUM_DEB_SUITE}"
 
   rval=0
   make standalone_chromium || rval=$?
