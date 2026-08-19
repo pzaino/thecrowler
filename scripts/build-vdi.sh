@@ -379,8 +379,12 @@ append_standalone_runtime_guard() {
 # CROWLER_SUPERVISOR_RUNTIME
 USER root
 RUN command -v feh >/dev/null \
+  && test -x /usr/bin/locale-check \
+  && /usr/bin/python3 -c 'import _distutils_hack' \
   && /usr/bin/python3 -c 'import pkg_resources; print(pkg_resources.__file__)' \
-  && /usr/bin/supervisord --version
+  && /usr/bin/python3 -c 'import websockify' \
+  && /usr/bin/supervisord --version \
+  && test -x /opt/bin/noVNC/utils/novnc_proxy
 USER ${SEL_UID}:${SEL_GID}
 DOCKERFILE
 }
@@ -460,10 +464,14 @@ verify_supervisor_runtime() {
     --platform "$platform" \
     --entrypoint /bin/bash \
     "$image" \
-    -lc '
+    -c '
       set -e
       command -v feh
+      test -x /usr/bin/locale-check
+      /usr/bin/python3 -c "import _distutils_hack"
       /usr/bin/python3 -c "import pkg_resources; print(pkg_resources.__file__)"
+      /usr/bin/python3 -c "import websockify"
+      test -x /opt/bin/noVNC/utils/novnc_proxy
       /usr/bin/supervisord --version
     '
 }
@@ -483,6 +491,13 @@ print_vdi_diagnostics() {
   timeout 10 docker exec "$container" /bin/bash -lc \
     'command -v ss >/dev/null && ss -lntp || (command -v netstat >/dev/null && netstat -lntp) || true' \
     >&2 2>/dev/null || true
+  echo "===== noVNC stdout =====" >&2
+  timeout 10 docker exec "$container" /bin/bash -c \
+    'cat /var/log/supervisor/novnc-stdout.log 2>/dev/null || true' >&2 || true
+
+  echo "===== noVNC stderr =====" >&2
+  timeout 10 docker exec "$container" /bin/bash -c \
+    'cat /var/log/supervisor/novnc-stderr.log 2>/dev/null || true' >&2 || true
 }
 
 wait_for_supervisor() {
@@ -545,17 +560,20 @@ wait_for_http() {
   local container="$1"
   local url="$2"
   local jq_filter="${3:-}"
-  local attempt
+  local deadline
 
-  for ((attempt = 1; attempt <= 60; attempt++)); do
+  deadline=$((SECONDS + 60))
+
+  while [ "$SECONDS" -lt "$deadline" ]; do
     if [ -n "$jq_filter" ]; then
-      if timeout 5 docker exec "$container" curl -fsS "$url" 2>/dev/null \
+      if timeout 2 docker exec "$container" curl -fsS "$url" 2>/dev/null \
           | jq -e "$jq_filter" >/dev/null 2>&1; then
         return 0
       fi
-    elif timeout 5 docker exec "$container" curl -fsS "$url" >/dev/null 2>&1; then
+    elif timeout 2 docker exec "$container" curl -fsS "$url" >/dev/null 2>&1; then
       return 0
     fi
+
     sleep 1
   done
 
