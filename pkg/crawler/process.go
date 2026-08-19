@@ -80,7 +80,7 @@ type performanceLogStore struct {
 	entries []log.Message
 }
 
-func (ctx *ProcessContext) ingestPerformanceLogs() error {
+func ingestPerformanceLogs(ctx *ProcessContext) error {
 	if ctx == nil || ctx.wd == nil {
 		return errors.New("WebDriver is nil")
 	}
@@ -94,12 +94,10 @@ func (ctx *ProcessContext) ingestPerformanceLogs() error {
 		return nil
 	}
 
-	ctx.performanceLogs.mu.Lock()
 	ctx.performanceLogs.entries = append(
 		ctx.performanceLogs.entries,
 		logs...,
 	)
-	ctx.performanceLogs.mu.Unlock()
 
 	for _, entry := range logs {
 		logNavigationFailureEntry(entry)
@@ -158,7 +156,7 @@ func (ctx *ProcessContext) performanceLogSnapshot() ([]log.Message, bool) {
 	defer ctx.performanceLogs.mu.Unlock()
 
 	if len(ctx.performanceLogs.entries) == 0 {
-		err := ctx.ingestPerformanceLogs() // Attempt to ingest logs if empty
+		err := ingestPerformanceLogs(ctx) // Attempt to ingest logs if empty
 		if err != nil {
 			return nil, false
 		}
