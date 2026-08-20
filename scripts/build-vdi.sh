@@ -378,13 +378,14 @@ append_standalone_runtime_guard() {
 
 # CROWLER_SUPERVISOR_RUNTIME
 USER root
-RUN command -v feh >/dev/null \
-  && test -x /usr/bin/locale-check \
-  && /usr/bin/python3 -c 'import _distutils_hack' \
-  && /usr/bin/python3 -c 'import pkg_resources; print(pkg_resources.__file__)' \
-  && /usr/bin/python3 -c 'import websockify' \
-  && /usr/bin/supervisord --version \
-  && test -x /opt/bin/noVNC/utils/novnc_proxy
+RUN set -eux; \
+    command -v feh; \
+    test -x /usr/bin/locale-check; \
+    /usr/bin/python3 -c 'import _distutils_hack'; \
+    /usr/bin/python3 -c 'import pkg_resources; print(pkg_resources.__file__)'; \
+    /usr/bin/python3 -c 'import websockify'; \
+    /usr/bin/supervisord --version; \
+    test -x /opt/bin/noVNC/utils/novnc_proxy
 USER ${SEL_UID}:${SEL_GID}
 DOCKERFILE
 }
@@ -942,13 +943,11 @@ pushd ./docker-selenium >/dev/null
     echo "No patches found for Selenium ${SELENIUM_VER_NUM}, continuing…"
   fi
 
-    # docker-selenium installs Chromium from a Debian repository on top of
-  # Ubuntu. Debian base-files merged-/usr diversions can conflict with the
-  # diversions already present in Ubuntu. Apply the guard independently of
-  # which Debian suite the selected Selenium release originally used.
-  if grep -Eq \
-      'deb( \[check-valid-until=no\])? \$\{CHROMIUM_DEB_SITE\}/ (sid|stable|testing) main' \
-      ./NodeChromium/Dockerfile \
+    # Some historical Selenium Chromium builds require the merged-/usr
+  # compatibility workaround when consuming Debian sid packages on top
+  # of Ubuntu. Do not apply it to stable/testing snapshots: removing the
+  # Ubuntu base-files diversions there damages the Ubuntu userspace.
+  if [ "${CHROMIUM_DEB_SUITE}" = "sid" ] \
       && ! grep -q \
         'dpkg-divert --package base-files --no-rename --remove' \
         ./NodeChromium/Dockerfile; then
@@ -972,9 +971,7 @@ pushd ./docker-selenium >/dev/null
     mv "$temporary_file" "$dockerfile"
   fi
 
-  if grep -Eq \
-      'deb( \[check-valid-until=no\])? \$\{CHROMIUM_DEB_SITE\}/ (sid|stable|testing) main' \
-      ./NodeChromium/Dockerfile \
+  if [ "${CHROMIUM_DEB_SUITE}" = "sid" ] \
       && ! grep -q \
         'dpkg-divert --package base-files --no-rename --remove' \
         ./NodeChromium/Dockerfile; then
@@ -983,9 +980,7 @@ pushd ./docker-selenium >/dev/null
     exit 1
   fi
 
-  if grep -Eq \
-      'deb( \[check-valid-until=no\])? \$\{CHROMIUM_DEB_SITE\}/ (sid|stable|testing) main' \
-      ./NodeChromium/Dockerfile; then
+  if [ "${CHROMIUM_DEB_SUITE}" = "sid" ]; then
     echo "Verified NodeChromium merged-/usr compatibility fix for ${PLATFORM}"
   fi
 
