@@ -403,6 +403,54 @@ DOCKERFILE
   }
 }
 
+patch_node_chromium_apt_diagnostics() {
+  local dockerfile="$1"
+  local temporary_file="${dockerfile}.tmp.$$"
+
+  if grep -q 'CROWLER_APT_RESOLVER_DIAGNOSTICS' "$dockerfile"; then
+    return 0
+  fi
+
+  if ! awk '
+    /&& apt-get -qqyf install \/tmp\/chromium\/chromium-common\.deb/ {
+      print "      # CROWLER_APT_RESOLVER_DIAGNOSTICS"
+      print "      && for pkg in /tmp/chromium/*.deb; do \\"
+      print "           echo \"===== ${pkg} =====\"; \\"
+      print "           dpkg-deb -f \"${pkg}\" Package Version Pre-Depends Depends Recommends; \\"
+      print "         done \\"
+      print "      && apt-get -o Debug::pkgProblemResolver=yes -yf install /tmp/chromium/chromium-common.deb /tmp/chromium/chromium.deb /tmp/chromium/chromium-l10n.deb /tmp/chromium/chromium-driver.deb \\"
+      replaced=1
+      next
+    }
+
+    {
+      print
+    }
+
+    END {
+      if (!replaced) {
+        exit 42
+      }
+    }
+  ' "$dockerfile" > "$temporary_file"; then
+    rm -f "$temporary_file"
+    echo "Unable to enable Chromium APT resolver diagnostics in $dockerfile" >&2
+    exit 1
+  fi
+
+  mv "$temporary_file" "$dockerfile"
+
+  grep -F '# CROWLER_APT_RESOLVER_DIAGNOSTICS' "$dockerfile" >/dev/null || {
+    echo "Chromium APT resolver diagnostics were not installed in $dockerfile" >&2
+    exit 1
+  }
+
+  grep -F 'Debug::pkgProblemResolver=yes' "$dockerfile" >/dev/null || {
+    echo "Chromium APT resolver debugging was not enabled in $dockerfile" >&2
+    exit 1
+  }
+}
+
 # Remove the temporary Debian Chromium repository once Chromium is installed.
 # This prevents accidental Debian/Ubuntu package mixing in later stages.
 append_node_chromium_repo_cleanup() {
@@ -795,7 +843,7 @@ resolve_chromium_version() {
 
     4.30.0)
       CHROMIUM_VERSION="134.0.6998.88"
-      CHROMIUM_DEB_SITE="https://snapshot.debian.org/archive/debian/20250323T235959Z"
+      CHROMIUM_DEB_SITE="https://snapshot.debian.org/archive/debian/20250317T235959Z"
       CHROMIUM_DEB_SUITE="testing"
       ;;
 
@@ -1060,6 +1108,7 @@ pushd ./docker-selenium >/dev/null
 
   patch_node_chromium_apt_transport "./NodeChromium/Dockerfile"
   patch_node_chromium_apt_pinning "./NodeChromium/Dockerfile"
+  patch_node_chromium_apt_diagnostics "./NodeChromium/Dockerfile"
   
   restore_pkg_resources_from_builder "./Standalone/Dockerfile"
   append_node_chromium_repo_cleanup "./NodeChromium/Dockerfile"
