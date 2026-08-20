@@ -344,7 +344,8 @@ patch_node_chromium_apt_pinning() {
 
   # The testing-based Chromium builds must not replace Ubuntu core packages
   # with newer Debian testing versions.
-  if [ "${CHROMIUM_DEB_SUITE:-}" != "testing" ]; then
+  if [ "${SELENIUM_VER_NUM}" != "4.30.0" ] \
+    || [ "${CHROMIUM_DEB_SUITE:-}" != "testing" ]; then
     return 0
   fi
 
@@ -406,6 +407,10 @@ DOCKERFILE
 patch_node_chromium_apt_diagnostics() {
   local dockerfile="$1"
   local temporary_file="${dockerfile}.tmp.$$"
+
+  if [ "${SELENIUM_VER_NUM}" != "4.30.0" ]; then
+    return 0
+  fi
 
   if grep -q 'CROWLER_APT_RESOLVER_DIAGNOSTICS' "$dockerfile"; then
     return 0
@@ -493,13 +498,32 @@ append_standalone_runtime_guard() {
 
 # CROWLER_SUPERVISOR_RUNTIME
 USER root
+RUN command -v feh >/dev/null \
+  && /usr/bin/python3 -c 'import pkg_resources; print(pkg_resources.__file__)' \
+  && /usr/bin/supervisord --version
+USER ${SEL_UID}:${SEL_GID}
+DOCKERFILE
+}
+
+append_standalone_430_runtime_guard() {
+  local dockerfile="$1"
+
+  if [ "${SELENIUM_VER_NUM}" != "4.30.0" ]; then
+    return 0
+  fi
+
+  if grep -q 'CROWLER_430_RUNTIME' "$dockerfile"; then
+    return 0
+  fi
+
+  cat >> "$dockerfile" <<'DOCKERFILE'
+
+# CROWLER_430_RUNTIME
+USER root
 RUN set -eux; \
-    command -v feh; \
     test -x /usr/bin/locale-check; \
     /usr/bin/python3 -c 'import _distutils_hack'; \
-    /usr/bin/python3 -c 'import pkg_resources; print(pkg_resources.__file__)'; \
     /usr/bin/python3 -c 'import websockify'; \
-    /usr/bin/supervisord --version; \
     test -x /opt/bin/noVNC/utils/novnc_proxy
 USER ${SEL_UID}:${SEL_GID}
 DOCKERFILE
@@ -575,6 +599,7 @@ verify_supervisor_runtime() {
 
   echo "Verifying Supervisor runtime in ${image} for ${platform}"
 
+  # Common runtime contract for every supported Selenium version.
   docker run --rm \
     --pull=never \
     --platform "$platform" \
@@ -583,14 +608,27 @@ verify_supervisor_runtime() {
     -c '
       set -e
       command -v feh
-      test -x /usr/bin/locale-check
-      /usr/bin/python3 -c "import _distutils_hack"
       /usr/bin/python3 -c "import pkg_resources; print(pkg_resources.__file__)"
-      /usr/bin/python3 -c "import websockify"
-      test -x /opt/bin/noVNC/utils/novnc_proxy
       /usr/bin/supervisord --version
     '
+
+  # Additional integrity checks required while validating Selenium 4.30.
+  if [ "${SELENIUM_VER_NUM}" = "4.30.0" ]; then
+    docker run --rm \
+      --pull=never \
+      --platform "$platform" \
+      --entrypoint /bin/bash \
+      "$image" \
+      -c '
+        set -e
+        test -x /usr/bin/locale-check
+        /usr/bin/python3 -c "import _distutils_hack"
+        /usr/bin/python3 -c "import websockify"
+        test -x /opt/bin/noVNC/utils/novnc_proxy
+      '
+  fi
 }
+
 
 print_vdi_diagnostics() {
   local container="$1"
@@ -1109,10 +1147,11 @@ pushd ./docker-selenium >/dev/null
   patch_node_chromium_apt_transport "./NodeChromium/Dockerfile"
   patch_node_chromium_apt_pinning "./NodeChromium/Dockerfile"
   patch_node_chromium_apt_diagnostics "./NodeChromium/Dockerfile"
-  
+
   restore_pkg_resources_from_builder "./Standalone/Dockerfile"
   append_node_chromium_repo_cleanup "./NodeChromium/Dockerfile"
   append_standalone_runtime_guard "./Standalone/Dockerfile"
+  append_standalone_430_runtime_guard "./Standalone/Dockerfile"
   append_standalone_vdi_ports "./Standalone/Dockerfile"
   verify_generated_dockerfiles "./Standalone/Dockerfile"
 
