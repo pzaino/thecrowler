@@ -342,10 +342,10 @@ patch_node_chromium_apt_pinning() {
   local insertion_line
   local temporary_file
 
-  # The testing-based Chromium builds must not replace Ubuntu core packages
-  # with newer Debian testing versions.
-  if [ "${SELENIUM_VER_NUM}" != "4.30.0" ] \
-    || [ "${CHROMIUM_DEB_SUITE:-}" != "testing" ]; then
+  # Selenium 4.30 uses a temporary Debian security repository for Chromium.
+  # Keep Ubuntu Noble packages preferred for the general userspace and allow
+  # Debian only where the Chromium package family requires it.
+  if [ "${SELENIUM_VER_NUM}" != "4.30.0" ]; then
     return 0
   fi
 
@@ -456,6 +456,97 @@ patch_node_chromium_apt_diagnostics() {
   }
 }
 
+patch_node_chromium_430_package_coordinates() {
+  local dockerfile="$1"
+  local temporary_file
+
+  if [ "${SELENIUM_VER_NUM}" != "4.30.0" ]; then
+    return 0
+  fi
+
+  : "${CHROMIUM_DEB_PACKAGE_VERSION:?CHROMIUM_DEB_PACKAGE_VERSION is required for Selenium 4.30.0}"
+  : "${CHROMIUM_DEB_POOL:?CHROMIUM_DEB_POOL is required for Selenium 4.30.0}"
+
+  if ! grep -q '^ARG CHROMIUM_DEB_PACKAGE_VERSION' "$dockerfile"; then
+    temporary_file="${dockerfile}.tmp.$$"
+
+    awk '
+      {
+        print
+      }
+
+      /^ARG CHROMIUM_DEB_SUITE=/ && !inserted {
+        print "ARG CHROMIUM_DEB_PACKAGE_VERSION"
+        print "ARG CHROMIUM_DEB_POOL"
+        inserted=1
+      }
+
+      END {
+        if (!inserted) {
+          exit 42
+        }
+      }
+    ' "$dockerfile" > "$temporary_file" || {
+      rm -f "$temporary_file"
+      echo "Unable to add Chromium Debian package coordinates to $dockerfile" >&2
+      exit 1
+    }
+
+    mv "$temporary_file" "$dockerfile"
+  fi
+
+  sed_in_place \
+    's#${CHROMIUM_DEB_SITE}/pool/main/c/chromium/chromium-common_${CHROMIUM_VERSION}-1_#${CHROMIUM_DEB_SITE}/${CHROMIUM_DEB_POOL}/chromium-common_${CHROMIUM_DEB_PACKAGE_VERSION}_#' \
+    "$dockerfile"
+
+  sed_in_place \
+    's#${CHROMIUM_DEB_SITE}/pool/main/c/chromium/chromium_${CHROMIUM_VERSION}-1_#${CHROMIUM_DEB_SITE}/${CHROMIUM_DEB_POOL}/chromium_${CHROMIUM_DEB_PACKAGE_VERSION}_#' \
+    "$dockerfile"
+
+  sed_in_place \
+    's#${CHROMIUM_DEB_SITE}/pool/main/c/chromium/chromium-l10n_${CHROMIUM_VERSION}-1_all.deb#${CHROMIUM_DEB_SITE}/${CHROMIUM_DEB_POOL}/chromium-l10n_${CHROMIUM_DEB_PACKAGE_VERSION}_all.deb#' \
+    "$dockerfile"
+
+  sed_in_place \
+    's#${CHROMIUM_DEB_SITE}/pool/main/c/chromium/chromium-driver_${CHROMIUM_VERSION}-1_#${CHROMIUM_DEB_SITE}/${CHROMIUM_DEB_POOL}/chromium-driver_${CHROMIUM_DEB_PACKAGE_VERSION}_#' \
+    "$dockerfile"
+
+  grep -F 'ARG CHROMIUM_DEB_PACKAGE_VERSION' "$dockerfile" >/dev/null || {
+    echo "CHROMIUM_DEB_PACKAGE_VERSION was not added to $dockerfile" >&2
+    exit 1
+  }
+
+  grep -F 'ARG CHROMIUM_DEB_POOL' "$dockerfile" >/dev/null || {
+    echo "CHROMIUM_DEB_POOL was not added to $dockerfile" >&2
+    exit 1
+  }
+
+  grep -F '${CHROMIUM_DEB_SITE}/${CHROMIUM_DEB_POOL}/chromium_${CHROMIUM_DEB_PACKAGE_VERSION}_$(dpkg --print-architecture).deb' \
+    "$dockerfile" >/dev/null || {
+      echo "Chromium package URL was not rewritten in $dockerfile" >&2
+      sed -n '1,70p' "$dockerfile" >&2
+      exit 1
+    }
+
+  grep -F '${CHROMIUM_DEB_SITE}/${CHROMIUM_DEB_POOL}/chromium-common_${CHROMIUM_DEB_PACKAGE_VERSION}_$(dpkg --print-architecture).deb' \
+    "$dockerfile" >/dev/null || {
+      echo "chromium-common package URL was not rewritten in $dockerfile" >&2
+      exit 1
+    }
+
+  grep -F '${CHROMIUM_DEB_SITE}/${CHROMIUM_DEB_POOL}/chromium-driver_${CHROMIUM_DEB_PACKAGE_VERSION}_$(dpkg --print-architecture).deb' \
+    "$dockerfile" >/dev/null || {
+      echo "chromium-driver package URL was not rewritten in $dockerfile" >&2
+      exit 1
+    }
+
+  grep -F '${CHROMIUM_DEB_SITE}/${CHROMIUM_DEB_POOL}/chromium-l10n_${CHROMIUM_DEB_PACKAGE_VERSION}_all.deb' \
+    "$dockerfile" >/dev/null || {
+      echo "chromium-l10n package URL was not rewritten in $dockerfile" >&2
+      exit 1
+    }
+}
+
 # Remove the temporary Debian Chromium repository once Chromium is installed.
 # This prevents accidental Debian/Ubuntu package mixing in later stages.
 append_node_chromium_repo_cleanup() {
@@ -470,12 +561,12 @@ append_node_chromium_repo_cleanup() {
 # CROWLER_REMOVE_DEBIAN_CHROMIUM_REPO
 USER root
 RUN if [ -f /etc/apt/sources.list ]; then \
-      sed -i '/[[:space:]]\(sid\|stable\|testing\)[[:space:]]main[[:space:]]*$/d' /etc/apt/sources.list; \
+      sed -i '/[[:space:]]\(sid\|stable\|testing\|bookworm-security\)[[:space:]]main[[:space:]]*$/d' /etc/apt/sources.list; \
     fi \
   && if [ -d /etc/apt/sources.list.d ]; then \
       find /etc/apt/sources.list.d -type f \
         \( -name '*.list' -o -name '*.sources' \) \
-        -exec sed -i '/[[:space:]]\(sid\|stable\|testing\)[[:space:]]main[[:space:]]*$/d' {} +; \
+        -exec sed -i '/[[:space:]]\(sid\|stable\|testing\|bookworm-security\)[[:space:]]main[[:space:]]*$/d' {} +; \
     fi \
   && rm -f \
       /etc/apt/trusted.gpg.d/debian-archive-keyring.gpg \
@@ -881,8 +972,10 @@ resolve_chromium_version() {
 
     4.30.0)
       CHROMIUM_VERSION="134.0.6998.88"
-      CHROMIUM_DEB_SITE="https://snapshot.debian.org/archive/debian/20250317T235959Z"
-      CHROMIUM_DEB_SUITE="testing"
+      CHROMIUM_DEB_PACKAGE_VERSION="134.0.6998.88-1~deb12u1"
+      CHROMIUM_DEB_SITE="https://snapshot.debian.org/archive/debian-security/20250313T235959Z"
+      CHROMIUM_DEB_SUITE="bookworm-security"
+      CHROMIUM_DEB_POOL="pool/updates/main/c/chromium"
       ;;
 
     *)
@@ -993,6 +1086,10 @@ echo "Selenium release : ${SELENIUM_RELEASE}"
 echo "Chromium version : ${CHROMIUM_VERSION}"
 echo "Chromium source  : ${CHROMIUM_DEB_SITE}"
 echo "Chromium suite   : ${CHROMIUM_DEB_SUITE}"
+if [ "${SELENIUM_VER_NUM}" = "4.30.0" ]; then
+  echo "Chromium package : ${CHROMIUM_DEB_PACKAGE_VERSION}"
+  echo "Chromium pool    : ${CHROMIUM_DEB_POOL}"
+fi
 
 CURRENT_DATE=$(date +%Y%m%d)
 export SELENIUM_PROD_RELEASE="${SELENIUM_VER_NUM}-${CURRENT_DATE}"
@@ -1145,6 +1242,7 @@ pushd ./docker-selenium >/dev/null
   patch_base_runtime_packages "./Base/Dockerfile"
 
   patch_node_chromium_apt_transport "./NodeChromium/Dockerfile"
+  patch_node_chromium_430_package_coordinates "./NodeChromium/Dockerfile"
   patch_node_chromium_apt_pinning "./NodeChromium/Dockerfile"
   patch_node_chromium_apt_diagnostics "./NodeChromium/Dockerfile"
 
@@ -1258,8 +1356,14 @@ pushd ./docker-selenium >/dev/null
   # Selenium's Makefile forwards CHROMIUM_VERSION itself, but it does not
   # forward CHROMIUM_DEB_SITE. Add the repository as a generic Docker build arg.
   export BUILD_ARGS="${BUILD_ARGS:-} \
-      --build-arg CHROMIUM_DEB_SITE=${CHROMIUM_DEB_SITE} \
-      --build-arg CHROMIUM_DEB_SUITE=${CHROMIUM_DEB_SUITE}"
+    --build-arg CHROMIUM_DEB_SITE=${CHROMIUM_DEB_SITE} \
+    --build-arg CHROMIUM_DEB_SUITE=${CHROMIUM_DEB_SUITE}"
+
+  if [ "${SELENIUM_VER_NUM}" = "4.30.0" ]; then
+    export BUILD_ARGS="${BUILD_ARGS} \
+        --build-arg CHROMIUM_DEB_PACKAGE_VERSION=${CHROMIUM_DEB_PACKAGE_VERSION} \
+        --build-arg CHROMIUM_DEB_POOL=${CHROMIUM_DEB_POOL}"
+  fi
 
   rval=0
   make standalone_chromium || rval=$?
