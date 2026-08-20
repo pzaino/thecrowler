@@ -337,6 +337,72 @@ patch_node_chromium_apt_transport() {
   }
 }
 
+patch_node_chromium_apt_pinning() {
+  local dockerfile="$1"
+  local insertion_line
+  local temporary_file
+
+  # The testing-based Chromium builds must not replace Ubuntu core packages
+  # with newer Debian testing versions.
+  if [ "${CHROMIUM_DEB_SUITE:-}" != "testing" ]; then
+    return 0
+  fi
+
+  if grep -q 'CROWLER_DEBIAN_CHROMIUM_PIN' "$dockerfile"; then
+    return 0
+  fi
+
+  insertion_line="$(
+    awk '
+      /^RUN echo "deb / {
+        print NR
+        exit
+      }
+    ' "$dockerfile"
+  )"
+
+  if [ -z "$insertion_line" ]; then
+    echo "Unable to locate Chromium Debian repository setup in $dockerfile" >&2
+    exit 1
+  fi
+
+  temporary_file="${dockerfile}.tmp.$$"
+
+  {
+    if [ "$insertion_line" -gt 1 ]; then
+      sed -n "1,$((insertion_line - 1))p" "$dockerfile"
+    fi
+
+    cat <<'DOCKERFILE'
+# CROWLER_DEBIAN_CHROMIUM_PIN
+# Prefer the Ubuntu Noble userspace. Debian testing is present only to satisfy
+# Chromium-specific dependencies which Ubuntu does not provide.
+RUN printf '%s\n' \
+      'Package: *' \
+      'Pin: release o=Debian' \
+      'Pin-Priority: 100' \
+      '' \
+      'Package: chromium-sandbox' \
+      'Pin: release o=Debian' \
+      'Pin-Priority: 990' \
+      '' \
+      'Package: base-files' \
+      'Pin: release o=Debian' \
+      'Pin-Priority: -1' \
+      > /etc/apt/preferences.d/crowler-debian-chromium
+DOCKERFILE
+
+    sed -n "${insertion_line},\$p" "$dockerfile"
+  } > "$temporary_file"
+
+  mv "$temporary_file" "$dockerfile"
+
+  grep -F '# CROWLER_DEBIAN_CHROMIUM_PIN' "$dockerfile" >/dev/null || {
+    echo "Failed to install Chromium Debian APT pinning in $dockerfile" >&2
+    exit 1
+  }
+}
+
 # Remove the temporary Debian Chromium repository once Chromium is installed.
 # This prevents accidental Debian/Ubuntu package mixing in later stages.
 append_node_chromium_repo_cleanup() {
@@ -361,6 +427,7 @@ RUN if [ -f /etc/apt/sources.list ]; then \
   && rm -f \
       /etc/apt/trusted.gpg.d/debian-archive-keyring.gpg \
       /etc/apt/trusted.gpg.d/debian-archive-security-keyring.gpg \
+      /etc/apt/preferences.d/crowler-debian-chromium \
   && rm -rf /var/lib/apt/lists/* /var/cache/apt/*
 USER ${SEL_UID}
 DOCKERFILE
@@ -990,7 +1057,10 @@ pushd ./docker-selenium >/dev/null
   prepare_base_ca_bundle "./Base/crowler-ca-certificates.crt"
   patch_base_apt_transport "./Base/Dockerfile"
   patch_base_runtime_packages "./Base/Dockerfile"
+
   patch_node_chromium_apt_transport "./NodeChromium/Dockerfile"
+  patch_node_chromium_apt_pinning "./NodeChromium/Dockerfile"
+  
   restore_pkg_resources_from_builder "./Standalone/Dockerfile"
   append_node_chromium_repo_cleanup "./NodeChromium/Dockerfile"
   append_standalone_runtime_guard "./Standalone/Dockerfile"
