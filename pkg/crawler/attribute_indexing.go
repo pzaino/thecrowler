@@ -35,7 +35,10 @@ import (
 )
 
 // ExtractedValue retains the flattened value together with its JSON provenance.
-// ContextPath is the concrete path through the last wildcard/array selection.
+// SourcePath identifies the exact extracted value, while ContextPath identifies
+// its immediate containing JSON object or array ("$" denotes the root). The
+// persisted object ID identifies the whole document, and ContextRef is the
+// deterministic reference for ContextPath within that document.
 type ExtractedValue struct {
 	Value       interface{}
 	SourcePath  string
@@ -341,18 +344,17 @@ func ExtractWithTokensAndContext(data interface{}, tokens []PathToken) []Extract
 		next := []traversalNode{}
 
 		for _, node := range current {
-			appendNode := func(v interface{}, component string, selected bool) {
+			appendNode := func(v interface{}, component, parentPath string) {
 				p := component
 				if node.path != "" && component != "" && component[0] != '[' {
 					p = node.path + "." + component
 				} else {
 					p = node.path + component
 				}
-				ctx := node.context
-				if selected {
-					ctx = p
+				if parentPath == "" {
+					parentPath = "$"
 				}
-				next = append(next, traversalNode{v, p, ctx})
+				next = append(next, traversalNode{v, p, parentPath})
 			}
 			switch n := node.value.(type) {
 
@@ -365,7 +367,7 @@ func ExtractWithTokensAndContext(data interface{}, tokens []PathToken) []Extract
 					}
 					sort.Strings(keys)
 					for _, k := range keys {
-						appendNode(n[k], k, true)
+						appendNode(n[k], k, node.path)
 					}
 					continue
 				}
@@ -380,7 +382,7 @@ func ExtractWithTokensAndContext(data interface{}, tokens []PathToken) []Extract
 					for _, k := range keys {
 						v := n[k]
 						if strings.HasPrefix(k, token.Prefix) {
-							appendNode(v, k, true)
+							appendNode(v, k, node.path)
 						}
 					}
 					continue
@@ -400,22 +402,22 @@ func ExtractWithTokensAndContext(data interface{}, tokens []PathToken) []Extract
 
 					if token.Index != nil {
 						if *token.Index < len(arr) {
-							appendNode(arr[*token.Index], token.Key+"["+strconv.Itoa(*token.Index)+"]", true)
+							appendNode(arr[*token.Index], token.Key+"["+strconv.Itoa(*token.Index)+"]", joinPath(node.path, token.Key))
 						}
 					} else {
 						for i, v := range arr {
-							appendNode(v, token.Key+"["+strconv.Itoa(i)+"]", true)
+							appendNode(v, token.Key+"["+strconv.Itoa(i)+"]", joinPath(node.path, token.Key))
 						}
 					}
 					continue
 				}
-				appendNode(val, token.Key, false)
+				appendNode(val, token.Key, node.path)
 
 			case []interface{}:
 
 				if token.Key == "" && token.IsArray {
 					for i, v := range n {
-						appendNode(v, "["+strconv.Itoa(i)+"]", true)
+						appendNode(v, "["+strconv.Itoa(i)+"]", node.path)
 					}
 					continue
 				}
@@ -425,14 +427,14 @@ func ExtractWithTokensAndContext(data interface{}, tokens []PathToken) []Extract
 					// Handle direct index access like [2]
 					if token.Key == "" && token.Index != nil {
 						if *token.Index < len(n) {
-							appendNode(n[*token.Index], "["+strconv.Itoa(*token.Index)+"]", true)
+							appendNode(n[*token.Index], "["+strconv.Itoa(*token.Index)+"]", node.path)
 						}
 						continue
 					}
 
 					// If no key (edge case), just propagate values
 					if token.Key == "" {
-						appendNode(item, "["+strconv.Itoa(i)+"]", true)
+						appendNode(item, "["+strconv.Itoa(i)+"]", node.path)
 						continue
 					}
 
@@ -445,18 +447,18 @@ func ExtractWithTokensAndContext(data interface{}, tokens []PathToken) []Extract
 						if token.IsArray {
 							if arr, ok := val.([]interface{}); ok {
 								for j, v := range arr {
-									appendNode(v, token.Key+"["+strconv.Itoa(j)+"]", true)
+									appendNode(v, token.Key+"["+strconv.Itoa(j)+"]", joinPath(node.path, token.Key))
 								}
 							}
 						} else {
-							appendNode(val, token.Key, false)
+							appendNode(val, token.Key, node.path)
 						}
 						continue
 					}
 
 					// handle primitive array elements
 					if token.Key == "" && !token.IsArray {
-						appendNode(item, "["+strconv.Itoa(i)+"]", true)
+						appendNode(item, "["+strconv.Itoa(i)+"]", node.path)
 					}
 				}
 			}
@@ -470,13 +472,30 @@ func ExtractWithTokensAndContext(data interface{}, tokens []PathToken) []Extract
 		if arr, ok := n.value.([]interface{}); ok {
 			for i, v := range arr {
 				p := n.path + "[" + strconv.Itoa(i) + "]"
-				result = append(result, makeExtracted(v, p, p))
+				result = append(result, makeExtracted(v, p, rootPath(n.path)))
 			}
 			continue
 		}
 		result = append(result, makeExtracted(n.value, n.path, n.context))
 	}
 	return result
+}
+
+func joinPath(base, component string) string {
+	if base == "" {
+		return component
+	}
+	if component == "" || component[0] == '[' {
+		return base + component
+	}
+	return base + "." + component
+}
+
+func rootPath(path string) string {
+	if path == "" {
+		return "$"
+	}
+	return path
 }
 
 func makeExtracted(value interface{}, source, context string) ExtractedValue {
