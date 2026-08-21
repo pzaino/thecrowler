@@ -91,7 +91,7 @@ func emitPersistedArtifact(tx *sql.Tx, currCfg *cfg.Config, input tse.IndexedArt
 		return nil
 	}
 	if input.ObjectType != "" && input.ObjectID != 0 {
-		attributes, err := loadObjectAttributeSiblings(tx, input.ObjectID, input.ObjectType)
+		attributes, err := loadObjectAttributeSiblings(tx, input.ObjectID, input.ObjectType, "")
 		if err != nil {
 			return err
 		}

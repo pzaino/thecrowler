@@ -239,6 +239,13 @@ func TestSQLiteTimeSeriesMigrationIsIdempotentAndEnforcesPortableKeys(t *testing
 		CREATE TABLE WebObjects (object_id INTEGER PRIMARY KEY);
 		CREATE TABLE HTTPInfo (httpinfo_id INTEGER PRIMARY KEY);
 		CREATE TABLE NetInfo (netinfo_id INTEGER PRIMARY KEY);
+		CREATE TABLE ObjectAttributes (
+			attribute_id INTEGER, object_id INTEGER NOT NULL, object_type TEXT NOT NULL DEFAULT 'webobject',
+			attribute_key TEXT NOT NULL, attribute_value TEXT NOT NULL, normalized_value TEXT NOT NULL,
+			value_hash VARCHAR(64) NOT NULL, attribute_type TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, fts TEXT,
+			PRIMARY KEY (object_type, object_id, attribute_key, value_hash)
+		);
 		INSERT INTO Sources (source_id) VALUES (7), (8);
 		INSERT INTO WebObjects VALUES (101);
 		INSERT INTO HTTPInfo VALUES (102);
@@ -263,6 +270,9 @@ func TestSQLiteTimeSeriesMigrationIsIdempotentAndEnforcesPortableKeys(t *testing
 	if _, err = db.Exec(string(migration)); err != nil {
 		t.Fatalf("execute SQLite 1.13 migration: %v", err)
 	}
+
+	assertSQLiteColumns(t, db, "ObjectAttributes", []string{"source_path", "context_path", "context_ref"})
+	assertSQLiteIndexes(t, db, []string{"uq_objattr_unscoped", "uq_objattr_scoped", "idx_objattr_context"})
 
 	assertSQLiteColumns(t, db, "TimeSeriesMetrics", []string{
 		"metric_key", "selector", "retention_policy", "cardinality_policy", "store_value_text", "hash_only",

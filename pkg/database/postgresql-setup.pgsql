@@ -558,7 +558,7 @@ WHERE details ? 'scraped_data';
 -- | 200       | webobject   | domain        | example.com     |
 -- | 200       | httpinfo    | server        | nginx.          |
 CREATE TABLE IF NOT EXISTS ObjectAttributes (
-    attribute_id BIGSERIAL,
+    attribute_id BIGSERIAL PRIMARY KEY,
     object_id BIGINT NOT NULL,
     object_type TEXT NOT NULL DEFAULT 'webobject',
     attribute_key TEXT NOT NULL,
@@ -566,20 +566,20 @@ CREATE TABLE IF NOT EXISTS ObjectAttributes (
     normalized_value TEXT NOT NULL,
     value_hash VARCHAR(64) NOT NULL,    -- SHA256 hash of the attribute value for fast comparison and uniqueness.
     attribute_type TEXT,
+    source_path TEXT,
+    context_path TEXT,
+    context_ref VARCHAR(64),
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     last_updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     fts tsvector,
     CONSTRAINT chk_objattr_value_hash_hex
         CHECK (value_hash IS NULL OR value_hash ~ '^[0-9a-fA-F]{64}$'),
-    CONSTRAINT chk_object_type
-        CHECK (object_type IN ('webobject','netinfo','httpinfo')),
-    PRIMARY KEY (
-        object_type,
-        object_id,
-        attribute_key,
-        value_hash
-    )
+    CONSTRAINT chk_object_type CHECK (object_type IN ('webobject','netinfo','httpinfo'))
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_objattr_unscoped ON ObjectAttributes(object_type, object_id, attribute_key, value_hash) WHERE context_ref IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_objattr_scoped ON ObjectAttributes(object_type, object_id, attribute_key, value_hash, context_ref) WHERE context_ref IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_objattr_context ON ObjectAttributes(object_type, object_id, context_ref) WHERE context_ref IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_objattr_fts
     ON ObjectAttributes

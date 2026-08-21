@@ -148,3 +148,58 @@ CREATE INDEX IF NOT EXISTS idx_timeseriesaggregates_aggregate_hash ON TimeSeries
 COMMIT;
 
 PRAGMA foreign_keys = ON;
+
+-- Preserve JSON extraction provenance and allow equal values in distinct contexts.
+PRAGMA foreign_keys = OFF;
+BEGIN IMMEDIATE;
+ALTER TABLE ObjectAttributes RENAME TO ObjectAttributes_v112;
+CREATE TABLE ObjectAttributes (
+    attribute_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    object_id INTEGER NOT NULL,
+    object_type TEXT NOT NULL DEFAULT 'webobject',
+    attribute_key TEXT NOT NULL,
+    attribute_value TEXT NOT NULL,
+    normalized_value TEXT NOT NULL,
+    value_hash VARCHAR(64) NOT NULL,
+    attribute_type TEXT,
+    source_path TEXT,
+    context_path TEXT,
+    context_ref VARCHAR(64),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    fts TEXT,
+    CHECK (value_hash IS NULL OR length(value_hash) = 64),
+    CHECK (object_type IN ('webobject','netinfo','httpinfo'))
+);
+INSERT INTO ObjectAttributes
+    (attribute_id, object_id, object_type, attribute_key, attribute_value,
+     normalized_value, value_hash, attribute_type, created_at, last_updated_at, fts)
+SELECT attribute_id, object_id, object_type, attribute_key, attribute_value,
+       normalized_value, value_hash, attribute_type, created_at, last_updated_at, fts
+FROM ObjectAttributes_v112;
+DROP TABLE ObjectAttributes_v112;
+CREATE UNIQUE INDEX uq_objattr_unscoped
+    ON ObjectAttributes(object_type, object_id, attribute_key, value_hash)
+    WHERE context_ref IS NULL;
+CREATE UNIQUE INDEX uq_objattr_scoped
+    ON ObjectAttributes(object_type, object_id, attribute_key, value_hash, context_ref)
+    WHERE context_ref IS NOT NULL;
+CREATE INDEX idx_objattr_context
+    ON ObjectAttributes(object_type, object_id, context_ref)
+    WHERE context_ref IS NOT NULL;
+CREATE INDEX idx_objattr_fts ON ObjectAttributes(fts);
+CREATE INDEX idx_objattr_key ON ObjectAttributes(attribute_key);
+CREATE INDEX idx_objattr_type ON ObjectAttributes(object_type);
+CREATE INDEX idx_objattr_hash ON ObjectAttributes(value_hash) WHERE value_hash IS NOT NULL;
+CREATE INDEX idx_objattr_key_hash ON ObjectAttributes(attribute_key, value_hash);
+CREATE INDEX idx_objattr_object ON ObjectAttributes(object_type, object_id);
+CREATE INDEX idx_objattr_norm_trgm ON ObjectAttributes(normalized_value);
+CREATE TRIGGER IF NOT EXISTS trg_update_objectattributes_last_updated_after_update
+AFTER UPDATE ON ObjectAttributes
+FOR EACH ROW
+WHEN NEW.last_updated_at IS OLD.last_updated_at
+BEGIN
+    UPDATE ObjectAttributes SET last_updated_at = CURRENT_TIMESTAMP WHERE rowid = NEW.rowid;
+END;
+COMMIT;
+PRAGMA foreign_keys = ON;

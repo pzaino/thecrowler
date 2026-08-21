@@ -1119,17 +1119,19 @@ func indexObjectAttributes(
 		executed[id] = true
 
 		// --- extract ---
-		var values []interface{}
+		var values []ExtractedValue
 
 		if attr.IsCommandPath() {
 			ctxCmd := CommandContext{
 				ObjectID: objectID,
 				Data:     data,
 			}
-			values = ExecuteCommand(attr, ctxCmd)
+			for _, value := range ExecuteCommand(attr, ctxCmd) {
+				values = append(values, ExtractedValue{Value: value})
+			}
 		} else {
 			tokens := GetParsedPath(attr.Path)
-			values = ExtractWithTokens(data, tokens)
+			values = ExtractWithTokensAndContext(data, tokens)
 		}
 
 		if len(values) == 0 {
@@ -1143,7 +1145,7 @@ func indexObjectAttributes(
 
 		// --- insert values ---
 		for _, v := range values {
-			raw := ToString(v)
+			raw := ToString(v.Value)
 			if raw == "" {
 				continue
 			}
@@ -1164,6 +1166,7 @@ func indexObjectAttributes(
 				normalized,
 				hash,
 				attr.IndexType,
+				v.SourcePath, v.ContextPath, v.ContextRef,
 			)
 			if err != nil {
 				return err
@@ -1172,7 +1175,7 @@ func indexObjectAttributes(
 				continue
 			}
 			if currCfg.TimeSeries.Enabled {
-				siblings, siblingErr := loadObjectAttributeSiblings(tx, uint64(objectID), objectType)
+				siblings, siblingErr := loadObjectAttributeSiblings(tx, uint64(objectID), objectType, v.ContextRef)
 				if siblingErr != nil {
 					if currCfg.TimeSeries.Defaults.FailurePolicy == cfg.TimeSeriesFailureFailIndexing {
 						return siblingErr
@@ -1218,12 +1221,15 @@ func insertObjectAttribute(
 	normalized string,
 	hash string,
 	attrType string,
+	sourcePath string,
+	contextPath string,
+	contextRef string,
 ) (bool, error) {
 
 	result, err := tx.Exec(`
 		INSERT INTO ObjectAttributes
-			(object_id, object_type, attribute_key, attribute_value, normalized_value, value_hash, attribute_type)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+			(object_id, object_type, attribute_key, attribute_value, normalized_value, value_hash, attribute_type, source_path, context_path, context_ref)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, ''), NULLIF($9, ''), NULLIF($10, ''))
 		ON CONFLICT DO NOTHING
 	`,
 		objectID,
@@ -1233,6 +1239,7 @@ func insertObjectAttribute(
 		normalized,
 		hash,
 		attrType,
+		sourcePath, contextPath, contextRef,
 	)
 
 	if err != nil {

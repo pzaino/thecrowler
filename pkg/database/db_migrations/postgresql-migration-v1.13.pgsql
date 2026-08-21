@@ -99,3 +99,12 @@ BEGIN
 END;
 $$
 LANGUAGE plpgsql;
+-- Preserve JSON extraction provenance on ObjectAttributes.
+ALTER TABLE ObjectAttributes ADD COLUMN IF NOT EXISTS source_path TEXT;
+ALTER TABLE ObjectAttributes ADD COLUMN IF NOT EXISTS context_path TEXT;
+ALTER TABLE ObjectAttributes ADD COLUMN IF NOT EXISTS context_ref VARCHAR(64);
+ALTER TABLE ObjectAttributes DROP CONSTRAINT IF EXISTS objectattributes_pkey;
+ALTER TABLE ObjectAttributes ADD CONSTRAINT objectattributes_pkey PRIMARY KEY (attribute_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_objattr_unscoped ON ObjectAttributes(object_type, object_id, attribute_key, value_hash) WHERE context_ref IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_objattr_scoped ON ObjectAttributes(object_type, object_id, attribute_key, value_hash, context_ref) WHERE context_ref IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_objattr_context ON ObjectAttributes(object_type, object_id, context_ref) WHERE context_ref IS NOT NULL;
