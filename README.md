@@ -36,7 +36,11 @@ alt="OpenSSF Security Best Practices badge"></a> //-->
 
 ## What is it?
 
-The CROWler is a self-hosted, event-driven Content Discovery and Intelligence development platform designed for advanced web, email, APIs (both REST and WebSockets), filesystems, network, vulnerability crawling, scraping, detection, and automation using real browsers, rulesets, plugins, and agents. Not only that, but the CROWler is also designed to become the core of your own security, content discovery, and intelligence solutions.
+**The CROWler is an open, self-hosted framework for discovering, collecting, understanding, correlating, transforming, and acting on information from heterogeneous environments.**
+
+It achieves this through an event-driven Content Discovery and Intelligence platform for web, email, APIs, filesystems, networks, and other data sources, combining crawling, scraping, detection, analysis, and automation with real browsers, declarative rulesets, extensible plugins, events, and agents. The CROWler provides the foundation for building advanced data discovery, intelligence, research, automation, and cybersecurity solutions.
+
+Vertical solutions encode domain expertise through rules, plugins, agents, and data models rather than modifying the core platform.
 
 **Project status:** Still under active development (WIP). Most components are usable.
 Beta testers welcome. Full [daily progress stats](https://githubtracker.com/pzaino/thecrowler).
