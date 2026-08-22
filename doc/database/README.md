@@ -31,3 +31,15 @@ database semantics rather than backend-specific implementation details.
 Given the development history and time constraints of the project, some parts of the codebase
 currently bypass this abstraction. As the project evolves, these cases should progressively be
 refactored so that `pkg/database` becomes the authoritative database access layer.
+
+**The rest of the codebase should depend on CROWler database semantics, not database implementation
+details.**
+
+## `pkg/search`
+
+`pkg/search` implements the CROWler search engine and should be considered a specialized layer on
+top of `pkg/database` for querying, filtering, ranking, and retrieving data stored in the CROWler
+database.
+
+Search-specific logic belongs in `pkg/search`, while database access and backend-specific persistence
+or query mechanics should remain behind the abstractions exposed by `pkg/database`.
