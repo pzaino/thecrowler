@@ -918,8 +918,20 @@ func execEnginePlugin(parent context.Context, p *JSPlugin, timeout int, params m
 	// Create a new VM
 	vm := otto.New()
 
+	d := time.Duration(timeout) * time.Second
+	if (d <= 0) || (d > maxTimeout) {
+		cmn.DebugMsg(
+			cmn.DbgLvlDebug2,
+			"Invalid plugin `%s` timeout %s, using default %s",
+			p.Name,
+			d,
+			defaultTimeout,
+		)
+		d = defaultTimeout
+	}
+
 	// Per VM context and interrupt channel
-	ctx, cancel := context.WithCancel(parent)
+	ctx, cancel := context.WithTimeout(parent, d)
 	defer cancel()
 
 	// Per-plugin runtime state
@@ -987,12 +999,12 @@ func execEnginePlugin(parent context.Context, p *JSPlugin, timeout int, params m
 	}
 	cmn.DebugMsg(cmn.DbgLvlDebug5, "Set params to the plugin `%s` VM successfully: %v", p.Name, params)
 
-	// Normalize timeout
-	d := time.Duration(timeout) * time.Second
-	if (d <= 0) || (d > maxTimeout) {
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "Invalid plugin `%s` timeout %s, using default %s", p.Name, d, defaultTimeout)
-		d = defaultTimeout
-	}
+	// Normalize timeout (this is now a repetition of the earlier code, but we need to ensure that the timeout is valid for the VM execution)
+	//d := time.Duration(timeout) * time.Second
+	//if (d <= 0) || (d > maxTimeout) {
+	//	cmn.DebugMsg(cmn.DbgLvlDebug2, "Invalid plugin `%s` timeout %s, using default %s", p.Name, d, defaultTimeout)
+	//	d = defaultTimeout
+	//}
 
 	// Set the VM as Active
 	vmActive := int32(1)
@@ -1820,7 +1832,7 @@ func setCrowlerJSAPI(ctx context.Context, vm *otto.Otto,
 	if err := addJSAPIRunQuery(ctx, vm, db); err != nil {
 		return err
 	}
-	if err := addJSAPICreateSource(vm, db); err != nil {
+	if err := addJSAPICreateSource(ctx, vm, db); err != nil {
 		return err
 	}
 	if err := addJSAPIRemoveSource(vm, db); err != nil {
@@ -3591,7 +3603,7 @@ func addJSAPICrypto(vm *otto.Otto) error {
 
 		console.log(sourceID);
 */
-func addJSAPICreateSource(vm *otto.Otto, db *cdb.Handler) error {
+func addJSAPICreateSource(ctx context.Context, vm *otto.Otto, db *cdb.Handler) error {
 	// Implement the `createSource` function
 	err := vm.Set("createSource", func(call otto.FunctionCall) otto.Value {
 		// Extract the source details from the plugin call
@@ -3670,7 +3682,7 @@ func addJSAPICreateSource(vm *otto.Otto, db *cdb.Handler) error {
 		}
 
 		// Call CreateSource
-		sourceID, err := cdb.CreateSource(db, &source, config)
+		sourceID, err := cdb.CreateSourceContext(ctx, db, &source, config)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "Failed to create source: %v", err)
 			return otto.UndefinedValue()

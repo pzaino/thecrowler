@@ -389,6 +389,38 @@
                                     "type": "object",
                                     "description": "Parameters for the action. This is a free section, however, there are some specific parameter names that are expected for each action. For example, for the 'APIRequest' action, the 'url' parameter is expected. For the 'AIInteraction' action, the 'model' and 'prompt' parameters are expected. For the 'DBQuery' action, the 'query' parameter is expected. For the 'RunCommand' action, the 'command' parameter is expected. For the 'PluginExecution' action, the 'plugin_name' parameter is expected. Also, when referring to data from the previous response in the 'params' section, the data must be referred to as '$response' followed by the key of the data. For example, if the previous response has a key 'status_code', it should be referred to as '$response.status_code'.",
                                     "additionalProperties": true
+                                },
+                                "retry": {
+                                    "type": "object",
+                                    "description": "Retry policy used when the action returns an execution error.",
+                                    "properties": {
+                                        "max_retries": {
+                                            "type": "integer",
+                                            "minimum": 1,
+                                            "maximum": 100,
+                                            "description": "Maximum number of retries after the initial action failure."
+                                        },
+                                        "base_delay": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "description": "Initial delay before retrying, expressed as a Go duration such as 250ms, 1s or 2s."
+                                        },
+                                        "backoff": {
+                                            "type": "number",
+                                            "minimum": 1,
+                                            "maximum": 10,
+                                            "description": "Exponential backoff multiplier."
+                                        },
+                                        "max_delay": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "description": "Maximum delay between retries, expressed as a Go duration."
+                                        }
+                                    },
+                                    "required": [
+                                        "max_retries"
+                                    ],
+                                    "additionalProperties": false
                                 }
                             },
                             "allOf": [

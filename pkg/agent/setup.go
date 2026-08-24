@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,6 +50,101 @@ type RetryConfig struct {
 	MaxRetries int
 	BaseDelay  time.Duration
 	Backoff    float64
+	MaxDelay   time.Duration
+}
+
+type retryConfigSpec struct {
+	MaxRetries int     `json:"max_retries"`
+	BaseDelay  string  `json:"base_delay"`
+	Backoff    float64 `json:"backoff"`
+	MaxDelay   string  `json:"max_delay"`
+}
+
+func parseRetryConfig(raw any) (RetryConfig, bool, error) {
+	if raw == nil {
+		return RetryConfig{}, false, nil
+	}
+
+	if retry, ok := raw.(RetryConfig); ok {
+		return retry, true, nil
+	}
+
+	normalized := cmn.ConvertMapIIToSI(raw)
+
+	data, err := json.Marshal(normalized)
+	if err != nil {
+		return RetryConfig{}, false, fmt.Errorf(
+			"marshaling retry configuration: %w",
+			err,
+		)
+	}
+
+	var spec retryConfigSpec
+	if err := json.Unmarshal(data, &spec); err != nil {
+		return RetryConfig{}, false, fmt.Errorf(
+			"decoding retry configuration: %w",
+			err,
+		)
+	}
+
+	if spec.MaxRetries <= 0 {
+		return RetryConfig{}, false, fmt.Errorf(
+			"max_retries must be greater than zero",
+		)
+	}
+
+	baseDelay := 100 * time.Millisecond
+	if strings.TrimSpace(spec.BaseDelay) != "" {
+		baseDelay, err = time.ParseDuration(spec.BaseDelay)
+		if err != nil {
+			return RetryConfig{}, false, fmt.Errorf(
+				"invalid base_delay %q: %w",
+				spec.BaseDelay,
+				err,
+			)
+		}
+	}
+
+	backoff := spec.Backoff
+	if backoff == 0 {
+		backoff = 2
+	}
+	if backoff < 1 {
+		return RetryConfig{}, false, fmt.Errorf(
+			"backoff must be >= 1",
+		)
+	}
+
+	maxDelay := 5 * time.Second
+	if strings.TrimSpace(spec.MaxDelay) != "" {
+		maxDelay, err = time.ParseDuration(spec.MaxDelay)
+		if err != nil {
+			return RetryConfig{}, false, fmt.Errorf(
+				"invalid max_delay %q: %w",
+				spec.MaxDelay,
+				err,
+			)
+		}
+	}
+
+	if baseDelay <= 0 {
+		return RetryConfig{}, false, fmt.Errorf(
+			"base_delay must be greater than zero",
+		)
+	}
+
+	if maxDelay <= 0 {
+		return RetryConfig{}, false, fmt.Errorf(
+			"max_delay must be greater than zero",
+		)
+	}
+
+	return RetryConfig{
+		MaxRetries: spec.MaxRetries,
+		BaseDelay:  baseDelay,
+		Backoff:    backoff,
+		MaxDelay:   maxDelay,
+	}, true, nil
 }
 
 // JobConfig represents the structure of a job configuration file
@@ -634,6 +730,9 @@ func (je *JobEngine) executeJobsWithContext(j *JobConfig, iCfg map[string]any, e
 		localJobs[i] = deepCopyJob(job)
 	}
 
+	// Create a channel to collect errors from parallel execution
+	parallelErrors := make(chan error, len(localJobs))
+
 	// Iterate over job groups
 	for _, jobGroup := range localJobs {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Agents] Executing Job Group: %s", jobGroup.Name)
@@ -676,17 +775,48 @@ func (je *JobEngine) executeJobsWithContext(j *JobConfig, iCfg map[string]any, e
 
 		// Check if the group should run in parallel
 		if strings.ToLower(strings.TrimSpace(jobGroup.Process)) == "parallel" {
-			// Increment the wait group counter
 			wg.Add(1)
 
-			// Execute the group in parallel
-			go func(jg []map[string]any, identity *AgentIdentity) {
+			go func(
+				groupName string,
+				jg []map[string]any,
+				identity *AgentIdentity,
+			) {
 				defer wg.Done()
-				if err := executeJobGroup(je, jg, identity, execCtx, flags); err != nil {
-					cmn.DebugMsg(cmn.DbgLvlError, "[DEBUG-Agents] Failed to execute job group '%s': %v", jobGroup.Name, err)
+
+				if err := executeJobGroup(
+					je,
+					jg,
+					identity,
+					execCtx,
+					flags,
+				); err != nil {
+					wrappedErr := fmt.Errorf(
+						"failed to execute job group '%s': %w",
+						groupName,
+						err,
+					)
+
+					cmn.DebugMsg(
+						cmn.DbgLvlError,
+						"[DEBUG-Agents] %v",
+						wrappedErr,
+					)
+
+					parallelErrors <- wrappedErr
+					return
 				}
-				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Agents] Job Group '%s' completed successfully", jobGroup.Name)
-			}(jobGroup.Steps, j.AgentIdentity)
+
+				cmn.DebugMsg(
+					cmn.DbgLvlDebug,
+					"[DEBUG-Agents] Job Group '%s' completed successfully",
+					groupName,
+				)
+			}(
+				jobGroup.Name,
+				jobGroup.Steps,
+				j.AgentIdentity,
+			)
 
 		} else {
 			// Execute the group serially
@@ -699,7 +829,12 @@ func (je *JobEngine) executeJobsWithContext(j *JobConfig, iCfg map[string]any, e
 
 	// Wait for all parallel groups to finish
 	wg.Wait()
-	return nil
+	select {
+	case err := <-parallelErrors:
+		return err
+	default:
+		return nil
+	}
 }
 
 // executeJobGroup runs jobs in a group serially
@@ -832,9 +967,25 @@ func executeJobGroup(je *JobEngine, steps []map[string]any, identity *AgentIdent
 
 		result, err := action.Execute(params)
 		if err != nil {
-			if retryConfig, hasRetry := (*step)["retry"].(RetryConfig); hasRetry {
-				result, err = executeWithRetry(action, params, retryConfig)
+			if rawRetry, hasRetry := (*step)["retry"]; hasRetry {
+				retryConfig, enabled, retryErr := parseRetryConfig(rawRetry)
+				if retryErr != nil {
+					return fmt.Errorf(
+						"invalid retry configuration for action %s: %w",
+						actionName,
+						retryErr,
+					)
+				}
+
+				if enabled {
+					result, err = executeWithRetry(
+						action,
+						params,
+						retryConfig,
+					)
+				}
 			}
+
 			if err != nil {
 				policy := effectiveFailurePolicy(identity)
 				je.appendAudit(AuditEvent{RunID: execCtx.RunID, TraceID: execCtx.TraceID, AgentID: auditAgentID, AgentName: auditAgentName, Owner: auditOwner, Action: actionName, RequiredCapability: requiredCapabilityForAction(actionName), CapabilitiesUsed: capabilitiesUsed(identity, actionName), Outcome: auditOutcomeError, Reason: err.Error(), FailurePolicy: policy})
@@ -873,21 +1024,71 @@ func executeJobGroup(je *JobEngine, steps []map[string]any, identity *AgentIdent
 }
 
 // executeWithRetry executes an action with retry logic
-func executeWithRetry(action Action, params map[string]any, retryConfig RetryConfig) (map[string]interface{}, error) {
-	var lastError error
-	var result map[string]any
+func executeWithRetry(
+	action Action,
+	params map[string]any,
+	retryConfig RetryConfig,
+) (map[string]interface{}, error) {
+	var (
+		lastError error
+		result    map[string]any
+	)
 
-	for attempt := 1; attempt <= retryConfig.MaxRetries; attempt++ {
+	baseDelay := retryConfig.BaseDelay
+	if baseDelay <= 0 {
+		baseDelay = 100 * time.Millisecond
+	}
+
+	backoff := retryConfig.Backoff
+	if backoff < 1 {
+		backoff = 2
+	}
+
+	maxDelay := retryConfig.MaxDelay
+	if maxDelay <= 0 {
+		maxDelay = 5 * time.Second
+	}
+
+	for retry := 1; retry <= retryConfig.MaxRetries; retry++ {
+		delay := time.Duration(
+			float64(baseDelay) *
+				math.Pow(backoff, float64(retry-1)),
+		)
+
+		if delay > maxDelay {
+			delay = maxDelay
+		}
+
+		// Jitter prevents thousands of failed event actions from
+		// hammering the DB again at exactly the same time.
+		jitterMax := delay / 2
+		if jitterMax > 0 {
+			delay += time.Duration(
+				rand.Int63n(int64(jitterMax) + 1), //nolint:gosec
+			)
+		}
+
+		cmn.DebugMsg(
+			cmn.DbgLvlWarn,
+			"Retrying action after failure: retry=%d/%d delay=%s",
+			retry,
+			retryConfig.MaxRetries,
+			delay,
+		)
+
+		time.Sleep(delay)
+
 		result, lastError = action.Execute(params)
 		if lastError == nil {
 			return result, nil
 		}
-
-		delay := retryConfig.BaseDelay * time.Duration(math.Pow(retryConfig.Backoff, float64(attempt-1)))
-		time.Sleep(delay)
 	}
 
-	return nil, fmt.Errorf("action failed after %d retries: %w", retryConfig.MaxRetries, lastError)
+	return nil, fmt.Errorf(
+		"action failed after %d retries: %w",
+		retryConfig.MaxRetries,
+		lastError,
+	)
 }
 
 /*

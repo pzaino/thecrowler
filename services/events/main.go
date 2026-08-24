@@ -1185,7 +1185,7 @@ func updateEventHandler(w http.ResponseWriter, r *http.Request) {
 
 // Handle the notification received
 var enqueueNotificationEvent = func(event cdb.Event) bool {
-	return enqueueWithTimeout(jobQueue, event, 500*time.Millisecond)
+	return enqueueWithTimeout(jobQueue, event, 0)
 }
 
 func handleNotification(payload string) {
@@ -1344,11 +1344,11 @@ func eventWorker() {
 			if strings.TrimSpace(e.Action) != "" {
 				// processInternalEvent(e)
 				// internal job
-				_ = enqueueWithTimeout(internalQ, e, 250*time.Millisecond)
+				_ = enqueueWithTimeout(internalQ, e, 0)
 			} else {
 				// processEvent(e)
 				// plugin/agent job
-				_ = enqueueWithTimeout(externalQ, e, 250*time.Millisecond)
+				_ = enqueueWithTimeout(externalQ, e, 0)
 			}
 		}(event)
 	}
@@ -1679,9 +1679,32 @@ func processEvent(event cdb.Event) {
 		// Execute the plugin
 		for _, plugin := range p {
 			// Execute the plugin
-			rval, err := plugin.Execute(nil, &dbHandler, config.Plugins.PluginsTimeout, eventMap)
+			rval, err := plugin.Execute(
+				nil,
+				&dbHandler,
+				config.Plugins.PluginsTimeout,
+				eventMap,
+			)
 			if err != nil {
-				cmn.DebugMsg(cmn.DbgLvlError, "executing plugin: %v", err)
+				cmn.DebugMsg(
+					cmn.DbgLvlError,
+					"executing plugin '%s': %v",
+					plugin.Name,
+					err,
+				)
+
+				processingResult = append(
+					processingResult,
+					"failure",
+				)
+
+				mEventsTotalErrors.With(
+					prometheus.Labels{
+						"engine": cmn.GetMicroServiceName(),
+					},
+				).Inc()
+
+				continue
 			}
 
 			// Parse the plugin response
@@ -1689,7 +1712,24 @@ func processEvent(event cdb.Event) {
 			var pluginResp PluginResponse
 			err = json.Unmarshal([]byte(rvalStr), &pluginResp)
 			if err != nil {
-				cmn.DebugMsg(cmn.DbgLvlError, "parsing plugin response: %v", err)
+				cmn.DebugMsg(
+					cmn.DbgLvlError,
+					"parsing plugin '%s' response: %v",
+					plugin.Name,
+					err,
+				)
+
+				processingResult = append(
+					processingResult,
+					"failure",
+				)
+
+				mEventsTotalErrors.With(
+					prometheus.Labels{
+						"engine": cmn.GetMicroServiceName(),
+					},
+				).Inc()
+
 				continue
 			}
 
