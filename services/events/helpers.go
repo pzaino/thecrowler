@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,6 +21,10 @@ import (
 // Heartbeat Coordinator: one active heartbeat at a time.
 var heartbeatMu sync.Mutex
 var activeHeartbeat *HeartbeatState
+
+// createHeartbeatEvent is shared by heartbeat requests and responses. Keeping
+// persistence behind this seam lets focused tests inspect the event without a database.
+var createHeartbeatEvent = cdb.CreateEventWithRetries
 
 var durationUnits = map[string]time.Duration{
 	"s":       time.Second,
@@ -123,7 +128,7 @@ func startHeartbeat(db *cdb.Handler, config cfg.Config) {
 	state := &HeartbeatState{
 		SentAt:    now,
 		Timeout:   eventResponseTimeout,
-		Responses: make(map[string]cdb.Event),
+		Responses: make(map[cdb.FleetMember]cdb.Event),
 		DoneChan:  make(chan struct{}),
 	}
 	activeHeartbeat = state
@@ -147,7 +152,7 @@ func startHeartbeat(db *cdb.Handler, config cfg.Config) {
 		},
 	}
 
-	uid, err := cdb.CreateEventWithRetries(db, event)
+	uid, err := createHeartbeatEvent(db, event)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "HEARTBEAT: failed to create event: %v", err)
 		heartbeatMu.Lock()
@@ -162,26 +167,66 @@ func startHeartbeat(db *cdb.Handler, config cfg.Config) {
 	go heartbeatTimeoutWatcher(db, state)
 }
 
+// respondToHeartbeat persists this instance's response to an incoming
+// heartbeat. Master selection deliberately belongs to the caller so any
+// instance that receives a heartbeat notification can use this responder.
+func respondToHeartbeat(db *cdb.Handler, heartbeat cdb.Event) (string, error) {
+	if strings.ToLower(strings.TrimSpace(heartbeat.Type)) != "crowler_heartbeat" {
+		return "", fmt.Errorf("cannot respond to event type %q", heartbeat.Type)
+	}
+	if strings.TrimSpace(heartbeat.ID) == "" {
+		return "", fmt.Errorf("cannot respond to heartbeat without an event ID")
+	}
+
+	now := time.Now().Format(time.RFC3339)
+	response := cdb.Event{
+		Type:          "crowler_heartbeat_response",
+		Severity:      "crowler_system_info",
+		Timestamp:     now,
+		CreatedAt:     now,
+		LastUpdatedAt: now,
+		Details: map[string]interface{}{
+			"parent_event_id": heartbeat.ID,
+			"origin_type":     "crowler-events",
+			"origin_name":     cmn.GetMicroServiceName(),
+			"origin_time":     now,
+			"status":          "ok",
+			"type":            "heartbeat_response",
+		},
+	}
+
+	return createHeartbeatEvent(db, response)
+}
+
 func heartbeatTimeoutWatcher(db *cdb.Handler, state *HeartbeatState) {
 	time.Sleep(state.Timeout)
 
 	heartbeatMu.Lock()
-	defer heartbeatMu.Unlock()
-
 	if activeHeartbeat != state {
+		heartbeatMu.Unlock()
 		return
 	}
 
-	// Produce report and cleanup now
-	report := finishHeartbeatState(state)
+	// Detach an immutable snapshot before logging, maintenance analysis, and DB
+	// persistence. Once detached, late responses cannot mutate this round.
+	finalized := &HeartbeatState{ParentID: state.ParentID, SentAt: state.SentAt, Timeout: state.Timeout,
+		Responses: make(map[cdb.FleetMember]cdb.Event, len(state.Responses))}
+	for identity, response := range state.Responses {
+		finalized.Responses[identity] = response
+	}
+	activeHeartbeat = nil
+	heartbeatMu.Unlock()
+
+	// Produce reports and cleanup now.
+	report := finishHeartbeatState(finalized)
 	if config.Events.HeartbeatLog {
 		logHeartbeatReport(report)
 	}
+	persistFleetDBHeartbeatReport(db, finalized)
 
 	// Delete events (parent + responses)
 	// cleanupHeartbeatEvents(db, state.ParentID) // no longer needed, we have a janitor routine now
 
-	activeHeartbeat = nil
 }
 
 // Called from processEvent() BEFORE plugin/agent routing.
@@ -208,10 +253,13 @@ func maybeHandleHeartbeatResponse(event cdb.Event) bool {
 		return false
 	}
 
-	// Identify responder
-	responder := fmt.Sprintf("src-%s", event.ID)
-	if name, ok := event.Details["origin_name"].(string); ok {
-		responder = name
+	// The tuple is the identity. Malformed responses retain a synthetic tuple
+	// for raw reporting, but normalization excludes them from the DB census.
+	originType, typeOK := event.Details["origin_type"].(string)
+	originName, nameOK := event.Details["origin_name"].(string)
+	responder := cdb.FleetMember{OriginType: strings.ToLower(strings.TrimSpace(originType)), OriginName: strings.TrimSpace(originName)}
+	if !typeOK || !nameOK || responder.OriginType == "" || responder.OriginName == "" {
+		responder = cdb.FleetMember{OriginType: "unknown", OriginName: fmt.Sprintf("src-%s", event.ID)}
 	}
 
 	activeHeartbeat.Responses[responder] = event
@@ -221,13 +269,21 @@ func maybeHandleHeartbeatResponse(event cdb.Event) bool {
 
 func finishHeartbeatState(state *HeartbeatState) HeartbeatReport {
 	res := make([]cdb.Event, 0, len(state.Responses))
-	names := make([]string, 0, len(state.Responses))
+	names := make([]cdb.FleetMember, 0, len(state.Responses))
 
 	const running = "running"
 
-	for k, v := range state.Responses {
+	for k := range state.Responses {
 		names = append(names, k)
-		res = append(res, v)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		if names[i].OriginType != names[j].OriginType {
+			return names[i].OriginType < names[j].OriginType
+		}
+		return names[i].OriginName < names[j].OriginName
+	})
+	for _, identity := range names {
+		res = append(res, state.Responses[identity])
 	}
 
 	// Update the active_fleet_nodes metric
@@ -320,6 +376,30 @@ func finishHeartbeatState(state *HeartbeatState) HeartbeatReport {
 		Total:      len(res),
 		Responders: names,
 		Raw:        res,
+	}
+}
+
+func persistFleetDBHeartbeatReport(db *cdb.Handler, state *HeartbeatState) {
+	members := make([]cdb.FleetMember, 0, len(state.Responses))
+	for identity := range state.Responses {
+		members = append(members, identity)
+	}
+	allocation := cdb.AllocateFleetDBConnections(cdb.ResolveEffectiveMaxOpenConnections(config), members)
+	now := time.Now().UTC()
+	report := cdb.FleetDBHeartbeatReport{
+		SchemaVersion: "1", ParentEventID: state.ParentID, GeneratedAt: now,
+		EffectiveMaxOpen: allocation.EffectiveMaxOpen, ReservedConnections: allocation.ReservedConnections,
+		UsableConnections: allocation.UsableConnections, MemberCount: allocation.MemberCount,
+		AllocationCount: len(allocation.Members), Members: allocation.Members,
+		Valid: allocation.Valid, Reason: allocation.Reason,
+	}
+	detailsBytes, _ := json.Marshal(report)
+	details := make(map[string]interface{})
+	_ = json.Unmarshal(detailsBytes, &details)
+	event := cdb.Event{Type: "crowler_heartbeat_report", Severity: "crowler_system_info",
+		Timestamp: now.Format(time.RFC3339), CreatedAt: now.Format(time.RFC3339), LastUpdatedAt: now.Format(time.RFC3339), Details: details}
+	if _, err := createHeartbeatEvent(db, event); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "HEARTBEAT: failed to persist allocation report: %v", err)
 	}
 }
 

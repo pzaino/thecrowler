@@ -45,6 +45,35 @@ type PostgresHandler struct {
 	connStr string
 }
 
+// SetConnectionLimits adjusts the existing PostgreSQL connection pool. The
+// database/sql package naturally closes excess idle connections and lets busy
+// connections converge to a lowered limit as they are returned to the pool.
+func (handler *PostgresHandler) SetConnectionLimits(maxOpen, maxIdle int) error {
+	if maxOpen <= 0 {
+		return fmt.Errorf("maximum open connections must be greater than zero: %d", maxOpen)
+	}
+	if handler == nil || handler.db == nil {
+		return fmt.Errorf("cannot set connection limits: PostgreSQL connection pool is not initialized")
+	}
+	if maxIdle < 0 {
+		maxIdle = 0
+	}
+	if maxIdle > maxOpen {
+		maxIdle = maxOpen
+	}
+	handler.db.SetMaxOpenConns(maxOpen)
+	handler.db.SetMaxIdleConns(maxIdle)
+	return nil
+}
+
+// ConnectionStats returns statistics for the existing PostgreSQL pool.
+func (handler *PostgresHandler) ConnectionStats() sql.DBStats {
+	if handler == nil || handler.db == nil {
+		return sql.DBStats{}
+	}
+	return handler.db.Stats()
+}
+
 // Connect connects to the database
 func (handler *PostgresHandler) Connect(c cfg.Config) error {
 	connectionString := buildConnectionString(c)
@@ -86,7 +115,7 @@ func (handler *PostgresHandler) Connect(c cfg.Config) error {
 	}
 
 	// Set connection parameters (open and idle connections)
-	mxConns, mxIdleConns := determineConnectionLimits(c)
+	mxConns, mxIdleConns := DetermineConnectionLimits(c)
 	//handler.db.SetConnMaxLifetime(time.Minute * 5)
 	handler.db.SetConnMaxLifetime(90 * time.Second)
 	handler.db.SetConnMaxIdleTime(30 * time.Second)
@@ -98,29 +127,47 @@ func (handler *PostgresHandler) Connect(c cfg.Config) error {
 
 // determineConnectionLimits calculates connection limits based on config
 func determineConnectionLimits(c cfg.Config) (int, int) {
+	return DetermineConnectionLimits(c)
+}
+
+// DetermineConnectionLimits calculates the PostgreSQL pool limits from config.
+// It is shared by pool initialization and fleet budget coordination.
+func DetermineConnectionLimits(c cfg.Config) (int, int) {
 	// Safe defaults per engine
 	mxConns := 8
 	mxIdleConns := 2
 
 	optFor := strings.ToLower(strings.TrimSpace(c.Database.OptimizeFor))
-	switch optFor {
-	case "write":
-		mxConns = 10
-		mxIdleConns = 2
-	case "query":
-		mxConns = 12
-		mxIdleConns = 4
-	}
-
-	// Apply explicit caps, but never allow unsafe values
-	if (c.Database.MaxConns > 0) && (c.Database.MaxConns < mxConns) {
-		mxConns = c.Database.MaxConns
-	}
-	if (c.Database.MaxIdleConns > 0) && (c.Database.MaxIdleConns < mxIdleConns) {
-		mxIdleConns = c.Database.MaxIdleConns
+	if (optFor != "") && (optFor != "none") {
+		switch optFor {
+		case "write":
+			mxConns = 10
+			mxIdleConns = 2
+		case "query":
+			mxConns = 12
+			mxIdleConns = 4
+		default:
+			cmn.DebugMsg(cmn.DbgLvlError, "Unknown OptimizeFor value: %s. Using defaults.", optFor)
+		}
+	} else {
+		// If OptimizeFor is not set, use explicit values from config if provided
+		if c.Database.MaxConns > 0 {
+			mxConns = c.Database.MaxConns
+		}
+		if c.Database.MaxIdleConns > 0 {
+			mxIdleConns = c.Database.MaxIdleConns
+		}
 	}
 
 	return mxConns, mxIdleConns
+}
+
+// ResolveEffectiveMaxOpenConnections returns the maximum-open setting which
+// PostgreSQL pool initialization will actually apply. Fleet coordinators must
+// use this resolver rather than interpreting configuration independently.
+func ResolveEffectiveMaxOpenConnections(c cfg.Config) int {
+	maximum, _ := DetermineConnectionLimits(c)
+	return maximum
 }
 
 func buildConnectionString(c cfg.Config) string {
@@ -221,6 +268,10 @@ func (handler *PostgresHandler) Rollback(tx *sql.Tx) error {
 // Row's Scan method is called.
 func (handler *PostgresHandler) QueryRow(query string, args ...interface{}) *sql.Row {
 	return handler.db.QueryRow(query, args...)
+}
+
+func (handler *PostgresHandler) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
+	return handler.db.QueryRowContext(ctx, query, args...)
 }
 
 // QueryContext executes a query with a context and returns the result

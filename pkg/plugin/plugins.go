@@ -745,6 +745,12 @@ func parseMetadataKV(line string) (string, string, bool) {
 
 // Execute executes the JS plugin
 func (p *JSPlugin) Execute(wd *vdi.WebDriver, db *cdb.Handler, timeout int, params map[string]interface{}) (map[string]interface{}, error) {
+	return p.ExecuteContext(context.Background(), wd, db, timeout, params)
+}
+
+// ExecuteContext executes a plugin as a child of parent. Cancellation of parent
+// interrupts the JavaScript runtime and all context-aware helpers.
+func (p *JSPlugin) ExecuteContext(parent context.Context, wd *vdi.WebDriver, db *cdb.Handler, timeout int, params map[string]interface{}) (map[string]interface{}, error) {
 	if p.PType == vdiPlugin {
 		return execVDIPlugin(p, timeout, params, wd)
 	}
@@ -756,7 +762,7 @@ func (p *JSPlugin) Execute(wd *vdi.WebDriver, db *cdb.Handler, timeout int, para
 		subs: make(map[string]*pluginEventSub),
 	}
 	rt.current = p
-	return execEnginePlugin(p, timeout, params, db, rt)
+	return execEnginePlugin(parent, p, timeout, params, db, rt)
 }
 
 func execVDIPlugin(p *JSPlugin, timeout int, params map[string]interface{}, wd *vdi.WebDriver) (map[string]interface{}, error) {
@@ -893,7 +899,7 @@ func resolvePluginFromCaller(caller *JSPlugin, name string) (*JSPlugin, bool) {
 	return nil, false
 }
 
-func execEnginePlugin(p *JSPlugin, timeout int, params map[string]any, db *cdb.Handler, rt *pluginRuntime) (map[string]any, error) {
+func execEnginePlugin(parent context.Context, p *JSPlugin, timeout int, params map[string]any, db *cdb.Handler, rt *pluginRuntime) (map[string]any, error) {
 	const (
 		errMsg01       = "plugin `%s` error getting results: %v"
 		defaultTimeout = 30 * time.Second
@@ -912,8 +918,20 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]any, db *cdb.H
 	// Create a new VM
 	vm := otto.New()
 
+	d := time.Duration(timeout) * time.Second
+	if (d <= 0) || (d > maxTimeout) {
+		cmn.DebugMsg(
+			cmn.DbgLvlDebug2,
+			"Invalid plugin `%s` timeout %s, using default %s",
+			p.Name,
+			d,
+			defaultTimeout,
+		)
+		d = defaultTimeout
+	}
+
 	// Per VM context and interrupt channel
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(parent, d)
 	defer cancel()
 
 	// Per-plugin runtime state
@@ -981,12 +999,12 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]any, db *cdb.H
 	}
 	cmn.DebugMsg(cmn.DbgLvlDebug5, "Set params to the plugin `%s` VM successfully: %v", p.Name, params)
 
-	// Normalize timeout
-	d := time.Duration(timeout) * time.Second
-	if (d <= 0) || (d > maxTimeout) {
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "Invalid plugin `%s` timeout %s, using default %s", p.Name, d, defaultTimeout)
-		d = defaultTimeout
-	}
+	// Normalize timeout (this is now a repetition of the earlier code, but we need to ensure that the timeout is valid for the VM execution)
+	//d := time.Duration(timeout) * time.Second
+	//if (d <= 0) || (d > maxTimeout) {
+	//	cmn.DebugMsg(cmn.DbgLvlDebug2, "Invalid plugin `%s` timeout %s, using default %s", p.Name, d, defaultTimeout)
+	//	d = defaultTimeout
+	//}
 
 	// Set the VM as Active
 	vmActive := int32(1)
@@ -1025,6 +1043,14 @@ func execEnginePlugin(p *JSPlugin, timeout int, params map[string]any, db *cdb.H
 					p.Name, d,
 				))
 			}:
+			default:
+			}
+		case <-ctx.Done():
+			if atomic.LoadInt32(&vmActive) == 0 {
+				return
+			}
+			select {
+			case vm.Interrupt <- func() { panic(ctx.Err()) }:
 			default:
 			}
 
@@ -1441,6 +1467,7 @@ func ExecEnginePluginTest(
 	}
 
 	rawResult, err := execEnginePlugin(
+		context.Background(),
 		&testPlugin,
 		timeout,
 		params,
@@ -1696,7 +1723,7 @@ func setCrowlerJSAPI(ctx context.Context, vm *otto.Otto,
 	// Extends Otto JS VM with CROWler JS API functions
 
 	// Extend Plugin calling function (this allow safe plugin-to-plugin calls)
-	if err := addJSAPICallPlugin(vm, db, rt); err != nil {
+	if err := addJSAPICallPlugin(ctx, vm, db, rt); err != nil {
 		return err
 	}
 	if err := addJSAPILib(vm); err != nil {
@@ -1802,10 +1829,10 @@ func setCrowlerJSAPI(ctx context.Context, vm *otto.Otto,
 
 	// CROWler DB API functions
 
-	if err := addJSAPIRunQuery(vm, db); err != nil {
+	if err := addJSAPIRunQuery(ctx, vm, db); err != nil {
 		return err
 	}
-	if err := addJSAPICreateSource(vm, db); err != nil {
+	if err := addJSAPICreateSource(ctx, vm, db); err != nil {
 		return err
 	}
 	if err := addJSAPIRemoveSource(vm, db); err != nil {
@@ -1870,6 +1897,7 @@ func setCrowlerJSAPI(ctx context.Context, vm *otto.Otto,
 
 /*
 func addJSAPICallPlugin(
+	ctx context.Context,
 	vm *otto.Otto,
 	db *cdb.Handler,
 	rt *pluginRuntime,
@@ -1937,7 +1965,7 @@ func addJSAPICallPlugin(
 			subs: make(map[string]*pluginEventSub),
 		}
 		rt.current = callee
-		res, execErr := execEnginePlugin(callee, timeout, params, db, rt)
+		res, execErr := execEnginePlugin(ctx, callee, timeout, params, db, rt)
 		if execErr != nil {
 			v, _ := vm.ToValue(res)
 			return v
@@ -1957,6 +1985,7 @@ let response = callPlugin("otherPluginName", { "param1": "value1", "param2": 42 
 console.log(response);
 */
 func addJSAPICallPlugin(
+	ctx context.Context,
 	vm *otto.Otto,
 	db *cdb.Handler,
 	rt *pluginRuntime,
@@ -2036,7 +2065,7 @@ func addJSAPICallPlugin(
 		}
 		rt2.current = callee
 
-		res, execErr := execEnginePlugin(callee, timeout, params, db, rt2)
+		res, execErr := execEnginePlugin(ctx, callee, timeout, params, db, rt2)
 		if execErr != nil {
 			v, _ := vm.ToValue(res)
 			return v
@@ -3010,7 +3039,7 @@ func formatConsoleLog(args []interface{}) string {
 // adds a way for a plugin to run a DB query and get the results as a JSON document, for example:
 // let result = runQuery("SELECT * FROM users WHERE id = ?", [42]);
 // console.log(JSON.parse(result)); // Parses the JSON string into a JavaScript object
-func addJSAPIRunQuery(vm *otto.Otto, db *cdb.Handler) error {
+func addJSAPIRunQuery(ctx context.Context, vm *otto.Otto, db *cdb.Handler) error {
 	// Implement the runQuery function
 	err := vm.Set("runQuery", func(call otto.FunctionCall) otto.Value {
 		// Extract the query and arguments from the JavaScript call
@@ -3065,7 +3094,7 @@ func addJSAPIRunQuery(vm *otto.Otto, db *cdb.Handler) error {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "Running query: %s with args: %v", query, args)
 
 		// Run the query using the provided db handler and arguments
-		rows, err := (*db).ExecuteQuery(query, args...)
+		rows, err := (*db).QueryContext(ctx, query, args...)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "executing query:", err)
 			return otto.UndefinedValue()
@@ -3574,7 +3603,7 @@ func addJSAPICrypto(vm *otto.Otto) error {
 
 		console.log(sourceID);
 */
-func addJSAPICreateSource(vm *otto.Otto, db *cdb.Handler) error {
+func addJSAPICreateSource(ctx context.Context, vm *otto.Otto, db *cdb.Handler) error {
 	// Implement the `createSource` function
 	err := vm.Set("createSource", func(call otto.FunctionCall) otto.Value {
 		// Extract the source details from the plugin call
@@ -3606,6 +3635,9 @@ func addJSAPICreateSource(vm *otto.Otto, db *cdb.Handler) error {
 		}
 		if priority, ok := sourceData["priority"].(string); ok {
 			source.Priority = priority
+		}
+		if subPriority, ok := sourceData["sub_priority"].(float64); ok {
+			source.SubPriority = int(subPriority)
 		}
 		if categoryID, ok := sourceData["category_id"].(float64); ok {
 			source.CategoryID = uint64(categoryID)
@@ -3650,7 +3682,7 @@ func addJSAPICreateSource(vm *otto.Otto, db *cdb.Handler) error {
 		}
 
 		// Call CreateSource
-		sourceID, err := cdb.CreateSource(db, &source, config)
+		sourceID, err := cdb.CreateSourceContext(ctx, db, &source, config)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "Failed to create source: %v", err)
 			return otto.UndefinedValue()

@@ -29,6 +29,10 @@ type InformationSeedEventFilter struct {
 
 // ListInformationSeedEvents returns discovery events emitted for an information seed.
 func ListInformationSeedEvents(db *Handler, seedID uint64, filter InformationSeedEventFilter) ([]Event, error) {
+	return ListInformationSeedEventsContext(context.Background(), db, seedID, filter)
+}
+
+func ListInformationSeedEventsContext(ctx context.Context, db *Handler, seedID uint64, filter InformationSeedEventFilter) ([]Event, error) {
 	if db == nil || *db == nil {
 		return nil, fmt.Errorf("database handler is nil")
 	}
@@ -45,7 +49,7 @@ func ListInformationSeedEvents(db *Handler, seedID uint64, filter InformationSee
 		filter.Limit = 100
 	}
 
-	detailsColumn, err := informationSeedEventDetailsColumn(db)
+	detailsColumn, err := informationSeedEventDetailsColumnContext(ctx, db)
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +78,7 @@ func ListInformationSeedEvents(db *Handler, seedID uint64, filter InformationSee
 		  AND %s
 		ORDER BY event_timestamp DESC, event_sha256 DESC
 		LIMIT %s OFFSET %s`, detailsColumn, seedPredicate, p2, p3)
-	rows, err := (*db).QueryContext(context.Background(), query, fmt.Sprintf("%d", seedID), filter.Limit, filter.Offset)
+	rows, err := (*db).QueryContext(ctx, query, fmt.Sprintf("%d", seedID), filter.Limit, filter.Offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list information seed events: %w", err)
 	}
@@ -82,14 +86,18 @@ func ListInformationSeedEvents(db *Handler, seedID uint64, filter InformationSee
 }
 
 func informationSeedEventDetailsColumn(db *Handler) (string, error) {
-	exists, err := tableColumnExists(db, "Events", "details")
+	return informationSeedEventDetailsColumnContext(context.Background(), db)
+}
+
+func informationSeedEventDetailsColumnContext(ctx context.Context, db *Handler) (string, error) {
+	exists, err := tableColumnExistsContext(ctx, db, "Events", "details")
 	if err != nil {
 		return "", err
 	}
 	if exists {
 		return "details", nil
 	}
-	exists, err = tableColumnExists(db, "Events", "event_details")
+	exists, err = tableColumnExistsContext(ctx, db, "Events", "event_details")
 	if err != nil {
 		return "", err
 	}

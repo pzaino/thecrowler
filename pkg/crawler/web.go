@@ -798,24 +798,44 @@ func changeUserAgentCDP(pctx *ProcessContext, userAgent string) error {
 }
 
 func blockCDPURLs(wd vdi.WebDriver, ctx *ProcessContext) error {
-	// Check if we have any blocked URLs configured
-	if len((*ctx).userURLBlockPatterns) == 0 {
-		return nil // No patterns to block
+	// Enable the Network domain first.
+	if err := vdi.EnableNetwork(wd, getCDPDelay(ctx.config), nil); err != nil {
+		return fmt.Errorf("failed to enable Network domain: %w", err)
 	}
 
-	// Extract patterns from the configuration
+	// DIAGNOSTIC:
+	// Explicitly clear any URL blocking state already associated with
+	// this Chromium/CDP target before applying the CROWler configuration.
+	_, err := vdi.ExecuteCDPCommand(
+		wd,
+		getCDPDelay(ctx.config),
+		"Network.setBlockedURLs",
+		map[string]interface{}{
+			"urls":        []string{},
+			"urlPatterns": []interface{}{},
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to clear blocked URLs: %w", err)
+	}
+
 	patterns := make([]string, 0)
-	for _, pattern := range (*ctx).userURLBlockPatterns {
+	for _, pattern := range ctx.userURLBlockPatterns {
+		pattern = strings.TrimSpace(pattern)
 		if pattern != "" {
 			patterns = append(patterns, pattern)
 		}
 	}
 
-	// First: enable the Network domain
-	err := vdi.EnableNetwork(wd, getCDPDelay(ctx.config), nil)
-	if err != nil {
-		return fmt.Errorf("failed to enable Network domain: %w", err)
+	if len(patterns) == 0 {
+		return nil
 	}
+
+	cmn.DebugMsg(
+		cmn.DbgLvlDebug2,
+		"[DEBUG-CDP-BLOCK] target block patterns: %#v",
+		patterns,
+	)
 
 	// Then: set the blocked URL patterns
 	err = vdi.SetBlockedURLs(wd, getCDPDelay(ctx.config), patterns)
@@ -1070,7 +1090,7 @@ func collectLoadedWebPage(ctx *ProcessContext, wd vdi.WebDriver, pageURL string,
 	_ = vdi.Refresh(ctx)
 
 	if ctx.config.Crawler.CollectPageEvents {
-		collectPageLogs(&wd, pageInfo)
+		collectPageLogs(ctx, pageInfo)
 	}
 	if ctx.RefreshCrawlingTimer != nil {
 		ctx.RefreshCrawlingTimer()
@@ -1090,6 +1110,52 @@ func collectLoadedWebPage(ctx *ProcessContext, wd vdi.WebDriver, pageURL string,
 	_ = pageURL
 
 	return pageInfo, currentURL, htmlContent, nil
+}
+
+func logNavigationFailures(ctx *ProcessContext) {
+	logs, ok := ctx.performanceLogSnapshot()
+	if !ok {
+		cmn.DebugMsg(
+			cmn.DbgLvlError,
+			"[NAV-FAIL] unable to retrieve performance log",
+		)
+		return
+	}
+
+	type loadingFailedEvent struct {
+		Message struct {
+			Method string `json:"method"`
+			Params struct {
+				RequestID     string `json:"requestId"`
+				Type          string `json:"type"`
+				ErrorText     string `json:"errorText"`
+				BlockedReason string `json:"blockedReason"`
+				Canceled      bool   `json:"canceled"`
+			} `json:"params"`
+		} `json:"message"`
+	}
+
+	for _, entry := range logs {
+		var event loadingFailedEvent
+
+		if err := json.Unmarshal([]byte(entry.Message), &event); err != nil {
+			continue
+		}
+
+		if event.Message.Method != "Network.loadingFailed" {
+			continue
+		}
+
+		cmn.DebugMsg(
+			cmn.DbgLvlError,
+			"[NAV-FAIL] requestID=%s type=%s error=%s blockedReason=%s canceled=%v",
+			event.Message.Params.RequestID,
+			event.Message.Params.Type,
+			event.Message.Params.ErrorText,
+			event.Message.Params.BlockedReason,
+			event.Message.Params.Canceled,
+		)
+	}
 }
 
 // getURLContent is responsible for retrieving the HTML content of a page
@@ -1168,6 +1234,7 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 	// Tracking validation retries (if any)
 	validationRetryBudget := make(map[string]int)
 	ctx.Status.LastRetry.Store(0)
+	ctx.clearPerformanceLogs() // Clear performance logs before navigation
 	for retries := 0; retries <= maxRetries; retries++ {
 		if ctx.VDIReturned {
 			// If the VDI session is returned, return the WebDriver
@@ -1234,6 +1301,9 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 		PageLoadOk := false
 		ctx.Status.LastRetry.Add(1) // Increment the report retry count
 		if err := getWithTimeout(&wd, url, getPageTimeout); err != nil {
+			// Log Navigation error first:
+			logNavigationFailures(ctx)
+			// Determine what to do next:
 			if strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "unable to find session with id") {
 				// If the session is not found, create a new one
 				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: WebDriver session not found, creating a new one...", id)
@@ -1592,9 +1662,9 @@ func rightClick(processCtx *ProcessContext, id string, url LinkItem) error {
 	}
 
 	// Collect performance logs
-	logs, err := processCtx.wd.Log("performance")
-	if err != nil {
-		return err
+	logs, ok := processCtx.performanceLogSnapshot()
+	if !ok {
+		return errors.New("No performance logs")
 	}
 
 	// Parse and store performance logs
@@ -1779,9 +1849,9 @@ func clickLink(processCtx *ProcessContext, id string, url LinkItem) error {
 		}
 	}
 	// Collect Page logs
-	logs, err := processCtx.wd.Log("performance")
-	if err != nil {
-		return err
+	logs, ok := processCtx.performanceLogSnapshot()
+	if !ok {
+		return errors.New("No performance logs")
 	}
 
 	for _, entry := range logs {
@@ -2089,10 +2159,10 @@ func collectXHR(ctx *ProcessContext, pageInfo *PageInfo) {
 }
 
 // Collects the page logs from the browser
-func collectPageLogs(pageSource *vdi.WebDriver, pageInfo *PageInfo) {
-	logs, err := (*pageSource).Log("performance")
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Failed to retrieve performance logs: %v", err)
+func collectPageLogs(ctx *ProcessContext, pageInfo *PageInfo) {
+	logs, ok := ctx.performanceLogSnapshot()
+	if !ok {
+		cmn.DebugMsg(cmn.DbgLvlError, "Failed to retrieve performance logs")
 		return
 	}
 
@@ -2311,10 +2381,10 @@ func listenForCDPEvents(ctx context.Context, p *ProcessContext, wd vdi.WebDriver
 			// Fetch CDP Events
 			// events can be polled through CDP Log domain if needed.
 			p.getURLMutex.Lock()
-			logs, err := wd.Log("performance")
+			logs, ok := p.performanceLogSnapshot()
 			p.getURLMutex.Unlock()
-			if err != nil {
-				cmn.DebugMsg(cmn.DbgLvlError, "Failed to retrieve CDP events: %v", err)
+			if !ok {
+				cmn.DebugMsg(cmn.DbgLvlError, "Failed to retrieve CDP events")
 				time.Sleep(1 * time.Second) // backoff on failure
 				continue
 			}
@@ -2416,7 +2486,7 @@ func listenForCDPEvents(ctx context.Context, p *ProcessContext, wd vdi.WebDriver
 					responseBody, isBase64 := fetchResponseBody(wd, getCDPDelay(p.config), requestID)
 					p.getURLMutex.Unlock()
 					if responseBody == "" {
-						cmn.DebugMsg(cmn.DbgLvlDebug5, "⚠️ Failed to get response body for requestId %s: %v", requestID, err)
+						cmn.DebugMsg(cmn.DbgLvlDebug5, "⚠️ Failed to get response body for requestId %s", requestID)
 						continue
 					}
 
@@ -2615,10 +2685,10 @@ func collectCDPRequests(ctx *ProcessContext, maxItems int) ([]map[string]interfa
 	}
 
 	// Fetch Performance Logs
-	logs, err := wd.Log("performance")
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "[BROWSER-LOGS] Failed to retrieve performance logs: %v", err)
-		return nil, err
+	logs, ok := ctx.performanceLogSnapshot()
+	if !ok {
+		cmn.DebugMsg(cmn.DbgLvlError, "[BROWSER-LOGS] Failed to retrieve performance logs")
+		return nil, errors.New("Failed to retrieve performance logs")
 	}
 	cmn.DebugMsg(cmn.DbgLvlDebug5, "[BROWSER-LOGS] Performance logs retrieved successfully (%d entries).", len(logs))
 

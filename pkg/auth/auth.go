@@ -38,6 +38,9 @@ type Store interface {
 type queryStore interface {
 	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
 }
+type queryRowStore interface {
+	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
+}
 
 var ErrUnauthorized = errors.New("unauthorized")
 
@@ -57,20 +60,24 @@ func Login(ctx context.Context, db Store, c cfg.AuthConfig, username, password s
 	}
 	var id, hash string
 	var disabled bool
-	err := db.QueryRow(`SELECT CAST(user_id AS TEXT), password_hash, disabled FROM Users WHERE username = $1 AND deleted_at IS NULL`, username).Scan(&id, &hash, &disabled)
+	qs, ok := db.(queryRowStore)
+	if !ok {
+		return "", ErrUnauthorized
+	}
+	err := qs.QueryRowContext(ctx, `SELECT CAST(user_id AS TEXT), password_hash, disabled FROM Users WHERE username = $1 AND deleted_at IS NULL`, username).Scan(&id, &hash, &disabled)
 	if err != nil || disabled || !VerifyPassword(password, hash) {
 		return "", ErrUnauthorized
 	}
-	roles, scopes := LoadGrants(db, id)
+	roles, scopes := LoadGrants(ctx, db, id)
 	return IssueToken(c, Identity{Subject: id, Username: username, Issuer: "crowler", Roles: roles, Scopes: scopes}, "")
 }
 
-func LoadGrants(db Store, userID string) ([]string, []string) {
+func LoadGrants(ctx context.Context, db Store, userID string) ([]string, []string) {
 	qs, ok := db.(queryStore)
 	if !ok || qs == nil {
 		return []string{}, []string{}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	roles := []string{}
 	if rows, err := qs.QueryContext(ctx, `SELECT r.name FROM AuthRoles r JOIN UserRoles ur ON ur.role_id = r.role_id WHERE ur.user_id = $1 ORDER BY r.name`, userID); err == nil {
@@ -145,7 +152,11 @@ func ValidateToken(ctx context.Context, db Store, c cfg.AuthConfig, token string
 	}
 	if db != nil && cl.JTI != "" {
 		var revoked bool
-		if err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM AuthRevokedTokens WHERE token_id = $1 AND expires_at > NOW())`, cl.JTI).Scan(&revoked); err == nil && revoked {
+		qs, ok := db.(queryRowStore)
+		if !ok {
+			return Identity{}, ErrUnauthorized
+		}
+		if err := qs.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM AuthRevokedTokens WHERE token_id = $1 AND expires_at > NOW())`, cl.JTI).Scan(&revoked); err == nil && revoked {
 			return Identity{}, ErrUnauthorized
 		}
 	}

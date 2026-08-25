@@ -127,10 +127,10 @@ CREATE TABLE IF NOT EXISTS DBSchemaVersion (
 DO $$
 BEGIN
     IF NOT EXISTS (
-        SELECT 1 FROM DBSchemaVersion WHERE version = '1.8'
+        SELECT 1 FROM DBSchemaVersion WHERE version = '1.13'
     ) THEN
         INSERT INTO DBSchemaVersion (version, description)
-        VALUES ('1.8', 'CROWler DB schema version 1.8');
+        VALUES ('1.13', 'CROWler DB schema version 1.13');
     END IF;
 END
 $$;
@@ -280,6 +280,7 @@ CREATE TABLE IF NOT EXISTS Sources (
     category_id BIGINT DEFAULT 0 NOT NULL,      -- The category of the source.
     url TEXT NOT NULL UNIQUE,                   -- The Source URL.
     priority VARCHAR(64) DEFAULT '' NOT NULL,   -- The priority of the source (e.g., 'low', 'medium', 'high', or even custom strings).
+    sub_priority INTEGER DEFAULT 0 NOT NULL,    -- The sub-priority of the source, used for finer-grained prioritization within the update_source function.
     status VARCHAR(50) DEFAULT 'new' NOT NULL,  -- All new sources are set to 'new' by default.
     engine VARCHAR(256) DEFAULT '' NOT NULL,    -- The engine crawling the source.
     last_crawled_at TIMESTAMPTZ,                -- The last time the source was crawled.
@@ -305,6 +306,12 @@ CREATE TABLE IF NOT EXISTS Sources (
                                                 -- data like the stage of the crawling for
                                                 -- multi-stage crawls etc.
 );
+
+CREATE INDEX IF NOT EXISTS idx_sources_priority_sub_priority
+ON Sources(priority, sub_priority DESC, source_id ASC);
+
+--------------------------------------------------------------------------------
+
 --------------------------------------------------------------------------------
 -- Durable email ingestion checkpoints and bounded message reconciliation state.
 CREATE TABLE IF NOT EXISTS EmailMailboxState (
@@ -551,7 +558,7 @@ WHERE details ? 'scraped_data';
 -- | 200       | webobject   | domain        | example.com     |
 -- | 200       | httpinfo    | server        | nginx.          |
 CREATE TABLE IF NOT EXISTS ObjectAttributes (
-    attribute_id BIGSERIAL,
+    attribute_id BIGSERIAL PRIMARY KEY,
     object_id BIGINT NOT NULL,
     object_type TEXT NOT NULL DEFAULT 'webobject',
     attribute_key TEXT NOT NULL,
@@ -559,20 +566,20 @@ CREATE TABLE IF NOT EXISTS ObjectAttributes (
     normalized_value TEXT NOT NULL,
     value_hash VARCHAR(64) NOT NULL,    -- SHA256 hash of the attribute value for fast comparison and uniqueness.
     attribute_type TEXT,
+    source_path TEXT,
+    context_path TEXT,
+    context_ref VARCHAR(64),
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     last_updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     fts tsvector,
     CONSTRAINT chk_objattr_value_hash_hex
         CHECK (value_hash IS NULL OR value_hash ~ '^[0-9a-fA-F]{64}$'),
-    CONSTRAINT chk_object_type
-        CHECK (object_type IN ('webobject','netinfo','httpinfo')),
-    PRIMARY KEY (
-        object_type,
-        object_id,
-        attribute_key,
-        value_hash
-    )
+    CONSTRAINT chk_object_type CHECK (object_type IN ('webobject','netinfo','httpinfo'))
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_objattr_unscoped ON ObjectAttributes(object_type, object_id, attribute_key, value_hash) WHERE context_ref IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_objattr_scoped ON ObjectAttributes(object_type, object_id, attribute_key, value_hash, context_ref) WHERE context_ref IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_objattr_context ON ObjectAttributes(object_type, object_id, context_ref) WHERE context_ref IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_objattr_fts
     ON ObjectAttributes
@@ -2178,8 +2185,8 @@ CREATE TABLE IF NOT EXISTS TimeSeriesMetrics (
     last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- TimeSeriesObservations is append-only history. Optional references are nulled
--- when operational records are removed so historical measurements survive.
+-- Time-series rows are owned by their Source. Other optional operational
+-- references are nulled when those records are removed so history survives.
 CREATE TABLE IF NOT EXISTS TimeSeriesObservations (
     observation_id BIGSERIAL PRIMARY KEY,
     metric_id BIGINT NOT NULL REFERENCES TimeSeriesMetrics(metric_id) ON DELETE RESTRICT,
@@ -2191,7 +2198,7 @@ CREATE TABLE IF NOT EXISTS TimeSeriesObservations (
     bucket_end TIMESTAMPTZ NOT NULL,
     information_seed_id BIGINT REFERENCES InformationSeed(information_seed_id) ON DELETE SET NULL,
     information_seed_candidate_id BIGINT REFERENCES InformationSeedCandidate(information_seed_candidate_id) ON DELETE SET NULL,
-    source_id BIGINT REFERENCES Sources(source_id) ON DELETE SET NULL,
+    source_id BIGINT REFERENCES Sources(source_id) ON DELETE CASCADE,
     source_information_seed_id BIGINT REFERENCES SourceInformationSeedIndex(source_information_seed_id) ON DELETE SET NULL,
     index_id BIGINT REFERENCES SearchIndex(index_id) ON DELETE SET NULL,
     entity_id BIGINT REFERENCES Entities(entity_id) ON DELETE SET NULL,
@@ -2233,7 +2240,7 @@ CREATE TABLE IF NOT EXISTS TimeSeriesAggregates (
     bucket_end TIMESTAMPTZ NOT NULL,
     information_seed_id BIGINT REFERENCES InformationSeed(information_seed_id) ON DELETE SET NULL,
     information_seed_candidate_id BIGINT REFERENCES InformationSeedCandidate(information_seed_candidate_id) ON DELETE SET NULL,
-    source_id BIGINT REFERENCES Sources(source_id) ON DELETE SET NULL,
+    source_id BIGINT REFERENCES Sources(source_id) ON DELETE CASCADE,
     source_information_seed_id BIGINT REFERENCES SourceInformationSeedIndex(source_information_seed_id) ON DELETE SET NULL,
     index_id BIGINT REFERENCES SearchIndex(index_id) ON DELETE SET NULL,
     entity_id BIGINT REFERENCES Entities(entity_id) ON DELETE SET NULL,
@@ -2832,7 +2839,7 @@ CREATE OR REPLACE FUNCTION update_sources(
     p_regular_crawling VARCHAR,
     p_processing_timeout VARCHAR
 )
-RETURNS TABLE(source_id BIGINT, source_uid TEXT, url TEXT, restricted INT, flags INT, config JSONB, last_updated_at TIMESTAMPTZ) AS
+RETURNS TABLE(source_id BIGINT, source_uid TEXT, url TEXT, restricted INT, flags INT, config JSONB, last_updated_at TIMESTAMPTZ, sub_priority INT) AS
 $$
 DECLARE
     priority_list TEXT[];
@@ -2884,7 +2891,7 @@ BEGIN
                     OR s.status IS NULL
                 )
               )
-        ORDER BY s.created_at ASC, s.source_id ASC
+        ORDER BY s.sub_priority DESC, s.source_id ASC
         FOR UPDATE SKIP LOCKED
         LIMIT limit_val
     )
@@ -2892,7 +2899,7 @@ BEGIN
     SET status = 'processing',
         engine = p_engineID
     WHERE Sources.source_id IN (SELECT SelectedSources.source_id FROM SelectedSources)
-    RETURNING Sources.source_id, Sources.source_uid::TEXT, Sources.url, Sources.restricted, Sources.flags, Sources.config, Sources.last_updated_at;
+    RETURNING Sources.source_id, Sources.source_uid::TEXT, Sources.url, Sources.restricted, Sources.flags, Sources.config, Sources.last_updated_at, Sources.sub_priority;
 END;
 $$
 LANGUAGE plpgsql;

@@ -6,6 +6,7 @@
 package database
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -37,9 +38,13 @@ type informationSeedObservationEvent struct {
 // Thus a failed commit cannot leave an observation behind and retries converge
 // through a stable identity/value dedupe key.
 func emitInformationSeedObservationsTx(tx *sql.Tx, dbms string, event informationSeedObservationEvent) error {
+	return emitInformationSeedObservationsTxContext(context.Background(), tx, dbms, event)
+}
+
+func emitInformationSeedObservationsTxContext(ctx context.Context, tx *sql.Tx, dbms string, event informationSeedObservationEvent) error {
 	repo := TransactionTimeSeriesRepository{Tx: tx, DBMS: dbms}
 	enabled := true
-	metrics, err := repo.ListMetrics(TimeSeriesMetricFilter{SourceKind: event.SourceKind, Enabled: &enabled, Pagination: TimeSeriesPagination{Limit: 10000}})
+	metrics, err := repo.ListMetricsContext(ctx, TimeSeriesMetricFilter{SourceKind: event.SourceKind, Enabled: &enabled, Pagination: TimeSeriesPagination{Limit: 10000}})
 	if err != nil {
 		// Older/test schemas may intentionally predate time-series storage.
 		if isMissingTimeSeriesTableError(err) {
@@ -52,7 +57,7 @@ func emitInformationSeedObservationsTx(tx *sql.Tx, dbms string, event informatio
 		if !metric.Enabled || metric.SourceKind != event.SourceKind {
 			continue
 		}
-		if err = emitInformationSeedMetricTx(repo, metric, event); err != nil {
+		if err = emitInformationSeedMetricTxContext(ctx, repo, metric, event); err != nil {
 			if errors.Is(err, ErrTimeSeriesValueRejected) || metric.FailurePolicy == cfg.TimeSeriesFailureSkip {
 				continue
 			}
@@ -67,6 +72,10 @@ func emitInformationSeedObservationsTx(tx *sql.Tx, dbms string, event informatio
 }
 
 func emitInformationSeedMetricTx(repo TransactionTimeSeriesRepository, metric TimeSeriesMetric, event informationSeedObservationEvent) error {
+	return emitInformationSeedMetricTxContext(context.Background(), repo, metric, event)
+}
+
+func emitInformationSeedMetricTxContext(ctx context.Context, repo TransactionTimeSeriesRepository, metric TimeSeriesMetric, event informationSeedObservationEvent) error {
 	selector, err := decodeTimeSeriesMap(metric.Selector)
 	if err != nil {
 		return err
@@ -105,7 +114,7 @@ func emitInformationSeedMetricTx(repo TransactionTimeSeriesRepository, metric Ti
 		return err
 	}
 	observation = prepared.Observation
-	previous, previousErr := repo.PreviousObservation(TimeSeriesChangeLookup{MetricID: metric.ID, Scope: event.Scope, Dimensions: dimensions, Before: observedAt, TimeBasis: metric.TimeBasis})
+	previous, previousErr := repo.PreviousObservationContext(ctx, TimeSeriesChangeLookup{MetricID: metric.ID, Scope: event.Scope, Dimensions: dimensions, Before: observedAt, TimeBasis: metric.TimeBasis})
 	if previousErr != nil && !errors.Is(previousErr, ErrTimeSeriesObservationNotFound) {
 		return previousErr
 	}
@@ -120,7 +129,7 @@ func emitInformationSeedMetricTx(repo TransactionTimeSeriesRepository, metric Ti
 	if err != nil {
 		return err
 	}
-	_, err = repo.InsertObservation(&observation)
+	_, err = repo.InsertObservationContext(ctx, &observation)
 	return err
 }
 

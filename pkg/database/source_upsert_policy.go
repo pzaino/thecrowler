@@ -51,16 +51,17 @@ func UpsertSourceWithPolicy(db *Handler, source *Source, config cfg.SourceConfig
 	}
 
 	prepared := preparedSourceInsert{
-		URL:        NormalizeSourceURL(source.URL),
-		Name:       strings.TrimSpace(source.Name),
-		Priority:   strings.TrimSpace(source.Priority),
-		CategoryID: source.CategoryID,
-		UsrID:      source.UsrID,
-		Restricted: source.Restricted,
-		Flags:      source.Flags,
-		Config:     details,
-		Disabled:   policy.Disabled,
-		Status:     normalizedSourcePolicyStatus(policy.Status),
+		URL:         NormalizeSourceURL(source.URL),
+		Name:        strings.TrimSpace(source.Name),
+		Priority:    strings.TrimSpace(source.Priority),
+		SubPriority: source.SubPriority,
+		CategoryID:  source.CategoryID,
+		UsrID:       source.UsrID,
+		Restricted:  source.Restricted,
+		Flags:       source.Flags,
+		Config:      details,
+		Disabled:    policy.Disabled,
+		Status:      normalizedSourcePolicyStatus(policy.Status),
 	}
 	if prepared.URL == "" {
 		return SourceUpsertResult{}, fmt.Errorf("source URL must be provided")
@@ -139,11 +140,11 @@ func insertSourceWithPolicy(db *Handler, source preparedSourceInsert) (uint64, e
 	case DBPostgresStr:
 		var sourceID uint64
 		args := source.argsWithStatus()
-		args[7] = string(source.Config)
+		args[8] = string(source.Config)
 		err := (*db).QueryRow(`
 			INSERT INTO Sources
-				(url, name, priority, category_id, usr_id, restricted, flags, config, disabled, status)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10)
+				(url, name, priority, sub_priority, category_id, usr_id, restricted, flags, config, disabled, status)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11)
 			RETURNING source_id`, args...).Scan(&sourceID)
 		if err != nil {
 			return 0, fmt.Errorf("failed to insert PostgreSQL source: %w", err)
@@ -153,8 +154,8 @@ func insertSourceWithPolicy(db *Handler, source preparedSourceInsert) (uint64, e
 		var sourceID uint64
 		err := (*db).QueryRow(`
 			INSERT INTO Sources
-				(url, name, priority, category_id, usr_id, restricted, flags, config, disabled, status)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+				(url, name, priority, sub_priority, category_id, usr_id, restricted, flags, config, disabled, status)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 			RETURNING source_id`, source.argsWithStatus()...).Scan(&sourceID)
 		if err != nil {
 			return 0, fmt.Errorf("failed to insert SQLite source: %w", err)
@@ -163,8 +164,8 @@ func insertSourceWithPolicy(db *Handler, source preparedSourceInsert) (uint64, e
 	case DBMySQLStr:
 		result, err := (*db).Exec(`
 			INSERT INTO Sources
-				(url, name, priority, category_id, usr_id, restricted, flags, config, disabled, status)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, source.argsWithStatus()...)
+				(url, name, priority, sub_priority, category_id, usr_id, restricted, flags, config, disabled, status)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, source.argsWithStatus()...)
 		if err != nil {
 			return 0, fmt.Errorf("failed to insert MySQL source: %w", err)
 		}

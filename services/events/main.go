@@ -89,6 +89,35 @@ var (
 	eventsWSHub  *ws.Hub
 )
 
+type eventNotificationHandler func(string)
+
+// eventsStartupPlan keeps the one scalable responsibility (receiving database
+// notifications) separate from the responsibilities owned only by the master.
+type eventsStartupPlan struct {
+	notificationHandler           eventNotificationHandler
+	ownsSingletonResponsibilities bool
+}
+
+func planEventsStartup(isMaster bool) eventsStartupPlan {
+	if isMaster {
+		return eventsStartupPlan{
+			notificationHandler:           handleNotification,
+			ownsSingletonResponsibilities: true,
+		}
+	}
+
+	return eventsStartupPlan{notificationHandler: handleReplicaNotification}
+}
+
+func startEventsNotificationListener(
+	db *cdb.Handler,
+	timeout time.Duration,
+	plan eventsStartupPlan,
+	listen func(*cdb.Handler, func(string), time.Duration),
+) {
+	listen(db, plan.notificationHandler, timeout)
+}
+
 func setSysReady(newStatus int) {
 	if newStatus < 0 || newStatus > 2 {
 		return
@@ -273,15 +302,17 @@ func main() {
 
 	config.Events.MasterEventsManager = strings.ToLower(strings.TrimSpace(config.Events.MasterEventsManager))
 
+	notifyTimeout := parseDuration(config.Events.HeartbeatTimeout)
+	startup := planEventsStartup(instance == config.Events.MasterEventsManager)
+
+	// Every instance owns exactly one database notification listener. The
+	// selected callback limits replicas to heartbeat responses.
+	go startEventsNotificationListener(&dbHandler, notifyTimeout, startup, cdb.ListenForEvents)
+
 	// Start the event janitor (cleans up expired events from the DB)
-	if instance == config.Events.MasterEventsManager {
+	if startup.ownsSingletonResponsibilities {
 		// We are on the Master Instance, start the events janitor
 		go startEventJanitor(&dbHandler, time.Minute, config)
-
-		notifyTimeout := parseDuration(config.Events.HeartbeatTimeout)
-
-		// Start the event listener (on a separate go routine)
-		go cdb.ListenForEvents(&dbHandler, handleNotification, notifyTimeout)
 
 		// Provider listeners are singleton lifecycle owners. Their durable crawl
 		// requests are claimed atomically by one of the scalable crawler engines.
@@ -531,6 +562,7 @@ func initAll(configFile *string, config *cfg.Config, lmt **rate.Limiter) error {
 
 	// Initialize the database
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Initializing database...")
+	configureEventsQuota(*config)
 	connected := false
 	dbHandler, err = cdb.NewHandler(*config)
 	if err != nil {
@@ -544,6 +576,9 @@ func initAll(configFile *string, config *cfg.Config, lmt **rate.Limiter) error {
 				continue
 			}
 			connected = true
+		}
+		if err = applyEventsQuotaAfterConnect(*config); err != nil {
+			return fmt.Errorf("apply Events database quota: %w", err)
 		}
 		cmn.DebugMsg(cmn.DbgLvlInfo, "Database connection established")
 	}
@@ -1149,15 +1184,28 @@ func updateEventHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // Handle the notification received
+var enqueueNotificationEvent = func(event cdb.Event) bool {
+	return enqueueWithTimeout(jobQueue, event, 0)
+}
+
 func handleNotification(payload string) {
 	var event cdb.Event
 	mEventsTotalReceived.With(prometheus.Labels{"engine": cmn.GetMicroServiceName()}).Inc()
 	if err := json.Unmarshal([]byte(payload), &event); err == nil {
+		if strings.EqualFold(strings.TrimSpace(event.Type), "crowler_heartbeat_report") {
+			processEventsHeartbeatReport(event)
+			return
+		}
+		if strings.EqualFold(strings.TrimSpace(event.Type), "crowler_heartbeat") {
+			if _, err := respondToHeartbeat(&dbHandler, event); err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError, "HEARTBEAT: failed to persist response to %s: %v", event.ID, err)
+			}
+		}
 		if eventsWSHub != nil {
 			eventsWSHub.Broadcast("event", event)
 		}
 		// Put the event in the jobQueue
-		if !enqueueWithTimeout(jobQueue, event, 500*time.Millisecond) {
+		if !enqueueNotificationEvent(event) {
 			cmn.DebugMsg(cmn.DbgLvlWarn, "Job queue full; dropping event %s (type=%s)", event.ID, event.Type)
 			mEventsTotalDropped.With(prometheus.Labels{"engine": cmn.GetMicroServiceName()}).Inc()
 			return
@@ -1165,6 +1213,34 @@ func handleNotification(payload string) {
 	} else {
 		cmn.DebugMsg(cmn.DbgLvlError, "Failed to decode notification: %v", err)
 		mEventsTotalDropped.With(prometheus.Labels{"engine": cmn.GetMicroServiceName()}).Inc()
+	}
+}
+
+var replicaHeartbeatResponder = func(event cdb.Event) error {
+	_, err := respondToHeartbeat(&dbHandler, event)
+	return err
+}
+
+// handleReplicaNotification accepts only fleet-control heartbeat traffic. Replica listeners
+// must never feed the master event-processing paths.
+func handleReplicaNotification(payload string) {
+	var event cdb.Event
+	if err := json.Unmarshal([]byte(payload), &event); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug, "Failed to decode replica notification: %v", err)
+		return
+	}
+
+	switch strings.ToLower(strings.TrimSpace(event.Type)) {
+	case "crowler_heartbeat":
+		if err := replicaHeartbeatResponder(event); err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "HEARTBEAT: replica failed to persist response to %s: %v", event.ID, err)
+		}
+		return
+	case "crowler_heartbeat_report":
+		processEventsHeartbeatReport(event)
+		return
+	default:
+		return
 	}
 }
 
@@ -1268,11 +1344,11 @@ func eventWorker() {
 			if strings.TrimSpace(e.Action) != "" {
 				// processInternalEvent(e)
 				// internal job
-				_ = enqueueWithTimeout(internalQ, e, 250*time.Millisecond)
+				_ = enqueueWithTimeout(internalQ, e, 0)
 			} else {
 				// processEvent(e)
 				// plugin/agent job
-				_ = enqueueWithTimeout(externalQ, e, 250*time.Millisecond)
+				_ = enqueueWithTimeout(externalQ, e, 0)
 			}
 		}(event)
 	}
@@ -1603,9 +1679,32 @@ func processEvent(event cdb.Event) {
 		// Execute the plugin
 		for _, plugin := range p {
 			// Execute the plugin
-			rval, err := plugin.Execute(nil, &dbHandler, config.Plugins.PluginsTimeout, eventMap)
+			rval, err := plugin.Execute(
+				nil,
+				&dbHandler,
+				config.Plugins.PluginsTimeout,
+				eventMap,
+			)
 			if err != nil {
-				cmn.DebugMsg(cmn.DbgLvlError, "executing plugin: %v", err)
+				cmn.DebugMsg(
+					cmn.DbgLvlError,
+					"executing plugin '%s': %v",
+					plugin.Name,
+					err,
+				)
+
+				processingResult = append(
+					processingResult,
+					"failure",
+				)
+
+				mEventsTotalErrors.With(
+					prometheus.Labels{
+						"engine": cmn.GetMicroServiceName(),
+					},
+				).Inc()
+
+				continue
 			}
 
 			// Parse the plugin response
@@ -1613,7 +1712,24 @@ func processEvent(event cdb.Event) {
 			var pluginResp PluginResponse
 			err = json.Unmarshal([]byte(rvalStr), &pluginResp)
 			if err != nil {
-				cmn.DebugMsg(cmn.DbgLvlError, "parsing plugin response: %v", err)
+				cmn.DebugMsg(
+					cmn.DbgLvlError,
+					"parsing plugin '%s' response: %v",
+					plugin.Name,
+					err,
+				)
+
+				processingResult = append(
+					processingResult,
+					"failure",
+				)
+
+				mEventsTotalErrors.With(
+					prometheus.Labels{
+						"engine": cmn.GetMicroServiceName(),
+					},
+				).Inc()
+
 				continue
 			}
 
@@ -2074,6 +2190,9 @@ func registerMetrics() {
 		mSysReady,
 		mActiveFleetNodes,
 	)
+	for _, collector := range eventsDBMetrics.Collectors() {
+		prometheus.MustRegister(collector)
+	}
 }
 
 func updateMetrics() {
@@ -2095,6 +2214,9 @@ func updateMetrics() {
 
 	// Ready state
 	mSysReady.With(labels).Set(float64(getSysReady()))
+	if stats, err := cdb.ConnectionStats(&dbHandler); err == nil {
+		eventsDBMetrics.UpdatePool(stats)
+	}
 
 	// Pushgateway
 	url := "http://" + config.Prometheus.Host + ":" + strconv.Itoa(config.Prometheus.Port)
@@ -2113,6 +2235,9 @@ func updateMetrics() {
 		Collector(mEventsTotalErrors).
 		Collector(mEventsTotalDropped).
 		Collector(mActiveFleetNodes)
+	for _, collector := range eventsDBMetrics.Collectors() {
+		p = p.Collector(collector)
+	}
 
 	if err := p.Push(); err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "EventsAPI Prometheus push failed: %v", err)

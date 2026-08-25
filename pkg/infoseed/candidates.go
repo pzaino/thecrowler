@@ -32,6 +32,7 @@ type Candidate struct {
 type SourceOverrides struct {
 	Name         *string         `json:"name,omitempty"`
 	Priority     *string         `json:"priority,omitempty"`
+	SubPriority  *int            `json:"sub_priority,omitempty"`
 	Restricted   *uint           `json:"restricted,omitempty"`
 	Flags        *uint           `json:"flags,omitempty"`
 	SourceConfig json.RawMessage `json:"source_config,omitempty"`

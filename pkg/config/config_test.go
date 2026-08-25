@@ -78,6 +78,9 @@ func TestLoadConfig(t *testing.T) {
 	if config.Database.Password != "testpassword" {
 		t.Errorf("Expected testpassword, got %v", config.Database.Password)
 	}
+	if config.API.MaxRequestBodySize != 0 {
+		t.Errorf("Expected fixture API body enforcement to be unlimited, got %d bytes", config.API.MaxRequestBodySize)
+	}
 }
 
 // Test LoadConfigInvalidFile
@@ -729,6 +732,42 @@ func TestValidateAPI(t *testing.T) {
 	}
 }
 
+func TestAPIMaxRequestBodySize(t *testing.T) {
+	tests := []struct {
+		name      string
+		yaml      string
+		want      int64
+		unlimited bool
+		wantErr   bool
+	}{
+		{name: "omitted", yaml: "api:\n  host: localhost\n", want: 0, unlimited: true},
+		{name: "explicit zero", yaml: "api:\n  max_request_body_size: 0\n", want: 0, unlimited: true},
+		{name: "positive bytes", yaml: "api:\n  max_request_body_size: 1048577\n", want: 1048577},
+		{name: "negative", yaml: "api:\n  max_request_body_size: -1\n", want: -1, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := ParseConfig([]byte(tt.yaml))
+			if tt.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "api.max_request_body_size") {
+					t.Fatalf("ParseConfig() error = %v, want api.max_request_body_size validation error", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseConfig() error = %v", err)
+			}
+			if cfg.API.MaxRequestBodySize != tt.want {
+				t.Errorf("MaxRequestBodySize = %d, want %d", cfg.API.MaxRequestBodySize, tt.want)
+			}
+			if gotUnlimited := cfg.API.MaxRequestBodySize == 0; gotUnlimited != tt.unlimited {
+				t.Errorf("unlimited = %t, want %t", gotUnlimited, tt.unlimited)
+			}
+		})
+	}
+}
+
 // Test validateVDI
 func TestValidateVDI(t *testing.T) {
 	// Create a config instance with some Selenium configurations
@@ -1223,7 +1262,7 @@ func TestConfigString(t *testing.T) {
 	}
 
 	// Define the expected string representation of the config
-	expected := "Config{Remote: {https://example.com /api 8080 us-west-1 mytoken  0  }, Database: {  0 testuser testpassword  0 0   0 0}, Crawler: {0 0 []  false false <nil>     0 0 false false 0 0 0 0 0 0  0  0 0 0  false  false     false false false false false false false false false false false false false false false false [] false 0 false false { 0 0     0 0 0}}, API: {  0 0 0 false false false false     false 0 0 0 false [] {false []} {false 0 []} false {false [] 0 0 0} {false     0 {false} {false   }}}, Selenium: [{    chrome  4444  false false     {0 0     0 0 0}}], RulesetsSchemaPath: path/to/schema, Rulesets: [], ImageStorageAPI: {  0    0  }, FileStorageAPI: {  0    0  }, HTTPHeaders: {false 0 false {false false false false false false false false false false false false false false false false} []}, NetworkInfo: {{false 0 } {false 0 } {false 0 } {false 0 { 0} false false false false false false  false false [] [] []    0 0 0   false 0  false  false 0 [] []} {false    0 } {  }}, OS: linux, DebugLevel: 1}"
+	expected := "Config{Remote: {https://example.com /api 8080 us-west-1 mytoken  0  }, Database: {  0 testuser testpassword  0 0   0 0}, Crawler: {0 0 []  false false <nil>     0 0 false false 0 0 0 0 0 0  0  0 0 0  false  false     false false false false false false false false false false false false false false false false [] false 0 false false { 0 0     0 0 0}}, API: {  0 0 0 false false false false     false 0 0 0 0 false [] {false []} {false 0 []} false {false [] 0 0 0} {false     0 {false} {false   }}}, Selenium: [{    chrome  4444  false false     {0 0     0 0 0}}], RulesetsSchemaPath: path/to/schema, Rulesets: [], ImageStorageAPI: {  0    0  }, FileStorageAPI: {  0    0  }, HTTPHeaders: {false 0 false {false false false false false false false false false false false false false false false false} []}, NetworkInfo: {{false 0 } {false 0 } {false 0 } {false 0 { 0} false false false false false false  false false [] [] []    0 0 0   false 0  false  false 0 [] []} {false    0 } {  }}, OS: linux, DebugLevel: 1}"
 
 	// Call the String method on the config
 	result := config.String()

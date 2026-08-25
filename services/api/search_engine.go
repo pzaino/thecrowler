@@ -15,6 +15,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -57,8 +58,8 @@ func requestSearchQuery(raw string, qType int, target interface{}, value func() 
 	return query, nil
 }
 
-func performSearch(query string, db *cdb.Handler) (SearchResult, error) {
-	result, err := searchEngine(db).Search(query)
+func performSearch(ctx context.Context, query string, db *cdb.Handler) (SearchResult, error) {
+	result, err := searchEngine(db).SearchContext(ctx, query)
 	if err != nil {
 		return SearchResult{}, err
 	}
@@ -87,13 +88,13 @@ func performSearch(query string, db *cdb.Handler) (SearchResult, error) {
 	return response, nil
 }
 
-func performScreenshotSearch(query string, qType int, db *cdb.Handler) (ScreenshotResponse, error) {
+func performScreenshotSearch(ctx context.Context, query string, qType int, db *cdb.Handler) (ScreenshotResponse, error) {
 	var req ScreenshotRequest
 	searchQuery, err := requestSearchQuery(query, qType, &req, func() string { return req.URL }, nil)
 	if err != nil {
 		return ScreenshotResponse{}, err
 	}
-	result, err := searchEngine(db).SearchScreenshots(searchQuery)
+	result, err := searchEngine(db).SearchScreenshotsContext(ctx, searchQuery)
 	if err != nil {
 		return ScreenshotResponse{}, err
 	}
@@ -111,29 +112,29 @@ func performScreenshotSearch(query string, qType int, db *cdb.Handler) (Screensh
 	return response, nil
 }
 
-func performWebObjectSearch(query string, qType int, db *cdb.Handler) (WebObjectResponse, error) {
+func performWebObjectSearch(ctx context.Context, query string, qType int, db *cdb.Handler) (WebObjectResponse, error) {
 	var req WebObjectRequest
 	searchQuery, err := requestSearchQuery(query, qType, &req, func() string { return req.URL }, func() (int, int) { return req.Limit, req.Offset })
 	if err != nil {
 		return WebObjectResponse{}, err
 	}
-	result, err := searchEngine(db).SearchWebObjects(searchQuery)
+	result, err := searchEngine(db).SearchWebObjectsContext(ctx, searchQuery)
 	if err != nil {
 		return WebObjectResponse{}, err
 	}
 	return readWebObjects(result)
 }
 
-func performWebObjectSearchBySourceID(sourceID int64, db *cdb.Handler) (WebObjectResponse, error) {
-	result, err := searchEngine(db).SearchWebObjectsBySourceID(sourceID)
+func performWebObjectSearchBySourceID(ctx context.Context, sourceID int64, db *cdb.Handler) (WebObjectResponse, error) {
+	result, err := searchEngine(db).SearchWebObjectsBySourceIDContext(ctx, sourceID)
 	if err != nil {
 		return WebObjectResponse{}, err
 	}
 	return readWebObjects(result)
 }
 
-func performWebObjectSearchBySourceUID(sourceUID string, db *cdb.Handler) (WebObjectResponse, error) {
-	result, err := searchEngine(db).SearchWebObjectsBySourceUID(sourceUID)
+func performWebObjectSearchBySourceUID(ctx context.Context, sourceUID string, db *cdb.Handler) (WebObjectResponse, error) {
+	result, err := searchEngine(db).SearchWebObjectsBySourceUIDContext(ctx, sourceUID)
 	if err != nil {
 		return WebObjectResponse{}, err
 	}
@@ -162,13 +163,13 @@ func readWebObjects(result *search.QueryResult) (WebObjectResponse, error) {
 	return response, nil
 }
 
-func performScrapedDataSearch(query string, qType int, db *cdb.Handler) (ScrapedDataResponse, error) {
+func performScrapedDataSearch(ctx context.Context, query string, qType int, db *cdb.Handler) (ScrapedDataResponse, error) {
 	var req ScrapedDataRequest
 	searchQuery, err := requestSearchQuery(query, qType, &req, func() string { return req.URL }, nil)
 	if err != nil {
 		return ScrapedDataResponse{}, err
 	}
-	result, err := searchEngine(db).SearchScrapedData(searchQuery)
+	result, err := searchEngine(db).SearchScrapedDataContext(ctx, searchQuery)
 	if err != nil {
 		return ScrapedDataResponse{}, err
 	}
@@ -194,13 +195,13 @@ func performScrapedDataSearch(query string, qType int, db *cdb.Handler) (Scraped
 	return response, nil
 }
 
-func performCorrelatedSitesSearch(query string, qType int, db *cdb.Handler) (CorrelatedSitesResponse, error) {
+func performCorrelatedSitesSearch(ctx context.Context, query string, qType int, db *cdb.Handler) (CorrelatedSitesResponse, error) {
 	var req CorrelatedSitesRequest
 	searchQuery, err := requestSearchQuery(query, qType, &req, func() string { return req.URL }, nil)
 	if err != nil {
 		return CorrelatedSitesResponse{}, err
 	}
-	result, err := searchEngine(db).SearchCorrelatedSites(searchQuery)
+	result, err := searchEngine(db).SearchCorrelatedSitesContext(ctx, searchQuery)
 	if err != nil {
 		return CorrelatedSitesResponse{}, err
 	}
@@ -232,13 +233,13 @@ func performCorrelatedSitesSearch(query string, qType int, db *cdb.Handler) (Cor
 	return response, nil
 }
 
-func performNetInfoSearch(query string, qType int, db *cdb.Handler) (NetInfoResponse, error) {
+func performNetInfoSearch(ctx context.Context, query string, qType int, db *cdb.Handler) (NetInfoResponse, error) {
 	var req QueryRequest
 	searchQuery, err := requestSearchQuery(query, qType, &req, func() string { return req.Title }, nil)
 	if err != nil {
 		return NetInfoResponse{}, err
 	}
-	result, err := searchEngine(db).SearchNetInfo(searchQuery)
+	result, err := searchEngine(db).SearchNetInfoContext(ctx, searchQuery)
 	if err != nil {
 		return NetInfoResponse{}, err
 	}
@@ -264,13 +265,13 @@ func performNetInfoSearch(query string, qType int, db *cdb.Handler) (NetInfoResp
 	return response, nil
 }
 
-func performHTTPInfoSearch(query string, qType int, db *cdb.Handler) (HTTPInfoResponse, error) {
+func performHTTPInfoSearch(ctx context.Context, query string, qType int, db *cdb.Handler) (HTTPInfoResponse, error) {
 	var req QueryRequest
 	searchQuery, err := requestSearchQuery(query, qType, &req, func() string { return req.Title }, nil)
 	if err != nil {
 		return HTTPInfoResponse{}, err
 	}
-	result, err := searchEngine(db).SearchHTTPInfo(searchQuery)
+	result, err := searchEngine(db).SearchHTTPInfoContext(ctx, searchQuery)
 	if err != nil {
 		return HTTPInfoResponse{}, err
 	}

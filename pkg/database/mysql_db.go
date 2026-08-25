@@ -169,6 +169,10 @@ func (handler *MySQLHandler) QueryRow(query string, args ...interface{}) *sql.Ro
 	return handler.db.QueryRow(query, args...)
 }
 
+func (handler *MySQLHandler) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
+	return handler.db.QueryRowContext(ctx, query, args...)
+}
+
 // CheckConnection checks if the database connection is still alive
 func (handler *MySQLHandler) CheckConnection(c cfg.Config) error {
 	var err error

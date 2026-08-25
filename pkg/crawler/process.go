@@ -18,9 +18,13 @@ package crawler
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 	"sync"
+
+	"github.com/go-auxiliaries/selenium/log"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
@@ -68,6 +72,108 @@ type ProcessContext struct {
 	RefreshCrawlingTimer func()                    // Function to refresh the crawling timer
 	ruleCallState        *ruleCallRuntimeState     // Runtime guardrails for plugin/agent rule calls
 	crowlerMeta          CrowlerMeta               // Shared metadata document for the current source/link
+	performanceLogs      performanceLogStore       // Temporary Perf Log storage per page
+}
+
+type performanceLogStore struct {
+	mu      sync.Mutex
+	entries []log.Message
+}
+
+func ingestPerformanceLogs(ctx *ProcessContext) error {
+	if ctx == nil || ctx.wd == nil {
+		return errors.New("WebDriver is nil")
+	}
+
+	logs, err := ctx.wd.Log(log.Performance)
+	if err != nil {
+		return fmt.Errorf("retrieving performance logs: %w", err)
+	}
+
+	if len(logs) == 0 {
+		return nil
+	}
+
+	ctx.performanceLogs.entries = append(
+		ctx.performanceLogs.entries,
+		logs...,
+	)
+
+	for _, entry := range logs {
+		logNavigationFailureEntry(entry)
+	}
+
+	return nil
+}
+
+func logNavigationFailureEntry(entry log.Message) {
+	var event struct {
+		Message struct {
+			Method string `json:"method"`
+			Params struct {
+				RequestID     string `json:"requestId"`
+				Type          string `json:"type"`
+				ErrorText     string `json:"errorText"`
+				BlockedReason string `json:"blockedReason"`
+				Canceled      bool   `json:"canceled"`
+			} `json:"params"`
+		} `json:"message"`
+	}
+
+	if err := json.Unmarshal([]byte(entry.Message), &event); err != nil {
+		return
+	}
+
+	if event.Message.Method != "Network.loadingFailed" {
+		return
+	}
+
+	// Avoid filling the logs with normal canceled resources.
+	// We're interested primarily in navigation/document failures.
+	if !strings.EqualFold(event.Message.Params.Type, "Document") {
+		return
+	}
+
+	cmn.DebugMsg(
+		cmn.DbgLvlError,
+		"[NAV-FAIL] requestID=%s type=%s error=%s blockedReason=%s canceled=%v",
+		event.Message.Params.RequestID,
+		event.Message.Params.Type,
+		event.Message.Params.ErrorText,
+		event.Message.Params.BlockedReason,
+		event.Message.Params.Canceled,
+	)
+}
+
+func (ctx *ProcessContext) clearPerformanceLogs() {
+	ctx.performanceLogs.mu.Lock()
+	defer ctx.performanceLogs.mu.Unlock()
+	ctx.performanceLogs.entries = nil
+}
+
+func (ctx *ProcessContext) performanceLogSnapshot() ([]log.Message, bool) {
+	ctx.performanceLogs.mu.Lock()
+	defer ctx.performanceLogs.mu.Unlock()
+
+	if len(ctx.performanceLogs.entries) == 0 {
+		err := ingestPerformanceLogs(ctx) // Attempt to ingest logs if empty
+		if err != nil {
+			cmn.DebugMsg(
+				cmn.DbgLvlError,
+				"retrieving performance logs: %v",
+				err,
+			)
+			return nil, false
+		}
+		if len(ctx.performanceLogs.entries) == 0 {
+			return nil, false
+		}
+	}
+
+	entries := make([]log.Message, len(ctx.performanceLogs.entries))
+	copy(entries, ctx.performanceLogs.entries)
+
+	return entries, true
 }
 
 // GetContextID returns a unique context ID for the ProcessContext

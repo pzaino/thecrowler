@@ -17,6 +17,7 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -26,6 +27,11 @@ import (
 
 // GetSourceID retrieves the source ID from the database based on the provided filter.
 func GetSourceID(filter SourceFilter, db *Handler) (uint64, error) {
+	return GetSourceIDContext(context.Background(), filter, db)
+}
+
+// GetSourceIDContext retrieves the source ID using ctx.
+func GetSourceIDContext(ctx context.Context, filter SourceFilter, db *Handler) (uint64, error) {
 	var sourceID int64 // Use int64 here since PostgreSQL BIGSERIAL maps to int64
 	var whereClauses []string
 	var args []interface{}
@@ -54,7 +60,7 @@ func GetSourceID(filter SourceFilter, db *Handler) (uint64, error) {
     `, strings.Join(whereClauses, " AND "))
 
 	// Query the database
-	err := (*db).QueryRow(query, args...).Scan(&sourceID)
+	err := (*db).QueryRowContext(ctx, query, args...).Scan(&sourceID)
 	if err == sql.ErrNoRows {
 		return 0, fmt.Errorf("no source found matching the provided filters")
 	} else if err != nil {

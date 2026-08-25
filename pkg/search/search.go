@@ -2,6 +2,7 @@
 package search
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"strconv"
@@ -37,27 +38,39 @@ func NewSearcher(db *cdb.Handler, cfg cfg.Config) *Searcher {
 
 // Search performs the standard SearchIndex search.
 func (s *Searcher) Search(query string) (*QueryResult, error) {
+	return s.SearchContext(context.Background(), query)
+}
+func (s *Searcher) SearchContext(ctx context.Context, query string) (*QueryResult, error) {
 	body := sqlSearchIndexBodyNoContent
 	if s.Config.API.ReturnContent {
 		body = sqlSearchIndexBody
 	}
-	return s.Execute(body, query, "")
+	return s.ExecuteContext(ctx, body, query, "")
 }
 
 // SearchScreenshots searches screenshot metadata.
 func (s *Searcher) SearchScreenshots(query string) (*QueryResult, error) {
-	return s.ExecuteOrdered(sqlScreenshotBody, query, "", "ORDER BY s.created_at DESC")
+	return s.SearchScreenshotsContext(context.Background(), query)
+}
+func (s *Searcher) SearchScreenshotsContext(ctx context.Context, query string) (*QueryResult, error) {
+	return s.ExecuteOrderedContext(ctx, sqlScreenshotBody, query, "", "ORDER BY s.created_at DESC")
 }
 
 // SearchWebObjects searches stored web objects.
 func (s *Searcher) SearchWebObjects(query string) (*QueryResult, error) {
-	return s.ExecuteOrdered(sqlWebObjectsBody, query, "", "ORDER BY wo.created_at DESC")
+	return s.SearchWebObjectsContext(context.Background(), query)
+}
+func (s *Searcher) SearchWebObjectsContext(ctx context.Context, query string) (*QueryResult, error) {
+	return s.ExecuteOrderedContext(ctx, sqlWebObjectsBody, query, "", "ORDER BY wo.created_at DESC")
 }
 
 // SearchWebObjectsBySourceID returns every stored web object associated with a
 // source. Source IDs are int64 values because the database column is BIGINT.
 func (s *Searcher) SearchWebObjectsBySourceID(sourceID int64) (*QueryResult, error) {
-	rows, err := (*s.DB).ExecuteQuery(sqlWebObjectsBySourceID, sourceID)
+	return s.SearchWebObjectsBySourceIDContext(context.Background(), sourceID)
+}
+func (s *Searcher) SearchWebObjectsBySourceIDContext(ctx context.Context, sourceID int64) (*QueryResult, error) {
+	rows, err := (*s.DB).QueryContext(ctx, sqlWebObjectsBySourceID, sourceID)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +84,10 @@ func (s *Searcher) SearchWebObjectsBySourceID(sourceID int64) (*QueryResult, err
 // SearchWebObjectsBySourceUID returns every stored web object associated with
 // the stable public identifier of a source.
 func (s *Searcher) SearchWebObjectsBySourceUID(sourceUID string) (*QueryResult, error) {
-	rows, err := (*s.DB).ExecuteQuery(sqlWebObjectsBySourceUID, sourceUID)
+	return s.SearchWebObjectsBySourceUIDContext(context.Background(), sourceUID)
+}
+func (s *Searcher) SearchWebObjectsBySourceUIDContext(ctx context.Context, sourceUID string) (*QueryResult, error) {
+	rows, err := (*s.DB).QueryContext(ctx, sqlWebObjectsBySourceUID, sourceUID)
 	if err != nil {
 		return nil, err
 	}
@@ -84,11 +100,17 @@ func (s *Searcher) SearchWebObjectsBySourceUID(sourceUID string) (*QueryResult, 
 
 // SearchScrapedData searches scraped-data JSON documents.
 func (s *Searcher) SearchScrapedData(query string) (*QueryResult, error) {
-	return s.ExecuteOrdered(sqlScrapedDataBody+" (", query, "", ") ORDER BY sd.last_updated_at DESC")
+	return s.SearchScrapedDataContext(context.Background(), query)
+}
+func (s *Searcher) SearchScrapedDataContext(ctx context.Context, query string) (*QueryResult, error) {
+	return s.ExecuteOrderedContext(ctx, sqlScrapedDataBody+" (", query, "", ") ORDER BY sd.last_updated_at DESC")
 }
 
 // SearchCorrelatedSites searches correlated sites for a domain.
 func (s *Searcher) SearchCorrelatedSites(query string) (*QueryResult, error) {
+	return s.SearchCorrelatedSitesContext(context.Background(), query)
+}
+func (s *Searcher) SearchCorrelatedSitesContext(ctx context.Context, query string) (*QueryResult, error) {
 	domain, limit, offset, err := parseSelfContainedSearchInput(query)
 	if err != nil {
 		return nil, err
@@ -96,7 +118,7 @@ func (s *Searcher) SearchCorrelatedSites(query string) (*QueryResult, error) {
 
 	sqlQuery := sqlCorrelatedSitesBody + " ORDER BY created_at DESC LIMIT $2 OFFSET $3;"
 	params := []any{domain, limit, offset}
-	rows, err := (*s.DB).ExecuteQuery(sqlQuery, params...)
+	rows, err := (*s.DB).QueryContext(ctx, sqlQuery, params...)
 	if err != nil {
 		return nil, err
 	}
@@ -164,10 +186,16 @@ func parseSelfContainedSearchInput(input string) (string, int, int, error) {
 
 // SearchNetInfo searches collected network information.
 func (s *Searcher) SearchNetInfo(query string) (*QueryResult, error) {
-	return s.ExecuteOrdered(sqlNetInfoBody, query, "", "ORDER BY ni.created_at DESC")
+	return s.SearchNetInfoContext(context.Background(), query)
+}
+func (s *Searcher) SearchNetInfoContext(ctx context.Context, query string) (*QueryResult, error) {
+	return s.ExecuteOrderedContext(ctx, sqlNetInfoBody, query, "", "ORDER BY ni.created_at DESC")
 }
 
 // SearchHTTPInfo searches collected HTTP information.
 func (s *Searcher) SearchHTTPInfo(query string) (*QueryResult, error) {
-	return s.ExecuteOrdered(sqlHTTPInfoBody, query, "", "ORDER BY hi.created_at DESC")
+	return s.SearchHTTPInfoContext(context.Background(), query)
+}
+func (s *Searcher) SearchHTTPInfoContext(ctx context.Context, query string) (*QueryResult, error) {
+	return s.ExecuteOrderedContext(ctx, sqlHTTPInfoBody, query, "", "ORDER BY hi.created_at DESC")
 }

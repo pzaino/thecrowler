@@ -18,17 +18,17 @@ import (
 
 func TestSourceHandlersValidateEmailRequests(t *testing.T) {
 	oldDBHandler := dbHandler
-	oldDBSemaphore := dbSemaphore
+	oldDBSemaphore := dbAdmission
 	t.Cleanup(func() {
 		dbHandler = oldDBHandler
-		dbSemaphore = oldDBSemaphore
+		dbAdmission = oldDBSemaphore
 	})
 
 	t.Run("create accepts valid email source", func(t *testing.T) {
 		handler, cleanup := setupSourceAPITestDB(t)
 		defer cleanup()
 		dbHandler = handler
-		dbSemaphore = make(chan struct{}, 1)
+		dbAdmission = newDBAdmissionGate(1)
 
 		recorder := httptest.NewRecorder()
 		request := httptest.NewRequest(http.MethodPost, "/v1/source/add", strings.NewReader(emailSourceRequest("imap", "imaps://mail.example.test", "")))
@@ -51,7 +51,7 @@ func TestSourceHandlersValidateEmailRequests(t *testing.T) {
 	})
 
 	t.Run("create rejects invalid email source", func(t *testing.T) {
-		dbSemaphore = make(chan struct{}, 1)
+		dbAdmission = newDBAdmissionGate(1)
 		recorder := httptest.NewRecorder()
 		request := httptest.NewRequest(http.MethodPost, "/v1/source/add", strings.NewReader(emailSourceRequest("smtp", "smtp://mail.example.test", "")))
 		addSourceHandler(recorder, request)
@@ -66,14 +66,14 @@ func TestSourceHandlersValidateEmailRequests(t *testing.T) {
 		}
 		defer db.Close()
 		dbHandler = &sourceAPITestHandler{db: db}
-		dbSemaphore = make(chan struct{}, 1)
+		dbAdmission = newDBAdmissionGate(1)
 
-		mock.ExpectQuery(`SELECT url, status, restricted, disabled, flags, config, details`).
+		mock.ExpectQuery(`SELECT url, sub_priority, status, restricted, disabled, flags, config, details`).
 			WithArgs(int64(41)).
-			WillReturnRows(sqlmock.NewRows([]string{"url", "status", "restricted", "disabled", "flags", "config", "details"}).
-				AddRow("https://source.example.test", "new", 2, false, 0, `{}`, `{}`))
+			WillReturnRows(sqlmock.NewRows([]string{"url", "sub_priority", "status", "restricted", "disabled", "flags", "config", "details"}).
+				AddRow("https://source.example.test", 0, "new", 2, false, 0, `{}`, `{}`))
 		mock.ExpectExec(`UPDATE Sources`).
-			WithArgs("https://source.example.test", "new", 2, false, 0, sqlmock.AnyArg(), sqlmock.AnyArg(), int64(41)).
+			WithArgs("https://source.example.test", 0, "new", 2, false, 0, sqlmock.AnyArg(), sqlmock.AnyArg(), int64(41)).
 			WillReturnResult(sqlmock.NewResult(0, 1))
 
 		body := `{"source_id":41,"config":` + emailSourceConfig("imap", "imaps://mail.example.test", "") + `}`
@@ -91,7 +91,7 @@ func TestSourceHandlersValidateEmailRequests(t *testing.T) {
 
 	t.Run("update rejects invalid email source before database access", func(t *testing.T) {
 		dbHandler = nil
-		dbSemaphore = make(chan struct{}, 1)
+		dbAdmission = newDBAdmissionGate(1)
 		body := `{"source_id":41,"config":` + emailSourceConfig("smtp", "smtp://mail.example.test", "") + `}`
 		recorder := httptest.NewRecorder()
 		request := httptest.NewRequest(http.MethodPost, "/v1/source/update", strings.NewReader(body))
@@ -102,7 +102,7 @@ func TestSourceHandlersValidateEmailRequests(t *testing.T) {
 
 	t.Run("validation response redacts request secrets", func(t *testing.T) {
 		dbHandler = nil
-		dbSemaphore = make(chan struct{}, 1)
+		dbAdmission = newDBAdmissionGate(1)
 		const secret = "SHOULD_NOT_LEAK"
 		recorder := httptest.NewRecorder()
 		request := httptest.NewRequest(http.MethodPost, "/v1/source/add", strings.NewReader(emailSourceRequest("smtp", "smtp://mail.example.test", secret)))
@@ -113,6 +113,48 @@ func TestSourceHandlersValidateEmailRequests(t *testing.T) {
 			t.Fatalf("validation response leaked request secret: %s", recorder.Body.String())
 		}
 	})
+}
+
+func TestUpdateSourceSubPriorityPresence(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want int
+	}{
+		{name: "explicit zero resets value", body: `{"source_id":41,"sub_priority":0}`, want: 0},
+		{name: "omitted field preserves value", body: `{"source_id":41}`, want: 37},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler, cleanup := setupSourceAPITestDB(t)
+			defer cleanup()
+			dbHandler = handler
+			dbAdmission = newDBAdmissionGate(1)
+
+			_, err := handler.(*sourceAPITestHandler).db.Exec(`
+				INSERT INTO Sources (source_id, source_uid, url, sub_priority, details)
+				VALUES (41, 'source-41', 'https://source.example.test', 37, '{}')`)
+			if err != nil {
+				t.Fatalf("insert source: %v", err)
+			}
+
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, "/v1/source/update", strings.NewReader(tt.body))
+			updateSourceHandler(recorder, request)
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", recorder.Code, recorder.Body.String())
+			}
+
+			var got int
+			if err := handler.(*sourceAPITestHandler).db.QueryRow(`SELECT sub_priority FROM Sources WHERE source_id = 41`).Scan(&got); err != nil {
+				t.Fatalf("read persisted sub-priority: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("persisted sub_priority = %d, want %d", got, tt.want)
+			}
+		})
+	}
 }
 
 func assertSourceValidationError(t *testing.T, recorder *httptest.ResponseRecorder, detail string) {
@@ -168,11 +210,16 @@ func (h *sourceAPITestHandler) Rollback(tx *sql.Tx) error { return tx.Rollback()
 func (h *sourceAPITestHandler) QueryRow(query string, args ...interface{}) *sql.Row {
 	return h.db.QueryRow(query, args...)
 }
+func (h *sourceAPITestHandler) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
+	return h.db.QueryRowContext(ctx, query, args...)
+}
 func (h *sourceAPITestHandler) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
 	return h.db.QueryContext(ctx, query, args...)
 }
 func (h *sourceAPITestHandler) CheckConnection(cfg.Config) error { return nil }
 func (h *sourceAPITestHandler) NewListener() cdb.Listener        { return nil }
+
+var _ cdb.Handler = (*sourceAPITestHandler)(nil)
 
 func setupSourceAPITestDB(t *testing.T) (cdb.Handler, func()) {
 	t.Helper()
@@ -188,11 +235,13 @@ func setupSourceAPITestDB(t *testing.T) (cdb.Handler, func()) {
 			url TEXT NOT NULL UNIQUE,
 			name TEXT,
 			priority TEXT,
+			sub_priority INTEGER NOT NULL DEFAULT 0,
 			category_id INTEGER NOT NULL DEFAULT 0,
 			usr_id INTEGER NOT NULL DEFAULT 0,
 			restricted INTEGER NOT NULL DEFAULT 0,
 			flags INTEGER NOT NULL DEFAULT 0,
 			config TEXT,
+			details TEXT,
 			disabled BOOLEAN NOT NULL DEFAULT FALSE,
 			status TEXT NOT NULL DEFAULT 'new',
 			last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP

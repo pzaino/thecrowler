@@ -44,11 +44,16 @@ func (h *testDatabaseHandler) Rollback(tx *sql.Tx) error { return tx.Rollback() 
 func (h *testDatabaseHandler) QueryRow(query string, args ...interface{}) *sql.Row {
 	return h.database.QueryRow(query, args...)
 }
+func (h *testDatabaseHandler) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
+	return h.database.QueryRowContext(ctx, query, args...)
+}
 func (h *testDatabaseHandler) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
 	return h.database.QueryContext(ctx, query, args...)
 }
 func (h *testDatabaseHandler) CheckConnection(cfg.Config) error { return h.database.Ping() }
 func (h *testDatabaseHandler) NewListener() db.Listener         { return nil }
+
+var _ db.Handler = (*testDatabaseHandler)(nil)
 
 func openMailStateStore(t *testing.T) (*DatabaseStateStore, *sql.DB) {
 	t.Helper()

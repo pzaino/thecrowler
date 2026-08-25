@@ -15,6 +15,7 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -23,6 +24,9 @@ import (
 
 // UpdateInformationSeedStatus updates a seed's lifecycle status and latest error details.
 func UpdateInformationSeedStatus(db *Handler, id uint64, status string, errText string) error {
+	return UpdateInformationSeedStatusContext(context.Background(), db, id, status, errText)
+}
+func UpdateInformationSeedStatusContext(ctx context.Context, db *Handler, id uint64, status string, errText string) error {
 	if db == nil || *db == nil {
 		return fmt.Errorf("database handler is nil")
 	}
@@ -43,7 +47,7 @@ func UpdateInformationSeedStatus(db *Handler, id uint64, status string, errText 
 	if !isSupportedInformationSeedDBMS(dbms) {
 		return fmt.Errorf("unsupported database type for information seed status update: %s", (*db).DBMS())
 	}
-	tx, err := (*db).Begin()
+	tx, err := (*db).BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -51,7 +55,7 @@ func UpdateInformationSeedStatus(db *Handler, id uint64, status string, errText 
 	defer rollbackIfUncommitted(tx, &committed)
 	p := newInformationSeedPlaceholders(dbms)
 	var previous string
-	if err = tx.QueryRow(`SELECT status FROM InformationSeed WHERE information_seed_id = `+p.Next(), id).Scan(&previous); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT status FROM InformationSeed WHERE information_seed_id = `+p.Next(), id).Scan(&previous); err != nil {
 		return fmt.Errorf("no information seed found with ID %d: %w", id, err)
 	}
 	nowExpr := "CURRENT_TIMESTAMP"
@@ -60,15 +64,15 @@ func UpdateInformationSeedStatus(db *Handler, id uint64, status string, errText 
 	}
 	p = newInformationSeedPlaceholders(dbms)
 	query := `UPDATE InformationSeed SET status = ` + p.Next() + `, last_error = ` + p.Next() + `, last_error_at = ` + p.Next() + `, last_processed_at = ` + nowExpr + ` WHERE information_seed_id = ` + p.Next()
-	if _, err = tx.Exec(query, status, lastError, lastErrorAt, id); err != nil {
+	if _, err = tx.ExecContext(ctx, query, status, lastError, lastErrorAt, id); err != nil {
 		return fmt.Errorf("failed to update information seed %d status: %w", id, err)
 	}
-	seed, err := getInformationSeedByIDTx(tx, dbms, id)
+	seed, err := getInformationSeedByIDTxContext(ctx, tx, dbms, id)
 	if err != nil {
 		return err
 	}
 	if normalizedSelectorString(previous) != normalizedSelectorString(status) {
-		if err = emitInformationSeedLifecycleObservationsTx(tx, dbms, *seed, "status_changed", previous, status); err != nil {
+		if err = emitInformationSeedLifecycleObservationsTxContext(ctx, tx, dbms, *seed, "status_changed", previous, status); err != nil {
 			return err
 		}
 	}

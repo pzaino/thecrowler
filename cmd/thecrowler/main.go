@@ -225,10 +225,11 @@ func retrieveAvailableSources(db cdb.Handler, maxSources int) ([]cdb.Source, err
 		l.url,
 		l.restricted,
 		l.flags,
-		l.config
+		l.config,
+		l.sub_priority
 	FROM
 		update_sources($1,$2,$3,$4,$5,$6,$7) AS l
-	ORDER BY l.last_updated_at ASC;`
+	ORDER BY l.sub_priority DESC, l.source_id ASC;`
 
 	// Execute the query within the transaction
 	if maxSources <= 0 {
@@ -247,7 +248,7 @@ func retrieveAvailableSources(db cdb.Handler, maxSources int) ([]cdb.Source, err
 	var sourcesToCrawl []cdb.Source
 	for rows.Next() {
 		var src cdb.Source
-		if err := rows.Scan(&src.ID, &src.UID, &src.URL, &src.Restricted, &src.Flags, &src.Config); err != nil {
+		if err := rows.Scan(&src.ID, &src.UID, &src.URL, &src.Restricted, &src.Flags, &src.Config, &src.SubPriority); err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "scanning rows: %v", err)
 			err2 := rows.Close()
 			if err2 != nil {
@@ -1192,6 +1193,9 @@ func updateMetrics(status *crowler.Status) {
 		"pipeline_id": pid,
 		"source":      status.Source,
 	}
+	if stats, err := cdb.ConnectionStats(&dbHandler); err == nil {
+		engineDBMetrics.UpdatePool(stats)
+	}
 
 	// Update all metrics from Status
 	gaugeTotalPages.With(labels).Set(float64(status.TotalPages.Load()))
@@ -1232,6 +1236,9 @@ func updateMetrics(status *crowler.Status) {
 		Collector(gaugeHTTPInfoRunning).
 		Collector(gaugeDetectedState).
 		Collector(totalPipelinesRunning)
+	for _, collector := range engineDBMetrics.Collectors() {
+		p = p.Collector(collector)
+	}
 
 	// Push metrics
 	if err := p.Push(); err != nil {
@@ -1290,6 +1297,7 @@ func initAll(configFile *string, config *cfg.Config,
 	if err != nil {
 		return fmt.Errorf("loading configuration file: %s", err)
 	}
+	configureEngineDBQuota(*config)
 
 	// Reset Key-Value Store
 	cmn.KVStore = nil
@@ -1356,6 +1364,9 @@ func initAll(configFile *string, config *cfg.Config,
 		prometheus.MustRegister(totalPages)
 		prometheus.MustRegister(totalLinks)
 		prometheus.MustRegister(totalErrors)
+		for _, collector := range engineDBMetrics.Collectors() {
+			prometheus.MustRegister(collector)
+		}
 	}
 
 	// Start the crawler
@@ -1450,6 +1461,11 @@ func main() {
 					closeResources(db, &vdiInstances) // Release resources
 					cmn.DebugMsg(cmn.DbgLvlFatal, "connecting to the database: %v", err)
 				}
+				if err = applyEngineDBQuotaAfterConnect(config); err != nil {
+					configMutex.Unlock()
+					closeResources(db, &vdiInstances)
+					cmn.DebugMsg(cmn.DbgLvlFatal, "applying engine database quota: %v", err)
+				}
 				if err = cdb.SyncConfiguredTimeSeriesMetrics(&db, config.TimeSeries); err != nil {
 					configMutex.Unlock()
 					closeResources(db, &vdiInstances) // Release resources
@@ -1477,6 +1493,10 @@ func main() {
 	if err != nil {
 		closeResources(db, &vdiInstances) // Release resources
 		cmn.DebugMsg(cmn.DbgLvlFatal, "connecting to the database: %v", err)
+	}
+	if err = applyEngineDBQuotaAfterConnect(config); err != nil {
+		closeResources(db, &vdiInstances)
+		cmn.DebugMsg(cmn.DbgLvlFatal, "applying engine database quota: %v", err)
 	}
 	if err = cdb.SyncConfiguredTimeSeriesMetrics(&db, config.TimeSeries); err != nil {
 		closeResources(db, &vdiInstances) // Release resources
@@ -1589,6 +1609,8 @@ func processEvent(event cdb.Event) {
 	case "crowler_heartbeat":
 		// Heartbeat event
 		processHeartbeatEvent(event)
+	case "crowler_heartbeat_report":
+		processEngineHeartbeatReport(event)
 	case "system_event":
 		// System event
 		processSystemEvent(event)
@@ -1627,9 +1649,13 @@ func processSystemEvent(event cdb.Event) {
 // processHeartbeatEvent will generate a new event with a response which contains the current pipeline status
 func processHeartbeatEvent(event cdb.Event) {
 	//cmn.DebugMsg(cmn.DbgLvlDebug4, "Processing heartbeat event: %+v", event)
+	responseEvent := newHeartbeatResponseEvent(event, time.Now())
 
-	// Prepare the response event
-	now := time.Now()
+	// Send the response event to the database
+	createEvent(dbHandler, responseEvent, 1)
+}
+
+func newHeartbeatResponseEvent(event cdb.Event, now time.Time) cdb.Event {
 	responseEvent := cdb.Event{
 		Type:      "crowler_heartbeat_response",
 		Severity:  "crowler_system_info",
@@ -1647,9 +1673,7 @@ func processHeartbeatEvent(event cdb.Event) {
 	responseEvent.Details["pipeline_status"] = pipelineStatusJSON(sysPipelineStatus)
 
 	responseEvent.Action = "new"
-
-	// Send the response event to the database
-	createEvent(dbHandler, responseEvent, 1)
+	return responseEvent
 }
 
 func pipelineStatusJSON(PipelineStatus *[]crowler.Status) []PipelineStatusReport {

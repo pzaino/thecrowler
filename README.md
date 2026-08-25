@@ -26,17 +26,21 @@ alt="OpenSSF Security Best Practices badge"></a> //-->
 ![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/pzaino/thecrowler)
 ![GitHub Tag](https://img.shields.io/github/v/tag/pzaino/thecrowler)
 
-Please consider supporting this project! The CROWler is empowering thousands of users (mostly professionals and enterprises) to build their own content discovery and intelligence based solutions, and it's growing fast. If you want to support the project, you can do it by:
+**Please consider supporting this project!** The CROWler is already empowering thousands of users (mostly professionals and enterprises) to build their own security, content discovery and intelligence based solutions, and it's growing fast. If you want to support the project, you can do it by:
 
 - Clicking the support button on the GitHub page
 - Buying some official merchandise from the [CROWler Merch Store](https://www.redbubble.com/shop/ap/181179394)
 - Contacting the author for consultancies, paid support, or custom development.
 
-<b>Important note</b>: From release 2.0.0, the section `selenium` in the configuration file has been renamed to `vdi`. Please update your configuration file accordingly. The old `selenium` section is no longer supported.
+**Important note:** From release 2.0.0, the section `selenium` in the configuration file has been renamed to `vdi`. Please update your configuration file accordingly. The old `selenium` section is no longer supported.
 
 ## What is it?
 
-The CROWler is a self-hosted, event-driven Content Discovery and Intelligence development platform designed for advanced web, email, APIs (both REST and WebSockets), filesystems, network crawling, scraping, detection, and automation using real browsers, rulesets, plugins, and agents.
+**The CROWler is an open, self-hosted framework for discovering, collecting, understanding, correlating, transforming, and acting on information from heterogeneous environments.**
+
+It achieves this through an event-driven Content Discovery and Intelligence platform for web, email, APIs, filesystems, networks, and other data sources, combining crawling, scraping, detection, analysis, and automation with real browsers, declarative rulesets, extensible plugins, events, and agents. The CROWler provides the foundation for building advanced data discovery, intelligence, research, automation, and cybersecurity solutions.
+
+Vertical solutions encode domain expertise through rules, plugins, agents, and data models rather than modifying the core platform.
 
 **Project status:** Still under active development (WIP). Most components are usable.
 Beta testers welcome. Full [daily progress stats](https://githubtracker.com/pzaino/thecrowler).

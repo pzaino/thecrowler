@@ -59,27 +59,27 @@ func SearchObjectsByAttributes(ctx context.Context, db *cdb.Handler, filters map
 }
 
 // GetSourceStatusByUID returns status information for one stable source UID.
-func GetSourceStatusByUID(_ context.Context, db *cdb.Handler, sourceUID string) ([]SourceStatusResult, error) {
-	return cdb.GetSourceStatusByUID(db, sourceUID)
+func GetSourceStatusByUID(ctx context.Context, db *cdb.Handler, sourceUID string) ([]SourceStatusResult, error) {
+	return cdb.GetSourceStatusByUIDContext(ctx, db, sourceUID)
 }
 
 // FindSourceUIDsByName returns sources whose names exactly match name,
 // case-insensitively.
-func FindSourceUIDsByName(_ context.Context, db *cdb.Handler, name string) ([]SourceUIDResult, error) {
-	return findSourceUIDs(db, sqlSourceUIDByName, name)
+func FindSourceUIDsByName(ctx context.Context, db *cdb.Handler, name string) ([]SourceUIDResult, error) {
+	return findSourceUIDs(ctx, db, sqlSourceUIDByName, name)
 }
 
 // FindSourceUIDsByURL returns sources whose URLs exactly match sourceURL,
 // case-insensitively.
-func FindSourceUIDsByURL(_ context.Context, db *cdb.Handler, sourceURL string) ([]SourceUIDResult, error) {
-	return findSourceUIDs(db, sqlSourceUIDByURL, sourceURL)
+func FindSourceUIDsByURL(ctx context.Context, db *cdb.Handler, sourceURL string) ([]SourceUIDResult, error) {
+	return findSourceUIDs(ctx, db, sqlSourceUIDByURL, sourceURL)
 }
 
-func findSourceUIDs(db *cdb.Handler, query, value string) ([]SourceUIDResult, error) {
+func findSourceUIDs(ctx context.Context, db *cdb.Handler, query, value string) ([]SourceUIDResult, error) {
 	if db == nil || *db == nil {
 		return nil, fmt.Errorf("database handler is nil")
 	}
-	rows, err := (*db).ExecuteQuery(query, value)
+	rows, err := (*db).QueryContext(ctx, query, value)
 	if err != nil {
 		return nil, err
 	}

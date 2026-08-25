@@ -800,7 +800,7 @@ func listenForEventsLoop(db *Handler,
 			case <-ticker.C:
 				last := time.Unix(0, lastNotifyAt.Load())
 				if time.Since(last) > notifyTimeout {
-					runSilenceCatchUp(db, queue, &lastNotifyAt)
+					runSilenceCatchUp(db, queue, &lastNotifyAt, stop)
 				}
 			case <-stop:
 				return
@@ -819,10 +819,21 @@ func listenForEventsLoop(db *Handler,
 				continue
 			}
 			lastNotifyAt.Store(time.Now().UnixNano())
+			notification := EventNotification{
+				Payload:    n.Extra(),
+				ReceivedAt: time.Now(),
+			}
+
 			select {
-			case queue <- EventNotification{Payload: n.Extra(), ReceivedAt: time.Now()}:
-			default:
-				cmn.DebugMsg(cmn.DbgLvlWarn, "Event notification queue is full, dropping event: %s", n.Extra())
+			case queue <- notification:
+				// Queued successfully.
+
+			case <-stop:
+				cmn.DebugMsg(
+					cmn.DbgLvlInfo,
+					"Stopping event listener while waiting for notification queue capacity",
+				)
+				return
 			}
 		case <-stop:
 			cmn.DebugMsg(cmn.DbgLvlInfo, "Shutting down the events handler...")
@@ -839,6 +850,7 @@ func runSilenceCatchUp(
 	db *Handler,
 	queue chan<- EventNotification,
 	lastNotifyAt *atomic.Int64,
+	stop <-chan struct{},
 ) {
 	ctx, cancel := context.WithTimeout(context.Background(), silenceCatchUpTimeout)
 	defer cancel()
@@ -904,8 +916,9 @@ func runSilenceCatchUp(
 			ReceivedAt: time.Now(),
 		}:
 			enqueued++
-		default:
-			dropped++
+
+		case <-stop:
+			return
 		}
 	}
 
@@ -916,8 +929,8 @@ func runSilenceCatchUp(
 	if (enqueued > 0) || (dropped > 0) {
 		cmn.DebugMsg(
 			cmn.DbgLvlDebug4,
-			"Silence catch-up executed: enqueued=%d dropped=%d",
-			enqueued, dropped,
+			"Silence catch-up executed: enqueued=%d",
+			enqueued,
 		)
 		lastNotifyAt.Store(time.Now().UnixNano())
 	}

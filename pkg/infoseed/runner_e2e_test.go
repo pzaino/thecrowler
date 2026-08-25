@@ -197,6 +197,7 @@ func createInformationSeedE2ESchema(t *testing.T, handler *cdb.Handler) {
 			category_id INTEGER DEFAULT 0 NOT NULL,
 			url TEXT NOT NULL UNIQUE,
 			priority VARCHAR(64) DEFAULT '' NOT NULL,
+			sub_priority INTEGER DEFAULT 0 NOT NULL,
 			status VARCHAR(50) DEFAULT 'new' NOT NULL,
 			engine VARCHAR(256) DEFAULT '' NOT NULL,
 			last_crawled_at TIMESTAMP,

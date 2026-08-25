@@ -6,6 +6,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -35,33 +36,33 @@ const (
 var timeSeriesDimensionKeyRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]{0,63}$`)
 
 type timeSeriesAPIRepository interface {
-	MetricByID(uint64) (*cdb.TimeSeriesMetric, error)
-	MetricByKey(string) (*cdb.TimeSeriesMetric, error)
-	ListMetrics(cdb.TimeSeriesMetricFilter) ([]cdb.TimeSeriesMetric, error)
-	QueryAggregates(cdb.TimeSeriesQueryFilter) (cdb.TimeSeriesAggregateQueryResult, error)
-	QueryObservations(cdb.TimeSeriesQueryFilter) (cdb.TimeSeriesObservationQueryResult, error)
-	AggregateByHash(string) (*cdb.TimeSeriesAggregate, error)
+	MetricByID(context.Context, uint64) (*cdb.TimeSeriesMetric, error)
+	MetricByKey(context.Context, string) (*cdb.TimeSeriesMetric, error)
+	ListMetrics(context.Context, cdb.TimeSeriesMetricFilter) ([]cdb.TimeSeriesMetric, error)
+	QueryAggregates(context.Context, cdb.TimeSeriesQueryFilter) (cdb.TimeSeriesAggregateQueryResult, error)
+	QueryObservations(context.Context, cdb.TimeSeriesQueryFilter) (cdb.TimeSeriesObservationQueryResult, error)
+	AggregateByHash(context.Context, string) (*cdb.TimeSeriesAggregate, error)
 }
 
 type handlerTimeSeriesAPIRepository struct{ db *cdb.Handler }
 
-func (r handlerTimeSeriesAPIRepository) MetricByID(id uint64) (*cdb.TimeSeriesMetric, error) {
-	return cdb.GetTimeSeriesMetricByID(r.db, id)
+func (r handlerTimeSeriesAPIRepository) MetricByID(ctx context.Context, id uint64) (*cdb.TimeSeriesMetric, error) {
+	return cdb.GetTimeSeriesMetricByIDContext(ctx, r.db, id)
 }
-func (r handlerTimeSeriesAPIRepository) MetricByKey(key string) (*cdb.TimeSeriesMetric, error) {
-	return cdb.GetTimeSeriesMetricByKey(r.db, key)
+func (r handlerTimeSeriesAPIRepository) MetricByKey(ctx context.Context, key string) (*cdb.TimeSeriesMetric, error) {
+	return cdb.GetTimeSeriesMetricByKeyContext(ctx, r.db, key)
 }
-func (r handlerTimeSeriesAPIRepository) ListMetrics(filter cdb.TimeSeriesMetricFilter) ([]cdb.TimeSeriesMetric, error) {
-	return cdb.ListTimeSeriesMetrics(r.db, filter)
+func (r handlerTimeSeriesAPIRepository) ListMetrics(ctx context.Context, filter cdb.TimeSeriesMetricFilter) ([]cdb.TimeSeriesMetric, error) {
+	return cdb.ListTimeSeriesMetricsContext(ctx, r.db, filter)
 }
-func (r handlerTimeSeriesAPIRepository) QueryAggregates(filter cdb.TimeSeriesQueryFilter) (cdb.TimeSeriesAggregateQueryResult, error) {
-	return cdb.QueryTimeSeriesAggregates(r.db, filter)
+func (r handlerTimeSeriesAPIRepository) QueryAggregates(ctx context.Context, filter cdb.TimeSeriesQueryFilter) (cdb.TimeSeriesAggregateQueryResult, error) {
+	return cdb.QueryTimeSeriesAggregatesContext(ctx, r.db, filter)
 }
-func (r handlerTimeSeriesAPIRepository) QueryObservations(filter cdb.TimeSeriesQueryFilter) (cdb.TimeSeriesObservationQueryResult, error) {
-	return cdb.QueryTimeSeriesObservations(r.db, filter)
+func (r handlerTimeSeriesAPIRepository) QueryObservations(ctx context.Context, filter cdb.TimeSeriesQueryFilter) (cdb.TimeSeriesObservationQueryResult, error) {
+	return cdb.QueryTimeSeriesObservationsContext(ctx, r.db, filter)
 }
-func (r handlerTimeSeriesAPIRepository) AggregateByHash(hash string) (*cdb.TimeSeriesAggregate, error) {
-	return cdb.GetTimeSeriesAggregateByHash(r.db, hash)
+func (r handlerTimeSeriesAPIRepository) AggregateByHash(ctx context.Context, hash string) (*cdb.TimeSeriesAggregate, error) {
+	return cdb.GetTimeSeriesAggregateByHashContext(ctx, r.db, hash)
 }
 
 var newTimeSeriesAPIRepository = func() timeSeriesAPIRepository {
@@ -92,7 +93,7 @@ func timeSeriesMetricsHandler(w http.ResponseWriter, r *http.Request) {
 			timeSeriesError(w, fmt.Errorf("metric_id must be a positive integer"), http.StatusBadRequest)
 			return
 		}
-		metric, lookupErr := newTimeSeriesAPIRepository().MetricByID(id)
+		metric, lookupErr := newTimeSeriesAPIRepository().MetricByID(r.Context(), id)
 		if lookupErr != nil {
 			timeSeriesError(w, lookupErr, timeSeriesStatus(lookupErr))
 			return
@@ -112,7 +113,7 @@ func timeSeriesMetricsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		filter.Enabled = &enabled
 	}
-	metrics, err := newTimeSeriesAPIRepository().ListMetrics(filter)
+	metrics, err := newTimeSeriesAPIRepository().ListMetrics(r.Context(), filter)
 	if err != nil {
 		timeSeriesError(w, err, http.StatusInternalServerError)
 		return
@@ -132,12 +133,12 @@ func timeSeriesAggregatesHandler(w http.ResponseWriter, r *http.Request) {
 	if !timeSeriesRequireGET(w, r) {
 		return
 	}
-	parsed, metric, err := parseTimeSeriesQuery(r.URL.Query(), timeSeriesAggregateMaxLimit, timeSeriesAggregateMaxRange, false)
+	parsed, metric, err := parseTimeSeriesQuery(r.Context(), r.URL.Query(), timeSeriesAggregateMaxLimit, timeSeriesAggregateMaxRange, false)
 	if err != nil {
 		timeSeriesError(w, err, timeSeriesStatus(err))
 		return
 	}
-	result, err := newTimeSeriesAPIRepository().QueryAggregates(parsed.filter)
+	result, err := newTimeSeriesAPIRepository().QueryAggregates(r.Context(), parsed.filter)
 	if err != nil {
 		timeSeriesError(w, err, http.StatusInternalServerError)
 		return
@@ -153,12 +154,12 @@ func timeSeriesObservationsHandler(w http.ResponseWriter, r *http.Request) {
 	if !timeSeriesRequireGET(w, r) {
 		return
 	}
-	parsed, metric, err := parseTimeSeriesQuery(r.URL.Query(), timeSeriesObservationMaxLimit, timeSeriesRawMaxRange, true)
+	parsed, metric, err := parseTimeSeriesQuery(r.Context(), r.URL.Query(), timeSeriesObservationMaxLimit, timeSeriesRawMaxRange, true)
 	if err != nil {
 		timeSeriesError(w, err, timeSeriesStatus(err))
 		return
 	}
-	result, err := newTimeSeriesAPIRepository().QueryObservations(parsed.filter)
+	result, err := newTimeSeriesAPIRepository().QueryObservations(r.Context(), parsed.filter)
 	if err != nil {
 		timeSeriesError(w, err, http.StatusInternalServerError)
 		return
@@ -181,7 +182,7 @@ func timeSeriesDrilldownHandler(w http.ResponseWriter, r *http.Request) {
 	var aggregate *cdb.TimeSeriesAggregate
 	if hash != "" {
 		var err error
-		aggregate, err = repo.AggregateByHash(strings.ToLower(hash))
+		aggregate, err = repo.AggregateByHash(r.Context(), strings.ToLower(hash))
 		if err != nil {
 			status := http.StatusInternalServerError
 			if errors.Is(err, cdb.ErrTimeSeriesAggregateNotFound) || errors.Is(err, cdb.ErrTimeSeriesMetricNotFound) {
@@ -199,12 +200,12 @@ func timeSeriesDrilldownHandler(w http.ResponseWriter, r *http.Request) {
 		timeSeriesError(w, fmt.Errorf("complete aggregate scope requires from and to"), http.StatusBadRequest)
 		return
 	}
-	parsed, metric, err := parseTimeSeriesQuery(values, timeSeriesDrilldownMaxLimit, timeSeriesRawMaxRange, true)
+	parsed, metric, err := parseTimeSeriesQuery(r.Context(), values, timeSeriesDrilldownMaxLimit, timeSeriesRawMaxRange, true)
 	if err != nil {
 		timeSeriesError(w, err, timeSeriesStatus(err))
 		return
 	}
-	result, err := repo.QueryObservations(parsed.filter)
+	result, err := repo.QueryObservations(r.Context(), parsed.filter)
 	if err != nil {
 		timeSeriesError(w, err, http.StatusInternalServerError)
 		return
@@ -229,7 +230,7 @@ func timeSeriesDimensionsHandler(w http.ResponseWriter, r *http.Request) {
 	comparisonValues := cloneTimeSeriesValues(r.URL.Query())
 	comparisonValues.Set("limit", "10000")
 	comparisonValues.Set("offset", "0")
-	parsed, metric, err := parseTimeSeriesQuery(comparisonValues, 10000, timeSeriesAggregateMaxRange, false)
+	parsed, metric, err := parseTimeSeriesQuery(r.Context(), comparisonValues, 10000, timeSeriesAggregateMaxRange, false)
 	if err != nil {
 		timeSeriesError(w, err, timeSeriesStatus(err))
 		return
@@ -245,7 +246,7 @@ func timeSeriesDimensionsHandler(w http.ResponseWriter, r *http.Request) {
 	if limit > timeSeriesAbsoluteCardinality {
 		limit = timeSeriesAbsoluteCardinality
 	}
-	result, err := newTimeSeriesAPIRepository().QueryAggregates(parsed.filter)
+	result, err := newTimeSeriesAPIRepository().QueryAggregates(r.Context(), parsed.filter)
 	if err != nil {
 		timeSeriesError(w, err, http.StatusInternalServerError)
 		return
@@ -291,7 +292,7 @@ func timeSeriesDimensionsHandler(w http.ResponseWriter, r *http.Request) {
 	timeSeriesJSON(w, http.StatusOK, TimeSeriesDimensionComparisonResponse{DimensionKey: key, Groups: groups, Cardinality: len(groups), Limit: limit})
 }
 
-func parseTimeSeriesQuery(values url.Values, maxLimit int, maxRange time.Duration, raw bool) (timeSeriesParsedQuery, *cdb.TimeSeriesMetric, error) {
+func parseTimeSeriesQuery(ctx context.Context, values url.Values, maxLimit int, maxRange time.Duration, raw bool) (timeSeriesParsedQuery, *cdb.TimeSeriesMetric, error) {
 	limit, offset, err := parseTimeSeriesPagination(values, timeSeriesDefaultLimit, maxLimit)
 	if err != nil {
 		return timeSeriesParsedQuery{}, nil, err
@@ -380,9 +381,9 @@ func parseTimeSeriesQuery(values url.Values, maxLimit int, maxRange time.Duratio
 	repo := newTimeSeriesAPIRepository()
 	var metric *cdb.TimeSeriesMetric
 	if filter.MetricID != nil {
-		metric, err = repo.MetricByID(*filter.MetricID)
+		metric, err = repo.MetricByID(ctx, *filter.MetricID)
 	} else {
-		metric, err = repo.MetricByKey(filter.MetricKey)
+		metric, err = repo.MetricByKey(ctx, filter.MetricKey)
 	}
 	if err != nil {
 		return timeSeriesParsedQuery{}, nil, err

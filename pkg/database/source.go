@@ -16,6 +16,7 @@
 package database
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -32,7 +33,8 @@ func GetSourceByID(db *Handler, sourceID uint64) (*Source, error) {
 	source := &Source{}
 
 	// Query the database
-	err := (*db).QueryRow(`SELECT source_id, source_uid, url, name, category_id, usr_id, restricted, flags, config FROM Sources WHERE source_id = $1`, sourceID).Scan(&source.ID, &source.UID, &source.URL, &source.Name, &source.CategoryID, &source.UsrID, &source.Restricted, &source.Flags, &source.Config)
+	err := (*db).QueryRow(`SELECT source_id, source_uid, url, name, priority,
+        sub_priority, category_id, usr_id, restricted, flags, config FROM Sources WHERE source_id = $1`, sourceID).Scan(&source.ID, &source.UID, &source.URL, &source.Name, &source.Priority, &source.SubPriority, &source.CategoryID, &source.UsrID, &source.Restricted, &source.Flags, &source.Config)
 	if err != nil {
 		return nil, fmt.Errorf("no source found with ID %d", sourceID)
 	}
@@ -42,6 +44,11 @@ func GetSourceByID(db *Handler, sourceID uint64) (*Source, error) {
 
 // CreateSource inserts a new source into the database with detailed configuration validation and marshaling.
 func CreateSource(db *Handler, source *Source, config cfg.SourceConfig) (uint64, error) {
+	return CreateSourceContext(context.Background(), db, source, config)
+}
+
+// CreateSourceContext inserts a source using the caller's lifecycle context.
+func CreateSourceContext(ctx context.Context, db *Handler, source *Source, config cfg.SourceConfig) (uint64, error) {
 	if db == nil || *db == nil {
 		return 0, fmt.Errorf("database handler is nil")
 	}
@@ -63,26 +70,27 @@ func CreateSource(db *Handler, source *Source, config cfg.SourceConfig) (uint64,
 	}
 
 	prepared := preparedSourceInsert{
-		URL:        NormalizeSourceURL(source.URL),
-		Name:       strings.TrimSpace(source.Name),
-		Priority:   strings.TrimSpace(source.Priority),
-		CategoryID: source.CategoryID,
-		UsrID:      source.UsrID,
-		Restricted: source.Restricted,
-		Flags:      source.Flags,
-		Config:     details,
-		Disabled:   source.Disabled,
+		URL:         NormalizeSourceURL(source.URL),
+		Name:        strings.TrimSpace(source.Name),
+		Priority:    strings.TrimSpace(source.Priority),
+		SubPriority: source.SubPriority,
+		CategoryID:  source.CategoryID,
+		UsrID:       source.UsrID,
+		Restricted:  source.Restricted,
+		Flags:       source.Flags,
+		Config:      details,
+		Disabled:    source.Disabled,
 	}
 	prepared.UID = CalculateSourceUID(prepared.Name, prepared.URL)
 	source.UID = prepared.UID
 
 	switch normalizeInformationSeedDBMS((*db).DBMS()) {
 	case DBPostgresStr:
-		return createSourcePostgres(db, prepared)
+		return createSourcePostgres(ctx, db, prepared)
 	case DBSQLiteStr:
-		return createSourceSQLite(db, prepared)
+		return createSourceSQLite(ctx, db, prepared)
 	case DBMySQLStr:
-		return createSourceMySQL(db, prepared)
+		return createSourceMySQL(ctx, db, prepared)
 	default:
 		return 0, fmt.Errorf("unsupported database type for source creation: %s", (*db).DBMS())
 	}
@@ -129,17 +137,18 @@ func decodeSearchableQueryCharacters(rawQuery string) string {
 }
 
 type preparedSourceInsert struct {
-	UID        string
-	URL        string
-	Name       string
-	Priority   string
-	CategoryID uint64
-	UsrID      uint64
-	Restricted uint
-	Flags      uint
-	Config     []byte
-	Disabled   bool
-	Status     string
+	UID         string
+	URL         string
+	Name        string
+	Priority    string
+	SubPriority int
+	CategoryID  uint64
+	UsrID       uint64
+	Restricted  uint
+	Flags       uint
+	Config      []byte
+	Disabled    bool
+	Status      string
 }
 
 func (source preparedSourceInsert) args() []interface{} {
@@ -147,6 +156,7 @@ func (source preparedSourceInsert) args() []interface{} {
 		source.URL,
 		source.Name,
 		source.Priority,
+		source.SubPriority,
 		source.CategoryID,
 		source.UsrID,
 		source.Restricted,
@@ -162,13 +172,13 @@ func (source preparedSourceInsert) argsWithStatus() []interface{} {
 	return append(args, source.Status)
 }
 
-func createSourcePostgres(db *Handler, source preparedSourceInsert) (uint64, error) {
+func createSourcePostgres(ctx context.Context, db *Handler, source preparedSourceInsert) (uint64, error) {
 	var sourceID uint64
 
 	query := `
         INSERT INTO Sources
-            (url, name, priority, category_id, usr_id, restricted, flags, config, disabled, source_uid, status)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'new')
+            (url, name, priority, sub_priority, category_id, usr_id, restricted, flags, config, disabled, source_uid, status)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'new')
         ON CONFLICT (url) DO UPDATE
         SET
             -- update name only if not processing AND non-empty trimmed string
@@ -191,6 +201,13 @@ func createSourcePostgres(db *Handler, source preparedSourceInsert) (uint64, err
                 THEN EXCLUDED.priority
                 ELSE Sources.priority
             END,
+
+			-- update sub_priority only if not processing
+			sub_priority = CASE
+				WHEN Sources.status <> 'processing'
+				THEN EXCLUDED.sub_priority
+				ELSE Sources.sub_priority
+			END,
 
             -- update integers only if not processing
             category_id = CASE
@@ -246,21 +263,21 @@ func createSourcePostgres(db *Handler, source preparedSourceInsert) (uint64, err
         RETURNING source_id;
     `
 
-	err := (*db).QueryRow(query, source.args()...).Scan(&sourceID)
+	err := (*db).QueryRowContext(ctx, query, source.args()...).Scan(&sourceID)
 	if err != nil {
-		return 0, fmt.Errorf("failed to create PostgreSQL source: %v", err)
+		return 0, fmt.Errorf("failed to create PostgreSQL source: %w", err)
 	}
 
 	return sourceID, nil
 }
 
-func createSourceSQLite(db *Handler, source preparedSourceInsert) (uint64, error) {
+func createSourceSQLite(ctx context.Context, db *Handler, source preparedSourceInsert) (uint64, error) {
 	var sourceID uint64
 
 	query := `
 		INSERT INTO Sources
-			(url, name, priority, category_id, usr_id, restricted, flags, config, disabled, source_uid, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'new')
+			(url, name, priority, sub_priority, category_id, usr_id, restricted, flags, config, disabled, source_uid, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'new')
 		ON CONFLICT (url) DO UPDATE SET
 			name = CASE
 				WHEN Sources.status <> 'processing'
@@ -278,6 +295,11 @@ func createSourceSQLite(db *Handler, source preparedSourceInsert) (uint64, error
 					 AND TRIM(excluded.priority) <> ''
 				THEN excluded.priority
 				ELSE Sources.priority
+			END,
+			sub_priority = CASE
+				WHEN Sources.status <> 'processing'
+				THEN excluded.sub_priority
+				ELSE Sources.sub_priority
 			END,
 			category_id = CASE
 				WHEN Sources.status <> 'processing'
@@ -321,19 +343,19 @@ func createSourceSQLite(db *Handler, source preparedSourceInsert) (uint64, error
 			last_updated_at = CURRENT_TIMESTAMP
 		RETURNING source_id`
 
-	err := (*db).QueryRow(query, source.args()...).Scan(&sourceID)
+	err := (*db).QueryRowContext(ctx, query, source.args()...).Scan(&sourceID)
 	if err != nil {
-		return 0, fmt.Errorf("failed to create SQLite source: %v", err)
+		return 0, fmt.Errorf("failed to create SQLite source: %w", err)
 	}
 
 	return sourceID, nil
 }
 
-func createSourceMySQL(db *Handler, source preparedSourceInsert) (uint64, error) {
+func createSourceMySQL(ctx context.Context, db *Handler, source preparedSourceInsert) (uint64, error) {
 	query := `
 		INSERT INTO Sources
-			(url, name, priority, category_id, usr_id, restricted, flags, config, disabled, source_uid, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new')
+			(url, name, priority, sub_priority, category_id, usr_id, restricted, flags, config, disabled, source_uid, status)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new')
 		ON DUPLICATE KEY UPDATE
 			source_id = LAST_INSERT_ID(source_id),
 			name = CASE
@@ -352,6 +374,11 @@ func createSourceMySQL(db *Handler, source preparedSourceInsert) (uint64, error)
 					 AND TRIM(VALUES(priority)) <> ''
 				THEN VALUES(priority)
 				ELSE priority
+			END,
+			sub_priority = CASE
+				WHEN status <> 'processing'
+				THEN VALUES(sub_priority)
+				ELSE sub_priority
 			END,
 			category_id = CASE
 				WHEN status <> 'processing'
@@ -393,9 +420,9 @@ func createSourceMySQL(db *Handler, source preparedSourceInsert) (uint64, error)
 			END,
 			last_updated_at = CURRENT_TIMESTAMP`
 
-	result, err := (*db).Exec(query, source.args()...)
+	result, err := (*db).ExecContext(ctx, query, source.args()...)
 	if err != nil {
-		return 0, fmt.Errorf("failed to create MySQL source: %v", err)
+		return 0, fmt.Errorf("failed to create MySQL source: %w", err)
 	}
 	id, err := result.LastInsertId()
 	if err != nil {

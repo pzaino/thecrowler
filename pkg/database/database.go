@@ -18,10 +18,23 @@ package database
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"time"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
+
+// ErrConnectionPoolControlUnsupported indicates that a database backend does
+// not expose runtime control of its database/sql connection pool.
+var ErrConnectionPoolControlUnsupported = errors.New("database backend does not support connection pool control")
+
+// ConnectionPoolController is optionally implemented by handlers which own a
+// database/sql connection pool whose limits can be adjusted at runtime.
+type ConnectionPoolController interface {
+	SetConnectionLimits(maxOpen, maxIdle int) error
+	ConnectionStats() sql.DBStats
+}
 
 // ListenerEventType represents the type of event that the listener has received.
 type ListenerEventType int
@@ -52,9 +65,46 @@ type Handler interface {
 	Commit(tx *sql.Tx) error
 	Rollback(tx *sql.Tx) error
 	QueryRow(query string, args ...interface{}) *sql.Row
+	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
 	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
 	CheckConnection(c cfg.Config) error
 	NewListener() Listener
+}
+
+// SetConnectionLimits updates the pool limits when the selected backend
+// supports runtime connection-pool control.
+func SetConnectionLimits(db *Handler, maxOpen, maxIdle int) error {
+	controller, err := connectionPoolController(db)
+	if err != nil {
+		return err
+	}
+	return controller.SetConnectionLimits(maxOpen, maxIdle)
+}
+
+// ConnectionStats returns database/sql pool statistics when the selected
+// backend supports runtime connection-pool control.
+func ConnectionStats(db *Handler) (sql.DBStats, error) {
+	controller, err := connectionPoolController(db)
+	if err != nil {
+		return sql.DBStats{}, err
+	}
+	return controller.ConnectionStats(), nil
+}
+
+func connectionPoolController(db *Handler) (ConnectionPoolController, error) {
+	if db == nil || *db == nil {
+		return nil, fmt.Errorf("%w: nil handler", ErrConnectionPoolControlUnsupported)
+	}
+	controller, ok := (*db).(ConnectionPoolController)
+	if !ok {
+		return nil, fmt.Errorf("%w: %T", ErrConnectionPoolControlUnsupported, *db)
+	}
+	return controller, nil
+}
+
+// QueryRowContext executes a single-row query with cancellation support.
+func QueryRowContext(ctx context.Context, db *Handler, query string, args ...interface{}) *sql.Row {
+	return (*db).QueryRowContext(ctx, query, args...)
 }
 
 // Listener is the interface that wraps the basic methods

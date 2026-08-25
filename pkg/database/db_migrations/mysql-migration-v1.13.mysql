@@ -1,0 +1,17 @@
+-- Add fine-grained source ordering to existing installations.
+ALTER TABLE Sources
+ADD COLUMN sub_priority INT DEFAULT 0 NOT NULL;
+
+CREATE INDEX idx_sources_priority_sub_priority
+ON Sources(priority, sub_priority DESC, source_id ASC);
+
+-- A Source owns its time-series history; provenance references remain nullable.
+ALTER TABLE TimeSeriesObservations
+    DROP FOREIGN KEY fk_timeseriesobservations_source,
+    ADD CONSTRAINT fk_timeseriesobservations_source
+        FOREIGN KEY (source_id) REFERENCES Sources(source_id) ON DELETE CASCADE;
+
+ALTER TABLE TimeSeriesAggregates
+    DROP FOREIGN KEY fk_timeseriesaggregates_source,
+    ADD CONSTRAINT fk_timeseriesaggregates_source
+        FOREIGN KEY (source_id) REFERENCES Sources(source_id) ON DELETE CASCADE;

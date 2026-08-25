@@ -231,12 +231,25 @@ func TestSQLiteTimeSeriesMigrationIsIdempotentAndEnforcesPortableKeys(t *testing
 		PRAGMA foreign_keys = ON;
 		CREATE TABLE InformationSeed (information_seed_id INTEGER PRIMARY KEY);
 		CREATE TABLE InformationSeedCandidate (information_seed_candidate_id INTEGER PRIMARY KEY);
-		CREATE TABLE Sources (source_id INTEGER PRIMARY KEY);
+		CREATE TABLE Sources (source_id INTEGER PRIMARY KEY, priority TEXT);
 		CREATE TABLE SourceInformationSeedIndex (source_information_seed_id INTEGER PRIMARY KEY);
 		CREATE TABLE SearchIndex (index_id INTEGER PRIMARY KEY);
 		CREATE TABLE Entities (entity_id INTEGER PRIMARY KEY);
 		CREATE TABLE CorrelationRules (rule_id INTEGER PRIMARY KEY);
-		INSERT INTO Sources (source_id) VALUES (7);
+		CREATE TABLE WebObjects (object_id INTEGER PRIMARY KEY);
+		CREATE TABLE HTTPInfo (httpinfo_id INTEGER PRIMARY KEY);
+		CREATE TABLE NetInfo (netinfo_id INTEGER PRIMARY KEY);
+		CREATE TABLE ObjectAttributes (
+			attribute_id INTEGER, object_id INTEGER NOT NULL, object_type TEXT NOT NULL DEFAULT 'webobject',
+			attribute_key TEXT NOT NULL, attribute_value TEXT NOT NULL, normalized_value TEXT NOT NULL,
+			value_hash VARCHAR(64) NOT NULL, attribute_type TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, fts TEXT,
+			PRIMARY KEY (object_type, object_id, attribute_key, value_hash)
+		);
+		INSERT INTO Sources (source_id) VALUES (7), (8);
+		INSERT INTO WebObjects VALUES (101);
+		INSERT INTO HTTPInfo VALUES (102);
+		INSERT INTO NetInfo VALUES (103);
 	`); err != nil {
 		t.Fatalf("create time-series migration prerequisites: %v", err)
 	}
@@ -250,6 +263,16 @@ func TestSQLiteTimeSeriesMigrationIsIdempotentAndEnforcesPortableKeys(t *testing
 			t.Fatalf("execute SQLite time-series migration run %d: %v", i+1, err)
 		}
 	}
+	migration, err = os.ReadFile("db_migrations/sqlite-migration-v1.13.sqlite3")
+	if err != nil {
+		t.Fatalf("read SQLite 1.13 migration: %v", err)
+	}
+	if _, err = db.Exec(string(migration)); err != nil {
+		t.Fatalf("execute SQLite 1.13 migration: %v", err)
+	}
+
+	assertSQLiteColumns(t, db, "ObjectAttributes", []string{"source_path", "context_path", "context_ref"})
+	assertSQLiteIndexes(t, db, []string{"uq_objattr_unscoped", "uq_objattr_scoped", "idx_objattr_context"})
 
 	assertSQLiteColumns(t, db, "TimeSeriesMetrics", []string{
 		"metric_key", "selector", "retention_policy", "cardinality_policy", "store_value_text", "hash_only",
@@ -287,18 +310,24 @@ func TestSQLiteTimeSeriesMigrationIsIdempotentAndEnforcesPortableKeys(t *testing
 			'observed_at', 'source', 'webobject', 'skip', '{}'
 		);
 		INSERT INTO TimeSeriesObservations (
-			metric_id, observed_at, bucket_start, bucket_end, source_id,
+			metric_id, observed_at, bucket_start, bucket_end, source_id, object_type, object_id,
 			value_numeric, value_hash, dedupe_key, dimensions, provenance
 		) VALUES (
-			1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 7,
+			1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 7, 'webobject', 101,
 			12.5, 'value-hash-1', 'dedupe-key-1', '{}', '{}'
 		);
 		INSERT INTO TimeSeriesAggregates (
-			metric_id, bucket_start, bucket_end, value_count, numeric_count,
+			metric_id, bucket_start, bucket_end, source_id, value_count, numeric_count,
 			numeric_sum, numeric_avg, aggregate_hash
 		) VALUES (
-			1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1, 1, 12.5, 12.5, 'aggregate-hash-1'
+			1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 7, 1, 1, 12.5, 12.5, 'aggregate-hash-1'
 		);
+		INSERT INTO TimeSeriesObservations
+			(metric_id, observed_at, bucket_start, bucket_end, source_id, object_type, object_id, value_hash, dedupe_key)
+		VALUES
+			(1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 8, 'webobject', 101, 'web-hash', 'web-key'),
+			(1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 8, 'httpinfo', 102, 'http-hash', 'http-key'),
+			(1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 8, 'netinfo', 103, 'net-hash', 'net-key');
 	`); err != nil {
 		t.Fatalf("insert direct-source time-series rows: %v", err)
 	}
@@ -335,14 +364,19 @@ func TestSQLiteTimeSeriesMigrationIsIdempotentAndEnforcesPortableKeys(t *testing
 		t.Fatal("duplicate metric_key was accepted")
 	}
 
+	if _, err = db.Exec("DELETE FROM WebObjects; DELETE FROM HTTPInfo; DELETE FROM NetInfo"); err != nil {
+		t.Fatalf("delete operational artifacts: %v", err)
+	}
+	var count int
+	if err = db.QueryRow("SELECT COUNT(*) FROM TimeSeriesObservations WHERE source_id = 8").Scan(&count); err != nil || count != 3 {
+		t.Fatalf("operational artifact deletion changed history: count=%d err=%v", count, err)
+	}
 	if _, err = db.Exec("DELETE FROM Sources WHERE source_id = 7"); err != nil {
-		t.Fatalf("delete optional source: %v", err)
+		t.Fatalf("delete owning source: %v", err)
 	}
-	var sourceID sql.NullInt64
-	if err = db.QueryRow("SELECT source_id FROM TimeSeriesObservations WHERE observation_id = 1").Scan(&sourceID); err != nil {
-		t.Fatalf("read observation after source deletion: %v", err)
-	}
-	if sourceID.Valid {
-		t.Fatalf("source reference was not cleared after source deletion: %d", sourceID.Int64)
+	for table, want := range map[string]int{"TimeSeriesObservations": 3, "TimeSeriesAggregates": 0} {
+		if err = db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil || count != want {
+			t.Fatalf("%s source cascade: count=%d want=%d err=%v", table, count, want, err)
+		}
 	}
 }

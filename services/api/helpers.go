@@ -2,9 +2,12 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -17,9 +20,45 @@ import (
 	infoseeddiag "github.com/pzaino/thecrowler/pkg/infoseed"
 	mailconfig "github.com/pzaino/thecrowler/pkg/mail/config"
 	plg "github.com/pzaino/thecrowler/pkg/plugin"
+	"github.com/pzaino/thecrowler/pkg/vdi"
 )
 
 const sourceConfigRedactionMarker = mailconfig.RedactedValue
+
+var errAPIRequestBodyTooLarge = errors.New("API request body exceeds configured maximum size")
+
+// readAPIRequestBody reads an inbound API-owned request body while enforcing
+// the configured application limit. A zero limit deliberately preserves the
+// historical unlimited behavior.
+func readAPIRequestBody(r *http.Request) ([]byte, error) {
+	limit := config.API.MaxRequestBodySize
+	if limit <= 0 {
+		return io.ReadAll(r.Body)
+	}
+	if r.ContentLength > limit {
+		return nil, errAPIRequestBodyTooLarge
+	}
+
+	readLimit := limit
+	if limit < math.MaxInt64 {
+		readLimit++
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, readLimit))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) > limit {
+		return nil, errAPIRequestBodyTooLarge
+	}
+	return body, nil
+}
+
+func apiRequestBodyErrorStatus(err error) int {
+	if errors.Is(err, errAPIRequestBodyTooLarge) {
+		return http.StatusRequestEntityTooLarge
+	}
+	return http.StatusBadRequest
+}
 
 // marshalRedactedSourceConfig serializes a source configuration after replacing
 // secret values and secret-store references in its email envelope. Email
@@ -42,26 +81,21 @@ func marshalRedactedSourceConfig(sourceConfig cfg.SourceConfig) ([]byte, error) 
 }
 
 func handleRequestWithDB(w http.ResponseWriter, r *http.Request, successCode int, action func(string, int, *cdb.Handler) (interface{}, error)) {
-	select {
-	case dbSemaphore <- struct{}{}:
-		defer func() { <-dbSemaphore }()
-
-		query, err := extractQueryOrBody(r)
-		defer r.Body.Close() // nolint: errcheck // we don't care about this error code
-		if err != nil {
-			handleErrorAndRespond(w, err, nil, "Invalid query", http.StatusBadRequest, successCode)
-			return
-		}
-
-		results, err := action(query, getQTypeFromName(r.Method), &dbHandler)
-		handleErrorAndRespond(w, err, results, "Error performing action: %v", http.StatusInternalServerError, successCode)
-
-	case <-time.After(5 * time.Second):
-		healthStatus := HealthCheck{
-			Status: "DB is overloaded, please try again later",
-		}
-		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+	if !acquireDBAdmission(w, false) {
+		return
 	}
+	defer dbAdmission.Release()
+
+	query, err := extractQueryOrBody(r)
+	defer r.Body.Close() // nolint: errcheck // we don't care about this error code
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Invalid query", apiRequestBodyErrorStatus(err), successCode)
+		return
+	}
+
+	results, err := action(query, getQTypeFromName(r.Method), &dbHandler)
+	handleErrorAndRespond(w, err, results, "Error performing action: %v", http.StatusInternalServerError, successCode)
+
 }
 
 // handleErrorAndRespond encapsulates common error handling and JSON response logic.
@@ -117,7 +151,7 @@ func handleErrorAndRespond(w http.ResponseWriter, err error, results interface{}
 // extractQueryOrBody extracts the query parameter for GET requests or the body for POST requests.
 func extractQueryOrBody(r *http.Request) (string, error) {
 	if r.Method == http.MethodPost {
-		bodyBytes, err := io.ReadAll(r.Body)
+		bodyBytes, err := readAPIRequestBody(r)
 		if err != nil {
 			return "", err
 		}
@@ -222,7 +256,7 @@ func extractAPIPluginData(r *http.Request) (interface{}, map[string]interface{},
 		return data, httpCtx, nil
 	}
 
-	bodyBytes, err := io.ReadAll(r.Body)
+	bodyBytes, err := readAPIRequestBody(r)
 	if err != nil {
 		return nil, httpCtx, err
 	}
@@ -297,6 +331,17 @@ func makeAPIPluginHandler(plugin plg.JSPlugin) http.HandlerFunc {
 }
 
 func handleNormalAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg.JSPlugin) {
+	handleNormalAPIPluginWithExecutor(w, r, plugin, plugin.ExecuteContext)
+}
+
+// handleNormalAPIPluginWithExecutor keeps body admission ahead of execution and
+// gives regression tests an observable boundary around plugin invocation.
+func handleNormalAPIPluginWithExecutor(
+	w http.ResponseWriter,
+	r *http.Request,
+	plugin plg.JSPlugin,
+	execute func(context.Context, *vdi.WebDriver, *cdb.Handler, int, map[string]interface{}) (map[string]interface{}, error),
+) {
 	jsonData, httpCtx, err := extractAPIPluginData(r)
 	defer r.Body.Close() // nolint: errcheck // we don't care about this error code
 	if err != nil {
@@ -305,7 +350,7 @@ func handleNormalAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg.JS
 			err,
 			nil,
 			"Invalid request",
-			http.StatusBadRequest,
+			apiRequestBodyErrorStatus(err),
 			0,
 		)
 		return
@@ -316,7 +361,8 @@ func handleNormalAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg.JS
 		"jsonData": jsonData,
 	}
 
-	result, err := plugin.Execute(
+	result, err := execute(
+		r.Context(),
 		nil,
 		&dbHandler,
 		config.API.Plugins.Timeout,
@@ -363,7 +409,7 @@ func handleStreamingAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg
 	jsonData, httpCtx, err := extractAPIPluginData(r)
 	defer r.Body.Close() // nolint: errcheck // we don't care about this error code
 	if err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+		handleErrorAndRespond(w, err, nil, "Invalid request", apiRequestBodyErrorStatus(err), 0)
 		return
 	}
 
@@ -410,7 +456,8 @@ func handleStreamingAPIPlugin(w http.ResponseWriter, r *http.Request, plugin plg
 			},
 		}
 
-		result, err := plugin.Execute(
+		result, err := plugin.ExecuteContext(
+			r.Context(),
 			nil,
 			&dbHandler,
 			config.API.Plugins.Timeout,

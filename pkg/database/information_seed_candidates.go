@@ -5,6 +5,7 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -102,6 +103,10 @@ func UpsertInformationSeedCandidateDecisions(db *Handler, candidates []Informati
 // ListInformationSeedCandidateDecisions returns candidate decision evidence for
 // one seed in newest-decision order with stable pagination.
 func ListInformationSeedCandidateDecisions(db *Handler, seedID uint64, filter InformationSeedCandidateFilter) ([]InformationSeedCandidate, error) {
+	return ListInformationSeedCandidateDecisionsContext(context.Background(), db, seedID, filter)
+}
+
+func ListInformationSeedCandidateDecisionsContext(ctx context.Context, db *Handler, seedID uint64, filter InformationSeedCandidateFilter) ([]InformationSeedCandidate, error) {
 	if db == nil || *db == nil {
 		return nil, fmt.Errorf("database handler is nil")
 	}
@@ -131,7 +136,7 @@ func ListInformationSeedCandidateDecisions(db *Handler, seedID uint64, filter In
 		WHERE information_seed_id = %s
 		ORDER BY run_attempt DESC, last_updated_at DESC, information_seed_candidate_id DESC
 		LIMIT %s OFFSET %s`, p1, p2, p3)
-	rows, err := (*db).ExecuteQuery(query, seedID, limit, offset)
+	rows, err := (*db).QueryContext(ctx, query, seedID, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list information seed %d candidate decisions: %w", seedID, err)
 	}

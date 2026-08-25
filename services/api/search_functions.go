@@ -264,11 +264,11 @@ func searchPagesFunctionHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func searchWebObjectsBySourceIDHandler(w http.ResponseWriter, r *http.Request) {
-	handleSearchFunctionEndpoint(w, r, "webobjects_by_source#search", "webobjects_by_source", "source_id", func(_ context.Context, query SearchFunctionQuery, db *cdb.Handler) (interface{}, error) {
+	handleSearchFunctionEndpoint(w, r, "webobjects_by_source#search", "webobjects_by_source", "source_id", func(ctx context.Context, query SearchFunctionQuery, db *cdb.Handler) (interface{}, error) {
 		if query.SourceID <= 0 {
 			return nil, newSearchFunctionBadRequest("query parameter 'source_id' is required and must be a positive BIGINT")
 		}
-		results, err := performWebObjectSearchBySourceID(query.SourceID, db)
+		results, err := performWebObjectSearchBySourceID(ctx, query.SourceID, db)
 		if err != nil {
 			return nil, err
 		}
@@ -277,12 +277,12 @@ func searchWebObjectsBySourceIDHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func searchWebObjectsBySourceUIDHandler(w http.ResponseWriter, r *http.Request) {
-	handleSearchFunctionEndpoint(w, r, "webobjects_by_source_uid#search", "webobjects_by_source_uid", "source_uid", func(_ context.Context, query SearchFunctionQuery, db *cdb.Handler) (interface{}, error) {
+	handleSearchFunctionEndpoint(w, r, "webobjects_by_source_uid#search", "webobjects_by_source_uid", "source_uid", func(ctx context.Context, query SearchFunctionQuery, db *cdb.Handler) (interface{}, error) {
 		sourceUID := strings.TrimSpace(query.SourceUID)
 		if sourceUID == "" {
 			return nil, newSearchFunctionBadRequest("query parameter 'source_uid' is required")
 		}
-		results, err := performWebObjectSearchBySourceUID(sourceUID, db)
+		results, err := performWebObjectSearchBySourceUID(ctx, sourceUID, db)
 		if err != nil {
 			return nil, err
 		}
@@ -447,37 +447,33 @@ func executeObjectAttributeSearch(ctx context.Context, query SearchFunctionQuery
 }
 
 func handleSearchFunctionEndpoint(w http.ResponseWriter, r *http.Request, kind, templateKind, searchParam string, executor searchFunctionExecutor) {
-	select {
-	case dbSemaphore <- struct{}{}:
-		defer func() { <-dbSemaphore }()
-
-		query, err := parseSearchFunctionQuery(r)
-		defer r.Body.Close() //nolint:errcheck // best-effort cleanup after optional POST body parsing
-		if err != nil {
-			totalErrors.Add(1)
-			handleErrorAndRespond(w, err, nil, "Invalid search-function request: %v", http.StatusBadRequest, http.StatusOK)
-			return
-		}
-
-		items, err := executor(r.Context(), query, &dbHandler)
-		if err != nil {
-			totalErrors.Add(1)
-			errCode := http.StatusInternalServerError
-			if isSearchFunctionBadRequest(err) {
-				errCode = http.StatusBadRequest
-			}
-			handleErrorAndRespond(w, err, nil, "Error performing search-function request: %v", errCode, http.StatusOK)
-			return
-		}
-
-		response := newSearchFunctionResponse(kind, templateKind, r.Method, query, searchParam, items)
-		totalSuccess.Add(1)
-		handleErrorAndRespond(w, nil, response, "", http.StatusInternalServerError, http.StatusOK)
-	case <-time.After(5 * time.Second):
-		totalErrors.Add(1)
-		healthStatus := HealthCheck{Status: "DB is overloaded, please try again later"}
-		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+	if !acquireDBAdmission(w, true) {
+		return
 	}
+	defer dbAdmission.Release()
+
+	query, err := parseSearchFunctionQuery(r)
+	defer r.Body.Close() //nolint:errcheck // best-effort cleanup after optional POST body parsing
+	if err != nil {
+		totalErrors.Add(1)
+		handleErrorAndRespond(w, err, nil, "Invalid search-function request: %v", http.StatusBadRequest, http.StatusOK)
+		return
+	}
+
+	items, err := executor(r.Context(), query, &dbHandler)
+	if err != nil {
+		totalErrors.Add(1)
+		errCode := http.StatusInternalServerError
+		if isSearchFunctionBadRequest(err) {
+			errCode = http.StatusBadRequest
+		}
+		handleErrorAndRespond(w, err, nil, "Error performing search-function request: %v", errCode, http.StatusOK)
+		return
+	}
+
+	response := newSearchFunctionResponse(kind, templateKind, r.Method, query, searchParam, items)
+	totalSuccess.Add(1)
+	handleErrorAndRespond(w, nil, response, "", http.StatusInternalServerError, http.StatusOK)
 }
 
 func parseSearchFunctionQuery(r *http.Request) (SearchFunctionQuery, error) {

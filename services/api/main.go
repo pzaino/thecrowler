@@ -54,7 +54,7 @@ var (
 	limiter     *rate.Limiter
 	configMutex sync.Mutex
 	configFile  *string
-	dbSemaphore chan struct{} // Semaphore for the database connection
+	dbAdmission *dbAdmissionGate // Gate for database operations
 	dbHandler   cdb.Handler
 
 	sysReadyMtx sync.RWMutex // Mutex to protect the SysReady variable
@@ -129,8 +129,24 @@ func initAll(configFile *string, config *cfg.Config, lmt **rate.Limiter) error {
 	}
 	*lmt = rate.NewLimiter(rate.Limit(rl), bl)
 
-	// Set the database semaphore
-	dbSemaphore = make(chan struct{}, config.Database.MaxConns-3)
+	// Configure database admission. Heartbeats are the existing switch for
+	// dynamic fleet budgeting; no separate API setting is needed.
+	configureAPIQuota(*config)
+
+	if dbAdmission == nil {
+		effectiveMaxOpen := cdb.ResolveEffectiveMaxOpenConnections(*config)
+
+		targetLimit := effectiveMaxOpen - cdb.FleetDBReservedConnections
+		if config.Events.HeartbeatEnabled {
+			targetLimit = 1
+		}
+
+		if targetLimit <= 0 {
+			targetLimit = 1
+		}
+
+		dbAdmission = newDBAdmissionGate(targetLimit)
+	}
 
 	// Initialize the database
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Initializing database connection...")
@@ -147,6 +163,9 @@ func initAll(configFile *string, config *cfg.Config, lmt **rate.Limiter) error {
 				continue
 			}
 			connected = true
+		}
+		if err = applyAPIQuotaAfterConnect(*config); err != nil {
+			return fmt.Errorf("apply API database quota: %w", err)
 		}
 		cmn.DebugMsg(cmn.DbgLvlInfo, "Database connection established")
 	}
@@ -389,6 +408,9 @@ func handleNotification(payload string) {
 	case "crowler_heartbeat":
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "API: Received event of type '%s'", eventType)
 		processHeartbeatEvent(event)
+	case "crowler_heartbeat_report":
+		cmn.DebugMsg(cmn.DbgLvlDebug3, "API: Received event of type '%s'", eventType)
+		processHeartbeatReport(event)
 	default:
 		if apiWSHub != nil {
 			apiWSHub.Broadcast("event", event)
@@ -527,6 +549,9 @@ func init() {
 		gaugeSearchTotalErrors,
 		gaugeSearchTotalSuccess,
 	)
+	for _, collector := range apiDBMetrics.Collectors() {
+		prometheus.MustRegister(collector)
+	}
 }
 
 func updateMetrics() {
@@ -544,11 +569,17 @@ func updateMetrics() {
 	gaugeSearchTotalRequests.With(labels).Set(float64(totalRequests.Load()))
 	gaugeSearchTotalErrors.With(labels).Set(float64(totalErrors.Load()))
 	gaugeSearchTotalSuccess.With(labels).Set(float64(totalSuccess.Load()))
+	if stats, err := cdb.ConnectionStats(&dbHandler); err == nil {
+		apiDBMetrics.UpdatePool(stats)
+	}
 
 	p := push.New(url, "crowler_search_api").
 		Collector(gaugeSearchTotalRequests).
 		Collector(gaugeSearchTotalErrors).
 		Collector(gaugeSearchTotalSuccess)
+	for _, collector := range apiDBMetrics.Collectors() {
+		p = p.Collector(collector)
+	}
 
 	if err := p.Push(); err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "SearchAPI: Could not push metrics: %v", err)
@@ -1217,23 +1248,77 @@ func readyCheckHandler(w http.ResponseWriter, _ *http.Request) {
 
 // searchHandler handles the traditional search requests
 func searchHandler(w http.ResponseWriter, r *http.Request) {
-	select {
-	case dbSemaphore <- struct{}{}: // Try to acquire a DB connection
-		defer func() { <-dbSemaphore }() // Release the connection after the work is done
+	if !acquireDBAdmission(w, true) {
+		return
+	}
+	defer dbAdmission.Release()
 
-		successCode := http.StatusOK
-		query, err := extractQueryOrBody(r)
-		defer r.Body.Close() // nolint: errcheck // we don't care about this error code
-		if err != nil {
-			handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in search request", http.StatusBadRequest, successCode)
-			return
+	successCode := http.StatusOK
+	query, err := extractQueryOrBody(r)
+	defer r.Body.Close() // nolint: errcheck // we don't care about this error code
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in search request", http.StatusBadRequest, successCode)
+		return
+	}
+
+	results, err := performSearch(r.Context(), query, &dbHandler)
+	results.SetHeaderFields(
+		"customsearch#search",
+		jsonResponse,
+		GetQueryTemplate("search", "v1", r.Method),
+		[]QueryRequest{
+			{
+				"search",
+				len(results.Items),
+				query,
+				len(results.Items),
+				results.Queries.Offset,
+				"utf8",
+				"utf8",
+				"off",
+				"0",
+			},
+		},
+	)
+	if err != nil {
+		totalErrors.Add(1)
+	} else {
+		totalSuccess.Add(1)
+	}
+
+	handleErrorAndRespond(w, err, results, "Error performing search: %v", http.StatusInternalServerError, successCode)
+}
+
+func webObjectHandler(w http.ResponseWriter, r *http.Request) {
+	if !acquireDBAdmission(w, true) {
+		return
+	}
+	defer dbAdmission.Release()
+
+	successCode := http.StatusOK
+	query, err := extractQueryOrBody(r)
+	defer r.Body.Close() // nolint: errcheck // we don't care about this error code
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in webobject search request", http.StatusBadRequest, successCode)
+		return
+	}
+
+	results, err := performWebObjectSearch(r.Context(), query, getQTypeFromName(r.Method), &dbHandler)
+	if results.IsEmpty() {
+		var retCode int
+		if config.API.Return404 {
+			retCode = http.StatusNotFound
+			totalErrors.Add(1)
+		} else {
+			retCode = successCode
+			totalSuccess.Add(1)
 		}
-
-		results, err := performSearch(query, &dbHandler)
+		handleErrorAndRespond(w, err, results, "Error performing webobject search: %v", http.StatusNotFound, retCode)
+	} else {
 		results.SetHeaderFields(
-			"customsearch#search",
+			"webobject#search",
 			jsonResponse,
-			GetQueryTemplate("search", "v1", r.Method),
+			GetQueryTemplate("webobject", "v1", r.Method),
 			[]QueryRequest{
 				{
 					"search",
@@ -1253,566 +1338,428 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 		} else {
 			totalSuccess.Add(1)
 		}
-
-		handleErrorAndRespond(w, err, results, "Error performing search: %v", http.StatusInternalServerError, successCode)
-	case <-time.After(5 * time.Second): // Wait for a connection with timeout
-		healthStatus := HealthCheck{
-			Status: "DB is overloaded, please try again later",
-		}
-		totalErrors.Add(1)
-		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
-	}
-}
-
-func webObjectHandler(w http.ResponseWriter, r *http.Request) {
-	select {
-	case dbSemaphore <- struct{}{}:
-		defer func() { <-dbSemaphore }()
-
-		successCode := http.StatusOK
-		query, err := extractQueryOrBody(r)
-		defer r.Body.Close() // nolint: errcheck // we don't care about this error code
-		if err != nil {
-			handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in webobject search request", http.StatusBadRequest, successCode)
-			return
-		}
-
-		results, err := performWebObjectSearch(query, getQTypeFromName(r.Method), &dbHandler)
-		if results.IsEmpty() {
-			var retCode int
-			if config.API.Return404 {
-				retCode = http.StatusNotFound
-				totalErrors.Add(1)
-			} else {
-				retCode = successCode
-				totalSuccess.Add(1)
-			}
-			handleErrorAndRespond(w, err, results, "Error performing webobject search: %v", http.StatusNotFound, retCode)
-		} else {
-			results.SetHeaderFields(
-				"webobject#search",
-				jsonResponse,
-				GetQueryTemplate("webobject", "v1", r.Method),
-				[]QueryRequest{
-					{
-						"search",
-						len(results.Items),
-						query,
-						len(results.Items),
-						results.Queries.Offset,
-						"utf8",
-						"utf8",
-						"off",
-						"0",
-					},
-				},
-			)
-			if err != nil {
-				totalErrors.Add(1)
-			} else {
-				totalSuccess.Add(1)
-			}
-			handleErrorAndRespond(w, err, results, "Error performing webobject search: %v", http.StatusInternalServerError, successCode)
-		}
-	case <-time.After(5 * time.Second): // Wait for a connection with timeout
-		healthStatus := HealthCheck{
-			Status: "DB is overloaded, please try again later",
-		}
-		totalErrors.Add(1)
-		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+		handleErrorAndRespond(w, err, results, "Error performing webobject search: %v", http.StatusInternalServerError, successCode)
 	}
 }
 
 func webCorrelatedSitesHandler(w http.ResponseWriter, r *http.Request) {
-	select {
-	case dbSemaphore <- struct{}{}:
-		defer func() { <-dbSemaphore }()
+	if !acquireDBAdmission(w, true) {
+		return
+	}
+	defer dbAdmission.Release()
 
-		successCode := http.StatusOK
-		query, err := extractQueryOrBody(r)
-		defer r.Body.Close() // nolint: errcheck // we don't care about this error code
-		if err != nil {
-			handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in correlatedsites search request", http.StatusBadRequest, successCode)
-			return
-		}
+	successCode := http.StatusOK
+	query, err := extractQueryOrBody(r)
+	defer r.Body.Close() // nolint: errcheck // we don't care about this error code
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in correlatedsites search request", http.StatusBadRequest, successCode)
+		return
+	}
 
-		results, err := performCorrelatedSitesSearch(query, getQTypeFromName(r.Method), &dbHandler)
-		if results.IsEmpty() {
-			var retCode int
-			if config.API.Return404 {
-				retCode = http.StatusNotFound
-				totalErrors.Add(1)
-			} else {
-				retCode = successCode
-				totalSuccess.Add(1)
-			}
-			handleErrorAndRespond(w, err, results, "Error performing correlatedsites search: %v", http.StatusNotFound, retCode)
+	results, err := performCorrelatedSitesSearch(r.Context(), query, getQTypeFromName(r.Method), &dbHandler)
+	if results.IsEmpty() {
+		var retCode int
+		if config.API.Return404 {
+			retCode = http.StatusNotFound
+			totalErrors.Add(1)
 		} else {
-			results.SetHeaderFields(
-				"correlatedsites#search",
-				jsonResponse,
-				GetQueryTemplate("correlatedsites", "v1", r.Method),
-				[]QueryRequest{
-					{
-						"search",
-						len(results.Items),
-						query,
-						len(results.Items),
-						results.Queries.Offset,
-						"utf8",
-						"utf8",
-						"off",
-						"0",
-					},
+			retCode = successCode
+			totalSuccess.Add(1)
+		}
+		handleErrorAndRespond(w, err, results, "Error performing correlatedsites search: %v", http.StatusNotFound, retCode)
+	} else {
+		results.SetHeaderFields(
+			"correlatedsites#search",
+			jsonResponse,
+			GetQueryTemplate("correlatedsites", "v1", r.Method),
+			[]QueryRequest{
+				{
+					"search",
+					len(results.Items),
+					query,
+					len(results.Items),
+					results.Queries.Offset,
+					"utf8",
+					"utf8",
+					"off",
+					"0",
 				},
-			)
-			if err != nil {
-				totalErrors.Add(1)
-			} else {
-				totalSuccess.Add(1)
-			}
-			handleErrorAndRespond(w, err, results, "Error performing correlatedsites search: %v", http.StatusInternalServerError, successCode)
+			},
+		)
+		if err != nil {
+			totalErrors.Add(1)
+		} else {
+			totalSuccess.Add(1)
 		}
-	case <-time.After(5 * time.Second): // Wait for a connection with timeout
-		healthStatus := HealthCheck{
-			Status: "DB is overloaded, please try again later",
-		}
-		totalErrors.Add(1)
-		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+		handleErrorAndRespond(w, err, results, "Error performing correlatedsites search: %v", http.StatusInternalServerError, successCode)
 	}
 }
 
 // webScrapedDataHandler handles the search requests for scraped data
 func webScrapedDataHandler(w http.ResponseWriter, r *http.Request) {
-	select {
-	case dbSemaphore <- struct{}{}:
-		defer func() { <-dbSemaphore }()
+	if !acquireDBAdmission(w, true) {
+		return
+	}
+	defer dbAdmission.Release()
 
-		successCode := http.StatusOK
-		query, err := extractQueryOrBody(r)
-		defer r.Body.Close() // nolint: errcheck // we don't care about this error code
-		if err != nil {
-			handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in scraped_data search request", http.StatusBadRequest, successCode)
-			return
-		}
+	successCode := http.StatusOK
+	query, err := extractQueryOrBody(r)
+	defer r.Body.Close() // nolint: errcheck // we don't care about this error code
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in scraped_data search request", http.StatusBadRequest, successCode)
+		return
+	}
 
-		results, err := performScrapedDataSearch(query, getQTypeFromName(r.Method), &dbHandler)
-		if results.IsEmpty() {
-			var retCode int
-			if config.API.Return404 {
-				retCode = http.StatusNotFound
-				totalErrors.Add(1)
-			} else {
-				retCode = successCode
-				totalSuccess.Add(1)
-			}
-			handleErrorAndRespond(w, err, results, "Error performing scraped_data search: %v", http.StatusNotFound, retCode)
+	results, err := performScrapedDataSearch(r.Context(), query, getQTypeFromName(r.Method), &dbHandler)
+	if results.IsEmpty() {
+		var retCode int
+		if config.API.Return404 {
+			retCode = http.StatusNotFound
+			totalErrors.Add(1)
 		} else {
-			results.SetHeaderFields(
-				"scraped_data#search",
-				jsonResponse,
-				GetQueryTemplate("scraped_data", "v1", r.Method),
-				[]QueryRequest{
-					{
-						"search",
-						len(results.Items),
-						query,
-						len(results.Items),
-						results.Queries.Offset,
-						"utf8",
-						"utf8",
-						"off",
-						"0",
-					},
+			retCode = successCode
+			totalSuccess.Add(1)
+		}
+		handleErrorAndRespond(w, err, results, "Error performing scraped_data search: %v", http.StatusNotFound, retCode)
+	} else {
+		results.SetHeaderFields(
+			"scraped_data#search",
+			jsonResponse,
+			GetQueryTemplate("scraped_data", "v1", r.Method),
+			[]QueryRequest{
+				{
+					"search",
+					len(results.Items),
+					query,
+					len(results.Items),
+					results.Queries.Offset,
+					"utf8",
+					"utf8",
+					"off",
+					"0",
 				},
-			)
-			if err != nil {
-				totalErrors.Add(1)
-			} else {
-				totalSuccess.Add(1)
-			}
-			handleErrorAndRespond(w, err, results, "Error performing correlatedsites search: %v", http.StatusInternalServerError, successCode)
+			},
+		)
+		if err != nil {
+			totalErrors.Add(1)
+		} else {
+			totalSuccess.Add(1)
 		}
-	case <-time.After(5 * time.Second): // Wait for a connection with timeout
-		healthStatus := HealthCheck{
-			Status: "DB is overloaded, please try again later",
-		}
-		totalErrors.Add(1)
-		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+		handleErrorAndRespond(w, err, results, "Error performing correlatedsites search: %v", http.StatusInternalServerError, successCode)
 	}
 }
 
 // scrImgSrchHandler handles the search requests for screenshot images
 func scrImgSrchHandler(w http.ResponseWriter, r *http.Request) {
-	select {
-	case dbSemaphore <- struct{}{}:
-		defer func() { <-dbSemaphore }()
+	if !acquireDBAdmission(w, true) {
+		return
+	}
+	defer dbAdmission.Release()
 
-		successCode := http.StatusOK
-		query, err := extractQueryOrBody(r)
-		defer r.Body.Close() // nolint: errcheck // we don't care about this error code
-		if err != nil {
-			handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in screenshot search request", http.StatusBadRequest, successCode)
-			return
-		}
+	successCode := http.StatusOK
+	query, err := extractQueryOrBody(r)
+	defer r.Body.Close() // nolint: errcheck // we don't care about this error code
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in screenshot search request", http.StatusBadRequest, successCode)
+		return
+	}
 
-		results, err := performScreenshotSearch(query, getQTypeFromName(r.Method), &dbHandler)
-		if results == (ScreenshotResponse{}) {
-			var retCode int
-			if config.API.Return404 {
-				retCode = http.StatusNotFound
-				totalErrors.Add(1)
-			} else {
-				retCode = successCode
-				totalSuccess.Add(1)
-			}
-			handleErrorAndRespond(w, err, results, "Error performing screenshot search: %v", http.StatusInternalServerError, retCode)
+	results, err := performScreenshotSearch(r.Context(), query, getQTypeFromName(r.Method), &dbHandler)
+	if results == (ScreenshotResponse{}) {
+		var retCode int
+		if config.API.Return404 {
+			retCode = http.StatusNotFound
+			totalErrors.Add(1)
 		} else {
-			if err != nil {
-				totalErrors.Add(1)
-			} else {
-				totalSuccess.Add(1)
-			}
-			handleErrorAndRespond(w, err, results, "Error performing screenshot search: %v", http.StatusInternalServerError, successCode)
+			retCode = successCode
+			totalSuccess.Add(1)
 		}
-	case <-time.After(5 * time.Second): // Wait for a connection with timeout
-		healthStatus := HealthCheck{
-			Status: "DB is overloaded, please try again later",
+		handleErrorAndRespond(w, err, results, "Error performing screenshot search: %v", http.StatusInternalServerError, retCode)
+	} else {
+		if err != nil {
+			totalErrors.Add(1)
+		} else {
+			totalSuccess.Add(1)
 		}
-		totalErrors.Add(1)
-		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+		handleErrorAndRespond(w, err, results, "Error performing screenshot search: %v", http.StatusInternalServerError, successCode)
 	}
 }
 
 // netInfoHandler handles the network information requests
 func netInfoHandler(w http.ResponseWriter, r *http.Request) {
-	select {
-	case dbSemaphore <- struct{}{}:
-		defer func() { <-dbSemaphore }()
+	if !acquireDBAdmission(w, true) {
+		return
+	}
+	defer dbAdmission.Release()
 
-		successCode := http.StatusOK
-		query, err := extractQueryOrBody(r)
-		defer r.Body.Close() // nolint: errcheck // we don't care about this error code
-		if err != nil {
-			handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in netinfo search request", http.StatusBadRequest, successCode)
-			return
-		}
+	successCode := http.StatusOK
+	query, err := extractQueryOrBody(r)
+	defer r.Body.Close() // nolint: errcheck // we don't care about this error code
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in netinfo search request", http.StatusBadRequest, successCode)
+		return
+	}
 
-		results, err := performNetInfoSearch(query, getQTypeFromName(r.Method), &dbHandler)
-		if results.isEmpty() {
-			var retCode int
-			if config.API.Return404 {
-				retCode = http.StatusNotFound
-				totalErrors.Add(1)
-			} else {
-				retCode = successCode
-				totalSuccess.Add(1)
-			}
-			handleErrorAndRespond(w, err, results, "Error performing netinfo search: %v", http.StatusNotFound, retCode)
+	results, err := performNetInfoSearch(r.Context(), query, getQTypeFromName(r.Method), &dbHandler)
+	if results.isEmpty() {
+		var retCode int
+		if config.API.Return404 {
+			retCode = http.StatusNotFound
+			totalErrors.Add(1)
 		} else {
-			results.SetHeaderFields(
-				"netinfo#search",
-				jsonResponse,
-				GetQueryTemplate("netinfo", "v1", r.Method),
-				[]QueryRequest{
-					{
-						"search",
-						len(results.Items),
-						query,
-						len(results.Items),
-						results.Queries.Offset,
-						"utf8",
-						"utf8",
-						"off",
-						"0",
-					},
+			retCode = successCode
+			totalSuccess.Add(1)
+		}
+		handleErrorAndRespond(w, err, results, "Error performing netinfo search: %v", http.StatusNotFound, retCode)
+	} else {
+		results.SetHeaderFields(
+			"netinfo#search",
+			jsonResponse,
+			GetQueryTemplate("netinfo", "v1", r.Method),
+			[]QueryRequest{
+				{
+					"search",
+					len(results.Items),
+					query,
+					len(results.Items),
+					results.Queries.Offset,
+					"utf8",
+					"utf8",
+					"off",
+					"0",
 				},
-			)
-			if err != nil {
-				totalErrors.Add(1)
-			} else {
-				totalSuccess.Add(1)
-			}
-			handleErrorAndRespond(w, err, results, "Error performing netinfo search: %v", http.StatusInternalServerError, successCode)
+			},
+		)
+		if err != nil {
+			totalErrors.Add(1)
+		} else {
+			totalSuccess.Add(1)
 		}
-	case <-time.After(5 * time.Second): // Wait for a connection with timeout
-		healthStatus := HealthCheck{
-			Status: "DB is overloaded, please try again later",
-		}
-		totalErrors.Add(1)
-		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+		handleErrorAndRespond(w, err, results, "Error performing netinfo search: %v", http.StatusInternalServerError, successCode)
 	}
 }
 
 // httpInfoHandler handles the http information requests
 func httpInfoHandler(w http.ResponseWriter, r *http.Request) {
-	select {
-	case dbSemaphore <- struct{}{}:
-		defer func() { <-dbSemaphore }()
+	if !acquireDBAdmission(w, true) {
+		return
+	}
+	defer dbAdmission.Release()
 
-		successCode := http.StatusOK
-		query, err := extractQueryOrBody(r)
-		defer r.Body.Close() // nolint: errcheck // we don't care about this error code
-		if err != nil {
-			handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in httpinfo search request", http.StatusBadRequest, successCode)
-			return
-		}
+	successCode := http.StatusOK
+	query, err := extractQueryOrBody(r)
+	defer r.Body.Close() // nolint: errcheck // we don't care about this error code
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in httpinfo search request", http.StatusBadRequest, successCode)
+		return
+	}
 
-		results, err := performHTTPInfoSearch(query, getQTypeFromName(r.Method), &dbHandler)
-		if results.IsEmpty() {
-			var retCode int
-			if config.API.Return404 {
-				retCode = http.StatusNotFound
-				totalErrors.Add(1)
-			} else {
-				retCode = successCode
-				totalSuccess.Add(1)
-			}
-			handleErrorAndRespond(w, err, results, "Error performing httpinfo search: %v", http.StatusNotFound, retCode)
+	results, err := performHTTPInfoSearch(r.Context(), query, getQTypeFromName(r.Method), &dbHandler)
+	if results.IsEmpty() {
+		var retCode int
+		if config.API.Return404 {
+			retCode = http.StatusNotFound
+			totalErrors.Add(1)
 		} else {
-			results.SetHeaderFields(
-				"httpinfo#search",
-				jsonResponse,
-				GetQueryTemplate("httpinfo", "v1", r.Method),
-				[]QueryRequest{
-					{
-						"search",
-						len(results.Items),
-						query,
-						len(results.Items),
-						results.Queries.Offset,
-						"utf8",
-						"utf8",
-						"off",
-						"0",
-					},
+			retCode = successCode
+			totalSuccess.Add(1)
+		}
+		handleErrorAndRespond(w, err, results, "Error performing httpinfo search: %v", http.StatusNotFound, retCode)
+	} else {
+		results.SetHeaderFields(
+			"httpinfo#search",
+			jsonResponse,
+			GetQueryTemplate("httpinfo", "v1", r.Method),
+			[]QueryRequest{
+				{
+					"search",
+					len(results.Items),
+					query,
+					len(results.Items),
+					results.Queries.Offset,
+					"utf8",
+					"utf8",
+					"off",
+					"0",
 				},
-			)
-			if err != nil {
-				totalErrors.Add(1)
-			} else {
-				totalSuccess.Add(1)
-			}
-			handleErrorAndRespond(w, err, results, "Error performing httpinfo search: %v", http.StatusInternalServerError, successCode)
+			},
+		)
+		if err != nil {
+			totalErrors.Add(1)
+		} else {
+			totalSuccess.Add(1)
 		}
-	case <-time.After(5 * time.Second): // Wait for a connection with timeout
-		healthStatus := HealthCheck{
-			Status: "DB is overloaded, please try again later",
-		}
-		totalErrors.Add(1)
-		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+		handleErrorAndRespond(w, err, results, "Error performing httpinfo search: %v", http.StatusInternalServerError, successCode)
 	}
 }
 
 // addSourceHandler handles the addition of new sources
 func addSourceHandler(w http.ResponseWriter, r *http.Request) {
-	select {
-	case dbSemaphore <- struct{}{}:
-		defer func() { <-dbSemaphore }()
-
-		successCode := http.StatusCreated
-		query, err := extractQueryOrBody(r)
-		defer r.Body.Close() // nolint: errcheck // we don't care about this error code
-		if err != nil {
-			handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in addSource request", http.StatusBadRequest, successCode)
-			return
-		}
-
-		results, err := performAddSource(query, getQTypeFromName(r.Method), &dbHandler)
-		if err != nil {
-			totalErrors.Add(1)
-		} else {
-			totalSuccess.Add(1)
-		}
-		errCode := http.StatusInternalServerError
-		if isSourceConfigValidationError(err) {
-			errCode = http.StatusBadRequest
-		}
-		handleErrorAndRespond(w, err, results, "Error performing addSource: %v", errCode, successCode)
-	case <-time.After(5 * time.Second): // Wait for a connection with timeout
-		healthStatus := HealthCheck{
-			Status: "DB is overloaded, please try again later",
-		}
-		totalErrors.Add(1)
-		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+	if !acquireDBAdmission(w, true) {
+		return
 	}
+	defer dbAdmission.Release()
+
+	successCode := http.StatusCreated
+	query, err := extractQueryOrBody(r)
+	defer r.Body.Close() // nolint: errcheck // we don't care about this error code
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in addSource request", http.StatusBadRequest, successCode)
+		return
+	}
+
+	results, err := performAddSourceContext(r.Context(), query, getQTypeFromName(r.Method), &dbHandler)
+	if err != nil {
+		totalErrors.Add(1)
+	} else {
+		totalSuccess.Add(1)
+	}
+	errCode := http.StatusInternalServerError
+	if isSourceConfigValidationError(err) {
+		errCode = http.StatusBadRequest
+	}
+	handleErrorAndRespond(w, err, results, "Error performing addSource: %v", errCode, successCode)
 }
 
 // removeSourceHandler handles the removal of sources
 func removeSourceHandler(w http.ResponseWriter, r *http.Request) {
-	select {
-	case dbSemaphore <- struct{}{}:
-		defer func() { <-dbSemaphore }()
-
-		successCode := http.StatusNoContent
-		query, err := extractQueryOrBody(r)
-		defer r.Body.Close() // nolint: errcheck // we don't care about this error code
-		if err != nil {
-			handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in removeSource request", http.StatusBadRequest, successCode)
-			return
-		}
-
-		results, err := performRemoveSource(query, getQTypeFromName(r.Method), &dbHandler)
-		if err != nil {
-			totalErrors.Add(1)
-		} else {
-			totalSuccess.Add(1)
-		}
-		handleErrorAndRespond(w, err, results, "Error performing removeSource: %v", http.StatusInternalServerError, successCode)
-	case <-time.After(5 * time.Second): // Wait for a connection with timeout
-		healthStatus := HealthCheck{
-			Status: "DB is overloaded, please try again later",
-		}
-		totalErrors.Add(1)
-		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+	if !acquireDBAdmission(w, true) {
+		return
 	}
+	defer dbAdmission.Release()
+
+	successCode := http.StatusNoContent
+	query, err := extractQueryOrBody(r)
+	defer r.Body.Close() // nolint: errcheck // we don't care about this error code
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in removeSource request", http.StatusBadRequest, successCode)
+		return
+	}
+
+	results, err := performRemoveSourceContext(r.Context(), query, getQTypeFromName(r.Method), &dbHandler)
+	if err != nil {
+		totalErrors.Add(1)
+	} else {
+		totalSuccess.Add(1)
+	}
+	handleErrorAndRespond(w, err, results, "Error performing removeSource: %v", http.StatusInternalServerError, successCode)
 }
 
 // updateSourceHandler handles the update of sources
 func updateSourceHandler(w http.ResponseWriter, r *http.Request) {
-	select {
-	case dbSemaphore <- struct{}{}:
-		defer func() { <-dbSemaphore }()
-
-		successCode := http.StatusNoContent
-		query, err := extractQueryOrBody(r)
-		defer r.Body.Close() // nolint: errcheck // we don't care about this error code
-		if err != nil {
-			handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in removeSource request", http.StatusBadRequest, successCode)
-			return
-		}
-
-		results, err := performUpdateSource(query, getQTypeFromName(r.Method), &dbHandler)
-		if err != nil {
-			totalErrors.Add(1)
-		} else {
-			totalSuccess.Add(1)
-		}
-		errCode := http.StatusInternalServerError
-		if isSourceConfigValidationError(err) {
-			errCode = http.StatusBadRequest
-		}
-		handleErrorAndRespond(w, err, results, "Error performing update Source: %v", errCode, successCode)
-	case <-time.After(5 * time.Second): // Wait for a connection with timeout
-		healthStatus := HealthCheck{
-			Status: "DB is overloaded, please try again later",
-		}
-		totalErrors.Add(1)
-		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+	if !acquireDBAdmission(w, true) {
+		return
 	}
+	defer dbAdmission.Release()
+
+	successCode := http.StatusNoContent
+	query, err := extractQueryOrBody(r)
+	defer r.Body.Close() // nolint: errcheck // we don't care about this error code
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in removeSource request", http.StatusBadRequest, successCode)
+		return
+	}
+
+	results, err := performUpdateSourceContext(r.Context(), query, getQTypeFromName(r.Method), &dbHandler)
+	if err != nil {
+		totalErrors.Add(1)
+	} else {
+		totalSuccess.Add(1)
+	}
+	errCode := http.StatusInternalServerError
+	if isSourceConfigValidationError(err) {
+		errCode = http.StatusBadRequest
+	}
+	handleErrorAndRespond(w, err, results, "Error performing update Source: %v", errCode, successCode)
 }
 
 // vacuumSourceHandler handles the vacuum of sources
 func vacuumSourceHandler(w http.ResponseWriter, r *http.Request) {
-	select {
-	case dbSemaphore <- struct{}{}:
-		defer func() { <-dbSemaphore }()
-
-		successCode := http.StatusNoContent
-		query, err := extractQueryOrBody(r)
-		defer r.Body.Close() // nolint: errcheck // we don't care about this error code
-		if err != nil {
-			handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in removeSource request", http.StatusBadRequest, successCode)
-			return
-		}
-
-		results, err := performVacuumSource(query, getQTypeFromName(r.Method), &dbHandler)
-		if err != nil {
-			totalErrors.Add(1)
-		} else {
-			totalSuccess.Add(1)
-		}
-		handleErrorAndRespond(w, err, results, "Error performing removeSource: %v", http.StatusInternalServerError, successCode)
-	case <-time.After(5 * time.Second): // Wait for a connection with timeout
-		healthStatus := HealthCheck{
-			Status: "DB is overloaded, please try again later",
-		}
-		totalErrors.Add(1)
-		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+	if !acquireDBAdmission(w, true) {
+		return
 	}
+	defer dbAdmission.Release()
+
+	successCode := http.StatusNoContent
+	query, err := extractQueryOrBody(r)
+	defer r.Body.Close() // nolint: errcheck // we don't care about this error code
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in removeSource request", http.StatusBadRequest, successCode)
+		return
+	}
+
+	results, err := performVacuumSourceContext(r.Context(), query, getQTypeFromName(r.Method), &dbHandler)
+	if err != nil {
+		totalErrors.Add(1)
+	} else {
+		totalSuccess.Add(1)
+	}
+	handleErrorAndRespond(w, err, results, "Error performing removeSource: %v", http.StatusInternalServerError, successCode)
 }
 
 // singleURLstatusHandler handles the status requests
 func singleURLstatusHandler(w http.ResponseWriter, r *http.Request) {
-	select {
-	case dbSemaphore <- struct{}{}:
-		defer func() { <-dbSemaphore }()
-
-		successCode := http.StatusOK
-		query, err := extractQueryOrBody(r)
-		defer r.Body.Close() // nolint: errcheck // we don't care about this error code
-		if err != nil {
-			handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in status request", http.StatusBadRequest, successCode)
-			return
-		}
-
-		results, err := performGetURLStatus(query, getQTypeFromName(r.Method), &dbHandler)
-		if err != nil {
-			totalErrors.Add(1)
-		} else {
-			totalSuccess.Add(1)
-		}
-		handleErrorAndRespond(w, err, results, "Error performing status: %v", http.StatusInternalServerError, successCode)
-	case <-time.After(5 * time.Second): // Wait for a connection with timeout
-		healthStatus := HealthCheck{
-			Status: "DB is overloaded, please try again later",
-		}
-		totalErrors.Add(1)
-		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+	if !acquireDBAdmission(w, true) {
+		return
 	}
+	defer dbAdmission.Release()
+
+	successCode := http.StatusOK
+	query, err := extractQueryOrBody(r)
+	defer r.Body.Close() // nolint: errcheck // we don't care about this error code
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in status request", http.StatusBadRequest, successCode)
+		return
+	}
+
+	results, err := performGetURLStatusContext(r.Context(), query, getQTypeFromName(r.Method), &dbHandler)
+	if err != nil {
+		totalErrors.Add(1)
+	} else {
+		totalSuccess.Add(1)
+	}
+	handleErrorAndRespond(w, err, results, "Error performing status: %v", http.StatusInternalServerError, successCode)
 }
 
 // filteredURLstatusHandler handles status requests for sources whose URL contains the q filter.
 func filteredURLstatusHandler(w http.ResponseWriter, r *http.Request) {
-	select {
-	case dbSemaphore <- struct{}{}:
-		defer func() { <-dbSemaphore }()
-
-		successCode := http.StatusOK
-		query, err := extractQueryOrBody(r)
-		if err != nil {
-			handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in filtered statuses request", http.StatusBadRequest, successCode)
-			return
-		}
-
-		results, err := performGetFilteredURLStatus(query, getQTypeFromName(r.Method), &dbHandler)
-		if err != nil {
-			totalErrors.Add(1)
-		} else {
-			totalSuccess.Add(1)
-		}
-		handleErrorAndRespond(w, err, results, "Error performing filtered status: %v", http.StatusInternalServerError, successCode)
-	case <-time.After(5 * time.Second): // Wait for a connection with timeout
-		healthStatus := HealthCheck{
-			Status: "DB is overloaded, please try again later",
-		}
-		totalErrors.Add(1)
-		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+	if !acquireDBAdmission(w, true) {
+		return
 	}
+	defer dbAdmission.Release()
+
+	successCode := http.StatusOK
+	query, err := extractQueryOrBody(r)
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Missing parameter 'q' in filtered statuses request", http.StatusBadRequest, successCode)
+		return
+	}
+
+	results, err := performGetFilteredURLStatusContext(r.Context(), query, getQTypeFromName(r.Method), &dbHandler)
+	if err != nil {
+		totalErrors.Add(1)
+	} else {
+		totalSuccess.Add(1)
+	}
+	handleErrorAndRespond(w, err, results, "Error performing filtered status: %v", http.StatusInternalServerError, successCode)
 }
 
 // allURLstatusHandler handles the status requests for all sources
 func allURLstatusHandler(w http.ResponseWriter, r *http.Request) {
-	select {
-	case dbSemaphore <- struct{}{}:
-		defer func() { <-dbSemaphore }()
-
-		successCode := http.StatusOK
-
-		results, err := performGetAllURLStatus(getQTypeFromName(r.Method), &dbHandler)
-		if err != nil {
-			totalErrors.Add(1)
-		} else {
-			totalSuccess.Add(1)
-		}
-		handleErrorAndRespond(w, err, results, "Error performing status: %v", http.StatusInternalServerError, successCode)
-	case <-time.After(5 * time.Second): // Wait for a connection with timeout
-		healthStatus := HealthCheck{
-			Status: "DB is overloaded, please try again later",
-		}
-		totalErrors.Add(1)
-		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+	if !acquireDBAdmission(w, true) {
+		return
 	}
+	defer dbAdmission.Release()
+
+	successCode := http.StatusOK
+
+	results, err := performGetAllURLStatusContext(r.Context(), getQTypeFromName(r.Method), &dbHandler)
+	if err != nil {
+		totalErrors.Add(1)
+	} else {
+		totalSuccess.Add(1)
+	}
+	handleErrorAndRespond(w, err, results, "Error performing status: %v", http.StatusInternalServerError, successCode)
 }
 
 func parseInformationSeedIDFromRequest(r *http.Request) (uint64, error) {
@@ -1845,31 +1792,27 @@ func informationSeedAddHandler(w http.ResponseWriter, r *http.Request) {
 		handleErrorAndRespond(w, fmt.Errorf("method not allowed"), nil, "Method not allowed", http.StatusMethodNotAllowed, http.StatusCreated)
 		return
 	}
-	select {
-	case dbSemaphore <- struct{}{}:
-		defer func() { <-dbSemaphore }()
-
-		query, err := extractQueryOrBody(r)
-		defer r.Body.Close() // nolint:errcheck // best effort close after body extraction
-		if err != nil {
-			totalErrors.Add(1)
-			handleErrorAndRespond(w, err, nil, "Invalid information seed add request", http.StatusBadRequest, http.StatusCreated)
-			return
-		}
-
-		results, err := performAddInformationSeed(query, postQuery, &dbHandler)
-		if err != nil {
-			totalErrors.Add(1)
-			handleErrorAndRespond(w, err, results, "Error adding information seed: %v", informationSeedAddErrorStatus(err), http.StatusCreated)
-			return
-		}
-		totalSuccess.Add(1)
-		handleErrorAndRespond(w, nil, results, "", http.StatusInternalServerError, http.StatusCreated)
-	case <-time.After(5 * time.Second):
-		healthStatus := HealthCheck{Status: "DB is overloaded, please try again later"}
-		totalErrors.Add(1)
-		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+	if !acquireDBAdmission(w, true) {
+		return
 	}
+	defer dbAdmission.Release()
+
+	query, err := extractQueryOrBody(r)
+	defer r.Body.Close() // nolint:errcheck // best effort close after body extraction
+	if err != nil {
+		totalErrors.Add(1)
+		handleErrorAndRespond(w, err, nil, "Invalid information seed add request", apiRequestBodyErrorStatus(err), http.StatusCreated)
+		return
+	}
+
+	results, err := performAddInformationSeedContext(r.Context(), query, postQuery, &dbHandler)
+	if err != nil {
+		totalErrors.Add(1)
+		handleErrorAndRespond(w, err, results, "Error adding information seed: %v", informationSeedAddErrorStatus(err), http.StatusCreated)
+		return
+	}
+	totalSuccess.Add(1)
+	handleErrorAndRespond(w, nil, results, "", http.StatusInternalServerError, http.StatusCreated)
 }
 
 func informationSeedAddErrorStatus(err error) int {
@@ -1894,26 +1837,22 @@ func informationSeedStatusHandler(w http.ResponseWriter, r *http.Request) {
 		handleErrorAndRespond(w, err, nil, "Invalid information seed status request", http.StatusBadRequest, http.StatusOK)
 		return
 	}
-	select {
-	case dbSemaphore <- struct{}{}:
-		defer func() { <-dbSemaphore }()
-		results, err := performGetInformationSeedStatus(id, &dbHandler)
-		if err != nil {
-			totalErrors.Add(1)
-			status := http.StatusInternalServerError
-			if strings.Contains(strings.ToLower(err.Error()), "no information seed found") {
-				status = http.StatusNotFound
-			}
-			handleErrorAndRespond(w, err, results, "Error getting information seed status: %v", status, http.StatusOK)
-			return
-		}
-		totalSuccess.Add(1)
-		handleErrorAndRespond(w, nil, results, "", http.StatusInternalServerError, http.StatusOK)
-	case <-time.After(5 * time.Second):
-		healthStatus := HealthCheck{Status: "DB is overloaded, please try again later"}
-		totalErrors.Add(1)
-		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+	if !acquireDBAdmission(w, true) {
+		return
 	}
+	defer dbAdmission.Release()
+	results, err := performGetInformationSeedStatusContext(r.Context(), id, &dbHandler)
+	if err != nil {
+		totalErrors.Add(1)
+		status := http.StatusInternalServerError
+		if strings.Contains(strings.ToLower(err.Error()), "no information seed found") {
+			status = http.StatusNotFound
+		}
+		handleErrorAndRespond(w, err, results, "Error getting information seed status: %v", status, http.StatusOK)
+		return
+	}
+	totalSuccess.Add(1)
+	handleErrorAndRespond(w, nil, results, "", http.StatusInternalServerError, http.StatusOK)
 }
 
 // informationSeedListHandler handles information seed list requests.
@@ -1923,31 +1862,25 @@ func informationSeedListHandler(w http.ResponseWriter, r *http.Request) {
 		handleErrorAndRespond(w, fmt.Errorf("method not allowed"), nil, "Method not allowed", http.StatusMethodNotAllowed, http.StatusOK)
 		return
 	}
-	select {
-	case dbSemaphore <- struct{}{}:
-		defer func() { <-dbSemaphore }()
-
-		successCode := http.StatusOK
-
-		results, err := performListInformationSeeds(r.URL.Query(), &dbHandler)
-		if err != nil {
-			totalErrors.Add(1)
-			status := http.StatusInternalServerError
-			if strings.Contains(err.Error(), "limit") || strings.Contains(err.Error(), "offset") || strings.Contains(err.Error(), "boolean") || strings.Contains(err.Error(), "integer") {
-				status = http.StatusBadRequest
-			}
-			handleErrorAndRespond(w, err, results, "Error listing information seeds: %v", status, successCode)
-			return
-		}
-		totalSuccess.Add(1)
-		handleErrorAndRespond(w, nil, results, "", http.StatusInternalServerError, successCode)
-	case <-time.After(5 * time.Second): // Wait for a connection with timeout
-		healthStatus := HealthCheck{
-			Status: "DB is overloaded, please try again later",
-		}
-		totalErrors.Add(1)
-		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+	if !acquireDBAdmission(w, true) {
+		return
 	}
+	defer dbAdmission.Release()
+
+	successCode := http.StatusOK
+
+	results, err := performListInformationSeedsContext(r.Context(), r.URL.Query(), &dbHandler)
+	if err != nil {
+		totalErrors.Add(1)
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "limit") || strings.Contains(err.Error(), "offset") || strings.Contains(err.Error(), "boolean") || strings.Contains(err.Error(), "integer") {
+			status = http.StatusBadRequest
+		}
+		handleErrorAndRespond(w, err, results, "Error listing information seeds: %v", status, successCode)
+		return
+	}
+	totalSuccess.Add(1)
+	handleErrorAndRespond(w, nil, results, "", http.StatusInternalServerError, successCode)
 }
 
 func informationSeedSourcesHandler(w http.ResponseWriter, r *http.Request) {
@@ -1961,28 +1894,24 @@ func informationSeedSourcesHandler(w http.ResponseWriter, r *http.Request) {
 		handleErrorAndRespond(w, err, nil, "Invalid information seed sources request", http.StatusBadRequest, http.StatusOK)
 		return
 	}
-	select {
-	case dbSemaphore <- struct{}{}:
-		defer func() { <-dbSemaphore }()
-		results, err := performListInformationSeedSources(id, r.URL.Query(), &dbHandler)
-		if err != nil {
-			totalErrors.Add(1)
-			status := http.StatusInternalServerError
-			if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no information seed found") {
-				status = http.StatusNotFound
-			} else if strings.Contains(err.Error(), "limit") || strings.Contains(err.Error(), "offset") {
-				status = http.StatusBadRequest
-			}
-			handleErrorAndRespond(w, err, results, "Error listing information seed sources: %v", status, http.StatusOK)
-			return
-		}
-		totalSuccess.Add(1)
-		handleErrorAndRespond(w, nil, results, "", http.StatusInternalServerError, http.StatusOK)
-	case <-time.After(5 * time.Second):
-		healthStatus := HealthCheck{Status: "DB is overloaded, please try again later"}
-		totalErrors.Add(1)
-		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+	if !acquireDBAdmission(w, true) {
+		return
 	}
+	defer dbAdmission.Release()
+	results, err := performListInformationSeedSourcesContext(r.Context(), id, r.URL.Query(), &dbHandler)
+	if err != nil {
+		totalErrors.Add(1)
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no information seed found") {
+			status = http.StatusNotFound
+		} else if strings.Contains(err.Error(), "limit") || strings.Contains(err.Error(), "offset") {
+			status = http.StatusBadRequest
+		}
+		handleErrorAndRespond(w, err, results, "Error listing information seed sources: %v", status, http.StatusOK)
+		return
+	}
+	totalSuccess.Add(1)
+	handleErrorAndRespond(w, nil, results, "", http.StatusInternalServerError, http.StatusOK)
 }
 
 func informationSeedCandidateDecisionsHandler(w http.ResponseWriter, r *http.Request) {
@@ -1996,28 +1925,24 @@ func informationSeedCandidateDecisionsHandler(w http.ResponseWriter, r *http.Req
 		handleErrorAndRespond(w, err, nil, "Invalid information seed candidate request", http.StatusBadRequest, http.StatusOK)
 		return
 	}
-	select {
-	case dbSemaphore <- struct{}{}:
-		defer func() { <-dbSemaphore }()
-		results, err := performListInformationSeedCandidateDecisions(id, r.URL.Query(), &dbHandler)
-		if err != nil {
-			totalErrors.Add(1)
-			status := http.StatusInternalServerError
-			if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no information seed found") {
-				status = http.StatusNotFound
-			} else if strings.Contains(err.Error(), "limit") || strings.Contains(err.Error(), "offset") {
-				status = http.StatusBadRequest
-			}
-			handleErrorAndRespond(w, err, results, "Error listing information seed candidate decisions: %v", status, http.StatusOK)
-			return
-		}
-		totalSuccess.Add(1)
-		handleErrorAndRespond(w, nil, results, "", http.StatusInternalServerError, http.StatusOK)
-	case <-time.After(5 * time.Second):
-		healthStatus := HealthCheck{Status: "DB is overloaded, please try again later"}
-		totalErrors.Add(1)
-		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+	if !acquireDBAdmission(w, true) {
+		return
 	}
+	defer dbAdmission.Release()
+	results, err := performListInformationSeedCandidateDecisionsContext(r.Context(), id, r.URL.Query(), &dbHandler)
+	if err != nil {
+		totalErrors.Add(1)
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no information seed found") {
+			status = http.StatusNotFound
+		} else if strings.Contains(err.Error(), "limit") || strings.Contains(err.Error(), "offset") {
+			status = http.StatusBadRequest
+		}
+		handleErrorAndRespond(w, err, results, "Error listing information seed candidate decisions: %v", status, http.StatusOK)
+		return
+	}
+	totalSuccess.Add(1)
+	handleErrorAndRespond(w, nil, results, "", http.StatusInternalServerError, http.StatusOK)
 }
 
 func informationSeedIDFromPath(path string) string {
@@ -2035,7 +1960,7 @@ func informationSeedRetryHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	handleRequestWithDB(w, r, http.StatusOK, func(query string, _ int, db *cdb.Handler) (interface{}, error) {
-		return performRetryInformationSeed(query, db)
+		return performRetryInformationSeedContext(r.Context(), query, db)
 	})
 }
 
@@ -2046,7 +1971,7 @@ func informationSeedDisableHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	handleRequestWithDB(w, r, http.StatusOK, func(query string, _ int, db *cdb.Handler) (interface{}, error) {
-		return performDisableInformationSeed(query, db)
+		return performDisableInformationSeedContext(r.Context(), query, db)
 	})
 }
 
@@ -2057,7 +1982,7 @@ func informationSeedUpdateHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	handleRequestWithDB(w, r, http.StatusOK, func(query string, qType int, db *cdb.Handler) (interface{}, error) {
-		return performUpdateInformationSeed(query, qType, db)
+		return performUpdateInformationSeedContext(r.Context(), query, qType, db)
 	})
 }
 
@@ -2068,7 +1993,7 @@ func informationSeedRemoveHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	handleRequestWithDB(w, r, http.StatusOK, func(query string, qType int, db *cdb.Handler) (interface{}, error) {
-		return performRemoveInformationSeed(query, qType, db)
+		return performRemoveInformationSeedContext(r.Context(), query, qType, db)
 	})
 }
 
@@ -2084,7 +2009,7 @@ func informationSeedRerunHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	handleInformationSeedPathAction(w, r, func(_ string, db *cdb.Handler) (interface{}, error) {
-		return performRerunInformationSeedByID(id, db)
+		return performRerunInformationSeedByIDContext(r.Context(), id, db)
 	})
 }
 
@@ -2100,7 +2025,7 @@ func informationSeedPathDisableHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	handleInformationSeedPathAction(w, r, func(_ string, db *cdb.Handler) (interface{}, error) {
-		return performDisableInformationSeedByID(id, db)
+		return performDisableInformationSeedByIDContext(r.Context(), id, db)
 	})
 }
 
@@ -2116,7 +2041,7 @@ func informationSeedEnableHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	handleInformationSeedPathAction(w, r, func(query string, db *cdb.Handler) (interface{}, error) {
-		return performEnableInformationSeedByID(id, query, db)
+		return performEnableInformationSeedByIDContext(r.Context(), id, query, db)
 	})
 }
 
@@ -2131,28 +2056,24 @@ func informationSeedEventsHandler(w http.ResponseWriter, r *http.Request) {
 		handleErrorAndRespond(w, err, nil, "Invalid information seed events request", http.StatusBadRequest, http.StatusOK)
 		return
 	}
-	select {
-	case dbSemaphore <- struct{}{}:
-		defer func() { <-dbSemaphore }()
-		results, err := performListInformationSeedEvents(id, r.URL.Query(), &dbHandler)
-		if err != nil {
-			totalErrors.Add(1)
-			status := http.StatusInternalServerError
-			if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no information seed found") {
-				status = http.StatusNotFound
-			} else if strings.Contains(err.Error(), "limit") || strings.Contains(err.Error(), "offset") {
-				status = http.StatusBadRequest
-			}
-			handleErrorAndRespond(w, err, results, "Error listing information seed events: %v", status, http.StatusOK)
-			return
-		}
-		totalSuccess.Add(1)
-		handleErrorAndRespond(w, nil, results, "", http.StatusInternalServerError, http.StatusOK)
-	case <-time.After(5 * time.Second):
-		healthStatus := HealthCheck{Status: "DB is overloaded, please try again later"}
-		totalErrors.Add(1)
-		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+	if !acquireDBAdmission(w, true) {
+		return
 	}
+	defer dbAdmission.Release()
+	results, err := performListInformationSeedEventsContext(r.Context(), id, r.URL.Query(), &dbHandler)
+	if err != nil {
+		totalErrors.Add(1)
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no information seed found") {
+			status = http.StatusNotFound
+		} else if strings.Contains(err.Error(), "limit") || strings.Contains(err.Error(), "offset") {
+			status = http.StatusBadRequest
+		}
+		handleErrorAndRespond(w, err, results, "Error listing information seed events: %v", status, http.StatusOK)
+		return
+	}
+	totalSuccess.Add(1)
+	handleErrorAndRespond(w, nil, results, "", http.StatusInternalServerError, http.StatusOK)
 }
 
 func informationSeedDiagnosticsHandler(w http.ResponseWriter, r *http.Request) {
@@ -2166,93 +2087,85 @@ func informationSeedDiagnosticsHandler(w http.ResponseWriter, r *http.Request) {
 		handleErrorAndRespond(w, err, nil, "Invalid information seed diagnostics request", http.StatusBadRequest, http.StatusOK)
 		return
 	}
-	select {
-	case dbSemaphore <- struct{}{}:
-		defer func() { <-dbSemaphore }()
-		results, err := performGetInformationSeedDiagnostics(id, &dbHandler)
-		if err != nil {
-			totalErrors.Add(1)
-			status := http.StatusInternalServerError
-			if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no information seed found") {
-				status = http.StatusNotFound
-			}
-			handleErrorAndRespond(w, err, results, "Error getting information seed diagnostics: %v", status, http.StatusOK)
-			return
-		}
-		totalSuccess.Add(1)
-		handleErrorAndRespond(w, nil, results, "", http.StatusInternalServerError, http.StatusOK)
-	case <-time.After(5 * time.Second):
-		healthStatus := HealthCheck{Status: "DB is overloaded, please try again later"}
-		totalErrors.Add(1)
-		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+	if !acquireDBAdmission(w, true) {
+		return
 	}
+	defer dbAdmission.Release()
+	results, err := performGetInformationSeedDiagnosticsContext(r.Context(), id, &dbHandler)
+	if err != nil {
+		totalErrors.Add(1)
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no information seed found") {
+			status = http.StatusNotFound
+		}
+		handleErrorAndRespond(w, err, results, "Error getting information seed diagnostics: %v", status, http.StatusOK)
+		return
+	}
+	totalSuccess.Add(1)
+	handleErrorAndRespond(w, nil, results, "", http.StatusInternalServerError, http.StatusOK)
 }
 
 func handleInformationSeedPathAction(w http.ResponseWriter, r *http.Request, action func(string, *cdb.Handler) (interface{}, error)) {
-	select {
-	case dbSemaphore <- struct{}{}:
-		defer func() { <-dbSemaphore }()
-		bodyBytes, err := io.ReadAll(r.Body)
-		defer r.Body.Close() // nolint:errcheck // best effort close after body extraction
-		if err != nil {
-			handleErrorAndRespond(w, err, nil, "Invalid information seed request", http.StatusBadRequest, http.StatusOK)
-			return
-		}
-		results, err := action(string(bodyBytes), &dbHandler)
-		if err != nil {
-			totalErrors.Add(1)
-			status := http.StatusInternalServerError
-			message := strings.ToLower(err.Error())
-			if strings.Contains(message, "no information seed found") {
-				status = http.StatusNotFound
-			} else if strings.Contains(message, "invalid json") || strings.Contains(message, "cannot be rerun") {
-				status = http.StatusBadRequest
-			}
-			handleErrorAndRespond(w, err, results, "Error updating information seed: %v", status, http.StatusOK)
-			return
-		}
-		totalSuccess.Add(1)
-		handleErrorAndRespond(w, nil, results, "", http.StatusInternalServerError, http.StatusOK)
-	case <-time.After(5 * time.Second):
-		healthStatus := HealthCheck{Status: "DB is overloaded, please try again later"}
-		totalErrors.Add(1)
-		handleErrorAndRespond(w, nil, healthStatus, "", http.StatusTooManyRequests, http.StatusTooManyRequests)
+	if !acquireDBAdmission(w, true) {
+		return
 	}
+	defer dbAdmission.Release()
+	bodyBytes, err := readAPIRequestBody(r)
+	defer r.Body.Close() // nolint:errcheck // best effort close after body extraction
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Invalid information seed request", apiRequestBodyErrorStatus(err), http.StatusOK)
+		return
+	}
+	results, err := action(string(bodyBytes), &dbHandler)
+	if err != nil {
+		totalErrors.Add(1)
+		status := http.StatusInternalServerError
+		message := strings.ToLower(err.Error())
+		if strings.Contains(message, "no information seed found") {
+			status = http.StatusNotFound
+		} else if strings.Contains(message, "invalid json") || strings.Contains(message, "cannot be rerun") {
+			status = http.StatusBadRequest
+		}
+		handleErrorAndRespond(w, err, results, "Error updating information seed: %v", status, http.StatusOK)
+		return
+	}
+	totalSuccess.Add(1)
+	handleErrorAndRespond(w, nil, results, "", http.StatusInternalServerError, http.StatusOK)
 }
 
 func addOwnerHandler(w http.ResponseWriter, r *http.Request) {
 	handleRequestWithDB(w, r, http.StatusCreated, func(query string, qType int, db *cdb.Handler) (interface{}, error) {
-		return performAddOwner(query, qType, db)
+		return performAddOwnerContext(r.Context(), query, qType, db)
 	})
 }
 
 func updateOwnerHandler(w http.ResponseWriter, r *http.Request) {
 	handleRequestWithDB(w, r, http.StatusNoContent, func(query string, qType int, db *cdb.Handler) (interface{}, error) {
-		return performUpdateOwner(query, qType, db)
+		return performUpdateOwnerContext(r.Context(), query, qType, db)
 	})
 }
 
 func removeOwnerHandler(w http.ResponseWriter, r *http.Request) {
 	handleRequestWithDB(w, r, http.StatusNoContent, func(query string, qType int, db *cdb.Handler) (interface{}, error) {
-		return performRemoveOwner(query, qType, db)
+		return performRemoveOwnerContext(r.Context(), query, qType, db)
 	})
 }
 
 func addCategoryHandler(w http.ResponseWriter, r *http.Request) {
 	handleRequestWithDB(w, r, http.StatusCreated, func(query string, qType int, db *cdb.Handler) (interface{}, error) {
-		return performAddCategory(query, qType, db)
+		return performAddCategoryContext(r.Context(), query, qType, db)
 	})
 }
 
 func updateCategoryHandler(w http.ResponseWriter, r *http.Request) {
 	handleRequestWithDB(w, r, http.StatusNoContent, func(query string, qType int, db *cdb.Handler) (interface{}, error) {
-		return performUpdateCategory(query, qType, db)
+		return performUpdateCategoryContext(r.Context(), query, qType, db)
 	})
 }
 
 func removeCategoryHandler(w http.ResponseWriter, r *http.Request) {
 	handleRequestWithDB(w, r, http.StatusNoContent, func(query string, qType int, db *cdb.Handler) (interface{}, error) {
-		return performRemoveCategory(query, qType, db)
+		return performRemoveCategoryContext(r.Context(), query, qType, db)
 	})
 }
 

@@ -107,6 +107,7 @@ type InformationSeedLinkedSourceListResponse struct {
 type InformationSeedLinkedSourceRow struct {
 	SourceID                   uint64                        `json:"source_id"`
 	Priority                   string                        `json:"priority"`
+	SubPriority                int                           `json:"sub_priority"`
 	CategoryID                 uint64                        `json:"category_id"`
 	Name                       string                        `json:"name"`
 	UsrID                      uint64                        `json:"usr_id"`
@@ -244,6 +245,7 @@ type InformationSeedRunConfigRequest struct {
 	MaxCandidatesPerDomain     int              `json:"max_candidates_per_domain,omitempty"`
 	SourceNameTemplate         string           `json:"source_name_template,omitempty"`
 	SourcePriority             string           `json:"source_priority,omitempty"`
+	SourceSubPriority          int              `json:"source_sub_priority,omitempty"`
 	CreateSources              bool             `json:"create_sources,omitempty"`
 	LinkExistingSources        bool             `json:"link_existing_sources,omitempty"`
 	UpdateExistingSourceConfig bool             `json:"update_existing_source_config,omitempty"`
@@ -298,6 +300,7 @@ type StatusResponseRow struct {
 	URL           sql.NullString       `json:"url"`
 	Status        sql.NullString       `json:"status"`
 	Priority      sql.NullString       `json:"priority"`
+	SubPriority   int                  `json:"sub_priority"`
 	Engine        sql.NullString       `json:"engine"`
 	CreatedAt     sql.NullString       `json:"created_at"`
 	LastUpdatedAt sql.NullString       `json:"last_updated_at"`
@@ -352,26 +355,29 @@ func (response SourceConfigResponse) MarshalJSON() ([]byte, error) {
 // Config is a pointer so an omitted configuration continues to preserve the
 // stored value, while an explicitly supplied email configuration can be saved.
 type updateSourceRequest struct {
-	SourceID   int64                `json:"source_id,omitempty"`
-	URL        string               `json:"url,omitempty"`
-	Status     string               `json:"status,omitempty"`
-	Restricted int                  `json:"restricted,omitempty"`
-	Disabled   bool                 `json:"disabled,omitempty"`
-	Flags      int                  `json:"flags,omitempty"`
-	Config     *SourceConfigRequest `json:"config,omitempty"`
-	Details    json.RawMessage      `json:"details,omitempty"`
+	SourceID    int64                `json:"source_id,omitempty"`
+	URL         string               `json:"url,omitempty"`
+	SubPriority *int                 `json:"sub_priority,omitempty"`
+	Status      string               `json:"status,omitempty"`
+	Restricted  int                  `json:"restricted,omitempty"`
+	Disabled    bool                 `json:"disabled,omitempty"`
+	Flags       int                  `json:"flags,omitempty"`
+	Config      *SourceConfigRequest `json:"config,omitempty"`
+	Details     json.RawMessage      `json:"details,omitempty"`
 }
 
 // addSourceRequest represents the structure of the add source request
 type addSourceRequest struct {
-	URL        string              `json:"url"`
-	CategoryID uint64              `json:"category_id,omitempty"`
-	UsrID      uint64              `json:"usr_id,omitempty"`
-	Status     string              `json:"status,omitempty"`
-	Restricted int                 `json:"restricted,omitempty"`
-	Disabled   bool                `json:"disabled,omitempty"`
-	Flags      int                 `json:"flags,omitempty"`
-	Config     SourceConfigRequest `json:"config,omitempty"`
+	URL         string              `json:"url"`
+	Priority    string              `json:"priority,omitempty"`
+	SubPriority int                 `json:"sub_priority,omitempty"`
+	CategoryID  uint64              `json:"category_id,omitempty"`
+	UsrID       uint64              `json:"usr_id,omitempty"`
+	Status      string              `json:"status,omitempty"`
+	Restricted  int                 `json:"restricted,omitempty"`
+	Disabled    bool                `json:"disabled,omitempty"`
+	Flags       int                 `json:"flags,omitempty"`
+	Config      SourceConfigRequest `json:"config,omitempty"`
 }
 
 // SearchResult represents the structure of the search result

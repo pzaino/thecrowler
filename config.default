@@ -35,7 +35,7 @@ database:
   sslmode: disable
   # Optimize for workload pattern: write | query | none | "" – pick for workload pattern
   optimize_for: write
-  # Max open connections (≥25)
+  # Max open connections (≥25) (to use max_conns and max_idle_conns, set `optimize_for` to "none")
   max_conns: 50
   # Idle pool size (≥25; ~25–30% of max_conns is typical)
   max_idle_conns: 30
@@ -99,7 +99,7 @@ crawler:
   max_links: 0
   # Limit number of sources processed per cycle
   max_sources: 0
-  # Warm-up delay in seconds before crawling starts
+  # Warm-up delay in seconds before full-on crawling starts (0 = no warm-up, warm-up makes the star gentle, this can help certain proxy providers avoid early blocks)
   initial_ramp_up: 0
   # Limit links per page
   #max_links: 0
@@ -330,6 +330,8 @@ api:
   port: 8080
   # Request timeout (seconds)
   timeout: 30
+  # Maximum accepted request body size in bytes (0 disables API-layer enforcement)
+  max_request_body_size: 0
   # Disable default API endpoints
   disable_default: false
   # Enable API docs endpoint

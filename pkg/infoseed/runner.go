@@ -69,6 +69,7 @@ type SeedRunConfig struct {
 	MaxCandidatesPerDomain     int             `json:"max_candidates_per_domain" yaml:"max_candidates_per_domain"`
 	SourceNameTemplate         string          `json:"source_name_template" yaml:"source_name_template"`
 	SourcePriority             string          `json:"source_priority" yaml:"source_priority"`
+	SourceSubPriority          int             `json:"source_sub_priority" yaml:"source_sub_priority"`
 	CreateSources              bool            `json:"create_sources" yaml:"create_sources"`
 	LinkExistingSources        bool            `json:"link_existing_sources" yaml:"link_existing_sources"`
 	UpdateExistingSourceConfig bool            `json:"update_existing_source_config" yaml:"update_existing_source_config"`
@@ -1116,6 +1117,7 @@ func (r *Runner) persistCandidates(ctx context.Context, seed cdb.InformationSeed
 			name = rendered
 		}
 		priority := runCfg.SourcePriority
+		subPriority := runCfg.SourceSubPriority
 		restricted := runCfg.Restricted
 		flags := runCfg.Flags
 		sourceConfig := defaultSourceConfig
@@ -1128,6 +1130,9 @@ func (r *Runner) persistCandidates(ctx context.Context, seed cdb.InformationSeed
 		if candidate.SourceOverrides.Restricted != nil {
 			restricted = *candidate.SourceOverrides.Restricted
 		}
+		if candidate.SourceOverrides.SubPriority != nil {
+			subPriority = *candidate.SourceOverrides.SubPriority
+		}
 		if candidate.SourceOverrides.Flags != nil {
 			flags = *candidate.SourceOverrides.Flags
 		}
@@ -1136,7 +1141,7 @@ func (r *Runner) persistCandidates(ctx context.Context, seed cdb.InformationSeed
 				return linked, err
 			}
 		}
-		upsertResult, err := cdb.UpsertSourceWithPolicy(r.DB, &cdb.Source{URL: candidate.URL, Name: name, Priority: priority, CategoryID: seed.CategoryID, UsrID: seed.UsrID, Restricted: restricted, Flags: flags}, sourceConfig, cdb.SourceUpsertPolicy{
+		upsertResult, err := cdb.UpsertSourceWithPolicy(r.DB, &cdb.Source{URL: candidate.URL, Name: name, Priority: priority, SubPriority: subPriority, CategoryID: seed.CategoryID, UsrID: seed.UsrID, Restricted: restricted, Flags: flags}, sourceConfig, cdb.SourceUpsertPolicy{
 			CreateSources:              runCfg.CreateSources,
 			LinkExistingSources:        runCfg.LinkExistingSources,
 			UpdateExistingSourceConfig: runCfg.UpdateExistingSourceConfig,
@@ -1235,6 +1240,7 @@ type CandidatePluginMeta struct {
 type SourceDefaults struct {
 	Name         string          `json:"name"`
 	Priority     string          `json:"priority"`
+	SubPriority  int             `json:"sub_priority"`
 	CategoryID   uint64          `json:"category_id"`
 	UsrID        uint64          `json:"usr_id"`
 	Restricted   uint            `json:"restricted"`

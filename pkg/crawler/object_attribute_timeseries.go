@@ -67,8 +67,15 @@ func (r crawlerObjectAttributeScopeResolver) ResolveScopes(input tse.ObjectAttri
 	return scopes, rows.Err()
 }
 
-func loadObjectAttributeSiblings(tx *sql.Tx, objectID uint64, objectType string) (map[string]interface{}, error) {
-	rows, err := tx.Query(`SELECT attribute_key, normalized_value FROM ObjectAttributes WHERE object_type = $1 AND object_id = $2 ORDER BY created_at, attribute_id`, objectType, objectID)
+func loadObjectAttributeSiblings(tx *sql.Tx, objectID uint64, objectType, contextRef string) (map[string]interface{}, error) {
+	query := `SELECT attribute_key, normalized_value FROM ObjectAttributes WHERE object_type = $1 AND object_id = $2`
+	args := []interface{}{objectType, objectID}
+	if contextRef != "" {
+		query += ` AND context_ref = $3`
+		args = append(args, contextRef)
+	}
+	query += ` ORDER BY created_at, attribute_id`
+	rows, err := tx.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("load sibling object attributes: %w", err)
 	}
