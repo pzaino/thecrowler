@@ -300,6 +300,10 @@ func (ctx *ProcessContext) LoadSourceConfiguration() error {
 		}
 	}
 
+	if err := ctx.loadRuleParameters(); err != nil {
+		return err
+	}
+
 	cmn.DebugMsg(cmn.DbgLvlDebug3,
 		"[DEBUG-ProcessContext] Loaded %d include and %d exclude URL patterns",
 		len(ctx.userURLPatterns), len(ctx.userURLBlockPatterns))
