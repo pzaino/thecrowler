@@ -771,10 +771,15 @@ func execVDIPlugin(p *JSPlugin, timeout int, params map[string]interface{}, wd *
 		errMsg01 = "[DEBUG-VDI-Plugin] Error getting result from JS plugin: %v"
 	)
 
-	// Transform params to []interface{}
-	paramsArr := make([]interface{}, 0)
-	for _, v := range params {
-		paramsArr = append(paramsArr, v)
+	// VDI contract requires []interface{}
+	// so to pass parameters in a meaningful way we need to wrap the map in a slice of interface{}
+	// so it becomes []interface{}{map[string]interface{}{"param1": "value1", "param2": "value2"}}
+	// and have the plugin being able to reference parameters as:
+	// var params = arguments[0]; var param1 = params.param1; var param2 = params.param2;
+	var paramsArr []interface{}
+
+	if params != nil {
+		paramsArr = []interface{}{params}
 	}
 
 	// Setup a timeout for the script

@@ -319,13 +319,13 @@ func executeCCPluginActionRule(ctx *ProcessContext, r *rules.ActionRule, data *[
 			params := make(map[string]interface{})
 
 			// Safely extract and add "parameters" from Details map
-			if r.Details != nil {
-				if r.Details["parameters"] != nil {
-					parametersRaw := r.Details["parameters"] // Extract parameters from Details
+			if selector.Details != nil {
+				if selector.Details["parameters"] != nil {
+					parametersRaw := selector.Details["parameters"] // Extract parameters from Details
 					// transform parametersRaw to a map[string]interface{}
 					parametersMap := cmn.ConvertInfToMap(parametersRaw)
 					if parametersMap != nil {
-						cmn.DebugMsg(cmn.DbgLvlDebug3, "Processing custom JS with parameters: %v", r.Details["parameters"])
+						cmn.DebugMsg(cmn.DbgLvlDebug3, "Processing custom JS with parameters: %v", selector.Details["parameters"])
 						for k, v := range parametersMap {
 							// Check if v is a string first:
 							if str, ok := v.(string); ok {
