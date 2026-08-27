@@ -235,7 +235,6 @@ type ActionRule struct {
 	ActionType     string                 `json:"action_type" yaml:"action_type"`
 	Selectors      []Selector             `json:"selectors" yaml:"selectors"`
 	Value          string                 `json:"value,omitempty" yaml:"value,omitempty"`
-	Details        map[string]interface{} `json:"details,omitempty" yaml:"details,omitempty"`
 	URL            string                 `json:"url,omitempty" yaml:"url,omitempty"`
 	WaitConditions []WaitCondition        `json:"wait_conditions" yaml:"wait_conditions"`
 	Conditions     map[string]interface{} `json:"conditions" yaml:"conditions"`
@@ -253,10 +252,11 @@ type Element struct {
 
 // Selector represents a single selector
 type Selector struct {
-	SelectorType string              `json:"selector_type" yaml:"selector_type"`
-	Selector     string              `json:"selector" yaml:"selector"`
-	AgentCall    *AgentCall          `json:"agent_call,omitempty" yaml:"agent_call,omitempty"`
-	SelectorAttr []SelectorAttribute `json:"selector_attributes,omitempty" yaml:"selector_attributes,omitempty"`
+	SelectorType string                 `json:"selector_type" yaml:"selector_type"`
+	Selector     string                 `json:"selector" yaml:"selector"`
+	Details      map[string]interface{} `json:"details,omitempty" yaml:"details,omitempty"`
+	AgentCall    *AgentCall             `json:"agent_call,omitempty" yaml:"agent_call,omitempty"`
+	SelectorAttr []SelectorAttribute    `json:"selector_attributes,omitempty" yaml:"selector_attributes,omitempty"`
 	Attribute    struct {
 		Name  string `json:"name" yaml:"name"`
 		Value string `json:"value" yaml:"value"`

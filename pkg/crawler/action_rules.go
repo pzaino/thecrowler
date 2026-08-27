@@ -160,14 +160,21 @@ func (l *crawlerActionLookup) PluginScript(_ context.Context, name string) (stri
 	return plugin.String(), true, nil
 }
 
-func (l *crawlerActionLookup) CallPlugin(_ context.Context, name string, value string) error {
+func (l *crawlerActionLookup) CallPlugin(_ context.Context,
+	name string,
+	value string,
+	params map[string]interface{},
+) error {
 	if l == nil || l.ctx == nil {
 		return fmt.Errorf("crawler action runtime is unavailable")
+	}
+	if value != "" {
+		params["value"] = value
 	}
 	res := executeRuleCall(l.ctx, l.wd, RuleCallRequest{
 		Kind:       RuleCallKindPlugin,
 		PluginName: name,
-		Params:     map[string]interface{}{"value": value},
+		Params:     params,
 		TimeoutSec: 30,
 		OnError:    "fail",
 		Caller:     "action.execute_javascript",

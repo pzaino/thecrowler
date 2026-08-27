@@ -939,6 +939,7 @@ type SourceConfig struct {
 	SourceName     string                 `json:"source_name" yaml:"source_name" validate:"required"`
 	CrawlingConfig CrawlingConfig         `json:"crawling_config" yaml:"crawling_config" validate:"required"`
 	ExecutionPlan  []ExecutionPlanItem    `json:"execution_plan,omitempty" yaml:"execution_plan,omitempty"`
+	RuleParameters RuleParameters         `json:"rule_parameters,omitempty" yaml:"rule_parameters,omitempty"`
 	Custom         map[string]interface{} `json:"custom,omitempty" yaml:"custom,omitempty"` // Flexible custom configuration
 	Email          *EmailSourceConfig     `json:"email,omitempty" yaml:"email,omitempty"`
 	MetaData       map[string]interface{} `json:"meta_data,omitempty" yaml:"meta_data,omitempty"`
@@ -961,6 +962,14 @@ type CrawlingConfig struct {
 // IsEmpty returns true if the CrawlingConfig is empty
 func (c CrawlingConfig) IsEmpty() bool {
 	return c.Site == "" && c.URLReferrer == "" && len(c.AlternativeLinks) == 0 && c.RetriesOnRedirect == 0 && len(c.UnwantedURLs) == 0 && c.SourceType == ""
+}
+
+// RuleParameters contains Source-scoped parameters available to CROWler rules.
+type RuleParameters struct {
+	Action    map[string]interface{} `json:"action,omitempty" yaml:"action,omitempty"`
+	Scraping  map[string]interface{} `json:"scraping,omitempty" yaml:"scraping,omitempty"`
+	Detection map[string]interface{} `json:"detection,omitempty" yaml:"detection,omitempty"`
+	Crawling  map[string]interface{} `json:"crawling,omitempty" yaml:"crawling,omitempty"`
 }
 
 // ExecutionPlanItem represents the execution plan item for a source

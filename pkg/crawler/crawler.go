@@ -216,6 +216,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 			cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling source configuration: %v", err)
 		}
 		processCtx.srcCfg = sourceConfig
+		_ = processCtx.loadRuleParameters()
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-CrawlWebsite] Source configuration extracted: %v", processCtx.srcCfg)
 		crawlingConfig := make(map[string]any)
 		crawlingConfig, _ = processCtx.srcCfg["crawling_config"].(map[string]interface{})

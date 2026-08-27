@@ -169,7 +169,7 @@ func (informationSeedActionLookup) PluginScript(context.Context, string) (string
 	return "", false, nil
 }
 
-func (informationSeedActionLookup) CallPlugin(context.Context, string, string) error {
+func (informationSeedActionLookup) CallPlugin(context.Context, string, string, map[string]interface{}) error {
 	return errors.New("information seed browser action plugins are unavailable")
 }
 

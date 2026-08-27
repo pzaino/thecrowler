@@ -449,15 +449,30 @@ func dispatchMouseEvent(driver vdi.WebDriver, element vdi.WebElement, eventName 
 
 func custom(ctx context.Context, runtime *Runtime, rule *rules.ActionRule) error {
 	for _, selector := range rule.Selectors {
-		if strings.EqualFold(strings.TrimSpace(selector.SelectorType), "plugin_call") {
-			if runtime.Rules == nil {
-				return errors.New("browser actions: rule lookup is nil")
-			}
-			if err := runtime.Rules.CallPlugin(ctx, selector.Selector, rule.Value); err != nil {
-				return err
+		if !strings.EqualFold(strings.TrimSpace(selector.SelectorType), "plugin_call") {
+			continue
+		}
+
+		if runtime.Rules == nil {
+			return errors.New("browser actions: rule lookup is nil")
+		}
+
+		params := make(map[string]interface{})
+
+		if selector.Details != nil {
+			if raw, exists := selector.Details["parameters"]; exists {
+				params = cmn.ConvertInfToMap(raw)
+				if params == nil {
+					return errors.New("browser actions: plugin parameters must be an object")
+				}
 			}
 		}
+
+		if err := runtime.Rules.CallPlugin(ctx, selector.Selector, rule.Value, params); err != nil {
+			return err
+		}
 	}
+
 	return nil
 }
 

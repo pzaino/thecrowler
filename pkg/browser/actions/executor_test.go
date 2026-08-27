@@ -54,7 +54,9 @@ func (testLookup) PluginScript(context.Context, string) (string, bool, error) {
 	return "", false, nil
 }
 
-func (testLookup) CallPlugin(context.Context, string, string) error { return nil }
+func (testLookup) CallPlugin(context.Context, string, string, map[string]interface{}) error {
+	return nil
+}
 
 func TestWaitForConditionObservesCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())

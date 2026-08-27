@@ -10,6 +10,7 @@ type SourceConfig struct {
 	SourceName     string                `json:"source_name" required:"true"`
 	CrawlingConfig SourceCrawlingConfig  `json:"crawling_config" required:"true"`
 	ExecutionPlan  []SourceExecutionStep `json:"execution_plan,omitempty"`
+	RuleParameters SourceRuleParameters  `json:"rule_parameters,omitempty"`
 	Custom         map[string]any        `json:"custom,omitempty"`
 	MetaData       map[string]any        `json:"meta_data,omitempty"`
 }
@@ -28,6 +29,13 @@ type SourceCrawlingConfig struct {
 
 // SourceConfigType defines the type of the source, which can influence crawling and processing behavior.
 type SourceConfigType string
+
+type SourceRuleParameters struct {
+	Action    map[string]any `json:"action,omitempty"`
+	Scraping  map[string]any `json:"scraping,omitempty"`
+	Detection map[string]any `json:"detection,omitempty"`
+	Crawling  map[string]any `json:"crawling,omitempty"`
+}
 
 const (
 	// SourceConfigTypeWebsite represents the string "website"

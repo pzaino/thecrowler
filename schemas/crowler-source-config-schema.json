@@ -413,6 +413,30 @@
         ]
       }
     },
+    "rule_parameters": {
+      "title": "CROWler Source Rule Parameters",
+      "description": "Source-scoped parameters made available to rules while processing this Source.",
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "scraping": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "detection": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "crawling": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
     "custom": {
       "title": "CROWler Source Custom Configuration",
       "description": "This is the custom configuration for the source. You can use this to add custom configurations for the source.",

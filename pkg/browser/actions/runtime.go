@@ -51,7 +51,7 @@ type CookieSink interface {
 type RuleLookup interface {
 	FindElement(context.Context, rules.Selector) (vdi.WebElement, error)
 	PluginScript(context.Context, string) (string, bool, error)
-	CallPlugin(context.Context, string, string) error
+	CallPlugin(context.Context, string, string, map[string]interface{}) error
 }
 
 // Runtime is the narrow set of dependencies required to execute action rules.
