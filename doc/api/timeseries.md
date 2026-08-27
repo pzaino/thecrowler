@@ -8,7 +8,9 @@ All endpoints use the API service's existing CIDR filtering, CORS/security/keep-
 
 ### `GET /v1/timeseries/capabilities`
 
-Returns a stable, machine-readable description of the query enums, scope filters, and effective API limits supported by the running service. It is intended for API clients and UI capability discovery, requires no query parameters, and does not access the database. The response is deliberately selector-free and configuration-safe: it exposes only collection and aggregation enabled state, never metric selectors, privacy or retention policy, storage details, or credentials. Metric-specific public metadata remains available from `/v1/timeseries/metrics`.
+Returns a stable, machine-readable description of the query enums, scope filters, and effective API limits supported by the running service. The `filters` list is the authoritative machine-readable public scope-filter surface accepted by Time Series queries. It is intended for API clients and UI capability discovery, requires no query parameters, and does not access the database. The response is deliberately selector-free and configuration-safe: it exposes only collection and aggregation enabled state, never metric selectors, privacy or retention policy, storage details, or credentials. Metric-specific public metadata remains available from `/v1/timeseries/metrics`.
+
+`limits.dimension_max_filters` reports the maximum number of dimension filters accepted by one query. A value of `0` means that no positive `timeseries.cardinality.max_dimensions` limit is currently enforced.
 
 ### `GET /v1/timeseries/metrics`
 

@@ -829,6 +829,7 @@ type TimeSeriesCapabilityLimits struct {
 	RawMaxDays                 int `json:"raw_max_days"`
 	ObservationMaxLimit        int `json:"observation_max_limit"`
 	DrilldownMaxLimit          int `json:"drilldown_max_limit"`
+	DimensionMaxFilters        int `json:"dimension_max_filters"`
 	DimensionMaxValues         int `json:"dimension_max_values"`
 	DimensionAbsoluteMaxValues int `json:"dimension_absolute_max_values"`
 	DimensionComparisonMaxRows int `json:"dimension_comparison_max_rows"`
