@@ -180,17 +180,51 @@ func executeRuleCall(ctx *ProcessContext, wd *vdi.WebDriver, req RuleCallRequest
 	return result
 }
 
-func interpolateRuleCallParam(ctx *ProcessContext, wd *vdi.WebDriver, s string) interface{} {
-	t := strings.TrimSpace(strings.ToLower(s))
-	switch t {
+func interpolateRuleCallParam(
+	ctx *ProcessContext,
+	wd *vdi.WebDriver,
+	s string,
+) interface{} {
+	value := strings.TrimSpace(s)
+	lower := strings.ToLower(value)
+
+	switch lower {
 	case "%current_url%":
-		u, _ := (*wd).CurrentURL()
-		return u
+		if wd != nil {
+			u, _ := (*wd).CurrentURL()
+			return u
+		}
+
 	case "%source_url%":
 		if ctx != nil && ctx.source != nil {
 			return ctx.source.URL
 		}
 	}
+
+	// Resolve CROWler rule parameter/environment references.
+	if strings.HasPrefix(value, "{{") &&
+		strings.HasSuffix(value, "}}") {
+
+		key := strings.TrimSpace(
+			strings.TrimSuffix(
+				strings.TrimPrefix(value, "{{"),
+				"}}",
+			),
+		)
+
+		if key == "" || ctx == nil {
+			return s
+		}
+
+		resolved, _, err := cmn.KVStore.Get(
+			key,
+			ctx.GetContextID(),
+		)
+		if err == nil {
+			return resolved
+		}
+	}
+
 	return s
 }
 
