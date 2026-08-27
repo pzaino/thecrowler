@@ -351,6 +351,7 @@ engines.
 The versioned time-series API reads materialized aggregate buckets by default. It never silently falls back to raw observations.
 
 * `GET /v1/timeseries/metrics` lists public metric definitions.
+* `GET /v1/timeseries/capabilities` describes selector-free query capabilities and effective public limits for clients and the Web UI.
 * `GET /v1/timeseries` returns aggregate chart buckets.
 * `GET /v1/timeseries/observations` returns explicitly requested, bounded raw observations.
 * `GET /v1/timeseries/drilldown` resolves an aggregate hash (preferred) or a complete aggregate scope to matching observations.

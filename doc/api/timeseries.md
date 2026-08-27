@@ -6,6 +6,10 @@ All endpoints use the API service's existing CIDR filtering, CORS/security/keep-
 
 ## Endpoints
 
+### `GET /v1/timeseries/capabilities`
+
+Returns a stable, machine-readable description of the query enums, scope filters, and effective API limits supported by the running service. It is intended for API clients and UI capability discovery, requires no query parameters, and does not access the database. The response is deliberately selector-free and configuration-safe: it exposes only collection and aggregation enabled state, never metric selectors, privacy or retention policy, storage details, or credentials. Metric-specific public metadata remains available from `/v1/timeseries/metrics`.
+
 ### `GET /v1/timeseries/metrics`
 
 Lists active metric definitions in stable metric-ID order. Filters are `metric_id`, `metric_key`, `source` (metric source kind), `enabled`, `limit`, and `offset`. Definitions expose display and aggregation metadata and configured dimension keys, but not selectors, retention internals, cardinality policies, or privacy rules.

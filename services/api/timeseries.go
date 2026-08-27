@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,15 +24,57 @@ import (
 )
 
 const (
-	timeSeriesDefaultLimit        = 100
-	timeSeriesAggregateMaxLimit   = 1000
-	timeSeriesObservationMaxLimit = 200
-	timeSeriesDrilldownMaxLimit   = 100
-	timeSeriesDefaultCardinality  = 25
-	timeSeriesAbsoluteCardinality = 100
-	timeSeriesAggregateMaxRange   = 366 * 24 * time.Hour
-	timeSeriesRawMaxRange         = 31 * 24 * time.Hour
+	timeSeriesDefaultLimit               = 100
+	timeSeriesAggregateMaxLimit          = 1000
+	timeSeriesObservationMaxLimit        = 200
+	timeSeriesDrilldownMaxLimit          = 100
+	timeSeriesDefaultCardinality         = 25
+	timeSeriesAbsoluteCardinality        = 100
+	timeSeriesDimensionComparisonMaxRows = 10000
+	timeSeriesAggregateMaxRange          = 366 * 24 * time.Hour
+	timeSeriesRawMaxRange                = 31 * 24 * time.Hour
 )
+
+var (
+	timeSeriesAggregates = []cfg.TimeSeriesAggregate{cfg.TimeSeriesAggregateCount, cfg.TimeSeriesAggregateSum, cfg.TimeSeriesAggregateAverage, cfg.TimeSeriesAggregateMinimum, cfg.TimeSeriesAggregateMaximum, cfg.TimeSeriesAggregateDistinctCount, cfg.TimeSeriesAggregateFirst, cfg.TimeSeriesAggregateLast, cfg.TimeSeriesAggregateP50, cfg.TimeSeriesAggregateP75, cfg.TimeSeriesAggregateP90, cfg.TimeSeriesAggregateP95, cfg.TimeSeriesAggregateP99}
+	timeSeriesBuckets    = []cfg.TimeSeriesBucketInterval{cfg.TimeSeriesBucketNone, cfg.TimeSeriesBucketOneMinute, cfg.TimeSeriesBucketFiveMinutes, cfg.TimeSeriesBucketFifteenMinutes, cfg.TimeSeriesBucketOneHour, cfg.TimeSeriesBucketOneDay, cfg.TimeSeriesBucketOneWeek, cfg.TimeSeriesBucketOneMonth}
+	timeSeriesTimeBases  = []cfg.TimeSeriesTimeBasis{cfg.TimeSeriesTimeObservedAt, cfg.TimeSeriesTimeEventAt, cfg.TimeSeriesTimeSourceTimestamp}
+)
+
+func timeSeriesCapabilitiesHandler(w http.ResponseWriter, r *http.Request) {
+	if !timeSeriesRequireGET(w, r) {
+		return
+	}
+	response := TimeSeriesCapabilitiesResponse{
+		Enabled: config.TimeSeries.Enabled, AggregationEnabled: config.TimeSeries.Aggregation.Enabled,
+		Aggregates: timeSeriesAggregates, Buckets: timeSeriesBuckets, TimeBases: timeSeriesTimeBases,
+		ValueTypes:  []cfg.TimeSeriesValueType{cfg.TimeSeriesValueInteger, cfg.TimeSeriesValueDecimal, cfg.TimeSeriesValueDuration, cfg.TimeSeriesValueBoolean, cfg.TimeSeriesValueString, cfg.TimeSeriesValueJSON, cfg.TimeSeriesValueCount, cfg.TimeSeriesValueTimestamp},
+		SourceKinds: []cfg.TimeSeriesSourceKind{cfg.TimeSeriesSourceKeyword, cfg.TimeSeriesSourceMetatag, cfg.TimeSeriesSourceObjectAttribute, cfg.TimeSeriesSourceWebObject, cfg.TimeSeriesSourceHTTPInfo, cfg.TimeSeriesSourceNetInfo, cfg.TimeSeriesSourceScreenshot, cfg.TimeSeriesSourceFile, cfg.TimeSeriesSourceInformationSeed, cfg.TimeSeriesSourceInformationSeedCandidate, cfg.TimeSeriesSourceDiscovery, cfg.TimeSeriesSourceEntityMembership, cfg.TimeSeriesSourceObjectCorrelation, cfg.TimeSeriesSourceCorrelationRule, cfg.TimeSeriesSourceCustom},
+		ObjectTypes: []cfg.TimeSeriesObjectType{cfg.TimeSeriesObjectWebObject, cfg.TimeSeriesObjectHTTPInfo, cfg.TimeSeriesObjectNetInfo},
+		Filters:     timeSeriesFilterCapabilities(),
+		Limits:      TimeSeriesCapabilityLimits{DefaultLimit: timeSeriesDefaultLimit, AggregateMaxDays: int(timeSeriesAggregateMaxRange / (24 * time.Hour)), AggregateMaxLimit: timeSeriesAggregateMaxLimit, RawMaxDays: int(timeSeriesRawMaxRange / (24 * time.Hour)), ObservationMaxLimit: timeSeriesObservationMaxLimit, DrilldownMaxLimit: timeSeriesDrilldownMaxLimit, DimensionMaxValues: effectiveTimeSeriesDimensionLimit(config.TimeSeries.Cardinality.MaxValuesPerDimension), DimensionAbsoluteMaxValues: timeSeriesAbsoluteCardinality, DimensionComparisonMaxRows: timeSeriesDimensionComparisonMaxRows},
+	}
+	timeSeriesJSON(w, http.StatusOK, response)
+}
+
+func timeSeriesFilterCapabilities() []TimeSeriesFilterCapability {
+	return []TimeSeriesFilterCapability{
+		{Key: "information_seed_id", Type: "uint64", Aliases: []string{"information_seed"}}, {Key: "information_seed_candidate_id", Type: "uint64"},
+		{Key: "source_id", Type: "uint64", Aliases: []string{"source"}}, {Key: "source_information_seed_id", Type: "uint64"}, {Key: "index_id", Type: "uint64", Aliases: []string{"index"}}, {Key: "entity_id", Type: "uint64", Aliases: []string{"entity"}},
+		{Key: "subject_type", Type: "string"}, {Key: "subject_id", Type: "uint64"}, {Key: "subject", Type: "string_or_uint64"}, {Key: "object_type", Type: "string"}, {Key: "object_id", Type: "uint64", Aliases: []string{"object"}},
+		{Key: "correlation_rule_id", Type: "uint64"}, {Key: "correlation_object_type_1", Type: "string"}, {Key: "correlation_object_id_1", Type: "uint64"}, {Key: "correlation_object_type_2", Type: "string"}, {Key: "correlation_object_id_2", Type: "uint64"},
+	}
+}
+
+func effectiveTimeSeriesDimensionLimit(configured int) int {
+	if configured <= 0 {
+		configured = timeSeriesDefaultCardinality
+	}
+	if configured > timeSeriesAbsoluteCardinality {
+		configured = timeSeriesAbsoluteCardinality
+	}
+	return configured
+}
 
 var timeSeriesDimensionKeyRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]{0,63}$`)
 
@@ -228,9 +271,9 @@ func timeSeriesDimensionsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	comparisonValues := cloneTimeSeriesValues(r.URL.Query())
-	comparisonValues.Set("limit", "10000")
+	comparisonValues.Set("limit", strconv.Itoa(timeSeriesDimensionComparisonMaxRows))
 	comparisonValues.Set("offset", "0")
-	parsed, metric, err := parseTimeSeriesQuery(r.Context(), comparisonValues, 10000, timeSeriesAggregateMaxRange, false)
+	parsed, metric, err := parseTimeSeriesQuery(r.Context(), comparisonValues, timeSeriesDimensionComparisonMaxRows, timeSeriesAggregateMaxRange, false)
 	if err != nil {
 		timeSeriesError(w, err, timeSeriesStatus(err))
 		return
@@ -239,20 +282,14 @@ func timeSeriesDimensionsHandler(w http.ResponseWriter, r *http.Request) {
 		timeSeriesError(w, fmt.Errorf("dimension %q is not defined for metric %q", key, metric.Key), http.StatusBadRequest)
 		return
 	}
-	limit := config.TimeSeries.Cardinality.MaxValuesPerDimension
-	if limit <= 0 {
-		limit = timeSeriesDefaultCardinality
-	}
-	if limit > timeSeriesAbsoluteCardinality {
-		limit = timeSeriesAbsoluteCardinality
-	}
+	limit := effectiveTimeSeriesDimensionLimit(config.TimeSeries.Cardinality.MaxValuesPerDimension)
 	result, err := newTimeSeriesAPIRepository().QueryAggregates(r.Context(), parsed.filter)
 	if err != nil {
 		timeSeriesError(w, err, http.StatusInternalServerError)
 		return
 	}
 	if result.HasMore {
-		timeSeriesError(w, fmt.Errorf("dimension comparison scope exceeds the maximum of 10000 aggregate rows"), http.StatusUnprocessableEntity)
+		timeSeriesError(w, fmt.Errorf("dimension comparison scope exceeds the maximum of %d aggregate rows", timeSeriesDimensionComparisonMaxRows), http.StatusUnprocessableEntity)
 		return
 	}
 	type dimensionGroup struct {
@@ -684,25 +721,13 @@ func applyAggregateScope(values url.Values, aggregate *cdb.TimeSeriesAggregate) 
 }
 
 func validTimeSeriesBucket(value cfg.TimeSeriesBucketInterval) bool {
-	switch value {
-	case cfg.TimeSeriesBucketNone, cfg.TimeSeriesBucketOneMinute, cfg.TimeSeriesBucketFiveMinutes, cfg.TimeSeriesBucketFifteenMinutes, cfg.TimeSeriesBucketOneHour, cfg.TimeSeriesBucketOneDay, cfg.TimeSeriesBucketOneWeek, cfg.TimeSeriesBucketOneMonth:
-		return true
-	}
-	return false
+	return slices.Contains(timeSeriesBuckets, value)
 }
 func validTimeSeriesTimeBasis(value cfg.TimeSeriesTimeBasis) bool {
-	switch value {
-	case cfg.TimeSeriesTimeObservedAt, cfg.TimeSeriesTimeEventAt, cfg.TimeSeriesTimeSourceTimestamp:
-		return true
-	}
-	return false
+	return slices.Contains(timeSeriesTimeBases, value)
 }
 func validTimeSeriesAggregate(value cfg.TimeSeriesAggregate) bool {
-	switch value {
-	case cfg.TimeSeriesAggregateCount, cfg.TimeSeriesAggregateSum, cfg.TimeSeriesAggregateAverage, cfg.TimeSeriesAggregateMinimum, cfg.TimeSeriesAggregateMaximum, cfg.TimeSeriesAggregateDistinctCount, cfg.TimeSeriesAggregateFirst, cfg.TimeSeriesAggregateLast, cfg.TimeSeriesAggregateP50, cfg.TimeSeriesAggregateP75, cfg.TimeSeriesAggregateP90, cfg.TimeSeriesAggregateP95, cfg.TimeSeriesAggregateP99:
-		return true
-	}
-	return false
+	return slices.Contains(timeSeriesAggregates, value)
 }
 
 func timeSeriesRequireGET(w http.ResponseWriter, r *http.Request) bool {

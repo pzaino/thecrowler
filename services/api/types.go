@@ -814,6 +814,40 @@ type TimeSeriesPaginationResponse struct {
 	HasMore bool `json:"has_more"`
 }
 
+// TimeSeriesFilterCapability describes one public scope filter accepted by time-series queries.
+type TimeSeriesFilterCapability struct {
+	Key     string   `json:"key"`
+	Type    string   `json:"type"`
+	Aliases []string `json:"aliases,omitempty"`
+}
+
+// TimeSeriesCapabilityLimits describes the effective public query bounds.
+type TimeSeriesCapabilityLimits struct {
+	DefaultLimit               int `json:"default_limit"`
+	AggregateMaxDays           int `json:"aggregate_max_days"`
+	AggregateMaxLimit          int `json:"aggregate_max_limit"`
+	RawMaxDays                 int `json:"raw_max_days"`
+	ObservationMaxLimit        int `json:"observation_max_limit"`
+	DrilldownMaxLimit          int `json:"drilldown_max_limit"`
+	DimensionMaxValues         int `json:"dimension_max_values"`
+	DimensionAbsoluteMaxValues int `json:"dimension_absolute_max_values"`
+	DimensionComparisonMaxRows int `json:"dimension_comparison_max_rows"`
+}
+
+// TimeSeriesCapabilitiesResponse is the stable, selector-free query capability contract.
+type TimeSeriesCapabilitiesResponse struct {
+	Enabled            bool                           `json:"enabled"`
+	AggregationEnabled bool                           `json:"aggregation_enabled"`
+	Aggregates         []cfg.TimeSeriesAggregate      `json:"aggregates"`
+	Buckets            []cfg.TimeSeriesBucketInterval `json:"buckets"`
+	TimeBases          []cfg.TimeSeriesTimeBasis      `json:"time_bases"`
+	ValueTypes         []cfg.TimeSeriesValueType      `json:"value_types"`
+	SourceKinds        []cfg.TimeSeriesSourceKind     `json:"source_kinds"`
+	ObjectTypes        []cfg.TimeSeriesObjectType     `json:"object_types"`
+	Filters            []TimeSeriesFilterCapability   `json:"filters"`
+	Limits             TimeSeriesCapabilityLimits     `json:"limits"`
+}
+
 // TimeSeriesMetricDefinition is the public, selector-free metric definition.
 type TimeSeriesMetricDefinition struct {
 	ID               uint64                       `json:"id"`

@@ -634,6 +634,8 @@ func initAPIv1() {
 		// their explicit, conservatively bounded endpoint.
 
 		// Time series endpoints
+		http.Handle("/v1/timeseries/capabilities", withPublicMiddlewares(timeSeriesCapabilitiesHandler))
+		cmn.RegisterAPIRoute("/v1/timeseries/capabilities", []string{"GET"}, "Describe supported time-series query capabilities and limits", tagsNone, false, false, 200, nil, nil, TimeSeriesCapabilitiesResponse{})
 
 		http.Handle("/v1/timeseries/metrics", withPublicMiddlewares(timeSeriesMetricsHandler))
 		cmn.RegisterAPIRoute("/v1/timeseries/metrics", []string{"GET"}, "List time-series metric definitions", tagsNone, false, false, 200, nil, TimeSeriesQuery{}, TimeSeriesMetricListResponse{})
