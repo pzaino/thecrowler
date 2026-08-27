@@ -49,7 +49,12 @@ func (e *StepError) Error() string {
 func (e *StepError) Unwrap() error { return e.Err }
 
 // ApplyRule applies a scraping rule with explicit optional runtime capabilities.
-func ApplyRule(ctx context.Context, runtime *Runtime, rule *rs.ScrapingRule, webPage *vdi.WebDriver) (map[string]interface{}, error) {
+func ApplyRule(
+	ctx context.Context,
+	runtime *Runtime,
+	rule *rs.ScrapingRule,
+	webPage *vdi.WebDriver,
+) (map[string]interface{}, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -107,6 +112,7 @@ func ApplyRule(ctx context.Context, runtime *Runtime, rule *rs.ScrapingRule, web
 		}
 	}
 
+	// Process rule post-processing steps if any are defined.
 	if len(rule.PostProcessing) > 0 {
 		data, err := json.Marshal(extractedData)
 		if err != nil {
