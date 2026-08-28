@@ -87,6 +87,152 @@ func testTimeSeriesMetric() *cdb.TimeSeriesMetric {
 	return &cdb.TimeSeriesMetric{ID: 7, Key: "pages.changed", DisplayName: "Changed pages", ValueType: cfg.TimeSeriesValueInteger, Aggregate: cfg.TimeSeriesAggregateSum, Bucket: cfg.TimeSeriesBucketOneHour, TimeBasis: cfg.TimeSeriesTimeObservedAt, StoreValueText: true, Enabled: true, Dimensions: json.RawMessage(`[{"key":"region"}]`)}
 }
 
+func TestTimeSeriesCapabilitiesHandler(t *testing.T) {
+	oldConfig := config
+	oldRepository := newTimeSeriesAPIRepository
+	config.TimeSeries.Enabled = true
+	config.TimeSeries.Aggregation.Enabled = true
+	config.TimeSeries.Cardinality.MaxValuesPerDimension = 10
+	config.TimeSeries.Cardinality.MaxDimensions = 10
+	newTimeSeriesAPIRepository = func() timeSeriesAPIRepository { panic("capabilities must not create a repository") }
+	t.Cleanup(func() { config = oldConfig; newTimeSeriesAPIRepository = oldRepository })
+
+	res := httptest.NewRecorder()
+	timeSeriesCapabilitiesHandler(res, httptest.NewRequest(http.MethodGet, "/v1/timeseries/capabilities", nil))
+	if res.Code != http.StatusOK || res.Header().Get("Content-Type") != jsonResponse {
+		t.Fatalf("status/content-type = %d/%q, body=%s", res.Code, res.Header().Get("Content-Type"), res.Body.String())
+	}
+	var body TimeSeriesCapabilitiesResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if !body.Enabled || !body.AggregationEnabled {
+		t.Fatalf("runtime enabled state not reported: %+v", body)
+	}
+	if !reflect.DeepEqual(body.Aggregates, timeSeriesAggregates) || !reflect.DeepEqual(body.Buckets, timeSeriesBuckets) || !reflect.DeepEqual(body.TimeBases, timeSeriesTimeBases) {
+		t.Fatalf("query enums changed: %+v", body)
+	}
+	wantValues := []cfg.TimeSeriesValueType{cfg.TimeSeriesValueInteger, cfg.TimeSeriesValueDecimal, cfg.TimeSeriesValueDuration, cfg.TimeSeriesValueBoolean, cfg.TimeSeriesValueString, cfg.TimeSeriesValueJSON, cfg.TimeSeriesValueCount, cfg.TimeSeriesValueTimestamp}
+	wantSources := []cfg.TimeSeriesSourceKind{cfg.TimeSeriesSourceKeyword, cfg.TimeSeriesSourceMetatag, cfg.TimeSeriesSourceObjectAttribute, cfg.TimeSeriesSourceWebObject, cfg.TimeSeriesSourceHTTPInfo, cfg.TimeSeriesSourceNetInfo, cfg.TimeSeriesSourceScreenshot, cfg.TimeSeriesSourceFile, cfg.TimeSeriesSourceInformationSeed, cfg.TimeSeriesSourceInformationSeedCandidate, cfg.TimeSeriesSourceDiscovery, cfg.TimeSeriesSourceEntityMembership, cfg.TimeSeriesSourceObjectCorrelation, cfg.TimeSeriesSourceCorrelationRule, cfg.TimeSeriesSourceCustom}
+	wantObjects := []cfg.TimeSeriesObjectType{cfg.TimeSeriesObjectWebObject, cfg.TimeSeriesObjectHTTPInfo, cfg.TimeSeriesObjectNetInfo}
+	if !reflect.DeepEqual(body.ValueTypes, wantValues) || !reflect.DeepEqual(body.SourceKinds, wantSources) || !reflect.DeepEqual(body.ObjectTypes, wantObjects) || !reflect.DeepEqual(body.Filters, timeSeriesFilterCapabilities()) {
+		t.Fatalf("capability contract changed: %+v", body)
+	}
+	wantLimits := TimeSeriesCapabilityLimits{100, 366, 1000, 31, 200, 100, 10, 10, 100, 10000}
+	if body.Limits != wantLimits {
+		t.Fatalf("limits = %+v, want %+v", body.Limits, wantLimits)
+	}
+}
+
+func TestEffectiveTimeSeriesDimensionFilterLimit(t *testing.T) {
+	for configured, want := range map[int]int{-1: 0, 0: 0, 1: 1, 10: 10} {
+		if got := effectiveTimeSeriesDimensionFilterLimit(configured); got != want {
+			t.Errorf("configured %d: got %d, want %d", configured, got, want)
+		}
+	}
+}
+
+func TestTimeSeriesCapabilitiesDimensionMaxFilters(t *testing.T) {
+	oldConfig := config
+	oldRepository := newTimeSeriesAPIRepository
+	newTimeSeriesAPIRepository = func() timeSeriesAPIRepository { panic("capabilities must not create a repository") }
+	t.Cleanup(func() { config = oldConfig; newTimeSeriesAPIRepository = oldRepository })
+
+	for _, configured := range []int{0, 1, 10} {
+		config.TimeSeries.Cardinality.MaxDimensions = configured
+		res := httptest.NewRecorder()
+		timeSeriesCapabilitiesHandler(res, httptest.NewRequest(http.MethodGet, "/v1/timeseries/capabilities", nil))
+		var body TimeSeriesCapabilitiesResponse
+		if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if body.Limits.DimensionMaxFilters != configured {
+			t.Errorf("configured %d: capability reports %d", configured, body.Limits.DimensionMaxFilters)
+		}
+	}
+}
+
+func TestTimeSeriesDimensionFilterLimitMatchesCapabilities(t *testing.T) {
+	oldConfig := config
+	t.Cleanup(func() { config = oldConfig })
+	config.TimeSeries.Cardinality.MaxDimensions = 2
+
+	if _, err := parseTimeSeriesDimensions(url.Values{"dimension": {"one=1", "two=2"}}); err != nil {
+		t.Fatalf("two dimension filters rejected: %v", err)
+	}
+	if _, err := parseTimeSeriesDimensions(url.Values{"dimension": {"one=1", "two=2", "three=3"}}); err == nil || !strings.Contains(err.Error(), "maximum of 2") {
+		t.Fatalf("three dimension filters error = %v", err)
+	}
+	if got := effectiveTimeSeriesDimensionFilterLimit(config.TimeSeries.Cardinality.MaxDimensions); got != 2 {
+		t.Fatalf("advertised limit = %d, want 2", got)
+	}
+}
+
+func TestTimeSeriesScopeFilterDefinitionsDriveParsing(t *testing.T) {
+	useFakeTimeSeriesRepository(t, &fakeTimeSeriesAPIRepository{metric: testTimeSeriesMetric()})
+	uint64Fields := map[string]func(cdb.TimeSeriesQueryFilter) *uint64{
+		"information_seed_id":           func(f cdb.TimeSeriesQueryFilter) *uint64 { return f.InformationSeedID },
+		"information_seed_candidate_id": func(f cdb.TimeSeriesQueryFilter) *uint64 { return f.InformationSeedCandidateID },
+		"source_id":                     func(f cdb.TimeSeriesQueryFilter) *uint64 { return f.SourceID },
+		"source_information_seed_id":    func(f cdb.TimeSeriesQueryFilter) *uint64 { return f.SourceInformationSeedID },
+		"index_id":                      func(f cdb.TimeSeriesQueryFilter) *uint64 { return f.IndexID },
+		"entity_id":                     func(f cdb.TimeSeriesQueryFilter) *uint64 { return f.EntityID },
+		"subject_id":                    func(f cdb.TimeSeriesQueryFilter) *uint64 { return f.SubjectID },
+		"object_id":                     func(f cdb.TimeSeriesQueryFilter) *uint64 { return f.ObjectID },
+		"correlation_rule_id":           func(f cdb.TimeSeriesQueryFilter) *uint64 { return f.CorrelationRuleID },
+		"correlation_object_id_1":       func(f cdb.TimeSeriesQueryFilter) *uint64 { return f.CorrelationObjectID1 },
+		"correlation_object_id_2":       func(f cdb.TimeSeriesQueryFilter) *uint64 { return f.CorrelationObjectID2 },
+	}
+	for _, capability := range timeSeriesFilterCapabilities() {
+		get, ok := uint64Fields[capability.Key]
+		if !ok {
+			continue
+		}
+		for _, name := range append([]string{capability.Key}, capability.Aliases...) {
+			t.Run(name, func(t *testing.T) {
+				parsed, _, err := parseTimeSeriesQuery(context.Background(), url.Values{"metric_key": {"pages.changed"}, name: {"42"}}, timeSeriesAggregateMaxLimit, timeSeriesAggregateMaxRange, false)
+				if err != nil || get(parsed.filter) == nil || *get(parsed.filter) != 42 {
+					t.Fatalf("parsed filter = %+v, error = %v", parsed.filter, err)
+				}
+			})
+		}
+	}
+
+	parsed, _, err := parseTimeSeriesQuery(context.Background(), url.Values{"metric_key": {"pages.changed"}, "source_id": {"42"}, "source": {"99"}, "subject_id": {"7"}, "subject": {"  exact text  "}, "subject_type": {" type "}, "object_type": {" object-type "}, "correlation_object_type_1": {" first "}, "correlation_object_type_2": {" second "}}, timeSeriesAggregateMaxLimit, timeSeriesAggregateMaxRange, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *parsed.filter.SourceID != 42 || *parsed.filter.SubjectID != 7 || parsed.filter.SubjectText != "exact text" || parsed.filter.SubjectType != "type" || parsed.filter.ObjectType != "object-type" || parsed.filter.CorrelationObjectType1 != "first" || parsed.filter.CorrelationObjectType2 != "second" {
+		t.Fatalf("special scope semantics changed: %+v", parsed.filter)
+	}
+	for subject, want := range map[string]struct {
+		id   uint64
+		text string
+	}{"123": {123, ""}, "some text": {0, "some text"}} {
+		parsed, _, err := parseTimeSeriesQuery(context.Background(), url.Values{"metric_key": {"pages.changed"}, "subject": {subject}}, timeSeriesAggregateMaxLimit, timeSeriesAggregateMaxRange, false)
+		if err != nil || (want.id > 0 && (parsed.filter.SubjectID == nil || *parsed.filter.SubjectID != want.id)) || parsed.filter.SubjectText != want.text {
+			t.Errorf("subject %q parsed as %+v, error = %v", subject, parsed.filter, err)
+		}
+	}
+}
+
+func TestEffectiveTimeSeriesDimensionLimit(t *testing.T) {
+	for configured, want := range map[int]int{0: 25, 10: 10, 100: 100, 101: 100, 10000: 100} {
+		if got := effectiveTimeSeriesDimensionLimit(configured); got != want {
+			t.Errorf("configured %d: got %d, want %d", configured, got, want)
+		}
+	}
+}
+
+func TestTimeSeriesCapabilitiesHandlerRejectsNonGET(t *testing.T) {
+	res := httptest.NewRecorder()
+	timeSeriesCapabilitiesHandler(res, httptest.NewRequest(http.MethodPost, "/v1/timeseries/capabilities", nil))
+	if res.Header().Get("Allow") != http.MethodGet {
+		t.Fatalf("Allow = %q", res.Header().Get("Allow"))
+	}
+	assertTimeSeriesErrorResponse(t, res, http.StatusMethodNotAllowed, "method must be GET")
+}
+
 func TestTimeSeriesAggregateHandlerUsesAggregateRowsAndStableShape(t *testing.T) {
 	metric := testTimeSeriesMetric()
 	sum := 12.5

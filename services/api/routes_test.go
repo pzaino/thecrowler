@@ -39,6 +39,7 @@ func TestInitAPIv1RegistersSearchConsoleAndDocsRoutes(t *testing.T) {
 		"/v1/ready",
 		"/v1/ready/",
 		"/v1/timeseries/metrics",
+		"/v1/timeseries/capabilities",
 		"/v1/timeseries",
 		"/v1/timeseries/observations",
 		"/v1/timeseries/drilldown",
@@ -136,7 +137,7 @@ func TestTimeSeriesRoutesAppearInOpenAPI(t *testing.T) {
 
 	initAPIv1()
 	spec := cmn.BuildOpenAPISpec(cmn.GetAPIRoutes(), cmn.OpenAPIOptions{Title: "test", Version: "v1"})
-	for _, path := range []string{"/v1/timeseries/metrics", "/v1/timeseries", "/v1/timeseries/observations", "/v1/timeseries/drilldown", "/v1/timeseries/dimensions"} {
+	for _, path := range []string{"/v1/timeseries/capabilities", "/v1/timeseries/metrics", "/v1/timeseries", "/v1/timeseries/observations", "/v1/timeseries/drilldown", "/v1/timeseries/dimensions"} {
 		operation, ok := spec.Paths[path]["get"]
 		if !ok {
 			t.Fatalf("OpenAPI specification is missing GET %s", path)
@@ -178,6 +179,7 @@ func TestInitAPIv1OmitsDefaultAndConsoleRoutesWhenDisabled(t *testing.T) {
 
 	unregisteredRoutes := []string{
 		"/v1/timeseries/metrics",
+		"/v1/timeseries/capabilities",
 		"/v1/timeseries",
 		"/v1/timeseries/observations",
 		"/v1/timeseries/drilldown",

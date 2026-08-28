@@ -68,12 +68,14 @@ func ExecuteRule(ctx context.Context, runtime *Runtime, rule *rs.ScrapingRule, w
 	if err != nil {
 		errs = append(errs, fmt.Errorf("marshalling JSON: '%v', for JSON: %v", err, cleaned))
 	}
+	/* No longer needed, we execute rule post-processing steps in the ApplyRule function.
 	for i := range rule.PostProcessing {
 		updated, stepErr := ApplyPostProcessingStep(ctx, &rt, "", 0, &rule.PostProcessing[i], jsonData)
 		if stepErr == nil {
 			jsonData = updated
 		}
 	}
+	*/
 
 	fragment := strings.TrimSpace(string(jsonData))
 	if strings.HasPrefix(fragment, "{") && strings.HasSuffix(fragment, "}") {

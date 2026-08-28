@@ -793,17 +793,17 @@ func execVDIPlugin(p *JSPlugin, timeout int, params map[string]interface{}, wd *
 	// Run the script wd.ExecuteScript(script, args)
 	var result interface{}
 	var err error
-	/* TODO: I need to finish this part, but for now I will just call ExecuteScript directly, because the current VDI backend does not support calling POST /session/:id/execute/async directly.
 	if p.Async {
-		// Still call ExecuteScript for async scripts for now, because
-		// The current VDI backend still does not support calling
-		// POST /session/:id/execute/async directly.
-		result, err = (*wd).ExecuteScript(p.Script, paramsArr)
+		result, err = (*wd).ExecuteScriptAsync(
+			p.Script,
+			paramsArr,
+		)
 	} else {
-		result, err = (*wd).ExecuteScript(p.Script, paramsArr)
+		result, err = (*wd).ExecuteScript(
+			p.Script,
+			paramsArr,
+		)
 	}
-	*/
-	result, err = (*wd).ExecuteScript(p.Script, paramsArr)
 	if err != nil {
 		resultMap := cmn.ConvertInfToMap(result)
 		cmn.DebugMsg(cmn.DbgLvlDebug3, errMsg01, err)
