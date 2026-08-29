@@ -279,13 +279,34 @@ func (handler *PostgresHandler) QueryContext(ctx context.Context, query string, 
 	return handler.db.QueryContext(ctx, query, args...)
 }
 
-// CheckConnection checks if the database connection is still alive
-func (handler *PostgresHandler) CheckConnection(c cfg.Config) error {
-	var err error
-	if handler.Ping() != nil {
-		err = handler.Connect(c)
+const postgresConnectionCheckTimeout = 5 * time.Second
+
+// CheckConnection verifies that PostgreSQL is currently reachable through the
+// existing connection pool.
+//
+// A failed health check must not recreate the pool. Recreating the pool here
+// would discard runtime connection limits, including fleet-assigned quotas,
+// and can amplify database pressure when PostgreSQL is already saturated.
+func (handler *PostgresHandler) CheckConnection(_ cfg.Config) error {
+	if handler == nil {
+		return fmt.Errorf("PostgreSQL connection handler is nil")
 	}
-	return err
+
+	if handler.db == nil {
+		return fmt.Errorf("PostgreSQL connection pool is not initialized")
+	}
+
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		postgresConnectionCheckTimeout,
+	)
+	defer cancel()
+
+	if err := handler.db.PingContext(ctx); err != nil {
+		return fmt.Errorf("PostgreSQL connection unavailable: %w", err)
+	}
+
+	return nil
 }
 
 // NewListener creates a new listener

@@ -1288,7 +1288,7 @@ func persistQueuedAPIEventUntilSuccess(event cdb.Event) (completed bool) {
 
 		delay := time.Duration(1<<min(attempt-1, 7)) * 20 * time.Millisecond
 		jitter := time.Duration(rand.Int63n(int64(delay / 2))) //nolint:gosec // jitter, not cryptography
-		if attempt == 1 || attempt%10 == 0 {
+		if (attempt == 1) || (attempt%10 == 0) {
 			cmn.DebugMsg(cmn.DbgLvlWarn, "Queued API event %s insert failed (attempt %d): %v; retrying in %s",
 				event.ID, attempt, err, delay+jitter)
 		}
