@@ -1,6 +1,6 @@
 module github.com/pzaino/thecrowler
 
-go 1.26.5
+go 1.26.6
 
 require (
 	github.com/PuerkitoBio/goquery v1.13.0
@@ -87,7 +87,7 @@ require (
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/mattn/go-runewidth v0.0.28 // indirect
 	github.com/mediabuyerbot/go-crx3 v1.7.0 // indirect
-	github.com/montanaflynn/stats v0.12.4 // indirect
+	github.com/montanaflynn/stats v0.12.5 // indirect
 	github.com/mtibben/percent v0.2.1 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/olekukonko/cat v0.0.0-20250911104152-50322a0618f6 // indirect
@@ -147,7 +147,7 @@ require (
 	go.mongodb.org/mongo-driver v1.17.9
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/time v0.15.0
-	google.golang.org/api v0.294.0
+	google.golang.org/api v0.295.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 

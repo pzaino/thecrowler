@@ -979,35 +979,37 @@ type TimeSeriesDimensionComparisonResponse struct {
 
 // TimeSeriesQuery documents composable time-series query parameters for OpenAPI.
 type TimeSeriesQuery struct {
-	MetricID                   uint64 `json:"metric_id,omitempty"`
-	MetricKey                  string `json:"metric_key,omitempty"`
-	InformationSeedID          uint64 `json:"information_seed_id,omitempty"`
-	InformationSeedCandidateID uint64 `json:"information_seed_candidate_id,omitempty"`
-	SourceID                   uint64 `json:"source_id,omitempty"`
-	SourceInformationSeedID    uint64 `json:"source_information_seed_id,omitempty"`
-	IndexID                    uint64 `json:"index_id,omitempty"`
-	EntityID                   uint64 `json:"entity_id,omitempty"`
-	SubjectType                string `json:"subject_type,omitempty"`
-	SubjectID                  uint64 `json:"subject_id,omitempty"`
-	Subject                    string `json:"subject,omitempty"`
-	ObjectType                 string `json:"object_type,omitempty"`
-	ObjectID                   uint64 `json:"object_id,omitempty"`
-	CorrelationRuleID          uint64 `json:"correlation_rule_id,omitempty"`
-	CorrelationObjectType1     string `json:"correlation_object_type_1,omitempty"`
-	CorrelationObjectID1       uint64 `json:"correlation_object_id_1,omitempty"`
-	CorrelationObjectType2     string `json:"correlation_object_type_2,omitempty"`
-	CorrelationObjectID2       uint64 `json:"correlation_object_id_2,omitempty"`
-	Dimensions                 string `json:"dimensions,omitempty"`
-	DimensionKey               string `json:"dimension_key,omitempty"`
-	AggregateHash              string `json:"aggregate_hash,omitempty"`
-	Bucket                     string `json:"bucket,omitempty"`
-	From                       string `json:"from,omitempty"`
-	To                         string `json:"to,omitempty"`
-	TimeBasis                  string `json:"time_basis,omitempty"`
-	Aggregate                  string `json:"aggregate,omitempty"`
-	Order                      string `json:"order,omitempty"`
-	Limit                      int    `json:"limit,omitempty"`
-	Offset                     int    `json:"offset,omitempty"`
+	MetricID                   uint64   `json:"metric_id,omitempty"`
+	MetricKey                  string   `json:"metric_key,omitempty"`
+	InformationSeedID          uint64   `json:"information_seed_id,omitempty"`
+	InformationSeedCandidateID uint64   `json:"information_seed_candidate_id,omitempty"`
+	SourceID                   uint64   `json:"source_id,omitempty"`
+	SourceInformationSeedID    uint64   `json:"source_information_seed_id,omitempty"`
+	IndexID                    uint64   `json:"index_id,omitempty"`
+	EntityID                   uint64   `json:"entity_id,omitempty"`
+	SubjectType                string   `json:"subject_type,omitempty"`
+	SubjectID                  uint64   `json:"subject_id,omitempty"`
+	Subject                    string   `json:"subject,omitempty"`
+	ObjectType                 string   `json:"object_type,omitempty"`
+	ObjectID                   uint64   `json:"object_id,omitempty"`
+	CorrelationRuleID          uint64   `json:"correlation_rule_id,omitempty"`
+	CorrelationObjectType1     string   `json:"correlation_object_type_1,omitempty"`
+	CorrelationObjectID1       uint64   `json:"correlation_object_id_1,omitempty"`
+	CorrelationObjectType2     string   `json:"correlation_object_type_2,omitempty"`
+	CorrelationObjectID2       uint64   `json:"correlation_object_id_2,omitempty"`
+	Dimension                  []string `json:"dimension,omitempty"`
+	// left for backward compatibility, but deprecated in favor of Dimension array
+	Dimensions    string `json:"dimensions,omitempty"`
+	DimensionKey  string `json:"dimension_key,omitempty"`
+	AggregateHash string `json:"aggregate_hash,omitempty"`
+	Bucket        string `json:"bucket,omitempty"`
+	From          string `json:"from,omitempty"`
+	To            string `json:"to,omitempty"`
+	TimeBasis     string `json:"time_basis,omitempty"`
+	Aggregate     string `json:"aggregate,omitempty"`
+	Order         string `json:"order,omitempty"`
+	Limit         int    `json:"limit,omitempty"`
+	Offset        int    `json:"offset,omitempty"`
 }
 
 // TimeSeriesErrorResponse documents the API's standard JSON error shape.
