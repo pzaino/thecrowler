@@ -37,7 +37,7 @@ func ExecuteRule(ctx context.Context, runtime *Runtime, rule *rs.ScrapingRule, w
 	}
 
 	shouldExecute := true
-	if len(rule.Conditions) != 0 {
+	if rule.Conditions.Element != "" || rule.Conditions.Language != "" || rule.Conditions.Env != nil {
 		if rt.MatchConditions == nil {
 			shouldExecute = false
 		} else {
@@ -61,6 +61,12 @@ func ExecuteRule(ctx context.Context, runtime *Runtime, rule *rs.ScrapingRule, w
 	}
 	if err == nil && rt.AugmentResult != nil {
 		extracted = rt.AugmentResult(ctx, rule, extracted)
+	}
+	if err == nil {
+		extracted, err = renameOutputFields(extracted, rule.JSONFieldMappings)
+		if err != nil {
+			errs = append(errs, err)
+		}
 	}
 	processed := processExtractedData(extracted)
 	cleaned := cleanJSONDocument(processed)
@@ -90,6 +96,25 @@ func ExecuteRule(ctx context.Context, runtime *Runtime, rule *rs.ScrapingRule, w
 		message.WriteByte('\n')
 	}
 	return fragment, fmt.Errorf("executing scraping rule: %v", message.String())
+}
+
+func renameOutputFields(data map[string]interface{}, mappings map[string]string) (map[string]interface{}, error) {
+	for source, destination := range mappings {
+		source, destination = strings.TrimSpace(source), strings.TrimSpace(destination)
+		if source == "" || destination == "" {
+			return data, fmt.Errorf("json field mappings require non-empty source and destination")
+		}
+		value, exists := data[source]
+		if !exists || source == destination {
+			continue
+		}
+		if _, collision := data[destination]; collision {
+			return data, fmt.Errorf("renaming JSON field %q to %q would overwrite an output field", source, destination)
+		}
+		data[destination] = value
+		delete(data, source)
+	}
+	return data, nil
 }
 
 func cleanJSONDocument(doc map[string]interface{}) map[string]interface{} {

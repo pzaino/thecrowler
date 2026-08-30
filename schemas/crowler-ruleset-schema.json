@@ -279,49 +279,6 @@
                     ]
                   }
                 },
-                "extract_scripts": {
-                  "title": "Extract Page's Scripts",
-                  "description": "Indicates whether the rule also has to extract scripts from a page and store them as separate web objects. This is useful for analyzing JavaScript code using 3rd party tools and vulnerability analysis.",
-                  "type": "boolean"
-                },
-                "objects": {
-                  "title": "Objects",
-                  "description": "Identifies specific technologies, requires correspondent detection rules.",
-                  "type": "array",
-                  "items": {
-                    "rule_name": {
-                      "type": "string",
-                      "description": "A unique name identifying the detection rule.",
-                      "examples": [
-                        "My Object",
-                        "https://example.com"
-                      ]
-                    }
-                  }
-                },
-                "json_field_rename": {
-                  "title": "JSON Fields Renaming",
-                  "description": "Given that the CROWler scraper maps automatically HTML tags to JSON tags, you can use this feature to rename the json-html tag with whatever name you wish to use.",
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "properties": {
-                      "source_tag": {
-                        "type": "string",
-                        "description": "The JSON tag you want to rename."
-                      },
-                      "dest_tag": {
-                        "type": "string",
-                        "description": "The new name for the JSON tag."
-                      }
-                    },
-                    "additionalProperties": false,
-                    "required": [
-                      "source_tag",
-                      "dest_tag"
-                    ]
-                  }
-                },
                 "post_processing": {
                   "title": "Rule's Post-processing",
                   "type": "array",
@@ -352,13 +309,45 @@
                         "$ref": "#/definitions/agentCall"
                       }
                     },
-                    "additionalProperties": false
+                    "additionalProperties": false,
+                    "required": [
+                      "step_type",
+                      "details"
+                    ]
                   },
-                  "description": "Rule's Post-processing steps for the scraped data to transform, validate, or clean it. This post_processing section runs within a single rule context. To use external APIs to process the data, use the 'transform' step type and, inside the 'details' object, specify the API endpoint and the required parameters. For example, in details, use { 'transform_type': 'api', 'api_url': 'https://api.example.com', 'timeout': 60, 'token': 'your-api-token' }.",
-                  "required": [
-                    "step_type",
-                    "details"
-                  ]
+                  "description": "Rule's Post-processing steps for the scraped data to transform, validate, or clean it. This post_processing section runs within a single rule context. To use external APIs to process the data, use the 'transform' step type and, inside the 'details' object, specify the API endpoint and the required parameters. For example, in details, use { 'transform_type': 'api', 'api_url': 'https://api.example.com', 'timeout': 60, 'token': 'your-api-token' }."
+                },
+                "conditions": {
+                  "title": "Scraping Conditions",
+                  "description": "All configured page and environment conditions must match before extraction.",
+                  "type": "object",
+                  "properties": {
+                    "element": {
+                      "type": "string",
+                      "description": "CSS selector that must be present."
+                    },
+                    "language": {
+                      "type": "string",
+                      "description": "Required document language."
+                    },
+                    "env": {
+                      "description": "Required crawler environment value or structured condition."
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "extract_scripts": {
+                  "title": "Extract Page's Scripts",
+                  "description": "Indicates whether the rule also has to extract scripts from a page and store them as separate web objects. This is useful for analyzing JavaScript code using 3rd party tools and vulnerability analysis.",
+                  "type": "boolean"
+                },
+                "json_field_mappings": {
+                  "title": "JSON Field Mappings",
+                  "description": "Map top-level extracted output keys to their destination names. Renaming fails rather than overwriting an existing destination.",
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
                 }
               },
               "additionalProperties": false,
@@ -1517,13 +1506,13 @@
                   "$ref": "#/definitions/agentCall"
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": false,
+              "required": [
+                "step_type",
+                "details"
+              ]
             },
-            "description": "Rulesgroup's Post-processing steps for the scraped data to transform, validate, or clean it. This post_processing section runs within the context of the entire rulesgroup (so it will access the entire JSON of collected data). To use external APIs to process the data, use the 'transform' step type and, inside the 'details' object, specify the API endpoint and the required parameters. For example, in details, use { 'transform_type': 'api', 'api_url': 'https://api.example.com', 'timeout': 60, 'token': 'your-api-token' }.",
-            "required": [
-              "step_type",
-              "details"
-            ]
+            "description": "Rulesgroup's Post-processing steps for the scraped data to transform, validate, or clean it. This post_processing section runs within the context of the entire rulesgroup (so it will access the entire JSON of collected data). To use external APIs to process the data, use the 'transform' step type and, inside the 'details' object, specify the API endpoint and the required parameters. For example, in details, use { 'transform_type': 'api', 'api_url': 'https://api.example.com', 'timeout': 60, 'token': 'your-api-token' }."
           }
         },
         "additionalProperties": false

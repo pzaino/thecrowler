@@ -20,6 +20,16 @@ import (
 
 const maxHTTPTransformResponse = 16 << 20
 
+// PublicPostProcessingHandlers is the stable set accepted in ruleset files.
+var PublicPostProcessingHandlers = []string{
+	"replace", "remove", "transform", "validate", "clean", "set_env",
+	"plugin_call", "agent_call", "external_api",
+}
+
+// InternalPostProcessingHandlers are crawler-owned operations and must not be
+// advertised by the public ruleset schema.
+var InternalPostProcessingHandlers = []string{"crowler_meta"}
+
 // RuleError identifies a failed scraping rule without retaining extracted page content.
 type RuleError struct {
 	RuleName string

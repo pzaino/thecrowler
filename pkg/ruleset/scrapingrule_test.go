@@ -86,7 +86,7 @@ func TestScrapingRuleGetElements(t *testing.T) {
 // TestScrapingRule_GetJsFiles tests the GetJsFiles method of ScrapingRule
 func TestScrapingRuleGetJsFiles(t *testing.T) {
 	r := ScrapingRule{
-		JsFiles: true,
+		ExtractScripts: true,
 	}
 	if got := r.GetJsFiles(); got != true {
 		t.Errorf("GetJsFiles() = %v, want %v", got, true)

@@ -90,11 +90,11 @@ Both are first-class across subsystems.
 - `rule_name` *(string)*
 - `scope` *(string)*
 - `pre_conditions` *(array)*: `{ url, path }`
-- `conditions` *(object)*
+- `conditions` *(object, optional)*: typed `element`, `language`, and `env` conditions; all specified conditions must match
 - `wait_conditions` *(array)*
 - `elements` *(array of Element)*
-- `js_files` *(bool)*: extract scripts as web objects
-- `json_field_mappings` *(object map[string]string)*: rename output keys
+- `extract_scripts` *(bool)*: extract scripts as web objects (`js_files` is accepted as a legacy alias)
+- `json_field_mappings` *(object map[string]string)*: rename top-level output keys (`json_field_rename` is accepted as a legacy alias)
 - `post_processing` *(array)*
 
 ### Wait conditions
@@ -131,7 +131,7 @@ Each wait condition supports:
 
 Each step:
 
-- `step_type`: `replace | remove | transform | validate | clean | plugin_call | agent_call`
+- `step_type`: `replace | remove | transform | validate | clean | set_env | plugin_call | agent_call | external_api`
 - `details` *(object; shape depends on step type)*
 - `agent_call` *(object, when `step_type: agent_call`)*
 

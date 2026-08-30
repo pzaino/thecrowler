@@ -319,32 +319,32 @@ func checkScrapingPreConditions(conditions cfg.Condition, url string) bool {
 // checkScrapingConditions checks all types of conditions: Scraping and Config Conditions
 // These are page related conditions, for instance check if an element is present
 // or if the page is in the desired language etc.
-func checkScrapingConditions(ctx *ProcessContext, conditions map[string]interface{}, wd *vdi.WebDriver) bool {
+func checkScrapingConditions(ctx *ProcessContext, conditions rules.ScrapingConditions, wd *vdi.WebDriver) bool {
 	canProceed := true
 	// Check the additional conditions
-	if len(conditions) > 0 {
+	if conditions.Element != "" || conditions.Language != "" || conditions.Env != nil {
 		// Check if the page contains a specific element
-		if _, ok := conditions["element"]; ok {
+		if conditions.Element != "" {
 			// Check if the element is present
-			_, err := (*wd).FindElement(vdi.ByCSSSelector, conditions["element"].(string))
+			_, err := (*wd).FindElement(vdi.ByCSSSelector, conditions.Element)
 			if err != nil {
 				canProceed = false
 			}
 		}
 		// If a language condition is present, check if the page is in the correct language
-		if _, ok := conditions["language"]; ok {
+		if conditions.Language != "" {
 			// Get the page language
 			lang, err := (*wd).ExecuteScript("return document.documentElement.lang", nil)
 			if err != nil {
 				canProceed = false
 			}
 			// Check if the language is correct
-			if lang != conditions["language"] {
+			if lang != conditions.Language {
 				canProceed = false
 			}
 		}
-		if envConditions, ok := conditions["env"]; ok {
-			if !checkEnvironmentCondition(ctx, envConditions) {
+		if conditions.Env != nil {
+			if !checkEnvironmentCondition(ctx, conditions.Env) {
 				canProceed = false
 			}
 		}

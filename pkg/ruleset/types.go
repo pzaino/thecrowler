@@ -18,6 +18,7 @@ package ruleset
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -217,16 +218,141 @@ type PreCondition struct {
 
 // ScrapingRule represents a scraping rule
 type ScrapingRule struct {
-	RuleName          string                 `json:"rule_name" yaml:"rule_name"`
-	ObjectType        []string               `json:"object_type,omitempty" yaml:"object_type,omitempty"`
-	Scope             string                 `json:"scope" yaml:"scope"`
-	PreConditions     []PreCondition         `json:"pre_conditions,omitempty" yaml:"pre_conditions,omitempty"`
-	Conditions        map[string]interface{} `json:"conditions" yaml:"conditions"`
-	WaitConditions    []WaitCondition        `json:"wait_conditions" yaml:"wait_conditions"`
-	Elements          []Element              `json:"elements" yaml:"elements"`
-	JsFiles           bool                   `json:"js_files" yaml:"js_files"`
-	JSONFieldMappings map[string]string      `json:"json_field_mappings" yaml:"json_field_mappings"`
-	PostProcessing    []PostProcessingStep   `json:"post_processing" yaml:"post_processing"`
+	RuleName          string               `json:"rule_name" yaml:"rule_name"`
+	ObjectType        []string             `json:"object_type,omitempty" yaml:"object_type,omitempty"`
+	Scope             string               `json:"scope" yaml:"scope"`
+	PreConditions     []PreCondition       `json:"pre_conditions,omitempty" yaml:"pre_conditions,omitempty"`
+	Conditions        ScrapingConditions   `json:"conditions,omitempty" yaml:"conditions,omitempty"`
+	WaitConditions    []WaitCondition      `json:"wait_conditions" yaml:"wait_conditions"`
+	Elements          []Element            `json:"elements" yaml:"elements"`
+	ExtractScripts    bool                 `json:"extract_scripts,omitempty" yaml:"extract_scripts,omitempty"`
+	JSONFieldMappings map[string]string    `json:"json_field_mappings,omitempty" yaml:"json_field_mappings,omitempty"`
+	PostProcessing    []PostProcessingStep `json:"post_processing" yaml:"post_processing"`
+}
+
+// ScrapingConditions is the set of page conditions implemented by the crawler.
+// All populated conditions must match. Env remains open because environment
+// matching supports scalar and structured values.
+type ScrapingConditions struct {
+	Element  string      `json:"element,omitempty" yaml:"element,omitempty"`
+	Language string      `json:"language,omitempty" yaml:"language,omitempty"`
+	Env      interface{} `json:"env,omitempty" yaml:"env,omitempty"`
+}
+
+type legacyFieldMappings map[string]string
+
+func (m *legacyFieldMappings) UnmarshalJSON(data []byte) error {
+	var direct map[string]string
+	if json.Unmarshal(data, &direct) == nil {
+		*m = direct
+		return nil
+	}
+	var pairs []struct {
+		Source string `json:"source_tag"`
+		Dest   string `json:"dest_tag"`
+	}
+	if err := json.Unmarshal(data, &pairs); err != nil {
+		return errors.New("json_field_rename must be a mapping or source_tag/dest_tag array")
+	}
+	result := make(map[string]string, len(pairs))
+	for _, pair := range pairs {
+		result[pair.Source] = pair.Dest
+	}
+	*m = result
+	return nil
+}
+
+func (m *legacyFieldMappings) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	var direct map[string]string
+	if unmarshal(&direct) == nil {
+		*m = direct
+		return nil
+	}
+	var pairs []struct {
+		Source string `yaml:"source_tag"`
+		Dest   string `yaml:"dest_tag"`
+	}
+	if err := unmarshal(&pairs); err != nil {
+		return errors.New("json_field_rename must be a mapping or source_tag/dest_tag array")
+	}
+	result := make(map[string]string, len(pairs))
+	for _, pair := range pairs {
+		result[pair.Source] = pair.Dest
+	}
+	*m = result
+	return nil
+}
+
+// UnmarshalJSON accepts the former public spellings while retaining one
+// canonical in-memory representation. Supplying both spellings is ambiguous.
+func (r *ScrapingRule) UnmarshalJSON(data []byte) error {
+	type plain ScrapingRule
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if _, a := raw["extract_scripts"]; a {
+		if _, b := raw["js_files"]; b {
+			return errors.New("scraping rule specifies both extract_scripts and js_files")
+		}
+	}
+	if _, a := raw["json_field_mappings"]; a {
+		if _, b := raw["json_field_rename"]; b {
+			return errors.New("scraping rule specifies both json_field_mappings and json_field_rename")
+		}
+	}
+	var aux struct {
+		*plain
+		JSFiles         *bool               `json:"js_files"`
+		JSONFieldRename legacyFieldMappings `json:"json_field_rename"`
+	}
+	aux.plain = (*plain)(r)
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if aux.JSFiles != nil {
+		r.ExtractScripts = *aux.JSFiles
+	}
+	if aux.JSONFieldRename != nil {
+		r.JSONFieldMappings = aux.JSONFieldRename
+	}
+	return nil
+}
+
+// UnmarshalYAML provides the same alias and conflict behavior as JSON.
+func (r *ScrapingRule) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	type plain ScrapingRule
+	var raw map[string]interface{}
+	if err := unmarshal(&raw); err != nil {
+		return err
+	}
+	if _, a := raw["extract_scripts"]; a {
+		if _, b := raw["js_files"]; b {
+			return errors.New("scraping rule specifies both extract_scripts and js_files")
+		}
+	}
+	if _, a := raw["json_field_mappings"]; a {
+		if _, b := raw["json_field_rename"]; b {
+			return errors.New("scraping rule specifies both json_field_mappings and json_field_rename")
+		}
+	}
+	var aux struct {
+		Plain           plain               `yaml:",inline"`
+		JSFiles         *bool               `yaml:"js_files"`
+		JSONFieldRename legacyFieldMappings `yaml:"json_field_rename"`
+	}
+	aux.Plain = plain(*r)
+	if err := unmarshal(&aux); err != nil {
+		return err
+	}
+	*r = ScrapingRule(aux.Plain)
+	if aux.JSFiles != nil {
+		r.ExtractScripts = *aux.JSFiles
+	}
+	if aux.JSONFieldRename != nil {
+		r.JSONFieldMappings = aux.JSONFieldRename
+	}
+	return nil
 }
 
 // ActionRule represents an action rule

@@ -58,7 +58,7 @@ func (r *ScrapingRule) GetElements() []Element {
 
 // GetJsFiles returns the js_files flag for the specified scraping rule.
 func (r *ScrapingRule) GetJsFiles() bool {
-	return r.JsFiles
+	return r.ExtractScripts
 }
 
 // GetJSONFieldMappings returns the JSON field mappings for the specified scraping rule.
