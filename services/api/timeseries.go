@@ -530,6 +530,7 @@ func parseTimeSeriesDate(raw string, endOfDate bool) (*time.Time, error) {
 func parseTimeSeriesDimensions(values url.Values) (map[string]interface{}, error) {
 	result := map[string]interface{}{}
 	parts := append([]string{}, values["dimension"]...)
+	// left for backward compatibility with the old "dimensions" parameter that accepted a comma-separated list of key=value pairs
 	for _, combined := range values["dimensions"] {
 		parts = append(parts, strings.Split(combined, ",")...)
 	}
