@@ -298,12 +298,12 @@ func TestUnmarshalJSON(t *testing.T) {
 			input: `{"values":["a","b","c"],"key":"test_key","properties":{"persistent":true,"static":true,"session_valid":true,"type":"[]string","source":"source3"}}`,
 			expected: EnvSetting{
 				Key:    "test_key",
-				Values: []string{"a", "b", "c"},
+				Values: []interface{}{"a", "b", "c"},
 				Properties: EnvProperties{
 					Persistent:   true,
 					Static:       true,
 					SessionValid: true,
-					Type:         arrTypeStr,
+					Type:         varTypeArr,
 					Source:       "source3",
 				},
 			},

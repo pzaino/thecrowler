@@ -20,6 +20,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -37,7 +39,6 @@ const (
 	varTypeArr     = "array"
 	varTypeUnknown = "unknown"
 	arrTypeStr     = "[]string"
-	arrTypeNum     = "[]number"
 	arrTypeBool    = "[]bool"
 	arrTypeFloat64 = "[]float64"
 	arrTypeUnknown = "[]unknown"
@@ -116,85 +117,204 @@ type EnvProperties struct {
 	Source       string `json:"source" yaml:"source"`
 }
 
-// UnmarshalJSON implements custom unmarshaling logic for EnvSetting
+// UnmarshalJSON accepts values (the canonical spelling) and the legacy value
+// alias. Values are decoded without coercing every JSON number to float64.
 func (e *EnvSetting) UnmarshalJSON(data []byte) error {
-	type Alias EnvSetting
-	aux := &struct {
-		Values json.RawMessage `json:"values"` // Read Values as raw JSON first
-		*Alias
-	}{
-		Alias: (*Alias)(e),
-	}
-
-	// Unmarshal the raw data
-	if err := json.Unmarshal(data, &aux); err != nil {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
 		return err
 	}
-
-	// Now handle the "values" field, which can be multiple types
-	var value interface{}
-	if err := json.Unmarshal(aux.Values, &value); err != nil {
+	canonical, hasCanonical := fields["values"]
+	legacy, hasLegacy := fields["value"]
+	if hasCanonical && hasLegacy {
+		return errors.New("environment setting cannot contain both values and value")
+	}
+	delete(fields, "values")
+	delete(fields, "value")
+	type plain EnvSetting
+	remainder, err := json.Marshal(fields)
+	if err != nil {
 		return err
 	}
-
-	// Detect and process the type of "values"
-	switch v := value.(type) {
-	case string:
-		e.Values = v
-		e.Properties.Type = varTypeStr
-	case float64:
-		e.Values = v
-		e.Properties.Type = varTypeNum
-	case bool:
-		e.Values = v
-		e.Properties.Type = varTypeBool
-	case nil:
-		e.Values = v
-		e.Properties.Type = varTypeNull
-	case []interface{}:
-		e.Values = processArray(v, e)
-	default:
-		e.Values = nil
-		e.Properties.Type = varTypeUnknown
+	if err := json.Unmarshal(remainder, (*plain)(e)); err != nil {
+		return err
 	}
-
+	if hasLegacy {
+		canonical = legacy
+	}
+	if hasCanonical || hasLegacy {
+		value, err := decodeJSONValue(canonical)
+		if err != nil {
+			return err
+		}
+		e.Values = value
+		e.Properties.Type = environmentValueType(value)
+	}
 	return nil
 }
 
-// Helper function to handle array processing and set the type in EnvProperties
+func decodeJSONValue(data []byte) (interface{}, error) {
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.UseNumber()
+	var value interface{}
+	if err := decoder.Decode(&value); err != nil {
+		return nil, err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return nil, errors.New("invalid trailing JSON data")
+	}
+	return normalizeEnvironmentValue(value)
+}
+
+func normalizeEnvironmentValue(value interface{}) (interface{}, error) {
+	switch value := value.(type) {
+	case json.Number:
+		if integer, err := strconv.ParseInt(string(value), 10, 64); err == nil {
+			return integer, nil
+		}
+		float, err := strconv.ParseFloat(string(value), 64)
+		if err != nil {
+			return nil, err
+		}
+		return float, nil
+	case int:
+		return int64(value), nil
+	case int8:
+		return int64(value), nil
+	case int16:
+		return int64(value), nil
+	case int32:
+		return int64(value), nil
+	case int64:
+		return value, nil
+	case uint:
+		if uint64(value) > uint64(^uint64(0)>>1) {
+			return nil, errors.New("environment integer exceeds int64")
+		}
+		return int64(value), nil
+	case uint64:
+		if value > uint64(^uint64(0)>>1) {
+			return nil, errors.New("environment integer exceeds int64")
+		}
+		return int64(value), nil
+	case []interface{}:
+		for i := range value {
+			normalized, err := normalizeEnvironmentValue(value[i])
+			if err != nil {
+				return nil, err
+			}
+			value[i] = normalized
+		}
+		return value, nil
+	case map[string]interface{}:
+		for key, item := range value {
+			normalized, err := normalizeEnvironmentValue(item)
+			if err != nil {
+				return nil, err
+			}
+			value[key] = normalized
+		}
+		return value, nil
+	case map[interface{}]interface{}:
+		result := make(map[string]interface{}, len(value))
+		for rawKey, item := range value {
+			key, ok := rawKey.(string)
+			if !ok {
+				return nil, errors.New("environment object keys must be strings")
+			}
+			normalized, err := normalizeEnvironmentValue(item)
+			if err != nil {
+				return nil, err
+			}
+			result[key] = normalized
+		}
+		return result, nil
+	default:
+		return value, nil
+	}
+}
+
+func environmentValueType(value interface{}) string {
+	switch value.(type) {
+	case string:
+		return varTypeStr
+	case int64, float64:
+		return varTypeNum
+	case bool:
+		return varTypeBool
+	case nil:
+		return varTypeNull
+	case []interface{}:
+		return varTypeArr
+	default:
+		return varTypeUnknown
+	}
+}
+
+// processArray remains for plugin-style typed parameters. Environment values
+// deliberately do not use it, because heterogeneous arrays must remain intact.
 func processArray(arr []interface{}, e *EnvSetting) interface{} {
 	if len(arr) == 0 {
 		e.Properties.Type = varTypeArr
 		return arr
 	}
-
-	// Check the type of the first element to guess the array type
 	switch arr[0].(type) {
 	case string:
 		e.Properties.Type = arrTypeStr
-		var stringArray []string
-		for _, elem := range arr {
-			stringArray = append(stringArray, elem.(string))
+		result := make([]string, len(arr))
+		for i := range arr {
+			result[i] = arr[i].(string)
 		}
-		return stringArray
+		return result
 	case float64:
 		e.Properties.Type = arrTypeFloat64
-		var numberArray []float64
-		for _, elem := range arr {
-			numberArray = append(numberArray, elem.(float64))
+		result := make([]float64, len(arr))
+		for i := range arr {
+			result[i] = arr[i].(float64)
 		}
-		return numberArray
+		return result
 	case bool:
 		e.Properties.Type = arrTypeBool
-		var boolArray []bool
-		for _, elem := range arr {
-			boolArray = append(boolArray, elem.(bool))
+		result := make([]bool, len(arr))
+		for i := range arr {
+			result[i] = arr[i].(bool)
 		}
-		return boolArray
+		return result
 	default:
 		e.Properties.Type = arrTypeUnknown
 		return arr
 	}
+}
+
+// UnmarshalYAML provides the same aliases, conflict handling, and value
+// representation as UnmarshalJSON.
+func (e *EnvSetting) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	var fields map[string]interface{}
+	if err := unmarshal(&fields); err != nil {
+		return err
+	}
+	canonical, seenCanonical := fields["values"]
+	legacy, seenLegacy := fields["value"]
+	if seenCanonical && seenLegacy {
+		return errors.New("environment setting cannot contain both values and value")
+	}
+	type plain EnvSetting
+	var decoded plain
+	if err := unmarshal(&decoded); err != nil {
+		return err
+	}
+	*e = EnvSetting(decoded)
+	if seenLegacy {
+		canonical = legacy
+	}
+	if seenCanonical || seenLegacy {
+		normalized, err := normalizeEnvironmentValue(canonical)
+		if err != nil {
+			return err
+		}
+		e.Values, e.Properties.Type = normalized, environmentValueType(normalized)
+	}
+	return nil
 }
 
 // MarshalJSON is a custom MarshalJSON to ensure the correct format when marshaling the "values" field
@@ -926,8 +1046,8 @@ type EnvironmentSettings struct {
 
 // LoggingConfiguration represents the logging configuration for the rule group
 type LoggingConfiguration struct {
-	LogLevel string `yaml:"log_level"`
-	LogFile  string `yaml:"log_file,omitempty"`
+	LogLevel   string `json:"log_level" yaml:"log_level"`
+	LogMessage string `json:"log_message,omitempty" yaml:"log_message,omitempty"`
 }
 
 // ErrorHandling represents the error handling configuration for the action rule

@@ -231,7 +231,8 @@ values.
 Each item:
 
 - `key`
-- `values` *(can be string/number/bool/array)*
+- `values` *(canonical; accepts any JSON-compatible scalar, object, or array)*
+- `value` *(deprecated input alias; do not specify it together with `values`)*
 - `properties`:
   - `persistent`
   - `static`
@@ -243,7 +244,7 @@ Each item:
 ### `logging_configuration`
 
 - `log_level`
-- `log_file` *(optional)*
+- `log_message` *(optional; message emitted when the rule group matches)*
 
 ---
 

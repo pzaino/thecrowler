@@ -1995,9 +1995,29 @@
                     "DB_PASSWORD"
                   ]
                 },
-                "value": {
+                "properties": {
+                  "title": "Setting's Properties",
+                  "description": "Optional. Additional properties for the environment setting. These properties are used to define the behavior of the environment setting.",
+                  "type": "object",
+                  "properties": {
+                    "persistent": {
+                      "type": "boolean",
+                      "description": "Optional. Flag to indicate if the environment setting should be persistent after ruleset completes execution."
+                    },
+                    "static": {
+                      "type": "boolean",
+                      "description": "Optional. Flag to indicate if the environment setting should be static and not changeable. That means that the value will be set once and never changed."
+                    },
+                    "source": {
+                      "type": "string",
+                      "description": "Optional. The source of the environment setting. If not set manually then the current URL will be used as the source."
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "values": {
                   "title": "Setting's Value",
-                  "description": "A single or a set of values for the environment key.",
+                  "description": "A JSON-compatible value for the environment key.",
                   "anyOf": [
                     {
                       "title": "Object",
@@ -2064,6 +2084,10 @@
                       "items": {
                         "type": "integer"
                       }
+                    },
+                    {
+                      "title": "Array",
+                      "type": "array"
                     }
                   ],
                   "examples": [
@@ -2076,31 +2100,118 @@
                     "['value1', 'value2']"
                   ]
                 },
-                "properties": {
-                  "title": "Setting's Properties",
-                  "description": "Optional. Additional properties for the environment setting. These properties are used to define the behavior of the environment setting.",
-                  "type": "object",
-                  "properties": {
-                    "persistent": {
-                      "type": "boolean",
-                      "description": "Optional. Flag to indicate if the environment setting should be persistent after ruleset completes execution."
+                "value": {
+                  "title": "Setting's Value",
+                  "description": "Deprecated alias for values.",
+                  "anyOf": [
+                    {
+                      "title": "Object",
+                      "type": "object"
                     },
-                    "static": {
-                      "type": "boolean",
-                      "description": "Optional. Flag to indicate if the environment setting should be static and not changeable. That means that the value will be set once and never changed."
+                    {
+                      "title": "String",
+                      "type": "string"
                     },
-                    "source": {
-                      "type": "string",
-                      "description": "Optional. The source of the environment setting. If not set manually then the current URL will be used as the source."
+                    {
+                      "title": "Number",
+                      "type": "number"
+                    },
+                    {
+                      "title": "Boolean",
+                      "type": "boolean"
+                    },
+                    {
+                      "title": "Null",
+                      "type": "null"
+                    },
+                    {
+                      "title": "Integer",
+                      "type": "integer"
+                    },
+                    {
+                      "title": "Array of Strings",
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    {
+                      "title": "Array of Numbers",
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      }
+                    },
+                    {
+                      "title": "Array of Booleans",
+                      "type": "array",
+                      "items": {
+                        "type": "boolean"
+                      }
+                    },
+                    {
+                      "title": "Array of Objects",
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    {
+                      "title": "Array of Nulls",
+                      "type": "array",
+                      "items": {
+                        "type": "null"
+                      }
+                    },
+                    {
+                      "title": "Array of Integers",
+                      "type": "array",
+                      "items": {
+                        "type": "integer"
+                      }
+                    },
+                    {
+                      "title": "Array",
+                      "type": "array"
                     }
-                  },
-                  "additionalProperties": false
+                  ],
+                  "examples": [
+                    "my_api_key",
+                    "my_db_password",
+                    "my_secret_key",
+                    "500",
+                    "true",
+                    "1.76",
+                    "['value1', 'value2']"
+                  ],
+                  "deprecated": true
                 }
               },
               "additionalProperties": false,
               "required": [
-                "key",
-                "value"
+                "key"
+              ],
+              "oneOf": [
+                {
+                  "required": [
+                    "values"
+                  ],
+                  "not": {
+                    "required": [
+                      "value"
+                    ]
+                  }
+                },
+                {
+                  "required": [
+                    "value"
+                  ],
+                  "not": {
+                    "required": [
+                      "values"
+                    ]
+                  }
+                }
               ]
             }
           },
