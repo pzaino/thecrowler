@@ -110,11 +110,10 @@ func TestActionRuleGetWaitConditions(t *testing.T) {
 		{
 			ConditionType: "wait",
 			Selector:      Selector{},
-			CustomJS:      "",
 			Value:         "2",
 		},
 	}}
-	expected := []WaitCondition{{ConditionType: "wait", Selector: Selector{}, CustomJS: "", Value: "2"}}
+	expected := []WaitCondition{{ConditionType: "wait", Selector: Selector{}, Value: "2"}}
 	if got := ar.GetWaitConditions(); !reflect.DeepEqual(got, expected) {
 		t.Errorf("GetWaitConditions() = %v, want %v", got, expected)
 	}

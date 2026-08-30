@@ -292,7 +292,7 @@ func executeCCActionRule(ctx *ProcessContext, r *rules.ActionRule, data *[]byte)
 // waitForCCCondition waits for a condition to be met before continuing.
 func waitForCCCondition(_ *ProcessContext, r rules.WaitCondition) error {
 	// Execute the wait condition
-	switch strings.ToLower(strings.TrimSpace(r.ConditionType)) {
+	switch strings.ToLower(strings.TrimSpace(string(r.ConditionType))) {
 	case "element":
 		return nil
 	case "delay":

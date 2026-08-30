@@ -401,13 +401,24 @@ type ItemToExtract struct {
 	Pattern string `json:"pattern" yaml:"pattern"`
 }
 
-// WaitCondition represents a single wait condition
+// WaitConditionType is the discriminator for a browser wait condition.
+type WaitConditionType string
+
+const (
+	WaitConditionElementPresence WaitConditionType = "element_presence"
+	WaitConditionElementVisible  WaitConditionType = "element_visible"
+	WaitConditionDelay           WaitConditionType = "delay"
+	WaitConditionPluginCall      WaitConditionType = "plugin_call"
+)
+
+// WaitCondition represents a single wait condition. Selector is used only by
+// element conditions, Value only by delay, and Plugin only by plugin_call.
 type WaitCondition struct {
-	ConditionType string     `json:"condition_type" yaml:"condition_type"`
-	Selector      Selector   `json:"selector,omitempty" yaml:"selector,omitempty"`
-	CustomJS      string     `json:"custom_js,omitempty" yaml:"custom_js,omitempty"`
-	Value         string     `json:"value,omitempty" yaml:"value,omitempty"`
-	AgentCall     *AgentCall `json:"agent_call,omitempty" yaml:"agent_call,omitempty"`
+	ConditionType WaitConditionType `json:"condition_type" yaml:"condition_type"`
+	Selector      Selector          `json:"selector,omitempty" yaml:"selector,omitempty"`
+	Value         string            `json:"value,omitempty" yaml:"value,omitempty"`
+	Plugin        string            `json:"plugin,omitempty" yaml:"plugin,omitempty"`
+	AgentCall     *AgentCall        `json:"agent_call,omitempty" yaml:"agent_call,omitempty"`
 }
 
 // PostProcessingStep represents a single post-processing step

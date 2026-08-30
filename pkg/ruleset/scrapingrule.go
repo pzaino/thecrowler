@@ -78,7 +78,7 @@ func (r *ScrapingRule) GetPostProcessing() []PostProcessingStep {
 
 // GetConditionType returns the condition type for the specified wait condition.
 func (w *WaitCondition) GetConditionType() string {
-	return strings.ToLower(strings.TrimSpace(w.ConditionType))
+	return strings.ToLower(strings.TrimSpace(string(w.ConditionType)))
 }
 
 // GetSelector returns the selector for the specified wait condition.

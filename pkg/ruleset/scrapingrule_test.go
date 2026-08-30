@@ -147,7 +147,7 @@ func TestScrapingRuleGetPostProcessing(t *testing.T) {
 // TestWaitCondition_GetConditionType tests the GetConditionType method of WaitCondition
 func TestWaitConditionGetConditionType(t *testing.T) {
 	conditionType := "TestConditionType"
-	w := WaitCondition{ConditionType: "  " + conditionType + "  "}
+	w := WaitCondition{ConditionType: WaitConditionType("  " + conditionType + "  ")}
 	if got := w.GetConditionType(); got != strings.ToLower(strings.TrimSpace(conditionType)) {
 		t.Errorf("GetConditionType() = %v, want %v", got, conditionType)
 	}

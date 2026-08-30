@@ -268,22 +268,48 @@ func WaitForCondition(ctx context.Context, runtime *Runtime, condition rules.Wai
 	if err := runtime.check(ctx); err != nil {
 		return err
 	}
-	switch strings.ToLower(strings.TrimSpace(condition.ConditionType)) {
-	case "element":
-		_, err := runtime.Rules.FindElement(ctx, condition.Selector)
-		return err
-	case "delay":
-		return wait(ctx, runtime, time.Duration(exi.GetFloat(condition.Value)*float64(time.Second)))
-	case "plugin_call":
+	conditionType := rules.WaitConditionType(strings.ToLower(strings.TrimSpace(string(condition.ConditionType))))
+	switch conditionType {
+	case rules.WaitConditionElementPresence, rules.WaitConditionElementVisible:
 		if runtime.Rules == nil {
 			return errors.New("browser actions: rule lookup is nil")
 		}
-		script, exists, err := runtime.Rules.PluginScript(ctx, condition.Value)
+		if strings.TrimSpace(condition.Selector.SelectorType) == "" || strings.TrimSpace(condition.Selector.Selector) == "" {
+			return errors.New("wait condition requires a typed selector")
+		}
+		element, err := runtime.Rules.FindElement(ctx, condition.Selector)
+		if err != nil {
+			return err
+		}
+		if conditionType == rules.WaitConditionElementVisible {
+			visible, err := element.IsDisplayed()
+			if err != nil {
+				return err
+			}
+			if !visible {
+				return errors.New("wait condition element is not visible")
+			}
+		}
+		return err
+	case rules.WaitConditionDelay:
+		if strings.TrimSpace(condition.Value) == "" {
+			return errors.New("delay wait condition requires value")
+		}
+		return wait(ctx, runtime, time.Duration(exi.GetFloat(condition.Value)*float64(time.Second)))
+	case rules.WaitConditionPluginCall:
+		if runtime.Rules == nil {
+			return errors.New("browser actions: rule lookup is nil")
+		}
+		plugin := strings.TrimSpace(condition.Plugin)
+		if plugin == "" {
+			return errors.New("plugin_call wait condition requires plugin")
+		}
+		script, exists, err := runtime.Rules.PluginScript(ctx, plugin)
 		if err != nil {
 			return err
 		}
 		if !exists {
-			return fmt.Errorf("plugin not found: %s", condition.Value)
+			return fmt.Errorf("plugin not found: %s", plugin)
 		}
 		_, err = runtime.WebDriver.ExecuteScript(script, nil)
 		return err

@@ -3,6 +3,7 @@ package actions
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -34,9 +35,13 @@ func (d *testDriver) ExecuteScript(script string, args []interface{}) (interface
 
 type testElement struct {
 	vdi.WebElement
-	clicks   int
-	location selenium.Point
+	clicks     int
+	location   selenium.Point
+	displayed  bool
+	displayErr error
 }
+
+func (e *testElement) IsDisplayed() (bool, error) { return e.displayed, e.displayErr }
 
 func (e *testElement) Click() error {
 	e.clicks++
@@ -112,6 +117,37 @@ func TestWaitForConditionObservesCancellation(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("WaitForCondition did not stop after cancellation")
+	}
+}
+
+func TestWaitForConditionBehavior(t *testing.T) {
+	typedSelector := rules.Selector{SelectorType: "css", Selector: "#ready"}
+	tests := []struct {
+		name      string
+		condition rules.WaitCondition
+		lookup    testLookup
+		wantErr   string
+	}{
+		{name: "presence", condition: rules.WaitCondition{ConditionType: rules.WaitConditionElementPresence, Selector: typedSelector}, lookup: testLookup{element: &testElement{}}},
+		{name: "visible", condition: rules.WaitCondition{ConditionType: rules.WaitConditionElementVisible, Selector: typedSelector}, lookup: testLookup{element: &testElement{displayed: true}}},
+		{name: "not visible", condition: rules.WaitCondition{ConditionType: rules.WaitConditionElementVisible, Selector: typedSelector}, lookup: testLookup{element: &testElement{}}, wantErr: "not visible"},
+		{name: "plugin", condition: rules.WaitCondition{ConditionType: rules.WaitConditionPluginCall, Plugin: "ready"}, lookup: testLookup{pluginScript: "return true", pluginExists: true}},
+		{name: "plugin lookup failure", condition: rules.WaitCondition{ConditionType: rules.WaitConditionPluginCall, Plugin: "missing"}, lookup: testLookup{}, wantErr: "plugin not found: missing"},
+		{name: "missing selector", condition: rules.WaitCondition{ConditionType: rules.WaitConditionElementPresence}, lookup: testLookup{}, wantErr: "requires a typed selector"},
+		{name: "missing delay", condition: rules.WaitCondition{ConditionType: rules.WaitConditionDelay}, lookup: testLookup{}, wantErr: "requires value"},
+		{name: "missing plugin", condition: rules.WaitCondition{ConditionType: rules.WaitConditionPluginCall}, lookup: testLookup{}, wantErr: "requires plugin"},
+		{name: "unknown", condition: rules.WaitCondition{ConditionType: "agent_call"}, lookup: testLookup{}, wantErr: "not supported"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := WaitForCondition(context.Background(), &Runtime{WebDriver: &testDriver{}, Rules: tt.lookup}, tt.condition)
+			if tt.wantErr == "" && err != nil {
+				t.Fatalf("WaitForCondition() error = %v", err)
+			}
+			if tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)) {
+				t.Fatalf("WaitForCondition() error = %v, want substring %q", err, tt.wantErr)
+			}
+		})
 	}
 }
 
