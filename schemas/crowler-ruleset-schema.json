@@ -890,9 +890,16 @@
                       },
                       "confidence": {
                         "type": "number",
-                        "description": "Optional. The confidence level for the match, ranging from 0 to 10."
+                        "description": "Optional. The confidence level for the match, ranging from 0 to 10.",
+                        "minimum": -10,
+                        "maximum": 10
                       }
-                    }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "key",
+                      "confidence"
+                    ]
                   },
                   "description": "Matching patterns for HTTP header fields to identify technology."
                 },
@@ -917,41 +924,35 @@
                         "description": "The pattern to match within the tag's attribute content. You can use Perl-Compatible Regular Expressions (PCRE) to write your signatures and patterns."
                       },
                       "text": {
-                        "type": "string",
-                        "description": "Optional. The text to match in the tag's innerText. You can use Perl-Compatible Regular Expressions (PCRE) to write your signatures and patterns."
+                        "description": "Optional. The text to match in the tag's innerText. You can use Perl-Compatible Regular Expressions (PCRE) to write your signatures and patterns.",
+                        "oneOf": [
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          {
+                            "type": "string",
+                            "deprecated": true
+                          }
+                        ]
                       },
                       "confidence": {
                         "type": "number",
-                        "description": "Optional. The confidence level for the detection, decimal number ranging from 0 to 10 (or whatever set in the detection_configuration)."
+                        "description": "Optional. The confidence level for the detection, decimal number ranging from 0 to 10 (or whatever set in the detection_configuration).",
+                        "minimum": -10,
+                        "maximum": 10
                       }
                     },
-                    "description": "Phrases or character sequences within page content indicative of specific technology."
+                    "description": "Phrases or character sequences within page content indicative of specific technology.",
+                    "additionalProperties": false,
+                    "required": [
+                      "key",
+                      "confidence"
+                    ]
                   },
                   "description": "Patterns within the page content that match specific technologies."
-                },
-                "certificates_patterns": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "properties": {
-                      "key": {
-                        "type": "string",
-                        "description": "The name of the field in an SSL/TLS certificate to find."
-                      },
-                      "value": {
-                        "type": "array",
-                        "items": {
-                          "type": "string"
-                        },
-                        "description": "The pattern to match within the field's value. You can use Perl-Compatible Regular Expressions (PCRE) to write your signatures and patterns."
-                      },
-                      "confidence": {
-                        "type": "number",
-                        "description": "Optional. The confidence level for the detection, decimal number ranging from 0 to 10 (or whatever set in the detection_configuration)."
-                      }
-                    }
-                  },
-                  "description": "Phrases or character sequences within certain certificate's fields indicative of specific technology."
                 },
                 "url_micro_signatures": {
                   "type": "array",
@@ -964,10 +965,17 @@
                       },
                       "confidence": {
                         "type": "number",
-                        "description": "Optional. The confidence level for the match, decimal number ranging from 0 to 10 (or whatever set in the detection_configuration)."
+                        "description": "Optional. The confidence level for the match, decimal number ranging from 0 to 10 (or whatever set in the detection_configuration).",
+                        "minimum": -10,
+                        "maximum": 10
                       }
                     },
-                    "description": "Micro-signatures in URLs that indicate a specific technology, like '/wp-admin' for WordPress."
+                    "description": "Micro-signatures in URLs that indicate a specific technology, like '/wp-admin' for WordPress.",
+                    "additionalProperties": false,
+                    "required": [
+                      "value",
+                      "confidence"
+                    ]
                   },
                   "description": "URL patterns indicative of specific technologies."
                 },
@@ -983,8 +991,20 @@
                       "content": {
                         "type": "string",
                         "description": "The content attribute of the meta tag, which holds the value to match. You can use Perl-Compatible Regular Expressions (PCRE) to write your signatures and patterns."
+                      },
+                      "confidence": {
+                        "type": "number",
+                        "minimum": -10,
+                        "maximum": 10,
+                        "description": "Confidence contribution for this match."
                       }
-                    }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "name",
+                      "content",
+                      "confidence"
+                    ]
                   },
                   "description": "Matching patterns for meta tags to identify technology."
                 },
@@ -1007,7 +1027,7 @@
                         "type": "string",
                         "description": "The name of the plugin to call."
                       },
-                      "plugin_parameters": {
+                      "plugin_args": {
                         "title": "Plugin's Parameters",
                         "description": "The parameters to pass to the plugin.",
                         "type": "array",
@@ -1114,9 +1134,131 @@
                             "parameter_value": "my_db_password"
                           }
                         ]
+                      },
+                      "plugin_parameters": {
+                        "title": "Plugin's Parameters",
+                        "description": "Legacy alias for plugin_args.",
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "parameter_name": {
+                              "type": "string",
+                              "description": "The name of the parameter to pass to the plugin."
+                            },
+                            "parameter_value": {
+                              "description": "The value of the parameter to pass to the plugin.",
+                              "anyOf": [
+                                {
+                                  "title": "Object",
+                                  "type": "object"
+                                },
+                                {
+                                  "title": "String",
+                                  "type": "string"
+                                },
+                                {
+                                  "title": "Number",
+                                  "type": "number"
+                                },
+                                {
+                                  "title": "Boolean",
+                                  "type": "boolean"
+                                },
+                                {
+                                  "title": "Null",
+                                  "type": "null"
+                                },
+                                {
+                                  "title": "Integer",
+                                  "type": "integer"
+                                },
+                                {
+                                  "title": "Array of Strings",
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                },
+                                {
+                                  "title": "Array of Numbers",
+                                  "type": "array",
+                                  "items": {
+                                    "type": "number"
+                                  }
+                                },
+                                {
+                                  "title": "Array of Booleans",
+                                  "type": "array",
+                                  "items": {
+                                    "type": "boolean"
+                                  }
+                                },
+                                {
+                                  "title": "Array of Objects",
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object"
+                                  }
+                                },
+                                {
+                                  "title": "Array of Nulls",
+                                  "type": "array",
+                                  "items": {
+                                    "type": "null"
+                                  }
+                                },
+                                {
+                                  "title": "Array of Integers",
+                                  "type": "array",
+                                  "items": {
+                                    "type": "integer"
+                                  }
+                                }
+                              ],
+                              "examples": [
+                                "my_api_key",
+                                "my_db_password",
+                                "700",
+                                "true",
+                                "1.76",
+                                "['value1', 'value2']"
+                              ]
+                            }
+                          },
+                          "additionalProperties": false,
+                          "required": [
+                            "parameter_name",
+                            "parameter_value"
+                          ]
+                        },
+                        "examples": [
+                          {
+                            "parameter_name": "api_key",
+                            "parameter_value": "my_api_key"
+                          },
+                          {
+                            "parameter_name": "db_password",
+                            "parameter_value": "my_db_password"
+                          }
+                        ],
+                        "deprecated": true
                       }
                     },
-                    "additionalProperties": false
+                    "additionalProperties": false,
+                    "required": [
+                      "plugin_name"
+                    ],
+                    "allOf": [
+                      {
+                        "not": {
+                          "required": [
+                            "plugin_args",
+                            "plugin_parameters"
+                          ]
+                        }
+                      }
+                    ]
                   }
                 },
                 "external_detection": {
@@ -1130,36 +1272,70 @@
                         "type": "string",
                         "enum": [
                           "abuse_ipdb",
-                          "alien_vault",
-                          "censys",
-                          "cisco_umbrella",
-                          "grey_noise",
-                          "google_safe_browsing",
-                          "hybrid_analysis",
-                          "ip_quality_score",
                           "ipvoid",
-                          "malware_domain_list",
-                          "shodan",
+                          "censys",
+                          "ssllabs",
+                          "url_haus",
+                          "threat_crowd",
+                          "cuckoo_url",
                           "virus_total",
-                          "url_haus"
+                          "phish_tank",
+                          "google_safe_browsing",
+                          "open_phish",
+                          "hybrid_analysis",
+                          "cisco_umbrella",
+                          "alien_vault",
+                          "shodan",
+                          "virus_total_file",
+                          "hybrid_analysis_file",
+                          "cuckoo_file"
                         ],
                         "examples": [
                           "abuse_ipdb",
-                          "alien_vault",
-                          "censys",
-                          "cisco_umbrella",
-                          "grey_noise",
-                          "google_safe_browsing",
-                          "hybrid_analysis",
-                          "ip_quality_score",
                           "ipvoid",
-                          "malware_domain_list",
-                          "shodan",
+                          "censys",
+                          "ssllabs",
+                          "url_haus",
+                          "threat_crowd",
+                          "cuckoo_url",
                           "virus_total",
-                          "url_haus"
+                          "phish_tank",
+                          "google_safe_browsing",
+                          "open_phish",
+                          "hybrid_analysis",
+                          "cisco_umbrella",
+                          "alien_vault",
+                          "shodan",
+                          "virus_total_file",
+                          "hybrid_analysis_file",
+                          "cuckoo_file"
                         ]
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "detection_params": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "param_name": {
+                              "type": "string"
+                            },
+                            "param_value": {}
+                          },
+                          "required": [
+                            "param_name",
+                            "param_value"
+                          ]
+                        }
                       }
-                    }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "provider"
+                    ]
                   }
                 },
                 "agent_calls": {
@@ -1167,6 +1343,69 @@
                   "items": {
                     "$ref": "#/definitions/agentCall"
                   }
+                },
+                "ssl_patterns": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string",
+                        "description": "The name of the field in an SSL/TLS certificate to find."
+                      },
+                      "value": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "The pattern to match within the field's value. You can use Perl-Compatible Regular Expressions (PCRE) to write your signatures and patterns."
+                      },
+                      "confidence": {
+                        "type": "number",
+                        "description": "Optional. The confidence level for the detection, decimal number ranging from 0 to 10 (or whatever set in the detection_configuration).",
+                        "minimum": -10,
+                        "maximum": 10
+                      }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "key",
+                      "confidence"
+                    ]
+                  },
+                  "description": "Phrases or character sequences within certain certificate's fields indicative of specific technology."
+                },
+                "certificates_patterns": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string",
+                        "description": "The name of the field in an SSL/TLS certificate to find."
+                      },
+                      "value": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "The pattern to match within the field's value. You can use Perl-Compatible Regular Expressions (PCRE) to write your signatures and patterns."
+                      },
+                      "confidence": {
+                        "type": "number",
+                        "description": "Optional. The confidence level for the detection, decimal number ranging from 0 to 10 (or whatever set in the detection_configuration).",
+                        "minimum": -10,
+                        "maximum": 10
+                      }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "key",
+                      "confidence"
+                    ]
+                  },
+                  "description": "Legacy alias for ssl_patterns.",
+                  "deprecated": true
                 }
               },
               "additionalProperties": false,
@@ -1187,7 +1426,7 @@
                 },
                 {
                   "required": [
-                    "certificates_patterns"
+                    "ssl_patterns"
                   ]
                 },
                 {
@@ -1209,6 +1448,26 @@
                   "required": [
                     "plugin_calls"
                   ]
+                },
+                {
+                  "required": [
+                    "certificates_patterns"
+                  ]
+                },
+                {
+                  "required": [
+                    "agent_calls"
+                  ]
+                }
+              ],
+              "allOf": [
+                {
+                  "not": {
+                    "required": [
+                      "ssl_patterns",
+                      "certificates_patterns"
+                    ]
+                  }
                 }
               ]
             }

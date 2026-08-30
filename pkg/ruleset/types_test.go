@@ -356,7 +356,7 @@ func TestPluginParams_MarshalJSON(t *testing.T) {
 					Type: varTypeStr,
 				},
 			},
-			expected: `{"parameter_value":"test string","ArgName":"test_arg","ArgValue":"test string","Properties":{"Type":"string"}}`,
+			expected: `{"parameter_value":"test string","parameter_name":"test_arg","properties":{"type":"string"}}`,
 		},
 		{
 			name: "Number value",
@@ -367,7 +367,7 @@ func TestPluginParams_MarshalJSON(t *testing.T) {
 					Type: varTypeNum,
 				},
 			},
-			expected: `{"parameter_value":42.5,"ArgName":"test_arg","ArgValue":42.5,"Properties":{"Type":"number"}}`,
+			expected: `{"parameter_value":42.5,"parameter_name":"test_arg","properties":{"type":"number"}}`,
 		},
 		{
 			name: "Boolean value",
@@ -378,7 +378,7 @@ func TestPluginParams_MarshalJSON(t *testing.T) {
 					Type: varTypeBool,
 				},
 			},
-			expected: `{"parameter_value":true,"ArgName":"test_arg","ArgValue":true,"Properties":{"Type":"boolean"}}`,
+			expected: `{"parameter_value":true,"parameter_name":"test_arg","properties":{"type":"boolean"}}`,
 		},
 		{
 			name: "Null value",
@@ -389,7 +389,7 @@ func TestPluginParams_MarshalJSON(t *testing.T) {
 					Type: varTypeNull,
 				},
 			},
-			expected: `{"parameter_value":null,"ArgName":"test_arg","ArgValue":null,"Properties":{"Type":"null"}}`,
+			expected: `{"parameter_value":null,"parameter_name":"test_arg","properties":{"type":"null"}}`,
 		},
 		{
 			name: "Array of strings",
@@ -400,7 +400,7 @@ func TestPluginParams_MarshalJSON(t *testing.T) {
 					Type: arrTypeStr,
 				},
 			},
-			expected: `{"parameter_value":["a","b","c"],"ArgName":"test_arg3","ArgValue":["a","b","c"],"Properties":{"Type":"[]string"}}`,
+			expected: `{"parameter_value":["a","b","c"],"parameter_name":"test_arg3","properties":{"type":"[]string"}}`,
 		},
 		{
 			name: "Array of numbers",
@@ -411,7 +411,7 @@ func TestPluginParams_MarshalJSON(t *testing.T) {
 					Type: arrTypeFloat64,
 				},
 			},
-			expected: `{"parameter_value":[1.1,2.2,3.3],"ArgName":"test_arg4","ArgValue":[1.1,2.2,3.3],"Properties":{"Type":"[]float64"}}`,
+			expected: `{"parameter_value":[1.1,2.2,3.3],"parameter_name":"test_arg4","properties":{"type":"[]float64"}}`,
 		},
 		{
 			name: "Array of booleans",
@@ -422,7 +422,7 @@ func TestPluginParams_MarshalJSON(t *testing.T) {
 					Type: arrTypeBool,
 				},
 			},
-			expected: `{"parameter_value":[true,false,true],"ArgName":"test_arg5","ArgValue":[true,false,true],"Properties":{"Type":"[]bool"}}`,
+			expected: `{"parameter_value":[true,false,true],"parameter_name":"test_arg5","properties":{"type":"[]bool"}}`,
 		},
 		{
 			name: "Unknown type",
@@ -433,7 +433,7 @@ func TestPluginParams_MarshalJSON(t *testing.T) {
 					Type: varTypeUnknown,
 				},
 			},
-			expected: `{"parameter_value":null,"ArgName":"test_null","ArgValue":null,"Properties":{"Type":"unknown"}}`,
+			expected: `{"parameter_value":null,"parameter_name":"test_null","properties":{"type":"unknown"}}`,
 		},
 	}
 
@@ -517,7 +517,7 @@ func TestMarshalJSON_PluginParams(t *testing.T) {
 					Type: varTypeStr,
 				},
 			},
-			expected: `{"parameter_value":"test string","ArgName":"test_arg","ArgValue":"test string","Properties":{"Type":"string"}}`,
+			expected: `{"parameter_value":"test string","parameter_name":"test_arg","properties":{"type":"string"}}`,
 		},
 		{
 			name: "Number value",
@@ -528,7 +528,7 @@ func TestMarshalJSON_PluginParams(t *testing.T) {
 					Type: varTypeNum,
 				},
 			},
-			expected: `{"parameter_value":42.5,"ArgName":"test_arg","ArgValue":42.5,"Properties":{"Type":"number"}}`,
+			expected: `{"parameter_value":42.5,"parameter_name":"test_arg","properties":{"type":"number"}}`,
 		},
 		{
 			name: "Boolean value",
@@ -539,7 +539,7 @@ func TestMarshalJSON_PluginParams(t *testing.T) {
 					Type: varTypeBool,
 				},
 			},
-			expected: `{"parameter_value":true,"ArgName":"test_arg","ArgValue":true,"Properties":{"Type":"boolean"}}`,
+			expected: `{"parameter_value":true,"parameter_name":"test_arg","properties":{"type":"boolean"}}`,
 		},
 		{
 			name: "Null value",
@@ -550,7 +550,7 @@ func TestMarshalJSON_PluginParams(t *testing.T) {
 					Type: varTypeNull,
 				},
 			},
-			expected: `{"parameter_value":null,"ArgName":"test_arg","ArgValue":null,"Properties":{"Type":"null"}}`,
+			expected: `{"parameter_value":null,"parameter_name":"test_arg","properties":{"type":"null"}}`,
 		},
 		{
 			name: "Array of strings",
@@ -561,7 +561,7 @@ func TestMarshalJSON_PluginParams(t *testing.T) {
 					Type: arrTypeStr,
 				},
 			},
-			expected: `{"parameter_value":["a","b","c"],"ArgName":"test_arg3","ArgValue":["a","b","c"],"Properties":{"Type":"[]string"}}`,
+			expected: `{"parameter_value":["a","b","c"],"parameter_name":"test_arg3","properties":{"type":"[]string"}}`,
 		},
 		{
 			name: "Array of numbers",
@@ -572,7 +572,7 @@ func TestMarshalJSON_PluginParams(t *testing.T) {
 					Type: arrTypeFloat64,
 				},
 			},
-			expected: `{"parameter_value":[1.1,2.2,3.3],"ArgName":"test_arg4","ArgValue":[1.1,2.2,3.3],"Properties":{"Type":"[]float64"}}`,
+			expected: `{"parameter_value":[1.1,2.2,3.3],"parameter_name":"test_arg4","properties":{"type":"[]float64"}}`,
 		},
 		{
 			name: "Array of booleans",
@@ -583,7 +583,7 @@ func TestMarshalJSON_PluginParams(t *testing.T) {
 					Type: arrTypeBool,
 				},
 			},
-			expected: `{"parameter_value":[true,false,true],"ArgName":"test_arg5","ArgValue":[true,false,true],"Properties":{"Type":"[]bool"}}`,
+			expected: `{"parameter_value":[true,false,true],"parameter_name":"test_arg5","properties":{"type":"[]bool"}}`,
 		},
 		{
 			name: "Unknown type",
@@ -594,7 +594,7 @@ func TestMarshalJSON_PluginParams(t *testing.T) {
 					Type: varTypeUnknown,
 				},
 			},
-			expected: `{"parameter_value":null,"ArgName":"test_null","ArgValue":null,"Properties":{"Type":"unknown"}}`,
+			expected: `{"parameter_value":null,"parameter_name":"test_null","properties":{"type":"unknown"}}`,
 		},
 	}
 

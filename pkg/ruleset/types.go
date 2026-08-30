@@ -559,34 +559,137 @@ type DetectionRule struct {
 	RuleName            string                 `json:"rule_name" yaml:"rule_name"`
 	ObjectType          []string               `json:"object_type,omitempty" yaml:"object_type,omitempty"`
 	Scope               string                 `json:"scope" yaml:"scope"`
-	ObjectName          string                 `yaml:"object_name"`
-	HTTPHeaderFields    []HTTPHeaderField      `yaml:"http_header_fields,omitempty"`
-	PageContentPatterns []PageContentSignature `yaml:"page_content_patterns,omitempty"`
-	SSLSignatures       []SSLSignature         `yaml:"ssl_patterns,omitempty"`
-	URLMicroSignatures  []URLMicroSignature    `yaml:"url_micro_signatures,omitempty"`
-	MetaTags            []MetaTag              `yaml:"meta_tags,omitempty"`
-	Implies             []string               `yaml:"implies,omitempty"`
-	PluginCalls         []PluginCall           `yaml:"plugin_calls,omitempty"`
+	ObjectName          string                 `json:"object_name" yaml:"object_name"`
+	HTTPHeaderFields    []HTTPHeaderField      `json:"http_header_fields,omitempty" yaml:"http_header_fields,omitempty"`
+	PageContentPatterns []PageContentSignature `json:"page_content_patterns,omitempty" yaml:"page_content_patterns,omitempty"`
+	SSLSignatures       []SSLSignature         `json:"ssl_patterns,omitempty" yaml:"ssl_patterns,omitempty"`
+	URLMicroSignatures  []URLMicroSignature    `json:"url_micro_signatures,omitempty" yaml:"url_micro_signatures,omitempty"`
+	MetaTags            []MetaTag              `json:"meta_tags,omitempty" yaml:"meta_tags,omitempty"`
+	Implies             []string               `json:"implies,omitempty" yaml:"implies,omitempty"`
+	PluginCalls         []PluginCall           `json:"plugin_calls,omitempty" yaml:"plugin_calls,omitempty"`
 	AgentCalls          []AgentCall            `json:"agent_calls,omitempty" yaml:"agent_calls,omitempty"`
-	ExternalDetections  []ExternalDetection    `yaml:"external_detection,omitempty"`
+	ExternalDetections  []ExternalDetection    `json:"external_detection,omitempty" yaml:"external_detection,omitempty"`
+}
+
+// UnmarshalJSON accepts the old certificates_patterns spelling while always
+// normalizing it into SSLSignatures. Supplying both names is ambiguous.
+func (r *DetectionRule) UnmarshalJSON(data []byte) error {
+	type plain DetectionRule
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	if _, canonical := fields["ssl_patterns"]; canonical {
+		if _, legacy := fields["certificates_patterns"]; legacy {
+			return errors.New("ssl_patterns and certificates_patterns cannot both be specified")
+		}
+	}
+	var aux struct {
+		*plain
+		Legacy []SSLSignature `json:"certificates_patterns"`
+	}
+	aux.plain = (*plain)(r)
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if _, ok := fields["certificates_patterns"]; ok {
+		r.SSLSignatures = aux.Legacy
+	}
+	return nil
+}
+
+// UnmarshalYAML is the YAML equivalent of UnmarshalJSON.
+func (r *DetectionRule) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	type plain DetectionRule
+	var fields map[string]interface{}
+	if err := unmarshal(&fields); err != nil {
+		return err
+	}
+	if _, canonical := fields["ssl_patterns"]; canonical {
+		if _, legacy := fields["certificates_patterns"]; legacy {
+			return errors.New("ssl_patterns and certificates_patterns cannot both be specified")
+		}
+	}
+	var aux struct {
+		plain  `yaml:",inline"`
+		Legacy []SSLSignature `yaml:"certificates_patterns"`
+	}
+	if err := unmarshal(&aux); err != nil {
+		return err
+	}
+	*r = DetectionRule(aux.plain)
+	if _, ok := fields["certificates_patterns"]; ok {
+		r.SSLSignatures = aux.Legacy
+	}
+	return nil
 }
 
 // PluginCall represents a call to a plugin
 type PluginCall struct {
-	PluginName string         `yaml:"plugin_name"`
-	PluginArgs []PluginParams `yaml:"plugin_args"`
+	PluginName string         `json:"plugin_name" yaml:"plugin_name"`
+	PluginArgs []PluginParams `json:"plugin_args" yaml:"plugin_args"`
+}
+
+func (p *PluginCall) UnmarshalJSON(data []byte) error {
+	type plain PluginCall
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	if _, canonical := fields["plugin_args"]; canonical {
+		if _, legacy := fields["plugin_parameters"]; legacy {
+			return errors.New("plugin_args and plugin_parameters cannot both be specified")
+		}
+	}
+	var aux struct {
+		*plain
+		Legacy []PluginParams `json:"plugin_parameters"`
+	}
+	aux.plain = (*plain)(p)
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if _, ok := fields["plugin_parameters"]; ok {
+		p.PluginArgs = aux.Legacy
+	}
+	return nil
+}
+
+func (p *PluginCall) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	type plain PluginCall
+	var fields map[string]interface{}
+	if err := unmarshal(&fields); err != nil {
+		return err
+	}
+	if _, canonical := fields["plugin_args"]; canonical {
+		if _, legacy := fields["plugin_parameters"]; legacy {
+			return errors.New("plugin_args and plugin_parameters cannot both be specified")
+		}
+	}
+	var aux struct {
+		plain  `yaml:",inline"`
+		Legacy []PluginParams `yaml:"plugin_parameters"`
+	}
+	if err := unmarshal(&aux); err != nil {
+		return err
+	}
+	*p = PluginCall(aux.plain)
+	if _, ok := fields["plugin_parameters"]; ok {
+		p.PluginArgs = aux.Legacy
+	}
+	return nil
 }
 
 // PluginParams represents the parameters for a plugin call
 type PluginParams struct {
-	ArgName    string                 `yaml:"parameter_name"`
-	ArgValue   interface{}            `yaml:"parameter_value"`
-	Properties PluginParamsProperties `yaml:"properties"`
+	ArgName    string                 `json:"parameter_name" yaml:"parameter_name"`
+	ArgValue   interface{}            `json:"parameter_value" yaml:"parameter_value"`
+	Properties PluginParamsProperties `json:"properties,omitempty" yaml:"properties,omitempty"`
 }
 
 // PluginParamsProperties represents the properties for the plugin parameters
 type PluginParamsProperties struct {
-	Type string `yaml:"type"`
+	Type string `json:"type" yaml:"type"`
 }
 
 // UnmarshalJSON implements custom unmarshaling logic for PluginParams
@@ -686,51 +789,106 @@ func (e *PluginParams) MarshalJSON() ([]byte, error) {
 
 // ExternalDetection represents a call to an external detection service
 type ExternalDetection struct {
-	Name            string            `yaml:"name"`
-	Provider        string            `yaml:"provider"`
-	DetectionParams []DetectionParams `yaml:"detection_params"`
+	Name            string            `json:"name,omitempty" yaml:"name,omitempty"`
+	Provider        string            `json:"provider" yaml:"provider"`
+	DetectionParams []DetectionParams `json:"detection_params,omitempty" yaml:"detection_params,omitempty"`
 }
 
 // DetectionParams represents the parameters for an external detection service
 type DetectionParams struct {
-	ParamName  string      `yaml:"param_name"`
-	ParamValue interface{} `yaml:"param_value"`
+	ParamName  string      `json:"param_name" yaml:"param_name"`
+	ParamValue interface{} `json:"param_value" yaml:"param_value"`
 }
 
 // HTTPHeaderField represents a pattern for matching HTTP header fields
 type HTTPHeaderField struct {
-	Key        string   `yaml:"key"`
-	Value      []string `yaml:"value,omitempty"`
-	Confidence float32  `yaml:"confidence"`
+	Key        string   `json:"key" yaml:"key"`
+	Value      []string `json:"value,omitempty" yaml:"value,omitempty"`
+	Confidence float32  `json:"confidence" yaml:"confidence"`
 }
 
 // SSLSignature represents a pattern for matching SSL Certificate fields
 type SSLSignature struct {
-	Key        string   `yaml:"key"`
-	Value      []string `yaml:"value,omitempty"`
-	Confidence float32  `yaml:"confidence"`
+	Key        string   `json:"key" yaml:"key"`
+	Value      []string `json:"value,omitempty" yaml:"value,omitempty"`
+	Confidence float32  `json:"confidence" yaml:"confidence"`
 }
 
 // URLMicroSignature represents a pattern for matching URL micro-signatures
 type URLMicroSignature struct {
-	Signature  string  `yaml:"value"`
-	Confidence float32 `yaml:"confidence"`
+	Signature  string  `json:"value" yaml:"value"`
+	Confidence float32 `json:"confidence" yaml:"confidence"`
 }
 
 // PageContentSignature micro-signatures are patterns that can be found in the page content
 type PageContentSignature struct {
-	Key        string   `yaml:"key"`
-	Attribute  string   `yaml:"attribute,omitempty"`
-	Signature  []string `yaml:"value,omitempty"`
-	Text       []string `yaml:"text,omitempty"`
-	Confidence float32  `yaml:"confidence"`
+	Key        string   `json:"key" yaml:"key"`
+	Attribute  string   `json:"attribute,omitempty" yaml:"attribute,omitempty"`
+	Signature  []string `json:"value,omitempty" yaml:"value,omitempty"`
+	Text       []string `json:"text,omitempty" yaml:"text,omitempty"`
+	Confidence float32  `json:"confidence" yaml:"confidence"`
+}
+
+func (p *PageContentSignature) UnmarshalJSON(data []byte) error {
+	type plain PageContentSignature
+	var aux struct {
+		*plain
+		Text json.RawMessage `json:"text"`
+	}
+	aux.plain = (*plain)(p)
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if len(aux.Text) == 0 || string(aux.Text) == "null" {
+		return nil
+	}
+	if err := json.Unmarshal(aux.Text, &p.Text); err == nil {
+		return nil
+	}
+	var legacy string
+	if err := json.Unmarshal(aux.Text, &legacy); err != nil {
+		return errors.New("page content text must be a string or an array of strings")
+	}
+	p.Text = []string{legacy}
+	return nil
+}
+
+func (p *PageContentSignature) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	var raw struct {
+		Key        string      `yaml:"key"`
+		Attribute  string      `yaml:"attribute"`
+		Signature  []string    `yaml:"value"`
+		Text       interface{} `yaml:"text"`
+		Confidence float32     `yaml:"confidence"`
+	}
+	if err := unmarshal(&raw); err != nil {
+		return err
+	}
+	p.Key, p.Attribute, p.Signature, p.Confidence = raw.Key, raw.Attribute, raw.Signature, raw.Confidence
+	switch value := raw.Text.(type) {
+	case nil:
+	case string:
+		p.Text = []string{value}
+	case []interface{}:
+		p.Text = make([]string, len(value))
+		for i, item := range value {
+			s, ok := item.(string)
+			if !ok {
+				return errors.New("page content text entries must be strings")
+			}
+			p.Text[i] = s
+		}
+	default:
+		return errors.New("page content text must be a string or an array of strings")
+	}
+	return nil
 }
 
 // MetaTag represents a pattern for matching HTML meta tags
 type MetaTag struct {
-	Name       string  `yaml:"name"`
-	Content    string  `yaml:"content"`
-	Confidence float32 `yaml:"confidence"`
+	Name       string  `json:"name" yaml:"name"`
+	Content    string  `json:"content" yaml:"content"`
+	Confidence float32 `json:"confidence" yaml:"confidence"`
 }
 
 // CrawlingRule represents a crawling rule for URL fuzzing and form handling
