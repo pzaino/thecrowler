@@ -397,55 +397,78 @@ func (re *RuleEngine) GetAllDetectionRules(CtxID string) []DetectionRule {
 }
 
 // GetAllEnabledScrapingRules returns all the enabled scraping rules in the RuleEngine.
-func (re *RuleEngine) GetAllEnabledScrapingRules(CtxID string) []ScrapingRule {
+func (re *RuleEngine) GetAllEnabledScrapingRules(CtxID string, runtimeScope ...string) []ScrapingRule {
 	var scrapingRules []ScrapingRule
 	CID := strings.ToLower(strings.TrimSpace(CtxID))
 	for _, rg := range re.GetAllEnabledRuleGroups() {
 		if CID != "" {
 			rg.SetEnv(CID)
 		}
-		scrapingRules = append(scrapingRules, rg.ScrapingRules...)
+		for _, rule := range rg.ScrapingRules {
+			if ScopeMatches(rule.Scope, firstScope(runtimeScope)) {
+				scrapingRules = append(scrapingRules, rule)
+			}
+		}
 	}
 	return scrapingRules
 }
 
 // GetAllEnabledActionRules returns all the enabled action rules in the RuleEngine.
-func (re *RuleEngine) GetAllEnabledActionRules(CtxID string) []ActionRule {
+func (re *RuleEngine) GetAllEnabledActionRules(CtxID string, runtimeScope ...string) []ActionRule {
 	var actionRules []ActionRule
 	CID := strings.ToLower(strings.TrimSpace(CtxID))
 	for _, rg := range re.GetAllEnabledRuleGroups() {
 		if CID != "" {
 			rg.SetEnv(CID)
 		}
-		actionRules = append(actionRules, rg.ActionRules...)
+		for _, rule := range rg.ActionRules {
+			if ScopeMatches(rule.Scope, firstScope(runtimeScope)) {
+				actionRules = append(actionRules, rule)
+			}
+		}
 	}
 	return actionRules
 }
 
 // GetAllEnabledCrawlingRules returns all the enabled crawling rules in the RuleEngine.
-func (re *RuleEngine) GetAllEnabledCrawlingRules(CtxID string) []CrawlingRule {
+func (re *RuleEngine) GetAllEnabledCrawlingRules(CtxID string, runtimeScope ...string) []CrawlingRule {
 	var crawlingRules []CrawlingRule
 	CID := strings.ToLower(strings.TrimSpace(CtxID))
 	for _, rg := range re.GetAllEnabledRuleGroups() {
 		if CID != "" {
 			rg.SetEnv(CID)
 		}
-		crawlingRules = append(crawlingRules, rg.CrawlingRules...)
+		for _, rule := range rg.CrawlingRules {
+			if ScopeMatches(rule.Scope, firstScope(runtimeScope)) {
+				crawlingRules = append(crawlingRules, rule)
+			}
+		}
 	}
 	return crawlingRules
 }
 
 // GetAllEnabledDetectionRules returns all the enabled detection rules in the RuleEngine.
-func (re *RuleEngine) GetAllEnabledDetectionRules(CtxID string) []DetectionRule {
+func (re *RuleEngine) GetAllEnabledDetectionRules(CtxID string, runtimeScope ...string) []DetectionRule {
 	var detectionRules []DetectionRule
 	CID := strings.ToLower(strings.TrimSpace(CtxID))
 	for _, rg := range re.GetAllEnabledRuleGroups() {
 		if CID != "" {
 			rg.SetEnv(CID)
 		}
-		detectionRules = append(detectionRules, rg.DetectionRules...)
+		for _, rule := range rg.DetectionRules {
+			if ScopeMatches(rule.Scope, firstScope(runtimeScope)) {
+				detectionRules = append(detectionRules, rule)
+			}
+		}
 	}
 	return detectionRules
+}
+
+func firstScope(scopes []string) string {
+	if len(scopes) == 0 {
+		return ""
+	}
+	return scopes[0]
 }
 
 // GetAllScrapingRulesByURL returns all the scraping rules for the specified URL.

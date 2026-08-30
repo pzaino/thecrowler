@@ -111,11 +111,15 @@ func (rs *Ruleset) GetAllDetectionRules() []DetectionRule {
 // GetAllEnabledScrapingRules returns a slice of Rule containing only the enabled rules.
 // It iterates over the RuleGroups in the SiteRules and appends the enabled rules
 // to the result slice.
-func (rs *Ruleset) GetAllEnabledScrapingRules() []ScrapingRule {
+func (rs *Ruleset) GetAllEnabledScrapingRules(runtimeScope ...string) []ScrapingRule {
 	var enabledRules []ScrapingRule
 
 	for _, rg := range rs.GetAllEnabledRuleGroups() {
-		enabledRules = append(enabledRules, rg.ScrapingRules...)
+		for _, rule := range rg.ScrapingRules {
+			if ScopeMatches(rule.Scope, firstScope(runtimeScope)) {
+				enabledRules = append(enabledRules, rule)
+			}
+		}
 	}
 
 	return enabledRules
@@ -125,6 +129,12 @@ func (rs *Ruleset) GetAllEnabledScrapingRules() []ScrapingRule {
 // It iterates over the RuleGroups in the SiteRules and appends the enabled action rules
 // to the result slice.
 func (rs *Ruleset) GetAllEnabledActionRules(CtxID string, flags ...bool) []ActionRule {
+	return rs.GetAllEnabledActionRulesForScope(CtxID, "", flags...)
+}
+
+// GetAllEnabledActionRulesForScope returns enabled action rules applicable to
+// runtimeScope. GetAllEnabledActionRules retains unscoped legacy collection.
+func (rs *Ruleset) GetAllEnabledActionRulesForScope(CtxID, runtimeScope string, flags ...bool) []ActionRule {
 	var enabledRules []ActionRule
 
 	for _, rg := range rs.GetAllEnabledRuleGroups() {
@@ -133,7 +143,11 @@ func (rs *Ruleset) GetAllEnabledActionRules(CtxID string, flags ...bool) []Actio
 				rg.SetEnv(CtxID)
 			}
 		}
-		enabledRules = append(enabledRules, rg.ActionRules...)
+		for _, rule := range rg.ActionRules {
+			if ScopeMatches(rule.Scope, runtimeScope) {
+				enabledRules = append(enabledRules, rule)
+			}
+		}
 	}
 
 	return enabledRules
@@ -142,11 +156,15 @@ func (rs *Ruleset) GetAllEnabledActionRules(CtxID string, flags ...bool) []Actio
 // GetAllEnabledCrawlingRules returns a slice of Rule containing only the enabled crawling rules.
 // It iterates over the RuleGroups in the SiteRules and appends the enabled crawling rules
 // to the result slice.
-func (rs *Ruleset) GetAllEnabledCrawlingRules() []CrawlingRule {
+func (rs *Ruleset) GetAllEnabledCrawlingRules(runtimeScope ...string) []CrawlingRule {
 	var enabledRules []CrawlingRule
 
 	for _, rg := range rs.GetAllEnabledRuleGroups() {
-		enabledRules = append(enabledRules, rg.CrawlingRules...)
+		for _, rule := range rg.CrawlingRules {
+			if ScopeMatches(rule.Scope, firstScope(runtimeScope)) {
+				enabledRules = append(enabledRules, rule)
+			}
+		}
 	}
 
 	return enabledRules
@@ -155,11 +173,15 @@ func (rs *Ruleset) GetAllEnabledCrawlingRules() []CrawlingRule {
 // GetAllEnabledDetectionRules returns a slice of Rule containing only the enabled detection rules.
 // It iterates over the RuleGroups in the SiteRules and appends the enabled detection rules
 // to the result slice.
-func (rs *Ruleset) GetAllEnabledDetectionRules() []DetectionRule {
+func (rs *Ruleset) GetAllEnabledDetectionRules(runtimeScope ...string) []DetectionRule {
 	var enabledRules []DetectionRule
 
 	for _, rg := range rs.GetAllEnabledRuleGroups() {
-		enabledRules = append(enabledRules, rg.DetectionRules...)
+		for _, rule := range rg.DetectionRules {
+			if ScopeMatches(rule.Scope, firstScope(runtimeScope)) {
+				enabledRules = append(enabledRules, rule)
+			}
+		}
 	}
 
 	return enabledRules
