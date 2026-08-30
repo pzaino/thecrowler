@@ -895,26 +895,27 @@ type MetaTag struct {
 type CrawlingRule struct {
 	RuleName          string             `json:"rule_name" yaml:"rule_name"`
 	ObjectType        []string           `json:"object_type,omitempty" yaml:"object_type,omitempty"`
-	RequestType       string             `yaml:"request_type"`
-	TargetElements    []TargetElement    `yaml:"target_elements"`
-	FuzzingParameters []FuzzingParameter `yaml:"fuzzing_parameters"`
+	Scope             string             `json:"scope" yaml:"scope"`
+	RequestType       string             `json:"request_type" yaml:"request_type"`
+	TargetElements    []TargetElement    `json:"target_elements" yaml:"target_elements"`
+	FuzzingParameters []FuzzingParameter `json:"fuzzing_parameters" yaml:"fuzzing_parameters"`
 	Lifecycle         *CrawlingLifecycle `json:"lifecycle,omitempty" yaml:"lifecycle,omitempty"`
 }
 
 // TargetElement represents a target element specified in a crawling rule
 type TargetElement struct {
-	SelectorType string     `yaml:"selector_type"`
-	Selector     string     `yaml:"selector"`
+	SelectorType string     `json:"selector_type" yaml:"selector_type"`
+	Selector     string     `json:"selector" yaml:"selector"`
 	AgentCall    *AgentCall `json:"agent_call,omitempty" yaml:"agent_call,omitempty"`
 }
 
 // FuzzingParameter represents a parameter to be fuzzed as specified in a crawling rule
 type FuzzingParameter struct {
-	ParameterName string   `yaml:"parameter_name"`
-	FuzzingType   string   `yaml:"fuzzing_type"`
-	Selector      string   `yaml:"selector"`
-	Values        []string `yaml:"values,omitempty"`
-	Pattern       string   `yaml:"pattern,omitempty"`
+	ParameterName string   `json:"parameter_name" yaml:"parameter_name"`
+	FuzzingType   string   `json:"fuzzing_type" yaml:"fuzzing_type"`
+	Selector      string   `json:"selector" yaml:"selector"`
+	Values        []string `json:"values,omitempty" yaml:"values,omitempty"`
+	Pattern       string   `json:"pattern,omitempty" yaml:"pattern,omitempty"`
 }
 
 // EnvironmentSettings represents the environment settings for the rule group

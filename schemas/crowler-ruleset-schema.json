@@ -1524,7 +1524,9 @@
                         "enum": [
                           "css",
                           "xpath",
-                          "form"
+                          "form",
+                          "query",
+                          "path"
                         ]
                       },
                       "selector": {
@@ -1569,14 +1571,403 @@
                       "pattern": {
                         "type": "string",
                         "description": "A pattern to generate fuzzing values, applicable if 'fuzzing_type' is 'pattern_based'."
+                      },
+                      "selector": {
+                        "type": "string",
+                        "description": "The query parameter name or path token to fuzz."
                       }
                     },
                     "required": [
                       "parameter_name",
                       "fuzzing_type"
+                    ],
+                    "allOf": [
+                      {
+                        "if": {
+                          "properties": {
+                            "fuzzing_type": {
+                              "const": "fixed_list"
+                            }
+                          },
+                          "required": [
+                            "fuzzing_type"
+                          ]
+                        },
+                        "then": {
+                          "required": [
+                            "values"
+                          ]
+                        }
+                      },
+                      {
+                        "if": {
+                          "properties": {
+                            "fuzzing_type": {
+                              "const": "pattern_based"
+                            }
+                          },
+                          "required": [
+                            "fuzzing_type"
+                          ]
+                        },
+                        "then": {
+                          "required": [
+                            "pattern"
+                          ]
+                        }
+                      }
                     ]
                   },
                   "description": "Defines the parameters to fuzz and the strategy for generating fuzz values."
+                },
+                "lifecycle": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "pre_crawl": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "agent_call": {
+                          "type": "object",
+                          "properties": {
+                            "agent_name": {
+                              "type": "string"
+                            },
+                            "params": {
+                              "type": "object",
+                              "additionalProperties": true
+                            },
+                            "timeout": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "on_error": {
+                              "type": "string",
+                              "enum": [
+                                "fail",
+                                "continue",
+                                "ignore"
+                              ]
+                            },
+                            "store_as": {
+                              "type": "string"
+                            },
+                            "merge_strategy": {
+                              "type": "string",
+                              "enum": [
+                                "replace",
+                                "merge",
+                                "append",
+                                "ignore"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "agent_name"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "agent_call"
+                      ]
+                    },
+                    "pre_request": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "agent_call": {
+                          "type": "object",
+                          "properties": {
+                            "agent_name": {
+                              "type": "string"
+                            },
+                            "params": {
+                              "type": "object",
+                              "additionalProperties": true
+                            },
+                            "timeout": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "on_error": {
+                              "type": "string",
+                              "enum": [
+                                "fail",
+                                "continue",
+                                "ignore"
+                              ]
+                            },
+                            "store_as": {
+                              "type": "string"
+                            },
+                            "merge_strategy": {
+                              "type": "string",
+                              "enum": [
+                                "replace",
+                                "merge",
+                                "append",
+                                "ignore"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "agent_name"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "agent_call"
+                      ]
+                    },
+                    "post_response": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "agent_call": {
+                          "type": "object",
+                          "properties": {
+                            "agent_name": {
+                              "type": "string"
+                            },
+                            "params": {
+                              "type": "object",
+                              "additionalProperties": true
+                            },
+                            "timeout": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "on_error": {
+                              "type": "string",
+                              "enum": [
+                                "fail",
+                                "continue",
+                                "ignore"
+                              ]
+                            },
+                            "store_as": {
+                              "type": "string"
+                            },
+                            "merge_strategy": {
+                              "type": "string",
+                              "enum": [
+                                "replace",
+                                "merge",
+                                "append",
+                                "ignore"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "agent_name"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "agent_call"
+                      ]
+                    },
+                    "pre_fuzz": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "agent_call": {
+                          "type": "object",
+                          "properties": {
+                            "agent_name": {
+                              "type": "string"
+                            },
+                            "params": {
+                              "type": "object",
+                              "additionalProperties": true
+                            },
+                            "timeout": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "on_error": {
+                              "type": "string",
+                              "enum": [
+                                "fail",
+                                "continue",
+                                "ignore"
+                              ]
+                            },
+                            "store_as": {
+                              "type": "string"
+                            },
+                            "merge_strategy": {
+                              "type": "string",
+                              "enum": [
+                                "replace",
+                                "merge",
+                                "append",
+                                "ignore"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "agent_name"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "agent_call"
+                      ]
+                    },
+                    "per_fuzz_candidate": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "agent_call": {
+                          "type": "object",
+                          "properties": {
+                            "agent_name": {
+                              "type": "string"
+                            },
+                            "params": {
+                              "type": "object",
+                              "additionalProperties": true
+                            },
+                            "timeout": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "on_error": {
+                              "type": "string",
+                              "enum": [
+                                "fail",
+                                "continue",
+                                "ignore"
+                              ]
+                            },
+                            "store_as": {
+                              "type": "string"
+                            },
+                            "merge_strategy": {
+                              "type": "string",
+                              "enum": [
+                                "replace",
+                                "merge",
+                                "append",
+                                "ignore"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "agent_name"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "agent_call"
+                      ]
+                    },
+                    "post_fuzz": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "agent_call": {
+                          "type": "object",
+                          "properties": {
+                            "agent_name": {
+                              "type": "string"
+                            },
+                            "params": {
+                              "type": "object",
+                              "additionalProperties": true
+                            },
+                            "timeout": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "on_error": {
+                              "type": "string",
+                              "enum": [
+                                "fail",
+                                "continue",
+                                "ignore"
+                              ]
+                            },
+                            "store_as": {
+                              "type": "string"
+                            },
+                            "merge_strategy": {
+                              "type": "string",
+                              "enum": [
+                                "replace",
+                                "merge",
+                                "append",
+                                "ignore"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "agent_name"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "agent_call"
+                      ]
+                    },
+                    "post_crawl": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "agent_call": {
+                          "type": "object",
+                          "properties": {
+                            "agent_name": {
+                              "type": "string"
+                            },
+                            "params": {
+                              "type": "object",
+                              "additionalProperties": true
+                            },
+                            "timeout": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "on_error": {
+                              "type": "string",
+                              "enum": [
+                                "fail",
+                                "continue",
+                                "ignore"
+                              ]
+                            },
+                            "store_as": {
+                              "type": "string"
+                            },
+                            "merge_strategy": {
+                              "type": "string",
+                              "enum": [
+                                "replace",
+                                "merge",
+                                "append",
+                                "ignore"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "agent_name"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "agent_call"
+                      ]
+                    }
+                  }
                 }
               },
               "additionalProperties": false,
