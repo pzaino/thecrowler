@@ -274,7 +274,11 @@ func runDefaultActionRules(wd *vdi.WebDriver, ctx *ProcessContext) {
 		if !checkActionPreConditions(r.Conditions, url) {
 			continue
 		}
-		matches, err := browseractions.ConditionsMatch(context.Background(), newActionRuntime(ctx, wd), r.AdditionalConditions)
+		condition, conditionErr := rules.ParseActionCondition(r.AdditionalConditions)
+		if conditionErr != nil {
+			continue
+		}
+		matches, err := browseractions.ConditionsMatch(context.Background(), newActionRuntime(ctx, wd), condition)
 		if err != nil || !matches {
 			continue
 		}

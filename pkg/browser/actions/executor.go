@@ -322,24 +322,39 @@ func wait(ctx context.Context, runtime *Runtime, duration time.Duration) error {
 }
 
 // ConditionsMatch evaluates browser-side action conditions.
-func ConditionsMatch(ctx context.Context, runtime *Runtime, conditions map[string]interface{}) (bool, error) {
-	if len(conditions) == 0 {
+func ConditionsMatch(ctx context.Context, runtime *Runtime, condition *rules.ActionCondition) (bool, error) {
+	if condition == nil {
 		return true, nil
 	}
-	if element, ok := conditions["element"].(string); ok {
-		if _, err := runtime.WebDriver.FindElement(vdi.ByCSSSelector, element); err != nil {
+	switch strings.ToLower(strings.TrimSpace(condition.Type)) {
+	case "element":
+		if strings.TrimSpace(condition.Selector) == "" {
+			return false, errors.New("element condition requires selector")
+		}
+		if _, err := runtime.WebDriver.FindElement(vdi.ByCSSSelector, condition.Selector); err != nil {
 			return false, nil
 		}
-	}
-	if language, ok := conditions["language"]; ok {
+		return true, nil
+	case "language":
+		if strings.TrimSpace(condition.Language) == "" {
+			return false, errors.New("language condition requires language")
+		}
 		actual, err := runtime.WebDriver.ExecuteScript("return document.documentElement.lang", nil)
-		if err != nil || actual != language {
+		if err != nil {
+			return false, err
+		}
+		if !strings.EqualFold(strings.TrimSpace(fmt.Sprint(actual)), condition.Language) {
 			return false, nil
 		}
-	}
-	if _, ok := conditions["plugin_call"]; ok {
-		name, _ := conditions["selector"].(string)
-		script, exists, err := runtime.Rules.PluginScript(ctx, name)
+		return true, nil
+	case "plugin_call":
+		if strings.TrimSpace(condition.PluginCall) == "" {
+			return false, errors.New("plugin_call condition requires plugin_call")
+		}
+		if runtime.Rules == nil {
+			return false, errors.New("browser actions: rule lookup is nil")
+		}
+		script, exists, err := runtime.Rules.PluginScript(ctx, condition.PluginCall)
 		if err != nil {
 			return false, err
 		}
@@ -351,8 +366,9 @@ func ConditionsMatch(ctx context.Context, runtime *Runtime, conditions map[strin
 			return false, nil
 		}
 		return strings.EqualFold(strings.TrimSpace(fmt.Sprint(result)), "true"), nil
+	default:
+		return false, fmt.Errorf("unknown action condition type %q", condition.Type)
 	}
-	return true, nil
 }
 
 func findElement(ctx context.Context, runtime *Runtime, selectors []rules.Selector) (vdi.WebElement, rules.Selector, error) {

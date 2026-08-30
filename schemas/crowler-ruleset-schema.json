@@ -464,22 +464,128 @@
                 },
                 "conditions": {
                   "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "type"
+                  ],
                   "properties": {
                     "type": {
                       "type": "string",
                       "enum": [
                         "element",
                         "language",
-                        "plugin_call",
-                        "agent_call"
+                        "plugin_call"
                       ]
                     },
                     "selector": {
                       "type": "string",
-                      "description": "The CSS selector to check if a given element exists, applicable for 'element'. The language id to check if a page is in a certain language, applicable for 'language'. The plugin's name if you're using plugin_call."
+                      "minLength": 1
+                    },
+                    "language": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "plugin_call": {
+                      "type": "string",
+                      "minLength": 1
                     }
                   },
-                  "description": "Conditions that must be met for the action to be executed. For example, you can check if a certain element exists on the page before performing an action. See this as something to do after we waited for the wait_conditions and we verify that the page is ready to perform the action."
+                  "allOf": [
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "element"
+                          }
+                        },
+                        "required": [
+                          "type"
+                        ]
+                      },
+                      "then": {
+                        "required": [
+                          "selector"
+                        ],
+                        "not": {
+                          "anyOf": [
+                            {
+                              "required": [
+                                "language"
+                              ]
+                            },
+                            {
+                              "required": [
+                                "plugin_call"
+                              ]
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "language"
+                          }
+                        },
+                        "required": [
+                          "type"
+                        ]
+                      },
+                      "then": {
+                        "required": [
+                          "language"
+                        ],
+                        "not": {
+                          "anyOf": [
+                            {
+                              "required": [
+                                "selector"
+                              ]
+                            },
+                            {
+                              "required": [
+                                "plugin_call"
+                              ]
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "plugin_call"
+                          }
+                        },
+                        "required": [
+                          "type"
+                        ]
+                      },
+                      "then": {
+                        "required": [
+                          "plugin_call"
+                        ],
+                        "not": {
+                          "anyOf": [
+                            {
+                              "required": [
+                                "selector"
+                              ]
+                            },
+                            {
+                              "required": [
+                                "language"
+                              ]
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  ],
+                  "description": "A closed, discriminated action condition with a field specific to each implemented runtime condition."
                 },
                 "action_type": {
                   "type": "string",

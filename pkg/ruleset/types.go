@@ -18,6 +18,8 @@ package ruleset
 
 import (
 	"encoding/json"
+	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/qri-io/jsonschema"
@@ -229,19 +231,136 @@ type ScrapingRule struct {
 
 // ActionRule represents an action rule
 type ActionRule struct {
-	RuleName        string                 `json:"rule_name" yaml:"rule_name"`
-	ObjectType      []string               `json:"object_type,omitempty" yaml:"object_type,omitempty"`
-	Scope           string                 `json:"scope" yaml:"scope"`
-	ActionType      string                 `json:"action_type" yaml:"action_type"`
-	Selectors       []Selector             `json:"selectors" yaml:"selectors"`
-	TargetSelectors []Selector             `json:"target_selectors,omitempty" yaml:"target_selectors,omitempty"`
-	StoreAs         string                 `json:"store_as,omitempty" yaml:"store_as,omitempty"`
-	Value           string                 `json:"value,omitempty" yaml:"value,omitempty"`
-	URL             string                 `json:"url,omitempty" yaml:"url,omitempty"`
-	WaitConditions  []WaitCondition        `json:"wait_conditions" yaml:"wait_conditions"`
-	Conditions      map[string]interface{} `json:"conditions" yaml:"conditions"`
-	PostProcessing  []PostProcessingStep   `json:"post_processing" yaml:"post_processing"`
-	ErrorHandling   ErrorHandling          `json:"error_handling" yaml:"error_handling"`
+	RuleName        string               `json:"rule_name" yaml:"rule_name"`
+	ObjectType      []string             `json:"object_type,omitempty" yaml:"object_type,omitempty"`
+	Scope           string               `json:"scope" yaml:"scope"`
+	ActionType      string               `json:"action_type" yaml:"action_type"`
+	Selectors       []Selector           `json:"selectors" yaml:"selectors"`
+	TargetSelectors []Selector           `json:"target_selectors,omitempty" yaml:"target_selectors,omitempty"`
+	StoreAs         string               `json:"store_as,omitempty" yaml:"store_as,omitempty"`
+	Value           string               `json:"value,omitempty" yaml:"value,omitempty"`
+	URL             string               `json:"url,omitempty" yaml:"url,omitempty"`
+	WaitConditions  []WaitCondition      `json:"wait_conditions" yaml:"wait_conditions"`
+	Conditions      *ActionCondition     `json:"conditions,omitempty" yaml:"conditions,omitempty"`
+	PostProcessing  []PostProcessingStep `json:"post_processing" yaml:"post_processing"`
+	ErrorHandling   ErrorHandling        `json:"error_handling" yaml:"error_handling"`
+}
+
+// ActionCondition is a closed, discriminated action condition.
+type ActionCondition struct {
+	Type       string `json:"type" yaml:"type"`
+	Selector   string `json:"selector,omitempty" yaml:"selector,omitempty"`
+	Language   string `json:"language,omitempty" yaml:"language,omitempty"`
+	PluginCall string `json:"plugin_call,omitempty" yaml:"plugin_call,omitempty"`
+}
+
+// ParseActionCondition converts a decoded canonical or legacy condition into
+// its validated typed representation.
+func ParseActionCondition(values map[string]interface{}) (*ActionCondition, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	typeValue, canonical := values["type"]
+	legacyKeys := []string{"element", "language", "plugin_call", "agent_call"}
+	var legacy string
+	for _, key := range legacyKeys {
+		if _, ok := values[key]; ok {
+			if legacy != "" {
+				return nil, fmt.Errorf("action condition has multiple legacy discriminators")
+			}
+			legacy = key
+		}
+	}
+	if canonical && legacy != "" {
+		return nil, fmt.Errorf("action condition mixes canonical and legacy forms")
+	}
+	condition := &ActionCondition{}
+	if canonical {
+		condition.Type, _ = typeValue.(string)
+		condition.Type = strings.ToLower(strings.TrimSpace(condition.Type))
+		switch condition.Type {
+		case "element":
+			condition.Selector, _ = values["selector"].(string)
+		case "language":
+			condition.Language, _ = values["language"].(string)
+		case "plugin_call":
+			condition.PluginCall, _ = values["plugin_call"].(string)
+		}
+		if len(values) != 2 {
+			return nil, fmt.Errorf("canonical action condition must contain only type and selector")
+		}
+	} else {
+		condition.Type = legacy
+		switch legacy {
+		case "element", "language":
+			value, _ := values[legacy].(string)
+			if legacy == "element" {
+				condition.Selector = value
+			} else {
+				condition.Language = value
+			}
+			if len(values) != 1 {
+				return nil, fmt.Errorf("legacy %s condition contains unknown fields", legacy)
+			}
+		case "plugin_call":
+			condition.PluginCall, _ = values["selector"].(string)
+			if condition.PluginCall == "" {
+				condition.PluginCall, _ = values[legacy].(string)
+			}
+			if len(values) > 2 {
+				return nil, fmt.Errorf("legacy plugin_call condition contains unknown fields")
+			}
+		default:
+			return nil, fmt.Errorf("action condition requires a type discriminator")
+		}
+	}
+	condition.Type = strings.ToLower(strings.TrimSpace(condition.Type))
+	condition.Selector = strings.TrimSpace(condition.Selector)
+	condition.Language = strings.TrimSpace(condition.Language)
+	condition.PluginCall = strings.TrimSpace(condition.PluginCall)
+	if condition.Type != "element" && condition.Type != "language" && condition.Type != "plugin_call" {
+		return nil, fmt.Errorf("unknown action condition type %q", condition.Type)
+	}
+	required := map[string]string{"element": condition.Selector, "language": condition.Language, "plugin_call": condition.PluginCall}
+	if required[condition.Type] == "" {
+		return nil, fmt.Errorf("action condition %q is incomplete", condition.Type)
+	}
+	return condition, nil
+}
+
+// UnmarshalJSON accepts both the canonical discriminated object and checked-in
+// legacy key-shaped objects.
+func (c *ActionCondition) UnmarshalJSON(data []byte) error {
+	var values map[string]interface{}
+	if err := json.Unmarshal(data, &values); err != nil {
+		return err
+	}
+	condition, err := ParseActionCondition(values)
+	if err != nil {
+		return err
+	}
+	if condition == nil {
+		return fmt.Errorf("action condition cannot be empty")
+	}
+	*c = *condition
+	return nil
+}
+
+// UnmarshalYAML provides the same normalization for YAML rule files.
+func (c *ActionCondition) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	var values map[string]interface{}
+	if err := unmarshal(&values); err != nil {
+		return err
+	}
+	condition, err := ParseActionCondition(values)
+	if err != nil {
+		return err
+	}
+	if condition == nil {
+		return fmt.Errorf("action condition cannot be empty")
+	}
+	*c = *condition
+	return nil
 }
 
 // Element represents a single element to be scraped

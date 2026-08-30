@@ -121,12 +121,9 @@ func TestActionRuleGetWaitConditions(t *testing.T) {
 }
 
 func TestActionRuleGetConditions(t *testing.T) {
-	ar := ActionRule{Conditions: map[string]interface{}{
-		"test": "test",
-	}}
-	expected := map[string]interface{}{
-		"test": "test",
-	}
+	condition := &ActionCondition{Type: "element", Selector: "#test"}
+	ar := ActionRule{Conditions: condition}
+	expected := condition
 	if got := ar.GetConditions(); !reflect.DeepEqual(got, expected) {
 		t.Errorf("GetConditions() = %v, want %v", got, expected)
 	}
