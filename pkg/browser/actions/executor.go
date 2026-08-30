@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +19,75 @@ const (
 	errNoElementFound  = "rule %q reported no element found: %w"
 	errElementLocation = "rule %q reported failed to get element location: %w"
 )
+
+type actionHandler func(context.Context, *Runtime, *rules.ActionRule) error
+
+// ActionSpec is the executor contract for a canonical schema action.
+type ActionSpec struct {
+	Handler         actionHandler
+	Selectors       int
+	TargetSelectors int
+	ValueRequired   bool
+	StoresResult    bool
+	SelectorKind    string
+	ValidateValue   func(string) error
+}
+
+func strictInteger(value string) error {
+	if value == "" || strings.TrimSpace(value) != value {
+		return errors.New("value must be a strict integer")
+	}
+	_, err := strconv.Atoi(value)
+	if err != nil {
+		return fmt.Errorf("value must be a strict integer: %w", err)
+	}
+	return nil
+}
+
+var canonicalActions = map[string]ActionSpec{
+	"click":           {Handler: func(c context.Context, r *Runtime, a *rules.ActionRule) error { return click(c, r, a, 0) }, Selectors: 1},
+	"input_text":      {Handler: input, Selectors: 1, ValueRequired: true},
+	"clear":           {Handler: elementAction(func(e vdi.WebElement) error { return e.Clear() }), Selectors: 1},
+	"drag_and_drop":   {Handler: dragAndDrop, Selectors: 1, TargetSelectors: 1},
+	"mouse_hover":     {Handler: moveToElement, Selectors: 1},
+	"right_click":     {Handler: func(c context.Context, r *Runtime, a *rules.ActionRule) error { return click(c, r, a, 2) }, Selectors: 1},
+	"double_click":    {Handler: doubleClick, Selectors: 1},
+	"click_and_hold":  {Handler: clickAndHold, Selectors: 1},
+	"release":         {Handler: release},
+	"key_down":        {Handler: func(_ context.Context, r *Runtime, a *rules.ActionRule) error { return r.WebDriver.KeyDown(a.Value) }, ValueRequired: true},
+	"key_up":          {Handler: func(_ context.Context, r *Runtime, a *rules.ActionRule) error { return r.WebDriver.KeyUp(a.Value) }, ValueRequired: true},
+	"navigate_to_url": {Handler: func(_ context.Context, r *Runtime, a *rules.ActionRule) error { return r.WebDriver.Get(a.GetValue()) }, ValueRequired: true},
+	"forward":         {Handler: func(_ context.Context, r *Runtime, _ *rules.ActionRule) error { return r.WebDriver.Forward() }},
+	"back":            {Handler: func(_ context.Context, r *Runtime, _ *rules.ActionRule) error { return r.WebDriver.Back() }},
+	"refresh":         {Handler: func(_ context.Context, r *Runtime, _ *rules.ActionRule) error { return r.WebDriver.Refresh() }},
+	"switch_to_window": {Handler: func(_ context.Context, r *Runtime, a *rules.ActionRule) error {
+		return r.WebDriver.SwitchWindow(a.Value)
+	}, ValueRequired: true},
+	"switch_to_frame": {Handler: switchFrame, Selectors: 1},
+	"close_window":    {Handler: func(_ context.Context, r *Runtime, _ *rules.ActionRule) error { return r.WebDriver.Close() }},
+	"accept_alert":    {Handler: func(_ context.Context, r *Runtime, _ *rules.ActionRule) error { return r.WebDriver.AcceptAlert() }},
+	"dismiss_alert":   {Handler: func(_ context.Context, r *Runtime, _ *rules.ActionRule) error { return r.WebDriver.DismissAlert() }},
+	"get_alert_text":  {Handler: getAlertText, StoresResult: true},
+	"send_keys_to_alert": {Handler: func(_ context.Context, r *Runtime, a *rules.ActionRule) error {
+		return r.WebDriver.SetAlertText(a.Value)
+	}, ValueRequired: true},
+	"scroll_to_element": {Handler: scrollToElement, Selectors: 1},
+	"scroll_by_amount":  {Handler: scrollByAmount, ValueRequired: true, ValidateValue: strictInteger},
+	"take_screenshot":   {Handler: screenshot, ValueRequired: true},
+	"custom":            {Handler: custom, Selectors: 1, SelectorKind: "plugin_call"},
+}
+
+var actionAliases = map[string]string{cmn.LClickStr: "click", cmn.RClickStr: "right_click", "scroll": "scroll_by_amount"}
+
+// CanonicalActionKeys returns the keys of the single canonical action table.
+func CanonicalActionKeys() []string {
+	keys := make([]string, 0, len(canonicalActions))
+	for k := range canonicalActions {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
 
 // ExecuteRules executes rules in order. It stops immediately when the context
 // is canceled or the runtime status check fails.
@@ -60,6 +130,9 @@ func ExecuteRule(ctx context.Context, runtime *Runtime, rule *rules.ActionRule) 
 		}
 	}
 	if err != nil {
+		if rule.ErrorHandling.Ignore && !isStopped(ctx, err) {
+			return nil
+		}
 		return err
 	}
 	for _, step := range rule.PostProcessing {
@@ -68,6 +141,81 @@ func ExecuteRule(ctx context.Context, runtime *Runtime, rule *rules.ActionRule) 
 		}
 	}
 	return nil
+}
+
+func elementAction(fn func(vdi.WebElement) error) actionHandler {
+	return func(ctx context.Context, runtime *Runtime, rule *rules.ActionRule) error {
+		e, _, err := findElement(ctx, runtime, rule.Selectors)
+		if err != nil {
+			return err
+		}
+		return fn(e)
+	}
+}
+
+func switchFrame(ctx context.Context, runtime *Runtime, rule *rules.ActionRule) error {
+	e, _, err := findElement(ctx, runtime, rule.Selectors)
+	if err != nil {
+		return err
+	}
+	return runtime.WebDriver.SwitchFrame(e)
+}
+
+func getAlertText(_ context.Context, runtime *Runtime, rule *rules.ActionRule) error {
+	value, err := runtime.WebDriver.AlertText()
+	if err != nil {
+		return err
+	}
+	if runtime.Results == nil {
+		runtime.Results = make(map[string]string)
+	}
+	runtime.Results[rule.GetRuleName()] = value
+	return nil
+}
+
+func scrollByAmount(_ context.Context, runtime *Runtime, rule *rules.ActionRule) error {
+	amount, _ := strconv.Atoi(rule.Value)
+	_, err := runtime.WebDriver.ExecuteScript("window.scrollBy(0, arguments[0]);", []interface{}{amount})
+	return err
+}
+
+func doubleClick(ctx context.Context, runtime *Runtime, rule *rules.ActionRule) error {
+	e, _, err := findElement(ctx, runtime, rule.Selectors)
+	if err != nil {
+		return err
+	}
+	if err = e.MoveTo(0, 0); err != nil {
+		return err
+	}
+	return runtime.WebDriver.DoubleClick()
+}
+
+func dragAndDrop(ctx context.Context, runtime *Runtime, rule *rules.ActionRule) error {
+	source, _, err := findElement(ctx, runtime, rule.Selectors[:1])
+	if err != nil {
+		return err
+	}
+	target, _, err := findElement(ctx, runtime, rule.Selectors[1:])
+	if err != nil {
+		return err
+	}
+	if err = source.MoveTo(0, 0); err != nil {
+		return err
+	}
+	if err = runtime.WebDriver.ButtonDown(); err != nil {
+		return err
+	}
+	held := true
+	defer func() {
+		if held {
+			_ = runtime.WebDriver.ButtonUp()
+		}
+	}() // cleanup on target failure
+	if err = target.MoveTo(0, 0); err != nil {
+		return err
+	}
+	held = false
+	return runtime.WebDriver.ButtonUp()
 }
 
 func executeRuleOnce(ctx context.Context, runtime *Runtime, rule *rules.ActionRule) error {
@@ -84,59 +232,34 @@ func executeRuleOnce(ctx context.Context, runtime *Runtime, rule *rules.ActionRu
 		return err
 	}
 
-	switch strings.ToLower(strings.TrimSpace(rule.ActionType)) {
-	case cmn.ClickStr, cmn.LClickStr:
-		return click(ctx, runtime, rule, 0)
-	case cmn.RClickStr:
-		return click(ctx, runtime, rule, 2)
-	case "scroll":
-		return scroll(ctx, runtime, rule)
-	case "input_text":
-		return input(ctx, runtime, rule)
-	case "clear":
-		element, _, err := findElement(ctx, runtime, rule.Selectors)
-		if err != nil {
-			return err
-		}
-		return element.Clear()
-	case "custom":
-		return custom(ctx, runtime, rule)
-	case "take_screenshot":
-		return screenshot(ctx, runtime, rule)
-	case "key_down":
-		return runtime.WebDriver.KeyDown(rule.Value)
-	case "key_up":
-		return runtime.WebDriver.KeyUp(rule.Value)
-	case "mouse_hover":
-		return moveToElement(ctx, runtime, rule)
-	case "forward":
-		return runtime.WebDriver.Forward()
-	case "back":
-		return runtime.WebDriver.Back()
-	case "refresh":
-		return runtime.WebDriver.Refresh()
-	case "switch_to_frame":
-		element, _, err := findElement(ctx, runtime, rule.Selectors)
-		if err != nil {
-			return err
-		}
-		return runtime.WebDriver.SwitchFrame(element)
-	case "switch_to_window":
-		return runtime.WebDriver.SwitchWindow(rule.Value)
-	case "scroll_to_element":
-		return scrollToElement(ctx, runtime, rule)
-	case "scroll_by_amount":
-		_, err := runtime.WebDriver.ExecuteScript(fmt.Sprintf("window.scrollTo(0, %d);", cmn.StringToInt(rule.Value)), nil)
-		return err
-	case "click_and_hold":
-		return clickAndHold(ctx, runtime, rule)
-	case "release":
-		return release(ctx, runtime, rule)
-	case "navigate_to_url":
-		return runtime.WebDriver.Get(rule.GetValue())
-	default:
+	key := strings.ToLower(strings.TrimSpace(rule.ActionType))
+	if canonical, ok := actionAliases[key]; ok {
+		key = canonical
+	}
+	spec, ok := canonicalActions[key]
+	if !ok {
 		return fmt.Errorf("action type not supported: %s", rule.ActionType)
 	}
+	needed := spec.Selectors + spec.TargetSelectors
+	if len(rule.Selectors) < needed {
+		return fmt.Errorf("action %s requires %d selector(s)", key, needed)
+	}
+	if spec.ValueRequired && rule.GetValue() == "" {
+		return fmt.Errorf("action %s requires a value", key)
+	}
+	if spec.SelectorKind != "" {
+		for _, selector := range rule.Selectors {
+			if !strings.EqualFold(strings.TrimSpace(selector.SelectorType), spec.SelectorKind) {
+				return fmt.Errorf("action %s requires selector kind %s", key, spec.SelectorKind)
+			}
+		}
+	}
+	if spec.ValidateValue != nil {
+		if err := spec.ValidateValue(rule.Value); err != nil {
+			return fmt.Errorf("action %s: %w", key, err)
+		}
+	}
+	return spec.Handler(ctx, runtime, rule)
 }
 
 // WaitForCondition waits without losing context cancellation or runtime status.
@@ -256,7 +379,7 @@ func click(ctx context.Context, runtime *Runtime, rule *rules.ActionRule, button
 	element, _, err := findElement(ctx, runtime, rule.Selectors)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, errNoElementFound, rule.RuleName, err)
-		return nil
+		return fmt.Errorf(errNoElementFound, rule.RuleName, err)
 	}
 	if runtime.Options.HBS.Enabled {
 		location, locationErr := element.Location()
@@ -288,7 +411,7 @@ func input(ctx context.Context, runtime *Runtime, rule *rules.ActionRule) error 
 	element, selector, err := findElement(ctx, runtime, rule.Selectors)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, errNoElementFound, rule.RuleName, err)
-		return nil
+		return fmt.Errorf(errNoElementFound, rule.RuleName, err)
 	}
 	value := rule.Value
 	if value == "" {
@@ -347,7 +470,7 @@ func scrollToElement(ctx context.Context, runtime *Runtime, rule *rules.ActionRu
 	element, selector, err := findElement(ctx, runtime, rule.Selectors)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, errNoElementFound, rule.RuleName, err)
-		return nil
+		return fmt.Errorf(errNoElementFound, rule.RuleName, err)
 	}
 	if runtime.Options.HBS.Enabled {
 		location, locationErr := element.Location()

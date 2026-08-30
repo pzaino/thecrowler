@@ -63,6 +63,9 @@ type Runtime struct {
 	CheckStatus func(context.Context) error
 	Screenshot  ScreenshotHook
 	Options     Options
+	// Results contains values produced by actions. Result-producing actions use
+	// the rule name as their key, keeping result storage explicit and testable.
+	Results map[string]string
 }
 
 func (r *Runtime) context(ctx context.Context) context.Context {
