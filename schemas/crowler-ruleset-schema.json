@@ -139,7 +139,7 @@
                 "wait_conditions": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/definitions/waitCondition"
+                    "$ref": "#/$defs/waitCondition"
                   },
                   "title": "Wait Conditions",
                   "description": "Conditions to wait before being able to execute the rule and scrape the data. This to ensure page readiness. Do not use this field to wait after 'navigate_to_url' action type, it doesn't do that, instead it will wait to execute 'navigate_to_url'."
@@ -253,7 +253,7 @@
                               "description": "Flag to extract all occurrences of the element, not just the first one. This flag has no effect when using CROWler plugins via plugin_call."
                             },
                             "agent_call": {
-                              "$ref": "#/definitions/agentCall"
+                              "$ref": "#/$defs/agentCall"
                             }
                           },
                           "additionalProperties": false,
@@ -306,7 +306,7 @@
                         "additionalProperties": true
                       },
                       "agent_call": {
-                        "$ref": "#/definitions/agentCall"
+                        "$ref": "#/$defs/agentCall"
                       }
                     },
                     "additionalProperties": false,
@@ -400,7 +400,7 @@
                 "wait_conditions": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/definitions/waitCondition"
+                    "$ref": "#/$defs/waitCondition"
                   },
                   "description": "Conditions to wait for, that must be met before the action is executed. These conditions are designed to ensure that the page or elements are ready (e.g., waiting for an element to appear, or a delay). Do not use this field to wait after an action is performed, as it only applies before the action is executed."
                 },
@@ -613,7 +613,7 @@
                         "additionalProperties": true
                       },
                       "agent_call": {
-                        "$ref": "#/definitions/agentCall"
+                        "$ref": "#/$defs/agentCall"
                       }
                     },
                     "required": [
@@ -715,7 +715,7 @@
                         "additionalProperties": true
                       },
                       "agent_call": {
-                        "$ref": "#/definitions/agentCall"
+                        "$ref": "#/$defs/agentCall"
                       }
                     },
                     "required": [
@@ -1341,7 +1341,7 @@
                 "agent_calls": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/definitions/agentCall"
+                    "$ref": "#/$defs/agentCall"
                   }
                 },
                 "ssl_patterns": {
@@ -1534,7 +1534,7 @@
                         "description": "The actual selector or form name used to find and interact with the target elements for fuzzing."
                       },
                       "agent_call": {
-                        "$ref": "#/definitions/agentCall"
+                        "$ref": "#/$defs/agentCall"
                       }
                     },
                     "required": [
@@ -2264,7 +2264,7 @@
                   "additionalProperties": true
                 },
                 "agent_call": {
-                  "$ref": "#/definitions/agentCall"
+                  "$ref": "#/$defs/agentCall"
                 }
               },
               "additionalProperties": false,
@@ -2315,7 +2315,7 @@
     "author",
     "description"
   ],
-  "definitions": {
+  "$defs": {
     "agentCall": {
       "type": "object",
       "properties": {

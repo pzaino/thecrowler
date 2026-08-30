@@ -30,7 +30,7 @@ import (
 // mockRuleset generates a basic Ruleset for testing purposes
 func mockRuleset(name string) Ruleset {
 	return Ruleset{
-		FormatVersion: "1.0",
+		FormatVersion: "1.0.0",
 		Author:        "Tester",
 		CreatedAt:     cmn.CustomTime{Time: time.Now()},
 		Description:   "A test ruleset",

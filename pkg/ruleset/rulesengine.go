@@ -17,7 +17,6 @@
 package ruleset
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -195,24 +194,12 @@ func (re *RuleEngine) ValidateRuleset(ruleset Ruleset) error {
 	}
 
 	// Transform the ruleset to JSON
-	rulesetJSON, err := json.Marshal(ruleset)
+	rulesetJSON, err := rulesetValidationJSON(ruleset)
 	if err != nil {
 		return fmt.Errorf("failed to marshal ruleset to JSON: %v", err)
 	}
 
-	// Create a context for the validation
-	ctx := context.Background()
-
-	// Validate the ruleset
-	if keywordsErrors, err := re.Schema.ValidateBytes(ctx, []byte(rulesetJSON)); err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Failed to validate ruleset: %v", err)
-		if len(keywordsErrors) > 0 {
-			return fmt.Errorf("ruleset validation failed: %v", keywordsErrors)
-		}
-		return fmt.Errorf("ruleset validation failed: %v", err)
-	}
-
-	return nil
+	return ValidateRulesetConfig(re.Schema, rulesetJSON, "json")
 }
 
 // MarshalJSON returns the JSON representation of the RuleEngine.

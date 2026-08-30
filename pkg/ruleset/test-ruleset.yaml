@@ -1,6 +1,9 @@
 ---
 ruleset_name: "Example Items Extraction Ruleset"
-format_version: "1.0"
+format_version: "1.0.0"
+author: "TheCROWler Team"
+created_at: "2024-03-01T12:00:00Z"
+description: "Ruleset fixture for automated validation and runtime tests."
 rule_groups:
   - group_name: "Group1"
     valid_from: "2021-01-01T00:00:00Z"
@@ -25,18 +28,18 @@ rule_groups:
             selectors:
               - selector_type: "css"
                 selector: "span.date"
-        js_files: true
-        technology_patterns:
-          - "jquery"
-          - "bootstrap"
+        extract_scripts: true
     post_processing:
       - step_type: "remove"
-        selector: "div.ads"
+        details:
+          selector: "div.ads"
       - step_type: "replace"
-        selector: "div.article-content"
-        replacement: "div.article-content > p"
+        details:
+          selector: "div.article-content"
+          replacement: "div.article-content > p"
       - step_type: "plugin_call"
-        value: "RemoveArticleContent"
+        details:
+          plugin_name: "RemoveArticleContent"
 
   - group_name: "Group2"
     valid_from: "2021-01-01T00:00:00Z"
@@ -55,7 +58,7 @@ rule_groups:
             selectors:
               - selector_type: "css"
                 selector: "p.summary"
-        js_files: false
+        extract_scripts: false
 
   - group_name: "GroupA"
     valid_from: "2021-01-01T00:00:00Z"

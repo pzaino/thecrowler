@@ -17,7 +17,10 @@ const (
 var rulesets = []Ruleset{
 	{
 		Name:          "Example Items Extraction Ruleset",
-		FormatVersion: "1.0",
+		FormatVersion: "1.0.0",
+		Author:        "TheCROWler Team",
+		CreatedAt:     cmn.CustomTime{Time: time.Date(2024, time.March, 1, 12, 0, 0, 0, time.UTC)},
+		Description:   "Ruleset fixture for automated validation and runtime tests.",
 		RuleGroups: []RuleGroup{
 			{
 				GroupName: "Group1",
@@ -54,7 +57,11 @@ var rulesets = []Ruleset{
 						ExtractScripts: true,
 					},
 				},
-				PostProcessing: []PostProcessingStep{{Type: "remove"}, {Type: "replace"}, {Type: "plugin_call"}},
+				PostProcessing: []PostProcessingStep{
+					{Type: "remove", Details: map[string]interface{}{"selector": "div.ads"}},
+					{Type: "replace", Details: map[string]interface{}{"selector": "div.article-content", "replacement": "div.article-content > p"}},
+					{Type: "plugin_call", Details: map[string]interface{}{"plugin_name": "RemoveArticleContent"}},
+				},
 			},
 			{
 				GroupName: "Group2",

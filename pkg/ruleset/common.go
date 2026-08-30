@@ -17,7 +17,6 @@
 package ruleset
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -109,7 +108,7 @@ func parseRuleset(schema *jsonschema.Schema, file *[]byte, fileType string) (Rul
 	validated := false
 	if schema != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "Validating ruleset against schema")
-		err = validateRuleset(schema, file, fileType)
+		err = ValidateRulesetConfig(schema, *file, fileType)
 		if err != nil {
 			return Ruleset{}, err
 		}
@@ -136,60 +135,6 @@ func parseRuleset(schema *jsonschema.Schema, file *[]byte, fileType string) (Rul
 	//fmt.Printf("%+v\n", ruleset)
 
 	return ruleset, nil
-}
-
-func validateRuleset(schema *jsonschema.Schema, ruleFile *[]byte, fileType string) error {
-	var jsonData interface{}
-	ruleData := *ruleFile
-
-	// Unmarshal based on fileType.
-	if (fileType == "yaml") || (fileType == "yml") || (fileType == "") {
-		if err := yaml.Unmarshal(ruleData, &jsonData); err != nil {
-			return fmt.Errorf("problems unmarshalling YAML: %v", err)
-		}
-		// Convert map[interface{}]interface{} to map[string]interface{}.
-		jsonData = cmn.ConvertInterfaceMapToStringMap(jsonData)
-	} else if fileType == "json" {
-		if err := json.Unmarshal(ruleData, &jsonData); err != nil {
-			return fmt.Errorf("problems unmarshalling JSON: %v", err)
-		}
-	}
-
-	// Convert the unmarshalled data back to JSON to prepare it for validation.
-	jsonBytes, err := json.MarshalIndent(jsonData, "", "  ")
-	if err != nil {
-		return fmt.Errorf("problems marshalling to JSON: %v", err)
-	}
-
-	// Create a validation context.
-	ctx := context.Background()
-
-	// Validate the ruleset against the schema.
-	errors, err := schema.ValidateBytes(ctx, jsonBytes)
-	if err != nil {
-		if len(errors) > 0 {
-			return fmt.Errorf("validation failed: %v", errors)
-		}
-		return err
-	}
-
-	// Convert jsonBytes back to YAML
-	jsonData = map[string]interface{}{}
-	if err := json.Unmarshal(jsonBytes, &jsonData); err != nil {
-		return fmt.Errorf("error unmarshalling JSON: %v", err)
-	}
-	jsonBytes, err = yaml.Marshal(jsonData)
-	if err != nil {
-		return fmt.Errorf("error marshalling to YAML: %v", err)
-	}
-
-	// Pretty print the JSON data for debugging purposes.
-	//fmt.Println(string(jsonBytes))
-
-	// Update the ruleFile with the marshalled JSON data.
-	*ruleFile = jsonBytes
-
-	return nil
 }
 
 // ParseRules is an interface for parsing rules from a file.
