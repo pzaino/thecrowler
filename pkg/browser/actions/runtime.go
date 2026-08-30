@@ -46,6 +46,13 @@ type CookieSink interface {
 	CollectCookies(context.Context, map[string]interface{}) error
 }
 
+// ResultSink receives values produced by result-returning browser actions.
+// Implementations decide where those values live, keeping crawler state out of
+// this package.
+type ResultSink interface {
+	StoreResult(context.Context, string, string) error
+}
+
 // RuleLookup supplies the crawler-specific rule and selector operations needed by
 // the generic executor.
 type RuleLookup interface {
@@ -60,12 +67,10 @@ type Runtime struct {
 	WebDriver   vdi.WebDriver
 	Rules       RuleLookup
 	Cookies     CookieSink
+	Results     ResultSink
 	CheckStatus func(context.Context) error
 	Screenshot  ScreenshotHook
 	Options     Options
-	// Results contains values produced by actions. Result-producing actions use
-	// the rule name as their key, keeping result storage explicit and testable.
-	Results map[string]string
 }
 
 func (r *Runtime) context(ctx context.Context) context.Context {

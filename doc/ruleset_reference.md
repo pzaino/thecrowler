@@ -146,6 +146,8 @@ Each step:
 - `action_type` *(string)*:
   `click | input_text | clear | drag_and_drop | mouse_hover | right_click | double_click | click_and_hold | release | key_down | key_up | navigate_to_url | forward | back | refresh | switch_to_window | switch_to_frame | close_window | accept_alert | dismiss_alert | get_alert_text | send_keys_to_alert | scroll_to_element | scroll_by_amount | take_screenshot | custom`
 - `selectors` *(array of Selector)*
+- `target_selectors` *(array of Selector, required for `drag_and_drop`)*
+- `store_as` *(string, required for `get_alert_text`)*
 - `value` *(string, optional)*: e.g. input text or URL for `navigate_to_url`
 - `details` *(object, optional)*
 - `url` *(string, optional)*: rule applicability filter (not navigation payload)
@@ -155,6 +157,16 @@ Each step:
 - `error_handling` *(object: `ignore`, `retry_count`, `retry_delay`)*
 
 > For plugin-driven custom actions, use `action_type: custom` and a selector with `selector_type: plugin_call`.
+
+Selectors in an array are fallbacks: they are tried in order until one locates an
+element. For `drag_and_drop`, `selectors` identifies the source while
+`target_selectors` independently identifies the destination; each array has its
+own fallback order and must contain at least one selector.
+
+`get_alert_text` reads the current browser alert and stores its text under the
+context-scoped key named by `store_as`. The stored value can subsequently be
+referenced through the same key/value mechanism used by ruleset environment
+values.
 
 ---
 

@@ -161,16 +161,15 @@ func switchFrame(ctx context.Context, runtime *Runtime, rule *rules.ActionRule) 
 	return runtime.WebDriver.SwitchFrame(e)
 }
 
-func getAlertText(_ context.Context, runtime *Runtime, rule *rules.ActionRule) error {
+func getAlertText(ctx context.Context, runtime *Runtime, rule *rules.ActionRule) error {
 	value, err := runtime.WebDriver.AlertText()
 	if err != nil {
 		return err
 	}
 	if runtime.Results == nil {
-		runtime.Results = make(map[string]string)
+		return errors.New("browser actions: result sink is nil")
 	}
-	runtime.Results[rule.GetRuleName()] = value
-	return nil
+	return runtime.Results.StoreResult(ctx, rule.StoreAs, value)
 }
 
 func scrollByAmount(_ context.Context, runtime *Runtime, rule *rules.ActionRule) error {
@@ -195,7 +194,7 @@ func dragAndDrop(ctx context.Context, runtime *Runtime, rule *rules.ActionRule) 
 	if err != nil {
 		return err
 	}
-	target, _, err := findElement(ctx, runtime, rule.Selectors[1:])
+	target, _, err := findElement(ctx, runtime, rule.TargetSelectors)
 	if err != nil {
 		return err
 	}
@@ -240,9 +239,11 @@ func executeRuleOnce(ctx context.Context, runtime *Runtime, rule *rules.ActionRu
 	if !ok {
 		return fmt.Errorf("action type not supported: %s", rule.ActionType)
 	}
-	needed := spec.Selectors + spec.TargetSelectors
-	if len(rule.Selectors) < needed {
-		return fmt.Errorf("action %s requires %d selector(s)", key, needed)
+	if len(rule.Selectors) < spec.Selectors {
+		return fmt.Errorf("action %s requires %d source selector(s)", key, spec.Selectors)
+	}
+	if len(rule.TargetSelectors) < spec.TargetSelectors {
+		return fmt.Errorf("action %s requires %d target selector(s)", key, spec.TargetSelectors)
 	}
 	if spec.ValueRequired && rule.GetValue() == "" {
 		return fmt.Errorf("action %s requires a value", key)

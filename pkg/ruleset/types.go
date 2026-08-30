@@ -229,17 +229,19 @@ type ScrapingRule struct {
 
 // ActionRule represents an action rule
 type ActionRule struct {
-	RuleName       string                 `json:"rule_name" yaml:"rule_name"`
-	ObjectType     []string               `json:"object_type,omitempty" yaml:"object_type,omitempty"`
-	Scope          string                 `json:"scope" yaml:"scope"`
-	ActionType     string                 `json:"action_type" yaml:"action_type"`
-	Selectors      []Selector             `json:"selectors" yaml:"selectors"`
-	Value          string                 `json:"value,omitempty" yaml:"value,omitempty"`
-	URL            string                 `json:"url,omitempty" yaml:"url,omitempty"`
-	WaitConditions []WaitCondition        `json:"wait_conditions" yaml:"wait_conditions"`
-	Conditions     map[string]interface{} `json:"conditions" yaml:"conditions"`
-	PostProcessing []PostProcessingStep   `json:"post_processing" yaml:"post_processing"`
-	ErrorHandling  ErrorHandling          `json:"error_handling" yaml:"error_handling"`
+	RuleName        string                 `json:"rule_name" yaml:"rule_name"`
+	ObjectType      []string               `json:"object_type,omitempty" yaml:"object_type,omitempty"`
+	Scope           string                 `json:"scope" yaml:"scope"`
+	ActionType      string                 `json:"action_type" yaml:"action_type"`
+	Selectors       []Selector             `json:"selectors" yaml:"selectors"`
+	TargetSelectors []Selector             `json:"target_selectors,omitempty" yaml:"target_selectors,omitempty"`
+	StoreAs         string                 `json:"store_as,omitempty" yaml:"store_as,omitempty"`
+	Value           string                 `json:"value,omitempty" yaml:"value,omitempty"`
+	URL             string                 `json:"url,omitempty" yaml:"url,omitempty"`
+	WaitConditions  []WaitCondition        `json:"wait_conditions" yaml:"wait_conditions"`
+	Conditions      map[string]interface{} `json:"conditions" yaml:"conditions"`
+	PostProcessing  []PostProcessingStep   `json:"post_processing" yaml:"post_processing"`
+	ErrorHandling   ErrorHandling          `json:"error_handling" yaml:"error_handling"`
 }
 
 // Element represents a single element to be scraped

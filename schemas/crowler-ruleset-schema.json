@@ -98,7 +98,9 @@
                   "title": "Object Type Labels",
                   "description": "Optional labels to add to crowler_meta.object_type when this rule is called or matched. Labels are normalized and deduplicated.",
                   "type": "array",
-                  "items": { "type": "string" },
+                  "items": {
+                    "type": "string"
+                  },
                   "uniqueItems": true
                 },
                 "scope": {
@@ -406,7 +408,9 @@
                   "title": "Object Type Labels",
                   "description": "Optional labels to add to crowler_meta.object_type when this rule is called or matched. Labels are normalized and deduplicated.",
                   "type": "array",
-                  "items": { "type": "string" },
+                  "items": {
+                    "type": "string"
+                  },
                   "uniqueItems": true
                 },
                 "scope": {
@@ -569,7 +573,8 @@
                       "selector"
                     ]
                   },
-                  "description": "Defines multiple ways to find and interact with elements, allowing for CSS, XPath, and other strategies. This field is ignored when using action_type like navigate_to_url, forward, back, refresh, close_window, accept_alert, dismiss_alert, get_alert_text, send_keys_to_alert, and take_screenshot."
+                  "description": "Defines multiple ways to find and interact with elements, allowing for CSS, XPath, and other strategies. This field is ignored when using action_type like navigate_to_url, forward, back, refresh, close_window, accept_alert, dismiss_alert, get_alert_text, send_keys_to_alert, and take_screenshot.",
+                  "minItems": 1
                 },
                 "value": {
                   "type": "string",
@@ -607,6 +612,75 @@
                       }
                     }
                   }
+                },
+                "target_selectors": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "selector_type": {
+                        "type": "string",
+                        "enum": [
+                          "css",
+                          "xpath",
+                          "id",
+                          "class_name",
+                          "class",
+                          "name",
+                          "tag_name",
+                          "element",
+                          "js_path",
+                          "link_text",
+                          "partial_link_text",
+                          "plugin_call",
+                          "agent_call"
+                        ],
+                        "description": "The type of selector to use to find the element."
+                      },
+                      "selector": {
+                        "type": "string",
+                        "description": "The actual selector or pattern used to find the element based on the selector_type. This field is used for the plugin's name when the selector_type is 'plugin_call'."
+                      },
+                      "attribute": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string",
+                            "description": "The name of the attribute to match for the selector match to be valid."
+                          },
+                          "value": {
+                            "type": "string",
+                            "description": "The value to of the attribute to match for the selector to be valid."
+                          }
+                        },
+                        "description": "Optional. The attribute of the element to match"
+                      },
+                      "value": {
+                        "type": "string",
+                        "description": "The value within the selector that we need to match for the action. (this is NOT the value to input!)"
+                      },
+                      "details": {
+                        "type": "object",
+                        "description": "Detailed configuration for the plugin_call selector type. This is used to pass parameters to the plugin being called. To do that you must create an object called `parameters` here in details and then place the plugin parameters as key-value pairs inside the parameters object.",
+                        "additionalProperties": true
+                      },
+                      "agent_call": {
+                        "$ref": "#/definitions/agentCall"
+                      }
+                    },
+                    "required": [
+                      "selector_type",
+                      "selector"
+                    ]
+                  },
+                  "description": "Fallback selectors for the drag-and-drop target, tried independently from the source selectors.",
+                  "minItems": 1,
+                  "title": "Target Selectors"
+                },
+                "store_as": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Context-scoped key used to store the value returned by a result-producing action."
                 }
               },
               "additionalProperties": false,
@@ -614,16 +688,96 @@
                 "rule_name",
                 "action_type"
               ],
-              "anyOf": [
+              "allOf": [
                 {
-                  "required": [
-                    "selectors"
-                  ]
+                  "if": {
+                    "properties": {
+                      "action_type": {
+                        "enum": [
+                          "click",
+                          "input_text",
+                          "clear",
+                          "drag_and_drop",
+                          "mouse_hover",
+                          "right_click",
+                          "double_click",
+                          "click_and_hold",
+                          "switch_to_frame",
+                          "scroll_to_element",
+                          "custom"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "action_type"
+                    ]
+                  },
+                  "then": {
+                    "required": [
+                      "selectors"
+                    ]
+                  }
                 },
                 {
-                  "required": [
-                    "value"
-                  ]
+                  "if": {
+                    "properties": {
+                      "action_type": {
+                        "enum": [
+                          "input_text",
+                          "key_down",
+                          "key_up",
+                          "navigate_to_url",
+                          "switch_to_window",
+                          "send_keys_to_alert",
+                          "scroll_by_amount",
+                          "take_screenshot"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "action_type"
+                    ]
+                  },
+                  "then": {
+                    "required": [
+                      "value"
+                    ]
+                  }
+                },
+                {
+                  "if": {
+                    "properties": {
+                      "action_type": {
+                        "const": "drag_and_drop"
+                      }
+                    },
+                    "required": [
+                      "action_type"
+                    ]
+                  },
+                  "then": {
+                    "required": [
+                      "selectors",
+                      "target_selectors"
+                    ]
+                  }
+                },
+                {
+                  "if": {
+                    "properties": {
+                      "action_type": {
+                        "const": "get_alert_text"
+                      }
+                    },
+                    "required": [
+                      "action_type"
+                    ]
+                  },
+                  "then": {
+                    "required": [
+                      "store_as"
+                    ]
+                  }
                 }
               ]
             }
@@ -644,7 +798,9 @@
                   "title": "Object Type Labels",
                   "description": "Optional labels to add to crowler_meta.object_type when this rule is called or matched. Labels are normalized and deduplicated.",
                   "type": "array",
-                  "items": { "type": "string" },
+                  "items": {
+                    "type": "string"
+                  },
                   "uniqueItems": true
                 },
                 "scope": {
@@ -1022,7 +1178,9 @@
                   "title": "Object Type Labels",
                   "description": "Optional labels to add to crowler_meta.object_type when this rule is called or matched. Labels are normalized and deduplicated.",
                   "type": "array",
-                  "items": { "type": "string" },
+                  "items": {
+                    "type": "string"
+                  },
                   "uniqueItems": true
                 },
                 "scope": {

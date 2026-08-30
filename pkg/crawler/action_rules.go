@@ -111,6 +111,7 @@ func newActionRuntime(ctx *ProcessContext, wd *vdi.WebDriver) *browseractions.Ru
 		WebDriver:  driver,
 		Rules:      &crawlerActionLookup{ctx: ctx, wd: wd},
 		Cookies:    &crawlerCookieSink{ctx: ctx},
+		Results:    &crawlerActionResultSink{ctx: ctx},
 		Screenshot: crawlerScreenshotHook(wd),
 		CheckStatus: func(actionCtx context.Context) error {
 			if err := actionCtx.Err(); err != nil {
@@ -127,6 +128,27 @@ func newActionRuntime(ctx *ProcessContext, wd *vdi.WebDriver) *browseractions.Ru
 			Rbee:             browseractions.RbeeEndpoints{Action: defaultRbeeActionURL},
 		}},
 	}
+}
+
+type crawlerActionResultSink struct {
+	ctx *ProcessContext
+}
+
+func (s *crawlerActionResultSink) StoreResult(_ context.Context, key, value string) error {
+	if s == nil || s.ctx == nil {
+		return fmt.Errorf("crawler action result sink is unavailable")
+	}
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return fmt.Errorf("crawler action result key is empty")
+	}
+	ensureKVStore()
+	source := ""
+	if s.ctx.source != nil {
+		source = s.ctx.source.URL
+	}
+	props := cmn.NewKVStoreProperty(false, false, true, false, source, s.ctx.GetContextID(), "string")
+	return cmn.KVStore.Set(key, value, props)
 }
 
 func actionContextID(ctx *ProcessContext) string {

@@ -17,11 +17,49 @@
 package ruleset
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 )
+
+func TestActionRuleTargetSelectorsAndStoreAsRoundTrip(t *testing.T) {
+	original := ActionRule{
+		RuleName:        "drag-alert-result",
+		TargetSelectors: []Selector{{SelectorType: "css", Selector: "#drop-zone"}},
+		StoreAs:         "dialog.message",
+	}
+
+	tests := []struct {
+		name      string
+		marshal   func(interface{}) ([]byte, error)
+		unmarshal func([]byte, interface{}) error
+	}{
+		{name: "JSON", marshal: json.Marshal, unmarshal: json.Unmarshal},
+		{name: "YAML", marshal: yaml.Marshal, unmarshal: yaml.Unmarshal},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := tc.marshal(original)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var decoded ActionRule
+			if err := tc.unmarshal(data, &decoded); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(decoded.TargetSelectors, original.TargetSelectors) {
+				t.Fatalf("target selectors did not survive round trip: %#v", decoded.TargetSelectors)
+			}
+			if decoded.StoreAs != original.StoreAs {
+				t.Fatalf("store_as did not survive round trip: %q", decoded.StoreAs)
+			}
+		})
+	}
+}
 
 func TestActionRuleGetActionType(t *testing.T) {
 	ar := ActionRule{ActionType: " Click "}
