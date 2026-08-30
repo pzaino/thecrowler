@@ -648,10 +648,12 @@
                     },
                     "retry_count": {
                       "type": "integer",
+                      "minimum": 0,
                       "description": "The number of times to retry the action on failure."
                     },
                     "retry_delay": {
                       "type": "integer",
+                      "minimum": 0,
                       "description": "The delay between retries in seconds."
                     }
                   },

@@ -58,6 +58,27 @@ type testLookup struct {
 	pluginExists bool
 }
 
+type retryLookup struct {
+	attempts int
+	element  vdi.WebElement
+}
+
+func (l *retryLookup) FindElement(context.Context, rules.Selector) (vdi.WebElement, error) {
+	l.attempts++
+	if l.attempts == 1 {
+		return nil, errors.New("not found")
+	}
+	return l.element, nil
+}
+
+func (*retryLookup) PluginScript(context.Context, string) (string, bool, error) {
+	return "", false, nil
+}
+
+func (*retryLookup) CallPlugin(context.Context, string, string, map[string]interface{}) error {
+	return nil
+}
+
 func (l testLookup) FindElement(context.Context, rules.Selector) (vdi.WebElement, error) {
 	if l.element == nil {
 		return nil, errors.New("not found")
@@ -175,6 +196,85 @@ func TestCancellationPreventsSeleniumFallback(t *testing.T) {
 	}
 	if element.clicks != 0 {
 		t.Fatalf("Selenium fallback clicked %d times after cancellation", element.clicks)
+	}
+}
+
+func TestExecuteRuleRetriesElementLookupWhenErrorsAreIgnored(t *testing.T) {
+	element := &testElement{}
+	lookup := &retryLookup{element: element}
+	runtime := &Runtime{WebDriver: &testDriver{}, Rules: lookup}
+	rule := &rules.ActionRule{
+		ActionType: "click",
+		Selectors:  []rules.Selector{{SelectorType: "css", Selector: "button"}},
+		ErrorHandling: rules.ErrorHandling{
+			Ignore:     true,
+			RetryCount: 1,
+		},
+	}
+
+	if err := ExecuteRule(context.Background(), runtime, rule); err != nil {
+		t.Fatalf("ExecuteRule() error = %v", err)
+	}
+	if lookup.attempts != 2 {
+		t.Fatalf("element lookup attempts = %d, want 2", lookup.attempts)
+	}
+	if element.clicks != 1 {
+		t.Fatalf("element clicks = %d, want 1", element.clicks)
+	}
+}
+
+func TestExecuteRuleFinalErrorHandling(t *testing.T) {
+	ordinaryErrRule := func(ignore bool) *rules.ActionRule {
+		return &rules.ActionRule{
+			ActionType:    "unsupported",
+			ErrorHandling: rules.ErrorHandling{Ignore: ignore},
+		}
+	}
+	runtime := &Runtime{WebDriver: &testDriver{}}
+
+	if err := ExecuteRule(context.Background(), runtime, ordinaryErrRule(false)); err == nil {
+		t.Fatal("ExecuteRule() error = nil with ignore false")
+	}
+	if err := ExecuteRule(context.Background(), runtime, ordinaryErrRule(true)); err != nil {
+		t.Fatalf("ExecuteRule() error = %v with ignore true", err)
+	}
+}
+
+func TestExecuteRuleDoesNotIgnoreStopErrors(t *testing.T) {
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	deadline, deadlineCancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer deadlineCancel()
+
+	tests := []struct {
+		name      string
+		ctx       context.Context
+		statusErr error
+		want      error
+	}{
+		{name: "cancellation", ctx: canceled, want: context.Canceled},
+		{name: "deadline", ctx: deadline, want: context.DeadlineExceeded},
+		{name: "runtime stop", ctx: context.Background(), statusErr: ErrRuntimeStopped, want: ErrRuntimeStopped},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runtime := &Runtime{WebDriver: &testDriver{}}
+			if tt.statusErr != nil {
+				runtime.CheckStatus = func(context.Context) error { return tt.statusErr }
+			}
+			rule := &rules.ActionRule{
+				ActionType: "refresh",
+				ErrorHandling: rules.ErrorHandling{
+					Ignore:     true,
+					RetryCount: 1,
+				},
+			}
+
+			err := ExecuteRule(tt.ctx, runtime, rule)
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("ExecuteRule() error = %v, want %v", err, tt.want)
+			}
+		})
 	}
 }
 

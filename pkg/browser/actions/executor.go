@@ -115,7 +115,7 @@ func ExecuteRule(ctx context.Context, runtime *Runtime, rule *rules.ActionRule) 
 		return errors.New("browser actions: action rule is nil")
 	}
 	err := executeRuleOnce(ctx, runtime, rule)
-	if err != nil && !rule.ErrorHandling.Ignore {
+	if err != nil {
 		for retry := 0; retry < rule.ErrorHandling.RetryCount; retry++ {
 			if isStopped(ctx, err) {
 				return err
