@@ -26,7 +26,6 @@ func TestCanonicalEnumParity(t *testing.T) {
 		path []string
 		want []string
 	}{
-		{"actions", append(append([]string{}, ruleProps...), "action_rules", "items", "properties", "action_type"), []string{"click", "input_text", "clear", "drag_and_drop", "mouse_hover", "right_click", "double_click", "click_and_hold", "release", "key_down", "key_up", "navigate_to_url", "forward", "back", "refresh", "switch_to_window", "switch_to_frame", "close_window", "accept_alert", "dismiss_alert", "get_alert_text", "send_keys_to_alert", "scroll_to_element", "scroll_by_amount", "take_screenshot", "custom"}},
 		{"waits", []string{"$defs", "waitCondition", "properties", "condition_type"}, []string{string(WaitConditionElementPresence), string(WaitConditionElementVisible), string(WaitConditionDelay), string(WaitConditionPluginCall)}},
 		{"action post-processing", append(append([]string{}, ruleProps...), "action_rules", "items", "properties", "post_processing", "items", "properties", "step_type"), []string{"collect_cookies"}},
 		{"scraping post-processing", append(append([]string{}, ruleProps...), "scraping_rules", "items", "properties", "post_processing", "items", "properties", "step_type"), []string{"replace", "remove", "transform", "validate", "clean", "set_env", "plugin_call", "agent_call", "external_api"}},

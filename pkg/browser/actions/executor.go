@@ -89,6 +89,14 @@ func CanonicalActionKeys() []string {
 	return keys
 }
 
+// CanonicalActionHasHandler reports whether action names a canonical action
+// with an executable handler. It exposes validation state without exposing the
+// mutable canonical action table.
+func CanonicalActionHasHandler(action string) bool {
+	spec, ok := canonicalActions[action]
+	return ok && spec.Handler != nil
+}
+
 // ExecuteRules executes rules in order. It stops immediately when the context
 // is canceled or the runtime status check fails.
 func ExecuteRules(ctx context.Context, runtime *Runtime, actionRules []rules.ActionRule) error {
