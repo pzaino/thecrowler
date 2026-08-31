@@ -205,17 +205,17 @@ func normalizeLegacyRulesetDocument(value interface{}, path string) interface{} 
 			rename("value", "values")
 		}
 		if isRulesetArrayItemPath(path, "meta_tags") {
-			rename("key", "name")
-			rename("value", "content")
+			rename("name", "key")
+			rename("content", "value")
 			// The oldest public form used the HTML meta name as the object
 			// key, for example {generator: WordPress, confidence: 5}.
-			if _, hasName := typed["name"]; !hasName {
+			if _, hasName := typed["key"]; !hasName {
 				for key, content := range typed {
 					if key == "confidence" {
 						continue
 					}
 					if text, ok := content.(string); ok {
-						typed["name"], typed["content"] = key, text
+						typed["key"], typed["value"] = key, text
 						delete(typed, key)
 					}
 					break
