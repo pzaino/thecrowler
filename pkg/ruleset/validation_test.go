@@ -159,3 +159,31 @@ func TestValidateRulesetConfigCompatibilityPreservesCanonicalKeyedMetaTag(t *tes
 		t.Fatalf("compatibility mode rejected canonical keyed meta tag: %v", err)
 	}
 }
+
+func TestValidateRulesetConfigCompatibilityNormalizesLegacyNamedMetaTag(t *testing.T) {
+	schema, _ := loadRulesetSchemaDocument(t)
+	document := minimalRulesetFixture(t, "detection_rules", map[string]interface{}{
+		"rule_name":   "legacy-meta",
+		"object_name": "cms",
+		"meta_tags": []interface{}{
+			map[string]interface{}{
+				"name":       "generator",
+				"content":    []string{"WordPress"},
+				"confidence": 5,
+			},
+		},
+	})
+
+	if err := ValidateRulesetConfig(
+		schema,
+		document,
+		"json",
+		RulesetValidationAllowLegacyAliases,
+	); err != nil {
+		t.Fatalf("compatibility mode rejected legacy named meta tag: %v", err)
+	}
+
+	if err := ValidateRulesetConfig(schema, document, "json"); err == nil {
+		t.Fatal("strict mode accepted legacy named meta tag")
+	}
+}
