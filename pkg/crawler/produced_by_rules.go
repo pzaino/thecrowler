@@ -7,11 +7,11 @@ import (
 	"github.com/pzaino/thecrowler/pkg/ruleset"
 )
 
-func addDetectionProducedByRules(cm CrowlerMeta, re *ruleset.RuleEngine, ctxID string, detected map[string]detect.DetectedEntity) {
+func addDetectionProducedByRules(cm CrowlerMeta, re *ruleset.RuleEngine, ctxID, runtimeScope string, detected map[string]detect.DetectedEntity) {
 	if cm == nil || re == nil || len(detected) == 0 {
 		return
 	}
-	for _, name := range detectionProducedByRuleNames(re.GetAllEnabledDetectionRules(ctxID), detected) {
+	for _, name := range detectionProducedByRuleNames(re.GetAllEnabledDetectionRules(ctxID, runtimeScope), detected) {
 		cm.AddProducedByRule(name)
 	}
 }

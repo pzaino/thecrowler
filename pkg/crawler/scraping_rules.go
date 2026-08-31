@@ -148,7 +148,7 @@ func executeScrapingRulesInRuleset(ctx *ProcessContext, rs *rules.Ruleset, wd *v
 	// Setup the environment
 	rs.SetEnv(ctx.GetContextID())
 
-	for _, r := range rs.GetAllEnabledScrapingRules() {
+	for _, r := range rs.GetAllEnabledScrapingRules(runtimeScope(ctx)) {
 		// Execute the rule
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "Executing rule: %v", r.RuleName)
 		scrapedData, err := executeScrapingRule(ctx, &r, wd, pageCache)
@@ -174,7 +174,7 @@ func executeScrapingRulesInRuleGroup(ctx *ProcessContext, rg *rules.RuleGroup, w
 	rg.SetEnv(ctx.GetContextID())
 
 	var err error
-	for _, r := range rg.GetScrapingRules() {
+	for _, r := range rg.GetScrapingRulesForScope(runtimeScope(ctx)) {
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-FindRules] Executing Rule: %v", r.RuleName)
 		// Execute the rule
 		var scrapedData string

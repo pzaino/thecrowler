@@ -58,7 +58,7 @@ func DetectTechnologies(dtCtx *DContext) *map[string]DetectedEntity {
 	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-DetectTech] Starting technologies detection (if any rules is enabled)...")
 
 	// micro-signatures
-	Patterns := dtCtx.RE.GetAllEnabledDetectionRules(dtCtx.CtxID)
+	Patterns := dtCtx.RE.GetAllEnabledDetectionRules(dtCtx.CtxID, dtCtx.RuntimeScope)
 	if len(Patterns) == 0 {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-DetectTech] No detection rules enabled")
 		return nil

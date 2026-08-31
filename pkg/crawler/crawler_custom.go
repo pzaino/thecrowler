@@ -140,7 +140,7 @@ func processCCActionRules(ctx *ProcessContext, url string, dataDoc *[]byte) erro
 			rg.SetEnv(ctx.GetContextID())
 
 			// Execute each ActionRule in the group
-			for _, rule := range rg.GetActionRules() {
+			for _, rule := range rg.GetActionRulesForScope(runtimeScope(ctx)) {
 				var data []byte
 				err = executeCCActionRule(ctx, &rule, &data)
 				if err != nil {
@@ -194,7 +194,7 @@ func processCCActionRules(ctx *ProcessContext, url string, dataDoc *[]byte) erro
 			rs.SetEnv(ctx.GetContextID())
 
 			// Execute all enabled rules in this ruleset
-			for _, rule := range rs.GetAllEnabledActionRules(ctx.GetContextID(), true) {
+			for _, rule := range rs.GetAllEnabledActionRulesForScope(ctx.GetContextID(), runtimeScope(ctx), true) {
 				var data []byte
 				err = executeCCActionRule(ctx, &rule, &data)
 				if err != nil {

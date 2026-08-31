@@ -115,9 +115,31 @@ func (rg *RuleGroup) GetActionRules() []ActionRule {
 	return rg.ActionRules
 }
 
+// GetActionRulesForScope returns action rules applicable to runtimeScope.
+func (rg *RuleGroup) GetActionRulesForScope(runtimeScope string) []ActionRule {
+	rules := make([]ActionRule, 0, len(rg.ActionRules))
+	for _, rule := range rg.ActionRules {
+		if ScopeMatches(rule.Scope, runtimeScope) {
+			rules = append(rules, rule)
+		}
+	}
+	return rules
+}
+
 // GetScrapingRules returns all the scraping rules in a RuleGroup.
 func (rg *RuleGroup) GetScrapingRules() []ScrapingRule {
 	return rg.ScrapingRules
+}
+
+// GetScrapingRulesForScope returns scraping rules applicable to runtimeScope.
+func (rg *RuleGroup) GetScrapingRulesForScope(runtimeScope string) []ScrapingRule {
+	rules := make([]ScrapingRule, 0, len(rg.ScrapingRules))
+	for _, rule := range rg.ScrapingRules {
+		if ScopeMatches(rule.Scope, runtimeScope) {
+			rules = append(rules, rule)
+		}
+	}
+	return rules
 }
 
 // GetActionRuleByName returns the action rule with the specified name.

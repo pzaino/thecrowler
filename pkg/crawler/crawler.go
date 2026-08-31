@@ -856,7 +856,7 @@ func (ctx *ProcessContext) GetHTTPInfo(url string, htmlContent string) {
 			ctx.crowlerMeta = NewCrowlerMetaFromSource(ctx.source, ctx.srcCfg)
 		}
 		ctx.crowlerMeta.EnsureSourceUID(ctx.source)
-		addDetectionProducedByRules(ctx.crowlerMeta, ctx.re, ctx.GetContextID(), ctx.hi.DetectedEntities)
+		addDetectionProducedByRules(ctx.crowlerMeta, ctx.re, ctx.GetContextID(), runtimeScope(ctx), ctx.hi.DetectedEntities)
 		ctx.hi.CrowlerMeta = map[string]interface{}(ctx.crowlerMeta)
 	}
 	ctx.Status.HTTPInfoRunning.Store(2)
@@ -2092,7 +2092,7 @@ func extractLinks(ctx *ProcessContext, htmlContent string, url string) []LinkIte
 func generateLinks(ctx *ProcessContext, url string) []LinkItem {
 	var links []LinkItem
 	state := newLifecycleRuntimeState(20)
-	for _, rule := range ctx.re.GetAllCrawlingRules() {
+	for _, rule := range ctx.re.GetAllEnabledCrawlingRules(ctx.GetContextID(), runtimeScope(ctx)) {
 		lnkSet, err := FuzzURLWithLifecycle(ctx, &ctx.wd, state, url, rule, int(ctx.Status.CurrentDepth.Load()))
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "generating links: %v", err)
