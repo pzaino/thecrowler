@@ -66,6 +66,13 @@ func ValidateRulesetConfig(schema *jsonschema.Schema, data []byte, fileType stri
 	if document == nil {
 		return fmt.Errorf("parse ruleset: empty document")
 	}
+	if mode == RulesetValidationAllowLegacyAliases {
+		// Check conflicts before normalization removes historical spellings.
+		if violations := semanticRulesetViolations(document, mode); len(violations) != 0 {
+			return fmt.Errorf("ruleset semantic violations: %s", strings.Join(violations, "; "))
+		}
+		document = normalizeLegacyRulesetDocument(document, "$")
+	}
 
 	jsonData, err := json.Marshal(document)
 	if err != nil {
@@ -116,12 +123,26 @@ func rulesetValidationJSON(ruleset Ruleset) ([]byte, error) {
 func omitAbsentRuntimeValues(value interface{}) interface{} {
 	switch typed := value.(type) {
 	case map[string]interface{}:
+		if conditionType, ok := typed["condition_type"].(string); ok {
+			switch conditionType {
+			case string(WaitConditionDelay), string(WaitConditionPluginCall):
+				delete(typed, "selector")
+			}
+		}
 		for key, child := range typed {
 			if child == nil || child == "" {
 				delete(typed, key)
 				continue
 			}
-			typed[key] = omitAbsentRuntimeValues(child)
+			normalized := omitAbsentRuntimeValues(child)
+			switch empty := normalized.(type) {
+			case map[string]interface{}:
+				if len(empty) == 0 {
+					delete(typed, key)
+					continue
+				}
+			}
+			typed[key] = normalized
 		}
 	case []interface{}:
 		for i := range typed {
@@ -152,6 +173,83 @@ func normalizeYAMLValue(value interface{}, path string, violations []string) (in
 	return value, violations
 }
 
+func isRulesetArrayItemPath(path, field string) bool {
+	prefix := "." + field + "["
+	index := strings.LastIndex(path, prefix)
+	if index < 0 || !strings.HasSuffix(path, "]") {
+		return false
+	}
+	remainder := path[index+len(prefix) : len(path)-1]
+	return remainder != "" && !strings.ContainsAny(remainder, ".[]")
+}
+
+// normalizeLegacyRulesetDocument rewrites historical public spellings into
+// their canonical schema representation. It is used only by the explicitly
+// requested compatibility mode; strict validation continues to reject them.
+func normalizeLegacyRulesetDocument(value interface{}, path string) interface{} {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		rename := func(legacy, canonical string) {
+			if legacyValue, ok := typed[legacy]; ok {
+				if _, exists := typed[canonical]; !exists {
+					typed[canonical] = legacyValue
+				}
+				delete(typed, legacy)
+			}
+		}
+		rename("js_files", "extract_scripts")
+		rename("json_field_rename", "json_field_mappings")
+		rename("certificates_patterns", "ssl_patterns")
+		rename("plugin_parameters", "plugin_args")
+		if isRulesetArrayItemPath(path, "environment_settings") {
+			rename("value", "values")
+		}
+		if isRulesetArrayItemPath(path, "meta_tags") {
+			rename("key", "name")
+			rename("value", "content")
+			// The oldest public form used the HTML meta name as the object
+			// key, for example {generator: WordPress, confidence: 5}.
+			if _, hasName := typed["name"]; !hasName {
+				for key, content := range typed {
+					if key == "confidence" {
+						continue
+					}
+					if text, ok := content.(string); ok {
+						typed["name"], typed["content"] = key, text
+						delete(typed, key)
+					}
+					break
+				}
+			}
+		}
+		if isRulesetArrayItemPath(path, "wait_conditions") {
+			if selector, ok := typed["selector"].(string); ok {
+				typed["selector"] = map[string]interface{}{"selector_type": "css", "selector": selector}
+			}
+		}
+		// Older input_text rules placed the text on their first selector.
+		if typed["action_type"] == "input_text" {
+			if _, present := typed["value"]; !present {
+				if selectors, ok := typed["selectors"].([]interface{}); ok && len(selectors) != 0 {
+					if selector, ok := selectors[0].(map[string]interface{}); ok {
+						if text, ok := selector["value"].(string); ok && text != "" {
+							typed["value"] = text
+						}
+					}
+				}
+			}
+		}
+		for key, child := range typed {
+			typed[key] = normalizeLegacyRulesetDocument(child, path+"."+key)
+		}
+	case []interface{}:
+		for i, child := range typed {
+			typed[i] = normalizeLegacyRulesetDocument(child, fmt.Sprintf("%s[%d]", path, i))
+		}
+	}
+	return value
+}
+
 var rulesetAliases = map[string]string{
 	"js_files":              "extract_scripts",
 	"json_field_rename":     "json_field_mappings",
@@ -176,7 +274,7 @@ func semanticRulesetViolations(document interface{}, mode RulesetValidationMode)
 			}
 			// value is an alias only on environment-setting objects; elsewhere it
 			// is a canonical and unrelated field (for example wait conditions).
-			if strings.Contains(path, ".environment_settings[") {
+			if isRulesetArrayItemPath(path, "environment_settings") {
 				_, hasLegacy := typed["value"]
 				_, hasCanonical := typed["values"]
 				if hasLegacy && hasCanonical {

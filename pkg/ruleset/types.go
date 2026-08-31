@@ -1006,9 +1006,9 @@ func (p *PageContentSignature) UnmarshalYAML(unmarshal func(interface{}) error) 
 
 // MetaTag represents a pattern for matching HTML meta tags
 type MetaTag struct {
-	Name       string  `json:"name" yaml:"name"`
-	Content    string  `json:"content" yaml:"content"`
-	Confidence float32 `json:"confidence" yaml:"confidence"`
+	Name       string   `json:"key" yaml:"key"`
+	Content    []string `json:"value" yaml:"value"`
+	Confidence float32  `json:"confidence" yaml:"confidence"`
 }
 
 // CrawlingRule represents a crawling rule for URL fuzzing and form handling

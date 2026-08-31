@@ -99,3 +99,63 @@ func TestValidateRulesetConfigQRIssuesWithNilOperationalError(t *testing.T) {
 		t.Fatalf("qri validation issues were ignored: %v", err)
 	}
 }
+
+func TestValidateRulesetConfigCompatibilityNormalizesHistoricalShapes(t *testing.T) {
+	schema, _ := loadRulesetSchemaDocument(t)
+	document := minimalRulesetFixture(t, "scraping_rules", map[string]interface{}{
+		"rule_name": "legacy", "elements": []interface{}{map[string]interface{}{
+			"key": "title", "selectors": []interface{}{map[string]interface{}{"selector_type": "css", "selector": "h1"}},
+		}},
+		"wait_conditions": []interface{}{map[string]interface{}{"condition_type": "element_visible", "selector": "h1"}},
+	})
+	if err := ValidateRulesetConfig(schema, document, "json", RulesetValidationAllowLegacyAliases); err != nil {
+		t.Fatalf("compatibility mode rejected historical wait selector: %v", err)
+	}
+	if err := ValidateRulesetConfig(schema, document, "json"); err == nil {
+		t.Fatal("strict mode accepted historical wait selector")
+	}
+}
+
+func TestRulesetValidationJSONOmitsEmptyOptionalStructs(t *testing.T) {
+	ruleset := Ruleset{FormatVersion: "1.0.5", Author: "test", Description: "test", Name: "test", RuleGroups: []RuleGroup{{
+		GroupName: "test", IsEnabled: true, URL: "*", ScrapingRules: []ScrapingRule{{
+			RuleName: "wait", Elements: []Element{{Key: "title", Selectors: []Selector{{SelectorType: "css", Selector: "h1"}}}},
+			WaitConditions: []WaitCondition{{ConditionType: WaitConditionDelay, Value: "100ms"}},
+		}},
+	}}}
+	data, err := rulesetValidationJSON(ruleset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"selector":{}`) {
+		t.Fatalf("empty optional selector was retained: %s", data)
+	}
+}
+
+func TestValidateRulesetConfigCompatibilityPreservesCanonicalKeyedMetaTag(t *testing.T) {
+	schema, _ := loadRulesetSchemaDocument(t)
+	document := minimalRulesetFixture(t, "detection_rules", map[string]interface{}{
+		"rule_name":   "canonical-meta",
+		"object_name": "cms",
+		"meta_tags": []interface{}{
+			map[string]interface{}{
+				"key":        "generator",
+				"value":      []interface{}{"WordPress"},
+				"confidence": 5,
+			},
+		},
+	})
+
+	if err := ValidateRulesetConfig(schema, document, "json"); err != nil {
+		t.Fatalf("strict mode rejected canonical keyed meta tag: %v", err)
+	}
+
+	if err := ValidateRulesetConfig(
+		schema,
+		document,
+		"json",
+		RulesetValidationAllowLegacyAliases,
+	); err != nil {
+		t.Fatalf("compatibility mode rejected canonical keyed meta tag: %v", err)
+	}
+}

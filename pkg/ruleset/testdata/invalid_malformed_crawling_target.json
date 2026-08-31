@@ -1,0 +1,51 @@
+{
+  "format_version": "1.0.5",
+  "author": "ruleset tests",
+  "created_at": "2026-01-01T00:00:00Z",
+  "description": "canonical fixture",
+  "ruleset_name": "canonical",
+  "rule_groups": [
+    {
+      "group_name": "invalid",
+      "is_enabled": true,
+      "url": "*",
+      "crawling_rules": [
+        {
+          "rule_name": "products",
+          "scope": "website",
+          "request_type": "GET",
+          "target_elements": [
+            {
+              "selector_type": "path"
+            }
+          ],
+          "fuzzing_parameters": [
+            {
+              "parameter_name": "id",
+              "fuzzing_type": "fixed_list",
+              "selector": "{id}",
+              "values": [
+                "1",
+                "2"
+              ]
+            }
+          ],
+          "lifecycle": {
+            "pre_crawl": {
+              "agent_call": {
+                "agent_name": "prepare",
+                "timeout": 10
+              }
+            },
+            "post_crawl": {
+              "agent_call": {
+                "agent_name": "summarize",
+                "on_error": "continue"
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

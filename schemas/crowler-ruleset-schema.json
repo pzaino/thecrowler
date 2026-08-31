@@ -984,13 +984,16 @@
                   "items": {
                     "type": "object",
                     "properties": {
-                      "name": {
+                      "key": {
                         "type": "string",
                         "description": "The name attribute of the meta tag."
                       },
-                      "content": {
-                        "type": "string",
-                        "description": "The content attribute of the meta tag, which holds the value to match. You can use Perl-Compatible Regular Expressions (PCRE) to write your signatures and patterns."
+                      "value": {
+                        "type": "array",
+                        "description": "The content attribute of the meta tag, which holds the value to match. You can use Perl-Compatible Regular Expressions (PCRE) to write your signatures and patterns.",
+                        "items": {
+                          "type": "string"
+                        }
                       },
                       "confidence": {
                         "type": "number",
@@ -1001,8 +1004,8 @@
                     },
                     "additionalProperties": false,
                     "required": [
-                      "name",
-                      "content",
+                      "key",
+                      "value",
                       "confidence"
                     ]
                   },

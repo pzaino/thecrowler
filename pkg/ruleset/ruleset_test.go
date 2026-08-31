@@ -1,6 +1,7 @@
 package ruleset
 
 import (
+	"os"
 	"reflect"
 	"testing"
 	"time"
@@ -2020,5 +2021,12 @@ func TestGetEnabledScrapingRulesByPathAndGroupHelper(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestDefaultRulesetSchemaPathIndependentOfWorkingDirectory(t *testing.T) {
+	path := defaultRulesetSchemaPath()
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("default ruleset schema path %q is not readable: %v", path, err)
 	}
 }

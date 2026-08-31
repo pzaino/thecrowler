@@ -1,13 +1,10 @@
 package ruleset
 
 import (
-	"context"
 	"encoding/json"
-	"os"
 	"reflect"
 	"testing"
 
-	"github.com/qri-io/jsonschema"
 	"gopkg.in/yaml.v2"
 )
 
@@ -70,20 +67,6 @@ func TestGetLifecycleHookStageParity(t *testing.T) {
 	}
 }
 
-func loadRulesetSchema(t *testing.T) *jsonschema.Schema {
-	t.Helper()
-	data, err := os.ReadFile("../../schemas/crowler-ruleset-schema.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	schema := &jsonschema.Schema{}
-	if err := json.Unmarshal(data, schema); err != nil {
-		t.Fatal(err)
-	}
-	schema.Register("", jsonschema.GetSchemaRegistry())
-	return schema
-}
-
 func crawlingRulesetJSON(t *testing.T, rule map[string]interface{}) []byte {
 	t.Helper()
 	doc := map[string]interface{}{
@@ -102,11 +85,12 @@ func crawlingRulesetJSON(t *testing.T, rule map[string]interface{}) []byte {
 
 func validateCrawlingRule(t *testing.T, rule map[string]interface{}) int {
 	t.Helper()
-	errs, err := loadRulesetSchema(t).ValidateBytes(context.Background(), crawlingRulesetJSON(t, rule))
+	schema, _ := loadRulesetSchemaDocument(t)
+	err := ValidateRulesetConfig(schema, crawlingRulesetJSON(t, rule), "json")
 	if err != nil {
-		t.Fatal(err)
+		return 1
 	}
-	return len(errs)
+	return 0
 }
 
 func validCrawlingRule() map[string]interface{} {

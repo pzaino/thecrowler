@@ -93,7 +93,7 @@ func (d *DetectionRule) GetAllMetaTags() []MetaTag {
 	for _, tag := range d.MetaTags {
 		trimmedMetaTags = append(trimmedMetaTags, MetaTag{
 			Name:       strings.TrimSpace(tag.Name),
-			Content:    strings.TrimSpace(tag.Content),
+			Content:    cmn.PrepareSlice(&tag.Content, 1),
 			Confidence: tag.Confidence,
 		},
 		)
@@ -319,6 +319,10 @@ func (m *MetaTag) GetName() string {
 }
 
 // GetContent returns the content attribute of the meta tag.
-func (m *MetaTag) GetContent() string {
-	return strings.TrimSpace(m.Content)
+func (m *MetaTag) GetContent() []string {
+	trimmedContent := []string{}
+	for _, content := range m.Content {
+		trimmedContent = append(trimmedContent, strings.TrimSpace(content))
+	}
+	return trimmedContent
 }

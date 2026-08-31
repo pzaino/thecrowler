@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -148,8 +149,16 @@ func (p *DefaultRuleParser) ParseRules(file string) ([]Ruleset, error) {
 func InitializeLibrary(rulesFile string) (*RuleEngine, error) {
 	rules, _ := BulkLoadRules(nil, rulesFile)
 
-	engine := NewRuleEngine("./schemas/crowler-ruleset-schema.json", rules)
+	engine := NewRuleEngine(defaultRulesetSchemaPath(), rules)
 	return engine, nil
+}
+
+func defaultRulesetSchemaPath() string {
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		return filepath.Join("schemas", "crowler-ruleset-schema.json")
+	}
+	return filepath.Clean(filepath.Join(filepath.Dir(source), "..", "..", "schemas", "crowler-ruleset-schema.json"))
 }
 
 // LoadRulesFromFile loads the rules from the specified file and returns a pointer to the created RuleEngine.

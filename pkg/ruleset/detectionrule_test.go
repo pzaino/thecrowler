@@ -64,9 +64,9 @@ func TestMetaTagGetName(t *testing.T) {
 }
 
 func TestMetaTagGetContent(t *testing.T) {
-	m := MetaTag{Content: " width=device-width, initial-scale=1 "}
-	expected := "width=device-width, initial-scale=1"
-	if got := m.GetContent(); got != expected {
+	m := MetaTag{Content: []string{" width=device-width, initial-scale=1 "}}
+	expected := []string{"width=device-width, initial-scale=1"}
+	if got := m.GetContent(); !equalStringSlices(got, expected) {
 		t.Errorf("GetContent() = %v, want %v", got, expected)
 	}
 }
@@ -286,24 +286,24 @@ func TestGetAllMetaTags(t *testing.T) {
 	metaTags := []MetaTag{
 		{
 			Name:       " viewport ",
-			Content:    " width=device-width, initial-scale=1 ",
+			Content:    []string{" width=device-width, initial-scale=1 "},
 			Confidence: 0.9,
 		},
 		{
 			Name:       " description ",
-			Content:    " A sample description ",
+			Content:    []string{" A sample description "},
 			Confidence: 0.8,
 		},
 	}
 	expected := []MetaTag{
 		{
 			Name:       "viewport",
-			Content:    "width=device-width, initial-scale=1",
+			Content:    []string{"width=device-width, initial-scale=1"},
 			Confidence: 0.9,
 		},
 		{
 			Name:       "description",
-			Content:    "A sample description",
+			Content:    []string{"A sample description"},
 			Confidence: 0.8,
 		},
 	}
@@ -577,32 +577,32 @@ func TestGetAllMetaTagsMap(t *testing.T) {
 		{
 			ObjectName: "Object1",
 			MetaTags: []MetaTag{
-				{Name: "viewport", Content: "width=device-width, initial-scale=1", Confidence: 0.9},
-				{Name: "description", Content: "A sample description", Confidence: 0.8},
+				{Name: "viewport", Content: []string{"width=device-width, initial-scale=1"}, Confidence: 0.9},
+				{Name: "description", Content: []string{"A sample description"}, Confidence: 0.8},
 			},
 		},
 		{
 			ObjectName: "Object2",
 			MetaTags: []MetaTag{
-				{Name: "keywords", Content: "sample, test", Confidence: 0.7},
+				{Name: "keywords", Content: []string{"sample, test"}, Confidence: 0.7},
 			},
 		},
 		{
 			ObjectName: "Object1", // Duplicate ObjectName to test appending
 			MetaTags: []MetaTag{
-				{Name: "author", Content: "John Doe", Confidence: 0.85},
+				{Name: "author", Content: []string{"John Doe"}, Confidence: 0.85},
 			},
 		},
 	}
 
 	expected := map[string][]MetaTag{
 		"object1": {
-			{Name: "viewport", Content: "width=device-width, initial-scale=1", Confidence: 0.9},
-			{Name: "description", Content: "A sample description", Confidence: 0.8},
-			{Name: "author", Content: "John Doe", Confidence: 0.85},
+			{Name: "viewport", Content: []string{"width=device-width, initial-scale=1"}, Confidence: 0.9},
+			{Name: "description", Content: []string{"A sample description"}, Confidence: 0.8},
+			{Name: "author", Content: []string{"John Doe"}, Confidence: 0.85},
 		},
 		"object2": {
-			{Name: "keywords", Content: "sample, test", Confidence: 0.7},
+			{Name: "keywords", Content: []string{"sample, test"}, Confidence: 0.7},
 		},
 	}
 
@@ -834,8 +834,10 @@ func equalMetaTag(a, b MetaTag) bool {
 	if a.Name != b.Name {
 		return false
 	}
-	if a.Content != b.Content {
-		return false
+	for i := range a.Content {
+		if a.Content[i] != b.Content[i] {
+			return false
+		}
 	}
 	if a.Confidence != b.Confidence {
 		return false
