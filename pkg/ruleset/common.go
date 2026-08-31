@@ -83,17 +83,14 @@ func BulkLoadRules(schema *jsonschema.Schema, path string) ([]Ruleset, error) {
 		}
 
 		// Parse it and get the correspondent Ruleset
-		loadedOK := true
 		ruleset, err := parseRuleset(schema, &rulesFile, fileType)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "parsing ruleset: %v", err)
-			loadedOK = false
+			return rulesets, fmt.Errorf("parse ruleset %s: %w", file, err)
 		}
 
 		// It's valid, let's add it to the rulesets list
-		if loadedOK {
-			rulesets = append(rulesets, ruleset)
-		}
+		rulesets = append(rulesets, ruleset)
 	}
 
 	return rulesets, nil
@@ -106,15 +103,12 @@ func parseRuleset(schema *jsonschema.Schema, file *[]byte, fileType string) (Rul
 	var err error
 
 	// Parse the YAML/JSON Ruleset using the provided schema
-	validated := false
 	if schema != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "Validating ruleset against schema")
 		err = ValidateRulesetConfig(schema, *file, fileType)
 		if err != nil {
 			return Ruleset{}, err
 		}
-		fileType = "yaml"
-		validated = true
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "Ruleset validated")
 	}
 
@@ -122,12 +116,12 @@ func parseRuleset(schema *jsonschema.Schema, file *[]byte, fileType string) (Rul
 	fileData := *file
 	if (fileType == "yaml") || (fileType == "yml") || fileType == "" {
 		err = yaml.Unmarshal(fileData, &ruleset)
-		if err != nil && !validated {
+		if err != nil {
 			return ruleset, err
 		}
 	} else {
 		err = json.Unmarshal(fileData, &ruleset)
-		if err != nil && !validated {
+		if err != nil {
 			return ruleset, err
 		}
 	}
@@ -139,17 +133,25 @@ func parseRuleset(schema *jsonschema.Schema, file *[]byte, fileType string) (Rul
 }
 
 // ParseRules is an interface for parsing rules from a file.
-func (p *DefaultRuleParser) ParseRules(file string) ([]Ruleset, error) {
-	return BulkLoadRules(nil, file)
+func (p *DefaultRuleParser) ParseRules(schema *jsonschema.Schema, file string) ([]Ruleset, error) {
+	return BulkLoadRules(schema, file)
 }
 
 // InitializeLibrary initializes the library by parsing the rules from the specified file
 // and creating a new rule engine with the parsed sites.
 // It returns a pointer to the created RuleEngine and an error if any occurred during parsing.
 func InitializeLibrary(rulesFile string) (*RuleEngine, error) {
-	rules, _ := BulkLoadRules(nil, rulesFile)
+	schemaPath := defaultRulesetSchemaPath()
+	schema, err := LoadSchema(schemaPath)
+	if err != nil {
+		return nil, err
+	}
+	rules, err := BulkLoadRules(schema, rulesFile)
+	if err != nil {
+		return nil, err
+	}
 
-	engine := NewRuleEngine(defaultRulesetSchemaPath(), rules)
+	engine := NewRuleEngine(schemaPath, rules)
 	return engine, nil
 }
 
@@ -163,14 +165,20 @@ func defaultRulesetSchemaPath() string {
 
 // LoadRulesFromFile loads the rules from the specified file and returns a pointer to the created RuleEngine.
 func LoadRulesFromFile(files []string) (*RuleEngine, error) {
+	schemaPath := defaultRulesetSchemaPath()
+	schema, err := LoadSchema(schemaPath)
+	if err != nil {
+		return nil, err
+	}
 	var rules []Ruleset
 	for _, file := range files {
-		r, err := BulkLoadRules(nil, file)
-		if err == nil {
-			rules = append(rules, r...)
+		r, err := BulkLoadRules(schema, file)
+		if err != nil {
+			return nil, err
 		}
+		rules = append(rules, r...)
 	}
-	return NewRuleEngine("", rules), nil
+	return NewRuleEngine(schemaPath, rules), nil
 }
 
 // loadRulesFromConfig loads the rules from the configuration file and returns a pointer to the created RuleEngine.

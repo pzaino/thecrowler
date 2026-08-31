@@ -132,19 +132,16 @@ func NewEmptyRuleEngine(schemaPath string) RuleEngine {
 
 // NewRuleEngineWithParser creates a new instance of RuleEngine with the provided site rules.
 func NewRuleEngineWithParser(parser RuleParser, file string) (*RuleEngine, error) {
-	rulesets, err := parser.ParseRules(nil, file)
+	schemaPath := defaultRulesetSchemaPath()
+	schema, err := LoadSchema(schemaPath)
 	if err != nil {
 		return nil, err
 	}
-	return &RuleEngine{
-		Schema:   nil,
-		Rulesets: rulesets,
-		DetectionConfig: DetectionConfig{
-			NoiseThreshold:    1.0,
-			MaybeThreshold:    5.0,
-			DetectedThreshold: 10.0,
-		},
-	}, nil
+	rulesets, err := parser.ParseRules(schema, file)
+	if err != nil {
+		return nil, err
+	}
+	return NewRuleEngine(schemaPath, rulesets), nil
 }
 
 // LoadRulesFromFile loads the rules from the provided file names list and returns

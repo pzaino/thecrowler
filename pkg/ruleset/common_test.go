@@ -17,6 +17,9 @@
 package ruleset
 
 import (
+	"os"
+	"strings"
+
 	"github.com/google/go-cmp/cmp"
 
 	"testing"
@@ -43,6 +46,22 @@ func TestParseRules(t *testing.T) {
 			t.Errorf("Parsed rules do not match expected rules")
 		}
 	*/
+}
+
+func TestLoadRulesFromFileRejectsUnknownActionRuleField(t *testing.T) {
+	data, err := os.ReadFile("../../rules/AcceptCookies-ruleset.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalid := strings.Replace(string(data), `"rule_name":`, `"definitely_not_a_real_field": true, "rule_name":`, 1)
+	path := t.TempDir() + "/invalid-ruleset.json"
+	if err := os.WriteFile(path, []byte(invalid), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := LoadRulesFromFile([]string{path}); err == nil {
+		t.Fatal("strict production loader accepted an unknown action rule field")
+	}
 }
 
 func TestInitializeLibrary(t *testing.T) {
