@@ -188,16 +188,24 @@
                             "selector_attributes": {
                               "type": "array",
                               "items": {
-                                "name": {
-                                  "type": "string"
+                                "type": "object",
+                                "properties": {
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "value": {
+                                    "type": [
+                                      "string",
+                                      "number",
+                                      "boolean"
+                                    ]
+                                  }
                                 },
-                                "value": {
-                                  "type": [
-                                    "string",
-                                    "number",
-                                    "boolean"
-                                  ]
-                                }
+                                "required": [
+                                  "name",
+                                  "value"
+                                ],
+                                "additionalProperties": false
                               },
                               "description": "Optional. Attributes specific to each selector type. Check the documentation for the specific selector type to see which attributes are supported."
                             },

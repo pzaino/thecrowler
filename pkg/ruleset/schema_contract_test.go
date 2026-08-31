@@ -145,6 +145,62 @@ func TestErrorHandlingRejectsUnknownProperties(t *testing.T) {
 	}
 }
 
+func TestSelectorAttributesSchemaIsStrict(t *testing.T) {
+	schema, _ := loadRulesetSchemaDocument(t)
+	tests := []struct {
+		name       string
+		attributes []interface{}
+		wantValid  bool
+	}{
+		{
+			name: "valid attribute objects",
+			attributes: []interface{}{
+				map[string]interface{}{"name": "visible", "value": true},
+				map[string]interface{}{"name": "position", "value": 2},
+				map[string]interface{}{"name": "label", "value": "next"},
+			},
+			wantValid: true,
+		},
+		{
+			name:       "primitive array item",
+			attributes: []interface{}{"visible"},
+		},
+		{
+			name: "unknown attribute property",
+			attributes: []interface{}{
+				map[string]interface{}{"name": "visible", "value": true, "unknown": "field"},
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			document := minimalRulesetFixture(t, "scraping_rules", map[string]interface{}{
+				"rule_name": "selector-attributes",
+				"elements": []interface{}{
+					map[string]interface{}{
+						"key": "link",
+						"selectors": []interface{}{
+							map[string]interface{}{
+								"selector_type":       "css",
+								"selector":            "a.next",
+								"selector_attributes": test.attributes,
+							},
+						},
+					},
+				},
+			})
+			err := ValidateRulesetConfig(schema, document, "json")
+			if test.wantValid && err != nil {
+				t.Fatalf("valid selector attributes rejected: %v", err)
+			}
+			if !test.wantValid && err == nil {
+				t.Fatal("invalid selector attributes accepted")
+			}
+		})
+	}
+}
+
 func TestMinimalRulesetFixtureHelper(t *testing.T) {
 	data := minimalRulesetFixture(t, "action_rules", map[string]interface{}{"rule_name": "refresh", "action_type": "refresh"})
 	validateFixture(t, data, "json")
