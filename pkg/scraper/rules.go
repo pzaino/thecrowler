@@ -270,7 +270,7 @@ func ApplyRulesGroup(ctx context.Context, runtime *Runtime, group *rs.RuleGroup,
 		if unmarshalErr := json.Unmarshal(unwrapDoubleObject(data), &processed); unmarshalErr != nil {
 			return result, &RuleError{RuleName: group.GroupName, Err: errors.New("group post-processing returned a non-object result")}
 		}
-		mergeResult(result, processed)
+		result = processed
 	}
 	return result, nil
 }
