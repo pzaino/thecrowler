@@ -630,6 +630,7 @@
                 },
                 "error_handling": {
                   "type": "object",
+                  "additionalProperties": false,
                   "properties": {
                     "ignore": {
                       "type": "boolean",

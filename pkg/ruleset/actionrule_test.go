@@ -138,6 +138,38 @@ func TestActionRuleGetErrorHandling(t *testing.T) {
 	}
 }
 
+func TestActionRuleErrorHandlingDecoding(t *testing.T) {
+	tests := []struct {
+		name   string
+		data   string
+		decode func([]byte, interface{}) error
+		ignore bool
+	}{
+		{name: "JSON false", data: `{"rule_name":"retry","action_type":"click","error_handling":{"ignore":false,"retry_count":2,"retry_delay":3}}`, decode: json.Unmarshal},
+		{name: "JSON true", data: `{"rule_name":"retry","action_type":"click","error_handling":{"ignore":true,"retry_count":2,"retry_delay":3}}`, decode: json.Unmarshal, ignore: true},
+		{name: "YAML false", data: "rule_name: retry\naction_type: click\nerror_handling:\n  ignore: false\n  retry_count: 2\n  retry_delay: 3\n", decode: yaml.Unmarshal},
+		{name: "YAML true", data: "rule_name: retry\naction_type: click\nerror_handling:\n  ignore: true\n  retry_count: 2\n  retry_delay: 3\n", decode: yaml.Unmarshal, ignore: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var rule ActionRule
+			if err := tt.decode([]byte(tt.data), &rule); err != nil {
+				t.Fatalf("decode action rule: %v", err)
+			}
+			if rule.ErrorHandling.Ignore != tt.ignore {
+				t.Errorf("Ignore = %t, want %t", rule.ErrorHandling.Ignore, tt.ignore)
+			}
+			if rule.ErrorHandling.RetryCount != 2 {
+				t.Errorf("RetryCount = %d, want 2", rule.ErrorHandling.RetryCount)
+			}
+			if rule.ErrorHandling.RetryDelay != 3 {
+				t.Errorf("RetryDelay = %d, want 3", rule.ErrorHandling.RetryDelay)
+			}
+		})
+	}
+}
+
 func TestSelectorGetSelectorType(t *testing.T) {
 	s := Selector{SelectorType: " ID "}
 	expected := "id"

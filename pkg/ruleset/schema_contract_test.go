@@ -130,6 +130,21 @@ func TestInvalidPublicObjectFixtures(t *testing.T) {
 	}
 }
 
+func TestErrorHandlingRejectsUnknownProperties(t *testing.T) {
+	data := minimalRulesetFixture(t, "action_rules", map[string]interface{}{
+		"rule_name":   "strict-error-handling",
+		"action_type": "refresh",
+		"error_handling": map[string]interface{}{
+			"ignore":           false,
+			"unexpected_field": true,
+		},
+	})
+	schema, _ := loadRulesetSchemaDocument(t)
+	if err := ValidateRulesetConfig(schema, data, "json"); err == nil {
+		t.Fatal("unknown error_handling property was accepted")
+	}
+}
+
 func TestMinimalRulesetFixtureHelper(t *testing.T) {
 	data := minimalRulesetFixture(t, "action_rules", map[string]interface{}{"rule_name": "refresh", "action_type": "refresh"})
 	validateFixture(t, data, "json")

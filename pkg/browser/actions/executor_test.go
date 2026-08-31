@@ -2,6 +2,7 @@ package actions
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -203,16 +204,16 @@ func TestExecuteRuleRetriesElementLookupWhenErrorsAreIgnored(t *testing.T) {
 	element := &testElement{}
 	lookup := &retryLookup{element: element}
 	runtime := &Runtime{WebDriver: &testDriver{}, Rules: lookup}
-	rule := &rules.ActionRule{
-		ActionType: "click",
-		Selectors:  []rules.Selector{{SelectorType: "css", Selector: "button"}},
-		ErrorHandling: rules.ErrorHandling{
-			Ignore:     true,
-			RetryCount: 1,
-		},
+	var rule rules.ActionRule
+	if err := json.Unmarshal([]byte(`{
+		"action_type":"click",
+		"selectors":[{"selector_type":"css","selector":"button"}],
+		"error_handling":{"ignore":true,"retry_count":1,"retry_delay":0}
+	}`), &rule); err != nil {
+		t.Fatalf("decode action rule: %v", err)
 	}
 
-	if err := ExecuteRule(context.Background(), runtime, rule); err != nil {
+	if err := ExecuteRule(context.Background(), runtime, &rule); err != nil {
 		t.Fatalf("ExecuteRule() error = %v", err)
 	}
 	if lookup.attempts != 2 {
