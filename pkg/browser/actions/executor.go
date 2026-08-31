@@ -510,7 +510,7 @@ func scroll(ctx context.Context, runtime *Runtime, rule *rules.ActionRule) error
 }
 
 func scrollToElement(ctx context.Context, runtime *Runtime, rule *rules.ActionRule) error {
-	element, selector, err := findElement(ctx, runtime, rule.Selectors)
+	element, _, err := findElement(ctx, runtime, rule.Selectors)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, errNoElementFound, rule.RuleName, err)
 		return fmt.Errorf(errNoElementFound, rule.RuleName, err)
@@ -534,15 +534,7 @@ func scrollToElement(ctx context.Context, runtime *Runtime, rule *rules.ActionRu
 			return err
 		}
 	}
-	script := fmt.Sprintf("var element=document.querySelector(%s); if (!element) return false; element.scrollIntoView({behavior:'smooth',block:'center'}); return true;", strconv.Quote(selector.Selector))
-	ok, err := runtime.WebDriver.ExecuteScript(script, nil)
-	if err != nil {
-		return fmt.Errorf("failed to scroll to element using Selenium: %w", err)
-	}
-	if ok != true {
-		return errors.New("element not found for scrolling")
-	}
-	return nil
+	return element.MoveTo(0, 0)
 }
 
 func moveToElement(ctx context.Context, runtime *Runtime, rule *rules.ActionRule) error {

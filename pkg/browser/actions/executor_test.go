@@ -36,10 +36,17 @@ func (d *testDriver) ExecuteScript(script string, args []interface{}) (interface
 
 type testElement struct {
 	vdi.WebElement
-	clicks     int
-	location   selenium.Point
-	displayed  bool
-	displayErr error
+	clicks      int
+	moveToCalls int
+	moveToErr   error
+	location    selenium.Point
+	displayed   bool
+	displayErr  error
+}
+
+func (e *testElement) MoveTo(xOffset, yOffset int) error {
+	e.moveToCalls++
+	return e.moveToErr
 }
 
 func (e *testElement) IsDisplayed() (bool, error) { return e.displayed, e.displayErr }
@@ -55,6 +62,8 @@ func (e *testElement) Location() (*selenium.Point, error) {
 
 type testLookup struct {
 	element      vdi.WebElement
+	findErr      error
+	selectors    *[]rules.Selector
 	pluginScript string
 	pluginExists bool
 }
@@ -80,11 +89,77 @@ func (*retryLookup) CallPlugin(context.Context, string, string, map[string]inter
 	return nil
 }
 
-func (l testLookup) FindElement(context.Context, rules.Selector) (vdi.WebElement, error) {
+func (l testLookup) FindElement(_ context.Context, selector rules.Selector) (vdi.WebElement, error) {
+	if l.selectors != nil {
+		*l.selectors = append(*l.selectors, selector)
+	}
+	if l.findErr != nil {
+		return nil, l.findErr
+	}
 	if l.element == nil {
 		return nil, errors.New("not found")
 	}
 	return l.element, nil
+}
+
+func TestScrollToElementUsesResolvedWebElement(t *testing.T) {
+	tests := []struct {
+		name     string
+		selector rules.Selector
+	}{
+		{name: "CSS", selector: rules.Selector{SelectorType: "css", Selector: "#target"}},
+		{name: "XPath", selector: rules.Selector{SelectorType: "xpath", Selector: `//button[@id="target"]`}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			element := &testElement{}
+			var resolved []rules.Selector
+			driver := &testDriver{executeScript: func(script string, _ []interface{}) (interface{}, error) {
+				if strings.Contains(script, "document.querySelector") {
+					t.Fatalf("ExecuteScript called with document.querySelector: %s", script)
+				}
+				t.Fatalf("unexpected ExecuteScript call: %s", script)
+				return nil, nil
+			}}
+			runtime := &Runtime{WebDriver: driver, Rules: testLookup{element: element, selectors: &resolved}}
+			rule := &rules.ActionRule{ActionType: "scroll_to_element", Selectors: []rules.Selector{tt.selector}}
+
+			if err := ExecuteRule(context.Background(), runtime, rule); err != nil {
+				t.Fatalf("ExecuteRule() error = %v", err)
+			}
+			if element.moveToCalls != 1 {
+				t.Fatalf("MoveTo() calls = %d, want 1", element.moveToCalls)
+			}
+			if len(resolved) != 1 || resolved[0].SelectorType != tt.selector.SelectorType || resolved[0].Selector != tt.selector.Selector {
+				t.Fatalf("resolved selectors = %#v, want %#v", resolved, []rules.Selector{tt.selector})
+			}
+		})
+	}
+}
+
+func TestScrollToElementPropagatesErrors(t *testing.T) {
+	lookupErr := errors.New("selector lookup failed")
+	moveErr := errors.New("element move failed")
+	tests := []struct {
+		name    string
+		lookup  testLookup
+		wantErr error
+	}{
+		{name: "lookup", lookup: testLookup{findErr: lookupErr}, wantErr: lookupErr},
+		{name: "element operation", lookup: testLookup{element: &testElement{moveToErr: moveErr}}, wantErr: moveErr},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runtime := &Runtime{WebDriver: &testDriver{}, Rules: tt.lookup}
+			rule := &rules.ActionRule{ActionType: "scroll_to_element", RuleName: "scroll", Selectors: []rules.Selector{{SelectorType: "css", Selector: "#target"}}}
+			err := ExecuteRule(context.Background(), runtime, rule)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("ExecuteRule() error = %v, want %v", err, tt.wantErr)
+			}
+		})
+	}
 }
 
 func (l testLookup) PluginScript(context.Context, string) (string, bool, error) {
