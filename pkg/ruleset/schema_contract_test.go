@@ -145,6 +145,47 @@ func TestErrorHandlingRejectsUnknownProperties(t *testing.T) {
 	}
 }
 
+func TestCustomActionRequiresPluginCallSelector(t *testing.T) {
+	schema, _ := loadRulesetSchemaDocument(t)
+	tests := []struct {
+		name      string
+		selectors []interface{}
+		wantValid bool
+	}{
+		{
+			name: "CSS only",
+			selectors: []interface{}{
+				map[string]interface{}{"selector_type": "css", "selector": "button"},
+			},
+		},
+		{
+			name: "plugin call",
+			selectors: []interface{}{
+				map[string]interface{}{"selector_type": "css", "selector": "button"},
+				map[string]interface{}{"selector_type": "plugin_call", "selector": "submit"},
+			},
+			wantValid: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			document := minimalRulesetFixture(t, "action_rules", map[string]interface{}{
+				"rule_name":   "custom-plugin",
+				"action_type": "custom",
+				"selectors":   test.selectors,
+			})
+			err := ValidateRulesetConfig(schema, document, "json")
+			if test.wantValid && err != nil {
+				t.Fatalf("valid custom action rejected: %v", err)
+			}
+			if !test.wantValid && err == nil {
+				t.Fatal("custom action without plugin_call selector was accepted")
+			}
+		})
+	}
+}
+
 func TestSelectorAttributesSchemaIsStrict(t *testing.T) {
 	schema, _ := loadRulesetSchemaDocument(t)
 	tests := []struct {

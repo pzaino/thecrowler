@@ -762,8 +762,7 @@
                           "double_click",
                           "click_and_hold",
                           "switch_to_frame",
-                          "scroll_to_element",
-                          "custom"
+                          "scroll_to_element"
                         ]
                       }
                     },
@@ -775,6 +774,38 @@
                     "required": [
                       "selectors"
                     ]
+                  }
+                },
+                {
+                  "if": {
+                    "properties": {
+                      "action_type": {
+                        "const": "custom"
+                      }
+                    },
+                    "required": [
+                      "action_type"
+                    ]
+                  },
+                  "then": {
+                    "required": [
+                      "selectors"
+                    ],
+                    "properties": {
+                      "selectors": {
+                        "contains": {
+                          "type": "object",
+                          "properties": {
+                            "selector_type": {
+                              "const": "plugin_call"
+                            }
+                          },
+                          "required": [
+                            "selector_type"
+                          ]
+                        }
+                      }
+                    }
                   }
                 },
                 {

@@ -74,7 +74,7 @@ var canonicalActions = map[string]ActionSpec{
 	"scroll_to_element": {Handler: scrollToElement, Selectors: 1},
 	"scroll_by_amount":  {Handler: scrollByAmount, ValueRequired: true, ValidateValue: strictInteger},
 	"take_screenshot":   {Handler: screenshot, ValueRequired: true},
-	"custom":            {Handler: custom, Selectors: 1, SelectorKind: "plugin_call"},
+	"custom":            {Handler: custom, Selectors: 1},
 }
 
 var actionAliases = map[string]string{cmn.LClickStr: "click", cmn.RClickStr: "right_click", "scroll": "scroll_by_amount"}
@@ -606,13 +606,17 @@ func dispatchMouseEvent(driver vdi.WebDriver, element vdi.WebElement, eventName 
 }
 
 func custom(ctx context.Context, runtime *Runtime, rule *rules.ActionRule) error {
+	foundPluginCall := false
+	var lastErr error
 	for _, selector := range rule.Selectors {
 		if !strings.EqualFold(strings.TrimSpace(selector.SelectorType), "plugin_call") {
 			continue
 		}
+		foundPluginCall = true
 
 		if runtime.Rules == nil {
-			return errors.New("browser actions: rule lookup is nil")
+			lastErr = errors.New("browser actions: rule lookup is nil")
+			continue
 		}
 
 		params := make(map[string]interface{})
@@ -621,17 +625,26 @@ func custom(ctx context.Context, runtime *Runtime, rule *rules.ActionRule) error
 			if raw, exists := selector.Details["parameters"]; exists {
 				params = cmn.ConvertInfToMap(raw)
 				if params == nil {
-					return errors.New("browser actions: plugin parameters must be an object")
+					lastErr = errors.New("browser actions: plugin parameters must be an object")
+					continue
 				}
 			}
 		}
 
 		if err := runtime.Rules.CallPlugin(ctx, selector.Selector, rule.Value, params); err != nil {
-			return err
+			if isStopped(ctx, err) {
+				return err
+			}
+			lastErr = err
+			continue
 		}
+		return nil
 	}
 
-	return nil
+	if !foundPluginCall {
+		return errors.New("browser actions: custom action requires a plugin_call selector")
+	}
+	return lastErr
 }
 
 func screenshot(ctx context.Context, runtime *Runtime, rule *rules.ActionRule) error {

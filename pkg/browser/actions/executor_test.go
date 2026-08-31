@@ -73,6 +73,24 @@ type retryLookup struct {
 	element  vdi.WebElement
 }
 
+type pluginCallLookup struct {
+	calls []string
+	errs  map[string]error
+}
+
+func (*pluginCallLookup) FindElement(context.Context, rules.Selector) (vdi.WebElement, error) {
+	return nil, errors.New("not found")
+}
+
+func (*pluginCallLookup) PluginScript(context.Context, string) (string, bool, error) {
+	return "", false, nil
+}
+
+func (l *pluginCallLookup) CallPlugin(_ context.Context, name, _ string, _ map[string]interface{}) error {
+	l.calls = append(l.calls, name)
+	return l.errs[name]
+}
+
 func (l *retryLookup) FindElement(context.Context, rules.Selector) (vdi.WebElement, error) {
 	l.attempts++
 	if l.attempts == 1 {
@@ -313,6 +331,69 @@ func TestExecuteRuleFinalErrorHandling(t *testing.T) {
 	}
 	if err := ExecuteRule(context.Background(), runtime, ordinaryErrRule(true)); err != nil {
 		t.Fatalf("ExecuteRule() error = %v with ignore true", err)
+	}
+}
+
+func TestCustomRequiresPluginCallSelector(t *testing.T) {
+	runtime := &Runtime{WebDriver: &testDriver{}, Rules: &pluginCallLookup{}}
+	rule := &rules.ActionRule{ActionType: "custom", Selectors: []rules.Selector{{SelectorType: "css", Selector: "button"}}}
+
+	err := ExecuteRule(context.Background(), runtime, rule)
+	if err == nil || !strings.Contains(err.Error(), "requires a plugin_call selector") {
+		t.Fatalf("ExecuteRule() error = %v, want missing plugin_call selector error", err)
+	}
+}
+
+func TestCustomStopsAfterFirstSuccessfulPlugin(t *testing.T) {
+	lookup := &pluginCallLookup{}
+	runtime := &Runtime{WebDriver: &testDriver{}, Rules: lookup}
+	rule := &rules.ActionRule{ActionType: "custom", Selectors: []rules.Selector{
+		{SelectorType: "plugin_call", Selector: "first"},
+		{SelectorType: "plugin_call", Selector: "second"},
+	}}
+
+	if err := ExecuteRule(context.Background(), runtime, rule); err != nil {
+		t.Fatalf("ExecuteRule() error = %v", err)
+	}
+	if got, want := strings.Join(lookup.calls, ","), "first"; got != want {
+		t.Fatalf("plugin calls = %q, want %q", got, want)
+	}
+}
+
+func TestCustomFallsThroughAfterPluginFailure(t *testing.T) {
+	firstErr := errors.New("first plugin failed")
+	lookup := &pluginCallLookup{errs: map[string]error{"first": firstErr}}
+	runtime := &Runtime{WebDriver: &testDriver{}, Rules: lookup}
+	rule := &rules.ActionRule{ActionType: "custom", Selectors: []rules.Selector{
+		{SelectorType: "plugin_call", Selector: "first"},
+		{SelectorType: "css", Selector: "ignored"},
+		{SelectorType: "plugin_call", Selector: "second"},
+	}}
+
+	if err := ExecuteRule(context.Background(), runtime, rule); err != nil {
+		t.Fatalf("ExecuteRule() error = %v", err)
+	}
+	if got, want := strings.Join(lookup.calls, ","), "first,second"; got != want {
+		t.Fatalf("plugin calls = %q, want %q", got, want)
+	}
+}
+
+func TestCustomReturnsFinalPluginFailure(t *testing.T) {
+	firstErr := errors.New("first plugin failed")
+	finalErr := errors.New("final plugin failed")
+	lookup := &pluginCallLookup{errs: map[string]error{"first": firstErr, "second": finalErr}}
+	runtime := &Runtime{WebDriver: &testDriver{}, Rules: lookup}
+	rule := &rules.ActionRule{ActionType: "custom", Selectors: []rules.Selector{
+		{SelectorType: "plugin_call", Selector: "first"},
+		{SelectorType: "plugin_call", Selector: "second"},
+	}}
+
+	err := ExecuteRule(context.Background(), runtime, rule)
+	if !errors.Is(err, finalErr) {
+		t.Fatalf("ExecuteRule() error = %v, want final error %v", err, finalErr)
+	}
+	if got, want := strings.Join(lookup.calls, ","), "first,second"; got != want {
+		t.Fatalf("plugin calls = %q, want %q", got, want)
 	}
 }
 
