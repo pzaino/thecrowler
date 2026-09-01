@@ -20,6 +20,16 @@ import (
 
 const maxHTTPTransformResponse = 16 << 20
 
+// PublicPostProcessingHandlers is the stable set accepted in ruleset files.
+var PublicPostProcessingHandlers = []string{
+	"replace", "remove", "transform", "validate", "clean", "set_env",
+	"plugin_call", "agent_call", "external_api",
+}
+
+// InternalPostProcessingHandlers are crawler-owned operations and must not be
+// advertised by the public ruleset schema.
+var InternalPostProcessingHandlers = []string{"crowler_meta"}
+
 // RuleError identifies a failed scraping rule without retaining extracted page content.
 type RuleError struct {
 	RuleName string
@@ -260,7 +270,7 @@ func ApplyRulesGroup(ctx context.Context, runtime *Runtime, group *rs.RuleGroup,
 		if unmarshalErr := json.Unmarshal(unwrapDoubleObject(data), &processed); unmarshalErr != nil {
 			return result, &RuleError{RuleName: group.GroupName, Err: errors.New("group post-processing returned a non-object result")}
 		}
-		mergeResult(result, processed)
+		result = processed
 	}
 	return result, nil
 }

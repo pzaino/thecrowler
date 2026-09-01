@@ -58,7 +58,7 @@ func DetectTechnologies(dtCtx *DContext) *map[string]DetectedEntity {
 	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-DetectTech] Starting technologies detection (if any rules is enabled)...")
 
 	// micro-signatures
-	Patterns := dtCtx.RE.GetAllEnabledDetectionRules(dtCtx.CtxID)
+	Patterns := dtCtx.RE.GetAllEnabledDetectionRules(dtCtx.CtxID, dtCtx.RuntimeScope)
 	if len(Patterns) == 0 {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-DetectTech] No detection rules enabled")
 		return nil
@@ -669,13 +669,17 @@ func detectTechByMetaTags(responseBody string, signatures *map[string][]ruleset.
 			doc.Find("meta").Each(func(_ int, htmlItem *goquery.Selection) {
 				if strings.EqualFold(htmlItem.AttrOr("name", ""), strings.TrimSpace(signature.Name)) {
 					text, contExists := htmlItem.Attr("content")
-					if contExists && signature.Content != "" {
+					if contExists && len(signature.Content) > 0 {
 						text = strings.ToLower(text)
-						matched, err := regexp.MatchString(signature.Content, text)
-						if err != nil {
-							cmn.DebugMsg(cmn.DbgLvlError, errMatchingSignature, err)
-						} else if matched {
-							updateDetectedTech(detectedTech, ObjName, signature.Confidence, signature.Content)
+						for _, content := range signature.Content {
+							matched, err := regexp.MatchString(content, text)
+							if err != nil {
+								cmn.DebugMsg(cmn.DbgLvlError, errMatchingSignature, err)
+								continue
+							}
+							if matched {
+								updateDetectedTech(detectedTech, ObjName, signature.Confidence, content)
+							}
 						}
 					}
 					updateDetectedType(detectedTech, ObjName, detectionType)

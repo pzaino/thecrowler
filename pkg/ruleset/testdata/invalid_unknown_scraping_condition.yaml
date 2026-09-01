@@ -1,0 +1,37 @@
+---
+format_version: 1.0.5
+author: ruleset tests
+created_at: '2026-01-01T00:00:00Z'
+description: canonical fixture
+ruleset_name: canonical
+rule_groups:
+- group_name: invalid
+  is_enabled: true
+  url: "*"
+  scraping_rules:
+  - rule_name: article
+    scope: website
+    pre_conditions:
+    - url: https://example.test/article
+    wait_conditions:
+    - condition_type: delay
+      value: 100ms
+    elements:
+    - key: title
+      selectors:
+      - selector_type: css
+        selector: h1
+        extract:
+          type: text
+      critical: true
+      transform_html_to_json: false
+    conditions:
+      language: en
+      unexpected: true
+    extract_scripts: true
+    json_field_mappings:
+      title: headline
+    post_processing:
+    - step_type: clean
+      details:
+        trim: true

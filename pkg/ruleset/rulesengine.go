@@ -17,7 +17,6 @@
 package ruleset
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -133,19 +132,16 @@ func NewEmptyRuleEngine(schemaPath string) RuleEngine {
 
 // NewRuleEngineWithParser creates a new instance of RuleEngine with the provided site rules.
 func NewRuleEngineWithParser(parser RuleParser, file string) (*RuleEngine, error) {
-	rulesets, err := parser.ParseRules(nil, file)
+	schemaPath := defaultRulesetSchemaPath()
+	schema, err := LoadSchema(schemaPath)
 	if err != nil {
 		return nil, err
 	}
-	return &RuleEngine{
-		Schema:   nil,
-		Rulesets: rulesets,
-		DetectionConfig: DetectionConfig{
-			NoiseThreshold:    1.0,
-			MaybeThreshold:    5.0,
-			DetectedThreshold: 10.0,
-		},
-	}, nil
+	rulesets, err := parser.ParseRules(schema, file)
+	if err != nil {
+		return nil, err
+	}
+	return NewRuleEngine(schemaPath, rulesets), nil
 }
 
 // LoadRulesFromFile loads the rules from the provided file names list and returns
@@ -195,24 +191,12 @@ func (re *RuleEngine) ValidateRuleset(ruleset Ruleset) error {
 	}
 
 	// Transform the ruleset to JSON
-	rulesetJSON, err := json.Marshal(ruleset)
+	rulesetJSON, err := rulesetValidationJSON(ruleset)
 	if err != nil {
 		return fmt.Errorf("failed to marshal ruleset to JSON: %v", err)
 	}
 
-	// Create a context for the validation
-	ctx := context.Background()
-
-	// Validate the ruleset
-	if keywordsErrors, err := re.Schema.ValidateBytes(ctx, []byte(rulesetJSON)); err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "Failed to validate ruleset: %v", err)
-		if len(keywordsErrors) > 0 {
-			return fmt.Errorf("ruleset validation failed: %v", keywordsErrors)
-		}
-		return fmt.Errorf("ruleset validation failed: %v", err)
-	}
-
-	return nil
+	return ValidateRulesetConfig(re.Schema, rulesetJSON, "json")
 }
 
 // MarshalJSON returns the JSON representation of the RuleEngine.
@@ -410,55 +394,78 @@ func (re *RuleEngine) GetAllDetectionRules(CtxID string) []DetectionRule {
 }
 
 // GetAllEnabledScrapingRules returns all the enabled scraping rules in the RuleEngine.
-func (re *RuleEngine) GetAllEnabledScrapingRules(CtxID string) []ScrapingRule {
+func (re *RuleEngine) GetAllEnabledScrapingRules(CtxID string, runtimeScope ...string) []ScrapingRule {
 	var scrapingRules []ScrapingRule
 	CID := strings.ToLower(strings.TrimSpace(CtxID))
 	for _, rg := range re.GetAllEnabledRuleGroups() {
 		if CID != "" {
 			rg.SetEnv(CID)
 		}
-		scrapingRules = append(scrapingRules, rg.ScrapingRules...)
+		for _, rule := range rg.ScrapingRules {
+			if ScopeMatches(rule.Scope, firstScope(runtimeScope)) {
+				scrapingRules = append(scrapingRules, rule)
+			}
+		}
 	}
 	return scrapingRules
 }
 
 // GetAllEnabledActionRules returns all the enabled action rules in the RuleEngine.
-func (re *RuleEngine) GetAllEnabledActionRules(CtxID string) []ActionRule {
+func (re *RuleEngine) GetAllEnabledActionRules(CtxID string, runtimeScope ...string) []ActionRule {
 	var actionRules []ActionRule
 	CID := strings.ToLower(strings.TrimSpace(CtxID))
 	for _, rg := range re.GetAllEnabledRuleGroups() {
 		if CID != "" {
 			rg.SetEnv(CID)
 		}
-		actionRules = append(actionRules, rg.ActionRules...)
+		for _, rule := range rg.ActionRules {
+			if ScopeMatches(rule.Scope, firstScope(runtimeScope)) {
+				actionRules = append(actionRules, rule)
+			}
+		}
 	}
 	return actionRules
 }
 
 // GetAllEnabledCrawlingRules returns all the enabled crawling rules in the RuleEngine.
-func (re *RuleEngine) GetAllEnabledCrawlingRules(CtxID string) []CrawlingRule {
+func (re *RuleEngine) GetAllEnabledCrawlingRules(CtxID string, runtimeScope ...string) []CrawlingRule {
 	var crawlingRules []CrawlingRule
 	CID := strings.ToLower(strings.TrimSpace(CtxID))
 	for _, rg := range re.GetAllEnabledRuleGroups() {
 		if CID != "" {
 			rg.SetEnv(CID)
 		}
-		crawlingRules = append(crawlingRules, rg.CrawlingRules...)
+		for _, rule := range rg.CrawlingRules {
+			if ScopeMatches(rule.Scope, firstScope(runtimeScope)) {
+				crawlingRules = append(crawlingRules, rule)
+			}
+		}
 	}
 	return crawlingRules
 }
 
 // GetAllEnabledDetectionRules returns all the enabled detection rules in the RuleEngine.
-func (re *RuleEngine) GetAllEnabledDetectionRules(CtxID string) []DetectionRule {
+func (re *RuleEngine) GetAllEnabledDetectionRules(CtxID string, runtimeScope ...string) []DetectionRule {
 	var detectionRules []DetectionRule
 	CID := strings.ToLower(strings.TrimSpace(CtxID))
 	for _, rg := range re.GetAllEnabledRuleGroups() {
 		if CID != "" {
 			rg.SetEnv(CID)
 		}
-		detectionRules = append(detectionRules, rg.DetectionRules...)
+		for _, rule := range rg.DetectionRules {
+			if ScopeMatches(rule.Scope, firstScope(runtimeScope)) {
+				detectionRules = append(detectionRules, rule)
+			}
+		}
 	}
 	return detectionRules
+}
+
+func firstScope(scopes []string) string {
+	if len(scopes) == 0 {
+		return ""
+	}
+	return scopes[0]
 }
 
 // GetAllScrapingRulesByURL returns all the scraping rules for the specified URL.

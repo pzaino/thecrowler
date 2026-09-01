@@ -1,0 +1,52 @@
+{
+  "format_version": "1.0.5",
+  "author": "ruleset tests",
+  "created_at": "2026-01-01T00:00:00Z",
+  "description": "canonical fixture",
+  "ruleset_name": "canonical",
+  "rule_groups": [
+    {
+      "group_name": "invalid",
+      "is_enabled": true,
+      "url": "*",
+      "action_rules": [
+        {
+          "rule_name": "login",
+          "scope": "website",
+          "action_type": "input_text",
+          "selectors": [
+            {
+              "selector_type": "css",
+              "selector": "#username"
+            }
+          ],
+          "value": "alice",
+          "wait_conditions": [
+            {
+              "condition_type": "element_visible",
+              "selector": {
+                "selector_type": "css",
+                "selector": "#username"
+              }
+            }
+          ],
+          "conditions": {
+            "type": "element",
+            "selector": "#login"
+          },
+          "post_processing": [
+            {
+              "step_type": "collect_cookies"
+            }
+          ],
+          "error_handling": {
+            "ignore": false,
+            "retry_count": 2,
+            "retry_delay": 1
+          },
+          "unexpected": true
+        }
+      ]
+    }
+  ]
+}

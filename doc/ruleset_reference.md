@@ -90,11 +90,11 @@ Both are first-class across subsystems.
 - `rule_name` *(string)*
 - `scope` *(string)*
 - `pre_conditions` *(array)*: `{ url, path }`
-- `conditions` *(object)*
+- `conditions` *(object, optional)*: typed `element`, `language`, and `env` conditions; all specified conditions must match
 - `wait_conditions` *(array)*
 - `elements` *(array of Element)*
-- `js_files` *(bool)*: extract scripts as web objects
-- `json_field_mappings` *(object map[string]string)*: rename output keys
+- `extract_scripts` *(bool)*: extract scripts as web objects (`js_files` is accepted as a legacy alias)
+- `json_field_mappings` *(object map[string]string)*: rename top-level output keys (`json_field_rename` is accepted as a legacy alias)
 - `post_processing` *(array)*
 
 ### Wait conditions
@@ -131,7 +131,7 @@ Each wait condition supports:
 
 Each step:
 
-- `step_type`: `replace | remove | transform | validate | clean | plugin_call | agent_call`
+- `step_type`: `replace | remove | transform | validate | clean | set_env | plugin_call | agent_call | external_api`
 - `details` *(object; shape depends on step type)*
 - `agent_call` *(object, when `step_type: agent_call`)*
 
@@ -146,6 +146,8 @@ Each step:
 - `action_type` *(string)*:
   `click | input_text | clear | drag_and_drop | mouse_hover | right_click | double_click | click_and_hold | release | key_down | key_up | navigate_to_url | forward | back | refresh | switch_to_window | switch_to_frame | close_window | accept_alert | dismiss_alert | get_alert_text | send_keys_to_alert | scroll_to_element | scroll_by_amount | take_screenshot | custom`
 - `selectors` *(array of Selector)*
+- `target_selectors` *(array of Selector, required for `drag_and_drop`)*
+- `store_as` *(string, required for `get_alert_text`)*
 - `value` *(string, optional)*: e.g. input text or URL for `navigate_to_url`
 - `details` *(object, optional)*
 - `url` *(string, optional)*: rule applicability filter (not navigation payload)
@@ -155,6 +157,16 @@ Each step:
 - `error_handling` *(object: `ignore`, `retry_count`, `retry_delay`)*
 
 > For plugin-driven custom actions, use `action_type: custom` and a selector with `selector_type: plugin_call`.
+
+Selectors in an array are fallbacks: they are tried in order until one locates an
+element. For `drag_and_drop`, `selectors` identifies the source while
+`target_selectors` independently identifies the destination; each array has its
+own fallback order and must contain at least one selector.
+
+`get_alert_text` reads the current browser alert and stores its text under the
+context-scoped key named by `store_as`. The stored value can subsequently be
+referenced through the same key/value mechanism used by ruleset environment
+values.
 
 ---
 
@@ -219,7 +231,8 @@ Each step:
 Each item:
 
 - `key`
-- `values` *(can be string/number/bool/array)*
+- `values` *(canonical; accepts any JSON-compatible scalar, object, or array)*
+- `value` *(deprecated input alias; do not specify it together with `values`)*
 - `properties`:
   - `persistent`
   - `static`
@@ -231,7 +244,7 @@ Each item:
 ### `logging_configuration`
 
 - `log_level`
-- `log_file` *(optional)*
+- `log_message` *(optional; message emitted when the rule group matches)*
 
 ---
 

@@ -53,7 +53,7 @@ func (r *ActionRule) GetWaitConditions() []WaitCondition {
 }
 
 // GetConditions returns the conditions for the specified action rule.
-func (r *ActionRule) GetConditions() map[string]interface{} {
+func (r *ActionRule) GetConditions() *ActionCondition {
 	return r.Conditions
 }
 

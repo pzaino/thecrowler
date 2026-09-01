@@ -60,11 +60,11 @@ func newScraperRuntimeAdapterWithPageInfo(ctx *ProcessContext, wd *vdi.WebDriver
 		WaitCondition: func(execCtx context.Context, condition rs.WaitCondition) error {
 			return browseractions.WaitForCondition(execCtx, newActionRuntime(ctx, wd), condition)
 		},
-		MatchConditions: func(_ context.Context, conditions map[string]interface{}) (bool, error) {
+		MatchConditions: func(_ context.Context, conditions rs.ScrapingConditions) (bool, error) {
 			return checkScrapingConditions(ctx, conditions, wd), nil
 		},
 		AugmentResult: func(_ context.Context, rule *rs.ScrapingRule, result map[string]interface{}) map[string]interface{} {
-			if rule == nil || !rule.JsFiles {
+			if rule == nil || !rule.ExtractScripts {
 				return result
 			}
 			scripts, err := scraper.ExtractJavaScriptFiles(scraper.JavaScriptRequest{Driver: wd})

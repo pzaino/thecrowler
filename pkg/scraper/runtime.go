@@ -139,7 +139,7 @@ type RuleHook func(context.Context, *rs.ScrapingRule) error
 type WaitConditionHook func(context.Context, rs.WaitCondition) error
 
 // ConditionsMatcher evaluates crawler-owned rule conditions.
-type ConditionsMatcher func(context.Context, map[string]interface{}) (bool, error)
+type ConditionsMatcher func(context.Context, rs.ScrapingConditions) (bool, error)
 
 // ResultAugmenter adds crawler-owned extraction fields without moving selection into scraper.
 type ResultAugmenter func(context.Context, *rs.ScrapingRule, map[string]interface{}) map[string]interface{}

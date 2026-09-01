@@ -63,7 +63,7 @@ func processURLRules(wd *vdi.WebDriver, ctx *ProcessContext, url string) {
 		for _, rs := range rsl {
 			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-ProcURLRules] Executing ruleset: %s", rs.Name)
 			// Execute all the rules in the ruleset
-			executeActionRules(ctx, rs.GetAllEnabledActionRules(ctx.GetContextID(), true), wd)
+			executeActionRules(ctx, rs.GetAllEnabledActionRulesForScope(ctx.GetContextID(), runtimeScope(ctx), true), wd)
 			// Clean up non-persistent rules
 			cmn.KVStore.DeleteByCID(ctx.GetContextID())
 		}
@@ -77,7 +77,7 @@ func processURLRules(wd *vdi.WebDriver, ctx *ProcessContext, url string) {
 			// Set the environment variables for the rule group
 			rg.SetEnv(ctx.GetContextID())
 			// Execute all the rules in the rule group
-			executeActionRules(ctx, rg.GetActionRules(), wd)
+			executeActionRules(ctx, rg.GetActionRulesForScope(runtimeScope(ctx)), wd)
 			// Clean up non-persistent rules
 			cmn.KVStore.DeleteByCID(ctx.GetContextID())
 		}
@@ -111,6 +111,7 @@ func newActionRuntime(ctx *ProcessContext, wd *vdi.WebDriver) *browseractions.Ru
 		WebDriver:  driver,
 		Rules:      &crawlerActionLookup{ctx: ctx, wd: wd},
 		Cookies:    &crawlerCookieSink{ctx: ctx},
+		Results:    &crawlerActionResultSink{ctx: ctx},
 		Screenshot: crawlerScreenshotHook(wd),
 		CheckStatus: func(actionCtx context.Context) error {
 			if err := actionCtx.Err(); err != nil {
@@ -127,6 +128,27 @@ func newActionRuntime(ctx *ProcessContext, wd *vdi.WebDriver) *browseractions.Ru
 			Rbee:             browseractions.RbeeEndpoints{Action: defaultRbeeActionURL},
 		}},
 	}
+}
+
+type crawlerActionResultSink struct {
+	ctx *ProcessContext
+}
+
+func (s *crawlerActionResultSink) StoreResult(_ context.Context, key, value string) error {
+	if s == nil || s.ctx == nil {
+		return fmt.Errorf("crawler action result sink is unavailable")
+	}
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return fmt.Errorf("crawler action result key is empty")
+	}
+	ensureKVStore()
+	source := ""
+	if s.ctx.source != nil {
+		source = s.ctx.source.URL
+	}
+	props := cmn.NewKVStoreProperty(false, false, true, false, source, s.ctx.GetContextID(), "string")
+	return cmn.KVStore.Set(key, value, props)
 }
 
 func actionContextID(ctx *ProcessContext) string {
@@ -252,7 +274,11 @@ func runDefaultActionRules(wd *vdi.WebDriver, ctx *ProcessContext) {
 		if !checkActionPreConditions(r.Conditions, url) {
 			continue
 		}
-		matches, err := browseractions.ConditionsMatch(context.Background(), newActionRuntime(ctx, wd), r.AdditionalConditions)
+		condition, conditionErr := rules.ParseActionCondition(r.AdditionalConditions)
+		if conditionErr != nil {
+			continue
+		}
+		matches, err := browseractions.ConditionsMatch(context.Background(), newActionRuntime(ctx, wd), condition)
 		if err != nil || !matches {
 			continue
 		}
@@ -334,8 +360,9 @@ func executePlannedRuleGroups(wd *vdi.WebDriver, ctx *ProcessContext, planned cf
 			cmn.DebugMsg(cmn.DbgLvlError, "getting rule group '%s': %v", ruleGroupName, err)
 		} else {
 			// Execute the rule group
-			executeActionRules(ctx, rg.GetActionRules(), wd)
-			ctx.Status.TotalActions.Add(int32(len(rg.GetActionRules())))
+			actionRules := rg.GetActionRulesForScope(runtimeScope(ctx))
+			executeActionRules(ctx, actionRules, wd)
+			ctx.Status.TotalActions.Add(int32(len(actionRules)))
 		}
 	}
 }
@@ -354,7 +381,7 @@ func executePlannedRulesets(wd *vdi.WebDriver, ctx *ProcessContext, planned cfg.
 			cmn.DebugMsg(cmn.DbgLvlError, "getting ruleset: %v", err)
 		} else {
 			// Execute the ruleset
-			executeActionRules(ctx, rs.GetAllEnabledActionRules(ctx.GetContextID(), true), wd)
+			executeActionRules(ctx, rs.GetAllEnabledActionRulesForScope(ctx.GetContextID(), runtimeScope(ctx), true), wd)
 			// Clean up non-persistent rules
 			cmn.KVStore.DeleteByCID(ctx.GetContextID())
 		}

@@ -58,7 +58,7 @@ func (r *ScrapingRule) GetElements() []Element {
 
 // GetJsFiles returns the js_files flag for the specified scraping rule.
 func (r *ScrapingRule) GetJsFiles() bool {
-	return r.JsFiles
+	return r.ExtractScripts
 }
 
 // GetJSONFieldMappings returns the JSON field mappings for the specified scraping rule.
@@ -78,7 +78,7 @@ func (r *ScrapingRule) GetPostProcessing() []PostProcessingStep {
 
 // GetConditionType returns the condition type for the specified wait condition.
 func (w *WaitCondition) GetConditionType() string {
-	return strings.ToLower(strings.TrimSpace(w.ConditionType))
+	return strings.ToLower(strings.TrimSpace(string(w.ConditionType)))
 }
 
 // GetSelector returns the selector for the specified wait condition.

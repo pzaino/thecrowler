@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +19,83 @@ const (
 	errNoElementFound  = "rule %q reported no element found: %w"
 	errElementLocation = "rule %q reported failed to get element location: %w"
 )
+
+type actionHandler func(context.Context, *Runtime, *rules.ActionRule) error
+
+// ActionSpec is the executor contract for a canonical schema action.
+type ActionSpec struct {
+	Handler         actionHandler
+	Selectors       int
+	TargetSelectors int
+	ValueRequired   bool
+	StoresResult    bool
+	SelectorKind    string
+	ValidateValue   func(string) error
+}
+
+func strictInteger(value string) error {
+	if value == "" || strings.TrimSpace(value) != value {
+		return errors.New("value must be a strict integer")
+	}
+	_, err := strconv.Atoi(value)
+	if err != nil {
+		return fmt.Errorf("value must be a strict integer: %w", err)
+	}
+	return nil
+}
+
+var canonicalActions = map[string]ActionSpec{
+	"click":           {Handler: func(c context.Context, r *Runtime, a *rules.ActionRule) error { return click(c, r, a, 0) }, Selectors: 1},
+	"input_text":      {Handler: input, Selectors: 1, ValueRequired: true},
+	"clear":           {Handler: elementAction(func(e vdi.WebElement) error { return e.Clear() }), Selectors: 1},
+	"drag_and_drop":   {Handler: dragAndDrop, Selectors: 1, TargetSelectors: 1},
+	"mouse_hover":     {Handler: moveToElement, Selectors: 1},
+	"right_click":     {Handler: func(c context.Context, r *Runtime, a *rules.ActionRule) error { return click(c, r, a, 2) }, Selectors: 1},
+	"double_click":    {Handler: doubleClick, Selectors: 1},
+	"click_and_hold":  {Handler: clickAndHold, Selectors: 1},
+	"release":         {Handler: release},
+	"key_down":        {Handler: func(_ context.Context, r *Runtime, a *rules.ActionRule) error { return r.WebDriver.KeyDown(a.Value) }, ValueRequired: true},
+	"key_up":          {Handler: func(_ context.Context, r *Runtime, a *rules.ActionRule) error { return r.WebDriver.KeyUp(a.Value) }, ValueRequired: true},
+	"navigate_to_url": {Handler: func(_ context.Context, r *Runtime, a *rules.ActionRule) error { return r.WebDriver.Get(a.GetValue()) }, ValueRequired: true},
+	"forward":         {Handler: func(_ context.Context, r *Runtime, _ *rules.ActionRule) error { return r.WebDriver.Forward() }},
+	"back":            {Handler: func(_ context.Context, r *Runtime, _ *rules.ActionRule) error { return r.WebDriver.Back() }},
+	"refresh":         {Handler: func(_ context.Context, r *Runtime, _ *rules.ActionRule) error { return r.WebDriver.Refresh() }},
+	"switch_to_window": {Handler: func(_ context.Context, r *Runtime, a *rules.ActionRule) error {
+		return r.WebDriver.SwitchWindow(a.Value)
+	}, ValueRequired: true},
+	"switch_to_frame": {Handler: switchFrame, Selectors: 1},
+	"close_window":    {Handler: func(_ context.Context, r *Runtime, _ *rules.ActionRule) error { return r.WebDriver.Close() }},
+	"accept_alert":    {Handler: func(_ context.Context, r *Runtime, _ *rules.ActionRule) error { return r.WebDriver.AcceptAlert() }},
+	"dismiss_alert":   {Handler: func(_ context.Context, r *Runtime, _ *rules.ActionRule) error { return r.WebDriver.DismissAlert() }},
+	"get_alert_text":  {Handler: getAlertText, StoresResult: true},
+	"send_keys_to_alert": {Handler: func(_ context.Context, r *Runtime, a *rules.ActionRule) error {
+		return r.WebDriver.SetAlertText(a.Value)
+	}, ValueRequired: true},
+	"scroll_to_element": {Handler: scrollToElement, Selectors: 1},
+	"scroll_by_amount":  {Handler: scrollByAmount, ValueRequired: true, ValidateValue: strictInteger},
+	"take_screenshot":   {Handler: screenshot, ValueRequired: true},
+	"custom":            {Handler: custom, Selectors: 1},
+}
+
+var actionAliases = map[string]string{cmn.LClickStr: "click", cmn.RClickStr: "right_click", "scroll": "scroll_by_amount"}
+
+// CanonicalActionKeys returns the keys of the single canonical action table.
+func CanonicalActionKeys() []string {
+	keys := make([]string, 0, len(canonicalActions))
+	for k := range canonicalActions {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// CanonicalActionHasHandler reports whether action names a canonical action
+// with an executable handler. It exposes validation state without exposing the
+// mutable canonical action table.
+func CanonicalActionHasHandler(action string) bool {
+	spec, ok := canonicalActions[action]
+	return ok && spec.Handler != nil
+}
 
 // ExecuteRules executes rules in order. It stops immediately when the context
 // is canceled or the runtime status check fails.
@@ -45,7 +123,7 @@ func ExecuteRule(ctx context.Context, runtime *Runtime, rule *rules.ActionRule) 
 		return errors.New("browser actions: action rule is nil")
 	}
 	err := executeRuleOnce(ctx, runtime, rule)
-	if err != nil && !rule.ErrorHandling.Ignore {
+	if err != nil {
 		for retry := 0; retry < rule.ErrorHandling.RetryCount; retry++ {
 			if isStopped(ctx, err) {
 				return err
@@ -60,6 +138,9 @@ func ExecuteRule(ctx context.Context, runtime *Runtime, rule *rules.ActionRule) 
 		}
 	}
 	if err != nil {
+		if rule.ErrorHandling.Ignore && !isStopped(ctx, err) {
+			return nil
+		}
 		return err
 	}
 	for _, step := range rule.PostProcessing {
@@ -68,6 +149,80 @@ func ExecuteRule(ctx context.Context, runtime *Runtime, rule *rules.ActionRule) 
 		}
 	}
 	return nil
+}
+
+func elementAction(fn func(vdi.WebElement) error) actionHandler {
+	return func(ctx context.Context, runtime *Runtime, rule *rules.ActionRule) error {
+		e, _, err := findElement(ctx, runtime, rule.Selectors)
+		if err != nil {
+			return err
+		}
+		return fn(e)
+	}
+}
+
+func switchFrame(ctx context.Context, runtime *Runtime, rule *rules.ActionRule) error {
+	e, _, err := findElement(ctx, runtime, rule.Selectors)
+	if err != nil {
+		return err
+	}
+	return runtime.WebDriver.SwitchFrame(e)
+}
+
+func getAlertText(ctx context.Context, runtime *Runtime, rule *rules.ActionRule) error {
+	value, err := runtime.WebDriver.AlertText()
+	if err != nil {
+		return err
+	}
+	if runtime.Results == nil {
+		return errors.New("browser actions: result sink is nil")
+	}
+	return runtime.Results.StoreResult(ctx, rule.StoreAs, value)
+}
+
+func scrollByAmount(_ context.Context, runtime *Runtime, rule *rules.ActionRule) error {
+	amount, _ := strconv.Atoi(rule.Value)
+	_, err := runtime.WebDriver.ExecuteScript("window.scrollBy(0, arguments[0]);", []interface{}{amount})
+	return err
+}
+
+func doubleClick(ctx context.Context, runtime *Runtime, rule *rules.ActionRule) error {
+	e, _, err := findElement(ctx, runtime, rule.Selectors)
+	if err != nil {
+		return err
+	}
+	if err = e.MoveTo(0, 0); err != nil {
+		return err
+	}
+	return runtime.WebDriver.DoubleClick()
+}
+
+func dragAndDrop(ctx context.Context, runtime *Runtime, rule *rules.ActionRule) error {
+	source, _, err := findElement(ctx, runtime, rule.Selectors[:1])
+	if err != nil {
+		return err
+	}
+	target, _, err := findElement(ctx, runtime, rule.TargetSelectors)
+	if err != nil {
+		return err
+	}
+	if err = source.MoveTo(0, 0); err != nil {
+		return err
+	}
+	if err = runtime.WebDriver.ButtonDown(); err != nil {
+		return err
+	}
+	held := true
+	defer func() {
+		if held {
+			_ = runtime.WebDriver.ButtonUp()
+		}
+	}() // cleanup on target failure
+	if err = target.MoveTo(0, 0); err != nil {
+		return err
+	}
+	held = false
+	return runtime.WebDriver.ButtonUp()
 }
 
 func executeRuleOnce(ctx context.Context, runtime *Runtime, rule *rules.ActionRule) error {
@@ -84,59 +239,36 @@ func executeRuleOnce(ctx context.Context, runtime *Runtime, rule *rules.ActionRu
 		return err
 	}
 
-	switch strings.ToLower(strings.TrimSpace(rule.ActionType)) {
-	case cmn.ClickStr, cmn.LClickStr:
-		return click(ctx, runtime, rule, 0)
-	case cmn.RClickStr:
-		return click(ctx, runtime, rule, 2)
-	case "scroll":
-		return scroll(ctx, runtime, rule)
-	case "input_text":
-		return input(ctx, runtime, rule)
-	case "clear":
-		element, _, err := findElement(ctx, runtime, rule.Selectors)
-		if err != nil {
-			return err
-		}
-		return element.Clear()
-	case "custom":
-		return custom(ctx, runtime, rule)
-	case "take_screenshot":
-		return screenshot(ctx, runtime, rule)
-	case "key_down":
-		return runtime.WebDriver.KeyDown(rule.Value)
-	case "key_up":
-		return runtime.WebDriver.KeyUp(rule.Value)
-	case "mouse_hover":
-		return moveToElement(ctx, runtime, rule)
-	case "forward":
-		return runtime.WebDriver.Forward()
-	case "back":
-		return runtime.WebDriver.Back()
-	case "refresh":
-		return runtime.WebDriver.Refresh()
-	case "switch_to_frame":
-		element, _, err := findElement(ctx, runtime, rule.Selectors)
-		if err != nil {
-			return err
-		}
-		return runtime.WebDriver.SwitchFrame(element)
-	case "switch_to_window":
-		return runtime.WebDriver.SwitchWindow(rule.Value)
-	case "scroll_to_element":
-		return scrollToElement(ctx, runtime, rule)
-	case "scroll_by_amount":
-		_, err := runtime.WebDriver.ExecuteScript(fmt.Sprintf("window.scrollTo(0, %d);", cmn.StringToInt(rule.Value)), nil)
-		return err
-	case "click_and_hold":
-		return clickAndHold(ctx, runtime, rule)
-	case "release":
-		return release(ctx, runtime, rule)
-	case "navigate_to_url":
-		return runtime.WebDriver.Get(rule.GetValue())
-	default:
+	key := strings.ToLower(strings.TrimSpace(rule.ActionType))
+	if canonical, ok := actionAliases[key]; ok {
+		key = canonical
+	}
+	spec, ok := canonicalActions[key]
+	if !ok {
 		return fmt.Errorf("action type not supported: %s", rule.ActionType)
 	}
+	if len(rule.Selectors) < spec.Selectors {
+		return fmt.Errorf("action %s requires %d source selector(s)", key, spec.Selectors)
+	}
+	if len(rule.TargetSelectors) < spec.TargetSelectors {
+		return fmt.Errorf("action %s requires %d target selector(s)", key, spec.TargetSelectors)
+	}
+	if spec.ValueRequired && rule.GetValue() == "" {
+		return fmt.Errorf("action %s requires a value", key)
+	}
+	if spec.SelectorKind != "" {
+		for _, selector := range rule.Selectors {
+			if !strings.EqualFold(strings.TrimSpace(selector.SelectorType), spec.SelectorKind) {
+				return fmt.Errorf("action %s requires selector kind %s", key, spec.SelectorKind)
+			}
+		}
+	}
+	if spec.ValidateValue != nil {
+		if err := spec.ValidateValue(rule.Value); err != nil {
+			return fmt.Errorf("action %s: %w", key, err)
+		}
+	}
+	return spec.Handler(ctx, runtime, rule)
 }
 
 // WaitForCondition waits without losing context cancellation or runtime status.
@@ -144,22 +276,48 @@ func WaitForCondition(ctx context.Context, runtime *Runtime, condition rules.Wai
 	if err := runtime.check(ctx); err != nil {
 		return err
 	}
-	switch strings.ToLower(strings.TrimSpace(condition.ConditionType)) {
-	case "element":
-		_, err := runtime.Rules.FindElement(ctx, condition.Selector)
-		return err
-	case "delay":
-		return wait(ctx, runtime, time.Duration(exi.GetFloat(condition.Value)*float64(time.Second)))
-	case "plugin_call":
+	conditionType := rules.WaitConditionType(strings.ToLower(strings.TrimSpace(string(condition.ConditionType))))
+	switch conditionType {
+	case rules.WaitConditionElementPresence, rules.WaitConditionElementVisible:
 		if runtime.Rules == nil {
 			return errors.New("browser actions: rule lookup is nil")
 		}
-		script, exists, err := runtime.Rules.PluginScript(ctx, condition.Value)
+		if strings.TrimSpace(condition.Selector.SelectorType) == "" || strings.TrimSpace(condition.Selector.Selector) == "" {
+			return errors.New("wait condition requires a typed selector")
+		}
+		element, err := runtime.Rules.FindElement(ctx, condition.Selector)
+		if err != nil {
+			return err
+		}
+		if conditionType == rules.WaitConditionElementVisible {
+			visible, err := element.IsDisplayed()
+			if err != nil {
+				return err
+			}
+			if !visible {
+				return errors.New("wait condition element is not visible")
+			}
+		}
+		return err
+	case rules.WaitConditionDelay:
+		if strings.TrimSpace(condition.Value) == "" {
+			return errors.New("delay wait condition requires value")
+		}
+		return wait(ctx, runtime, time.Duration(exi.GetFloat(condition.Value)*float64(time.Second)))
+	case rules.WaitConditionPluginCall:
+		if runtime.Rules == nil {
+			return errors.New("browser actions: rule lookup is nil")
+		}
+		plugin := strings.TrimSpace(condition.Plugin)
+		if plugin == "" {
+			return errors.New("plugin_call wait condition requires plugin")
+		}
+		script, exists, err := runtime.Rules.PluginScript(ctx, plugin)
 		if err != nil {
 			return err
 		}
 		if !exists {
-			return fmt.Errorf("plugin not found: %s", condition.Value)
+			return fmt.Errorf("plugin not found: %s", plugin)
 		}
 		_, err = runtime.WebDriver.ExecuteScript(script, nil)
 		return err
@@ -198,24 +356,39 @@ func wait(ctx context.Context, runtime *Runtime, duration time.Duration) error {
 }
 
 // ConditionsMatch evaluates browser-side action conditions.
-func ConditionsMatch(ctx context.Context, runtime *Runtime, conditions map[string]interface{}) (bool, error) {
-	if len(conditions) == 0 {
+func ConditionsMatch(ctx context.Context, runtime *Runtime, condition *rules.ActionCondition) (bool, error) {
+	if condition == nil {
 		return true, nil
 	}
-	if element, ok := conditions["element"].(string); ok {
-		if _, err := runtime.WebDriver.FindElement(vdi.ByCSSSelector, element); err != nil {
+	switch strings.ToLower(strings.TrimSpace(condition.Type)) {
+	case "element":
+		if strings.TrimSpace(condition.Selector) == "" {
+			return false, errors.New("element condition requires selector")
+		}
+		if _, err := runtime.WebDriver.FindElement(vdi.ByCSSSelector, condition.Selector); err != nil {
 			return false, nil
 		}
-	}
-	if language, ok := conditions["language"]; ok {
+		return true, nil
+	case "language":
+		if strings.TrimSpace(condition.Language) == "" {
+			return false, errors.New("language condition requires language")
+		}
 		actual, err := runtime.WebDriver.ExecuteScript("return document.documentElement.lang", nil)
-		if err != nil || actual != language {
+		if err != nil {
+			return false, err
+		}
+		if !strings.EqualFold(strings.TrimSpace(fmt.Sprint(actual)), condition.Language) {
 			return false, nil
 		}
-	}
-	if _, ok := conditions["plugin_call"]; ok {
-		name, _ := conditions["selector"].(string)
-		script, exists, err := runtime.Rules.PluginScript(ctx, name)
+		return true, nil
+	case "plugin_call":
+		if strings.TrimSpace(condition.PluginCall) == "" {
+			return false, errors.New("plugin_call condition requires plugin_call")
+		}
+		if runtime.Rules == nil {
+			return false, errors.New("browser actions: rule lookup is nil")
+		}
+		script, exists, err := runtime.Rules.PluginScript(ctx, condition.PluginCall)
 		if err != nil {
 			return false, err
 		}
@@ -227,8 +400,9 @@ func ConditionsMatch(ctx context.Context, runtime *Runtime, conditions map[strin
 			return false, nil
 		}
 		return strings.EqualFold(strings.TrimSpace(fmt.Sprint(result)), "true"), nil
+	default:
+		return false, fmt.Errorf("unknown action condition type %q", condition.Type)
 	}
-	return true, nil
 }
 
 func findElement(ctx context.Context, runtime *Runtime, selectors []rules.Selector) (vdi.WebElement, rules.Selector, error) {
@@ -256,7 +430,7 @@ func click(ctx context.Context, runtime *Runtime, rule *rules.ActionRule, button
 	element, _, err := findElement(ctx, runtime, rule.Selectors)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, errNoElementFound, rule.RuleName, err)
-		return nil
+		return fmt.Errorf(errNoElementFound, rule.RuleName, err)
 	}
 	if runtime.Options.HBS.Enabled {
 		location, locationErr := element.Location()
@@ -288,7 +462,7 @@ func input(ctx context.Context, runtime *Runtime, rule *rules.ActionRule) error 
 	element, selector, err := findElement(ctx, runtime, rule.Selectors)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, errNoElementFound, rule.RuleName, err)
-		return nil
+		return fmt.Errorf(errNoElementFound, rule.RuleName, err)
 	}
 	value := rule.Value
 	if value == "" {
@@ -344,10 +518,10 @@ func scroll(ctx context.Context, runtime *Runtime, rule *rules.ActionRule) error
 }
 
 func scrollToElement(ctx context.Context, runtime *Runtime, rule *rules.ActionRule) error {
-	element, selector, err := findElement(ctx, runtime, rule.Selectors)
+	element, _, err := findElement(ctx, runtime, rule.Selectors)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, errNoElementFound, rule.RuleName, err)
-		return nil
+		return fmt.Errorf(errNoElementFound, rule.RuleName, err)
 	}
 	if runtime.Options.HBS.Enabled {
 		location, locationErr := element.Location()
@@ -368,15 +542,7 @@ func scrollToElement(ctx context.Context, runtime *Runtime, rule *rules.ActionRu
 			return err
 		}
 	}
-	script := fmt.Sprintf("var element=document.querySelector(%s); if (!element) return false; element.scrollIntoView({behavior:'smooth',block:'center'}); return true;", strconv.Quote(selector.Selector))
-	ok, err := runtime.WebDriver.ExecuteScript(script, nil)
-	if err != nil {
-		return fmt.Errorf("failed to scroll to element using Selenium: %w", err)
-	}
-	if ok != true {
-		return errors.New("element not found for scrolling")
-	}
-	return nil
+	return element.MoveTo(0, 0)
 }
 
 func moveToElement(ctx context.Context, runtime *Runtime, rule *rules.ActionRule) error {
@@ -448,13 +614,17 @@ func dispatchMouseEvent(driver vdi.WebDriver, element vdi.WebElement, eventName 
 }
 
 func custom(ctx context.Context, runtime *Runtime, rule *rules.ActionRule) error {
+	foundPluginCall := false
+	var lastErr error
 	for _, selector := range rule.Selectors {
 		if !strings.EqualFold(strings.TrimSpace(selector.SelectorType), "plugin_call") {
 			continue
 		}
+		foundPluginCall = true
 
 		if runtime.Rules == nil {
-			return errors.New("browser actions: rule lookup is nil")
+			lastErr = errors.New("browser actions: rule lookup is nil")
+			continue
 		}
 
 		params := make(map[string]interface{})
@@ -463,17 +633,26 @@ func custom(ctx context.Context, runtime *Runtime, rule *rules.ActionRule) error
 			if raw, exists := selector.Details["parameters"]; exists {
 				params = cmn.ConvertInfToMap(raw)
 				if params == nil {
-					return errors.New("browser actions: plugin parameters must be an object")
+					lastErr = errors.New("browser actions: plugin parameters must be an object")
+					continue
 				}
 			}
 		}
 
 		if err := runtime.Rules.CallPlugin(ctx, selector.Selector, rule.Value, params); err != nil {
-			return err
+			if isStopped(ctx, err) {
+				return err
+			}
+			lastErr = err
+			continue
 		}
+		return nil
 	}
 
-	return nil
+	if !foundPluginCall {
+		return errors.New("browser actions: custom action requires a plugin_call selector")
+	}
+	return lastErr
 }
 
 func screenshot(ctx context.Context, runtime *Runtime, rule *rules.ActionRule) error {

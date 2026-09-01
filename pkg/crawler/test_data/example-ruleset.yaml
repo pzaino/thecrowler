@@ -1,11 +1,15 @@
 ruleset_name: example.com
-format_version: "1.0"
+format_version: "1.0.0"
+author: "TheCROWler Team"
+created_at: "2024-03-01T12:00:00Z"
+description: "Ruleset fixture for automated validation and runtime tests."
 rule_groups:
   - group_name: "Group1"
     is_enabled: true
     scraping_rules:
       - rule_name: "Rule1"
-        path: "/articles"
+        pre_conditions:
+          - path: "/articles"
         elements:
           - key: "title"
             selectors:
@@ -21,10 +25,7 @@ rule_groups:
             selectors:
               - selector_type: "css"
                 selector: "span.date"
-        js_files: true
-        technology_patterns:
-          - "jquery"
-          - "bootstrap"
+        extract_scripts: true
 
   - group_name: "Group2"
     valid_from: "2024-01-01T00:00:00Z"
@@ -32,7 +33,8 @@ rule_groups:
     is_enabled: true
     scraping_rules:
       - rule_name: "Get the News"
-        path: "/news"
+        pre_conditions:
+          - path: "/news"
         elements:
           - key: "headline"
             selectors:
@@ -42,14 +44,15 @@ rule_groups:
             selectors:
               - selector_type: "css"
                 selector: "p.summary"
-        js_files: false
+        extract_scripts: false
 
   - group_name: "GDPR"
     is_enabled: true
     action_rules:
       - rule_name: "FindAcceptButton"
         action_type: "click"
-        path: "/cookies"
+        pre_conditions:
+          - path: "/cookies"
         elements:
           - key: "accept_button"
             selectors:
@@ -59,4 +62,4 @@ rule_groups:
             selectors:
               - selector_type: "css"
                 selector: "button.reject"
-        js_files: false
+        extract_scripts: false

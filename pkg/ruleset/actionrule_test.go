@@ -17,11 +17,49 @@
 package ruleset
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 )
+
+func TestActionRuleTargetSelectorsAndStoreAsRoundTrip(t *testing.T) {
+	original := ActionRule{
+		RuleName:        "drag-alert-result",
+		TargetSelectors: []Selector{{SelectorType: "css", Selector: "#drop-zone"}},
+		StoreAs:         "dialog.message",
+	}
+
+	tests := []struct {
+		name      string
+		marshal   func(interface{}) ([]byte, error)
+		unmarshal func([]byte, interface{}) error
+	}{
+		{name: "JSON", marshal: json.Marshal, unmarshal: json.Unmarshal},
+		{name: "YAML", marshal: yaml.Marshal, unmarshal: yaml.Unmarshal},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := tc.marshal(original)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var decoded ActionRule
+			if err := tc.unmarshal(data, &decoded); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(decoded.TargetSelectors, original.TargetSelectors) {
+				t.Fatalf("target selectors did not survive round trip: %#v", decoded.TargetSelectors)
+			}
+			if decoded.StoreAs != original.StoreAs {
+				t.Fatalf("store_as did not survive round trip: %q", decoded.StoreAs)
+			}
+		})
+	}
+}
 
 func TestActionRuleGetActionType(t *testing.T) {
 	ar := ActionRule{ActionType: " Click "}
@@ -72,23 +110,19 @@ func TestActionRuleGetWaitConditions(t *testing.T) {
 		{
 			ConditionType: "wait",
 			Selector:      Selector{},
-			CustomJS:      "",
 			Value:         "2",
 		},
 	}}
-	expected := []WaitCondition{{ConditionType: "wait", Selector: Selector{}, CustomJS: "", Value: "2"}}
+	expected := []WaitCondition{{ConditionType: "wait", Selector: Selector{}, Value: "2"}}
 	if got := ar.GetWaitConditions(); !reflect.DeepEqual(got, expected) {
 		t.Errorf("GetWaitConditions() = %v, want %v", got, expected)
 	}
 }
 
 func TestActionRuleGetConditions(t *testing.T) {
-	ar := ActionRule{Conditions: map[string]interface{}{
-		"test": "test",
-	}}
-	expected := map[string]interface{}{
-		"test": "test",
-	}
+	condition := &ActionCondition{Type: "element", Selector: "#test"}
+	ar := ActionRule{Conditions: condition}
+	expected := condition
 	if got := ar.GetConditions(); !reflect.DeepEqual(got, expected) {
 		t.Errorf("GetConditions() = %v, want %v", got, expected)
 	}
@@ -101,6 +135,38 @@ func TestActionRuleGetErrorHandling(t *testing.T) {
 	expected := ErrorHandling{Ignore: true}
 	if got := ar.GetErrorHandling(); !reflect.DeepEqual(got, expected) {
 		t.Errorf("GetErrorHandling() = %v, want %v", got, expected)
+	}
+}
+
+func TestActionRuleErrorHandlingDecoding(t *testing.T) {
+	tests := []struct {
+		name   string
+		data   string
+		decode func([]byte, interface{}) error
+		ignore bool
+	}{
+		{name: "JSON false", data: `{"rule_name":"retry","action_type":"click","error_handling":{"ignore":false,"retry_count":2,"retry_delay":3}}`, decode: json.Unmarshal},
+		{name: "JSON true", data: `{"rule_name":"retry","action_type":"click","error_handling":{"ignore":true,"retry_count":2,"retry_delay":3}}`, decode: json.Unmarshal, ignore: true},
+		{name: "YAML false", data: "rule_name: retry\naction_type: click\nerror_handling:\n  ignore: false\n  retry_count: 2\n  retry_delay: 3\n", decode: yaml.Unmarshal},
+		{name: "YAML true", data: "rule_name: retry\naction_type: click\nerror_handling:\n  ignore: true\n  retry_count: 2\n  retry_delay: 3\n", decode: yaml.Unmarshal, ignore: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var rule ActionRule
+			if err := tt.decode([]byte(tt.data), &rule); err != nil {
+				t.Fatalf("decode action rule: %v", err)
+			}
+			if rule.ErrorHandling.Ignore != tt.ignore {
+				t.Errorf("Ignore = %t, want %t", rule.ErrorHandling.Ignore, tt.ignore)
+			}
+			if rule.ErrorHandling.RetryCount != 2 {
+				t.Errorf("RetryCount = %d, want 2", rule.ErrorHandling.RetryCount)
+			}
+			if rule.ErrorHandling.RetryDelay != 3 {
+				t.Errorf("RetryDelay = %d, want 3", rule.ErrorHandling.RetryDelay)
+			}
+		})
 	}
 }
 

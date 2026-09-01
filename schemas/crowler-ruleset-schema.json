@@ -98,7 +98,9 @@
                   "title": "Object Type Labels",
                   "description": "Optional labels to add to crowler_meta.object_type when this rule is called or matched. Labels are normalized and deduplicated.",
                   "type": "array",
-                  "items": { "type": "string" },
+                  "items": {
+                    "type": "string"
+                  },
                   "uniqueItems": true
                 },
                 "scope": {
@@ -135,36 +137,12 @@
                   }
                 },
                 "wait_conditions": {
-                  "title": "Wait Conditions",
-                  "description": "Conditions to wait before being able to execute the rule and scrape the data. This to ensure page readiness. Do not use this field to wait after 'navigate_to_url' action type, it doesn't do that, instead it will wait to execute 'navigate_to_url'.",
                   "type": "array",
                   "items": {
-                    "type": "object",
-                    "properties": {
-                      "condition_type": {
-                        "type": "string",
-                        "enum": [
-                          "element_presence",
-                          "element_visible",
-                          "plugin_call",
-                          "agent_call",
-                          "delay"
-                        ]
-                      },
-                      "value": {
-                        "type": "string",
-                        "description": "a generic value to use with the condition, e.g., a delay in seconds, applicable for delay condition type. For delay type you can also use the CROWler exprterpreter to generate delay values at runtime, e.g., 'random(1, 3)' or 'random(random(1,3), random(5,8))'. If you're using plugin_call, then value field is ignored."
-                      },
-                      "selector": {
-                        "type": "string",
-                        "description": "The CSS selector for the element, applicable for element_presence and element_visible conditions. This field is used for the plugin's name when the condition_type is 'plugin_call'."
-                      },
-                      "agent_call": {
-                        "$ref": "#/definitions/agentCall"
-                      }
-                    },
-                    "additionalProperties": false
-                  }
+                    "$ref": "#/$defs/waitCondition"
+                  },
+                  "title": "Wait Conditions",
+                  "description": "Conditions to wait before being able to execute the rule and scrape the data. This to ensure page readiness. Do not use this field to wait after 'navigate_to_url' action type, it doesn't do that, instead it will wait to execute 'navigate_to_url'."
                 },
                 "elements": {
                   "title": "Page's Elements",
@@ -210,16 +188,24 @@
                             "selector_attributes": {
                               "type": "array",
                               "items": {
-                                "name": {
-                                  "type": "string"
+                                "type": "object",
+                                "properties": {
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "value": {
+                                    "type": [
+                                      "string",
+                                      "number",
+                                      "boolean"
+                                    ]
+                                  }
                                 },
-                                "value": {
-                                  "type": [
-                                    "string",
-                                    "number",
-                                    "boolean"
-                                  ]
-                                }
+                                "required": [
+                                  "name",
+                                  "value"
+                                ],
+                                "additionalProperties": false
                               },
                               "description": "Optional. Attributes specific to each selector type. Check the documentation for the specific selector type to see which attributes are supported."
                             },
@@ -275,7 +261,7 @@
                               "description": "Flag to extract all occurrences of the element, not just the first one. This flag has no effect when using CROWler plugins via plugin_call."
                             },
                             "agent_call": {
-                              "$ref": "#/definitions/agentCall"
+                              "$ref": "#/$defs/agentCall"
                             }
                           },
                           "additionalProperties": false,
@@ -298,49 +284,6 @@
                     "required": [
                       "key",
                       "selectors"
-                    ]
-                  }
-                },
-                "extract_scripts": {
-                  "title": "Extract Page's Scripts",
-                  "description": "Indicates whether the rule also has to extract scripts from a page and store them as separate web objects. This is useful for analyzing JavaScript code using 3rd party tools and vulnerability analysis.",
-                  "type": "boolean"
-                },
-                "objects": {
-                  "title": "Objects",
-                  "description": "Identifies specific technologies, requires correspondent detection rules.",
-                  "type": "array",
-                  "items": {
-                    "rule_name": {
-                      "type": "string",
-                      "description": "A unique name identifying the detection rule.",
-                      "examples": [
-                        "My Object",
-                        "https://example.com"
-                      ]
-                    }
-                  }
-                },
-                "json_field_rename": {
-                  "title": "JSON Fields Renaming",
-                  "description": "Given that the CROWler scraper maps automatically HTML tags to JSON tags, you can use this feature to rename the json-html tag with whatever name you wish to use.",
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "properties": {
-                      "source_tag": {
-                        "type": "string",
-                        "description": "The JSON tag you want to rename."
-                      },
-                      "dest_tag": {
-                        "type": "string",
-                        "description": "The new name for the JSON tag."
-                      }
-                    },
-                    "additionalProperties": false,
-                    "required": [
-                      "source_tag",
-                      "dest_tag"
                     ]
                   }
                 },
@@ -371,16 +314,48 @@
                         "additionalProperties": true
                       },
                       "agent_call": {
-                        "$ref": "#/definitions/agentCall"
+                        "$ref": "#/$defs/agentCall"
                       }
                     },
-                    "additionalProperties": false
+                    "additionalProperties": false,
+                    "required": [
+                      "step_type",
+                      "details"
+                    ]
                   },
-                  "description": "Rule's Post-processing steps for the scraped data to transform, validate, or clean it. This post_processing section runs within a single rule context. To use external APIs to process the data, use the 'transform' step type and, inside the 'details' object, specify the API endpoint and the required parameters. For example, in details, use { 'transform_type': 'api', 'api_url': 'https://api.example.com', 'timeout': 60, 'token': 'your-api-token' }.",
-                  "required": [
-                    "step_type",
-                    "details"
-                  ]
+                  "description": "Rule's Post-processing steps for the scraped data to transform, validate, or clean it. This post_processing section runs within a single rule context. To use external APIs to process the data, use the 'transform' step type and, inside the 'details' object, specify the API endpoint and the required parameters. For example, in details, use { 'transform_type': 'api', 'api_url': 'https://api.example.com', 'timeout': 60, 'token': 'your-api-token' }."
+                },
+                "conditions": {
+                  "title": "Scraping Conditions",
+                  "description": "All configured page and environment conditions must match before extraction.",
+                  "type": "object",
+                  "properties": {
+                    "element": {
+                      "type": "string",
+                      "description": "CSS selector that must be present."
+                    },
+                    "language": {
+                      "type": "string",
+                      "description": "Required document language."
+                    },
+                    "env": {
+                      "description": "Required crawler environment value or structured condition."
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "extract_scripts": {
+                  "title": "Extract Page's Scripts",
+                  "description": "Indicates whether the rule also has to extract scripts from a page and store them as separate web objects. This is useful for analyzing JavaScript code using 3rd party tools and vulnerability analysis.",
+                  "type": "boolean"
+                },
+                "json_field_mappings": {
+                  "title": "JSON Field Mappings",
+                  "description": "Map top-level extracted output keys to their destination names. Renaming fails rather than overwriting an existing destination.",
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
                 }
               },
               "additionalProperties": false,
@@ -406,7 +381,9 @@
                   "title": "Object Type Labels",
                   "description": "Optional labels to add to crowler_meta.object_type when this rule is called or matched. Labels are normalized and deduplicated.",
                   "type": "array",
-                  "items": { "type": "string" },
+                  "items": {
+                    "type": "string"
+                  },
                   "uniqueItems": true
                 },
                 "scope": {
@@ -431,51 +408,134 @@
                 "wait_conditions": {
                   "type": "array",
                   "items": {
-                    "type": "object",
-                    "properties": {
-                      "condition_type": {
-                        "type": "string",
-                        "enum": [
-                          "element_presence",
-                          "element_visible",
-                          "plugin_call",
-                          "agent_call",
-                          "delay"
-                        ]
-                      },
-                      "value": {
-                        "type": "string",
-                        "description": "a generic value to use with the condition, e.g., a delay in seconds, applicable for delay condition type. For delay type you can also use the CROWler exprterpreter to generate delay values at runtime, e.g., 'random(1, 3)' or 'random(random(1,3), random(5,8))'."
-                      },
-                      "selector": {
-                        "type": "string",
-                        "description": "The CSS selector for the element, applicable for element_presence and element_visible conditions. If you're using plugin_call, then this field is used for the plugin name."
-                      },
-                      "agent_call": {
-                        "$ref": "#/definitions/agentCall"
-                      }
-                    }
+                    "$ref": "#/$defs/waitCondition"
                   },
                   "description": "Conditions to wait for, that must be met before the action is executed. These conditions are designed to ensure that the page or elements are ready (e.g., waiting for an element to appear, or a delay). Do not use this field to wait after an action is performed, as it only applies before the action is executed."
                 },
                 "conditions": {
                   "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "type"
+                  ],
                   "properties": {
                     "type": {
                       "type": "string",
                       "enum": [
                         "element",
                         "language",
-                        "plugin_call",
-                        "agent_call"
+                        "plugin_call"
                       ]
                     },
                     "selector": {
                       "type": "string",
-                      "description": "The CSS selector to check if a given element exists, applicable for 'element'. The language id to check if a page is in a certain language, applicable for 'language'. The plugin's name if you're using plugin_call."
+                      "minLength": 1
+                    },
+                    "language": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "plugin_call": {
+                      "type": "string",
+                      "minLength": 1
                     }
                   },
-                  "description": "Conditions that must be met for the action to be executed. For example, you can check if a certain element exists on the page before performing an action. See this as something to do after we waited for the wait_conditions and we verify that the page is ready to perform the action."
+                  "allOf": [
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "element"
+                          }
+                        },
+                        "required": [
+                          "type"
+                        ]
+                      },
+                      "then": {
+                        "required": [
+                          "selector"
+                        ],
+                        "not": {
+                          "anyOf": [
+                            {
+                              "required": [
+                                "language"
+                              ]
+                            },
+                            {
+                              "required": [
+                                "plugin_call"
+                              ]
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "language"
+                          }
+                        },
+                        "required": [
+                          "type"
+                        ]
+                      },
+                      "then": {
+                        "required": [
+                          "language"
+                        ],
+                        "not": {
+                          "anyOf": [
+                            {
+                              "required": [
+                                "selector"
+                              ]
+                            },
+                            {
+                              "required": [
+                                "plugin_call"
+                              ]
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "plugin_call"
+                          }
+                        },
+                        "required": [
+                          "type"
+                        ]
+                      },
+                      "then": {
+                        "required": [
+                          "plugin_call"
+                        ],
+                        "not": {
+                          "anyOf": [
+                            {
+                              "required": [
+                                "selector"
+                              ]
+                            },
+                            {
+                              "required": [
+                                "language"
+                              ]
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  ],
+                  "description": "A closed, discriminated action condition with a field specific to each implemented runtime condition."
                 },
                 "action_type": {
                   "type": "string",
@@ -561,7 +621,7 @@
                         "additionalProperties": true
                       },
                       "agent_call": {
-                        "$ref": "#/definitions/agentCall"
+                        "$ref": "#/$defs/agentCall"
                       }
                     },
                     "required": [
@@ -569,7 +629,8 @@
                       "selector"
                     ]
                   },
-                  "description": "Defines multiple ways to find and interact with elements, allowing for CSS, XPath, and other strategies. This field is ignored when using action_type like navigate_to_url, forward, back, refresh, close_window, accept_alert, dismiss_alert, get_alert_text, send_keys_to_alert, and take_screenshot."
+                  "description": "Defines multiple ways to find and interact with elements, allowing for CSS, XPath, and other strategies. This field is ignored when using action_type like navigate_to_url, forward, back, refresh, close_window, accept_alert, dismiss_alert, get_alert_text, send_keys_to_alert, and take_screenshot.",
+                  "minItems": 1
                 },
                 "value": {
                   "type": "string",
@@ -577,6 +638,7 @@
                 },
                 "error_handling": {
                   "type": "object",
+                  "additionalProperties": false,
                   "properties": {
                     "ignore": {
                       "type": "boolean",
@@ -584,10 +646,12 @@
                     },
                     "retry_count": {
                       "type": "integer",
+                      "minimum": 0,
                       "description": "The number of times to retry the action on failure."
                     },
                     "retry_delay": {
                       "type": "integer",
+                      "minimum": 0,
                       "description": "The delay between retries in seconds."
                     }
                   },
@@ -607,6 +671,75 @@
                       }
                     }
                   }
+                },
+                "target_selectors": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "selector_type": {
+                        "type": "string",
+                        "enum": [
+                          "css",
+                          "xpath",
+                          "id",
+                          "class_name",
+                          "class",
+                          "name",
+                          "tag_name",
+                          "element",
+                          "js_path",
+                          "link_text",
+                          "partial_link_text",
+                          "plugin_call",
+                          "agent_call"
+                        ],
+                        "description": "The type of selector to use to find the element."
+                      },
+                      "selector": {
+                        "type": "string",
+                        "description": "The actual selector or pattern used to find the element based on the selector_type. This field is used for the plugin's name when the selector_type is 'plugin_call'."
+                      },
+                      "attribute": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string",
+                            "description": "The name of the attribute to match for the selector match to be valid."
+                          },
+                          "value": {
+                            "type": "string",
+                            "description": "The value to of the attribute to match for the selector to be valid."
+                          }
+                        },
+                        "description": "Optional. The attribute of the element to match"
+                      },
+                      "value": {
+                        "type": "string",
+                        "description": "The value within the selector that we need to match for the action. (this is NOT the value to input!)"
+                      },
+                      "details": {
+                        "type": "object",
+                        "description": "Detailed configuration for the plugin_call selector type. This is used to pass parameters to the plugin being called. To do that you must create an object called `parameters` here in details and then place the plugin parameters as key-value pairs inside the parameters object.",
+                        "additionalProperties": true
+                      },
+                      "agent_call": {
+                        "$ref": "#/$defs/agentCall"
+                      }
+                    },
+                    "required": [
+                      "selector_type",
+                      "selector"
+                    ]
+                  },
+                  "description": "Fallback selectors for the drag-and-drop target, tried independently from the source selectors.",
+                  "minItems": 1,
+                  "title": "Target Selectors"
+                },
+                "store_as": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Context-scoped key used to store the value returned by a result-producing action."
                 }
               },
               "additionalProperties": false,
@@ -614,16 +747,127 @@
                 "rule_name",
                 "action_type"
               ],
-              "anyOf": [
+              "allOf": [
                 {
-                  "required": [
-                    "selectors"
-                  ]
+                  "if": {
+                    "properties": {
+                      "action_type": {
+                        "enum": [
+                          "click",
+                          "input_text",
+                          "clear",
+                          "drag_and_drop",
+                          "mouse_hover",
+                          "right_click",
+                          "double_click",
+                          "click_and_hold",
+                          "switch_to_frame",
+                          "scroll_to_element"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "action_type"
+                    ]
+                  },
+                  "then": {
+                    "required": [
+                      "selectors"
+                    ]
+                  }
                 },
                 {
-                  "required": [
-                    "value"
-                  ]
+                  "if": {
+                    "properties": {
+                      "action_type": {
+                        "const": "custom"
+                      }
+                    },
+                    "required": [
+                      "action_type"
+                    ]
+                  },
+                  "then": {
+                    "required": [
+                      "selectors"
+                    ],
+                    "properties": {
+                      "selectors": {
+                        "contains": {
+                          "type": "object",
+                          "properties": {
+                            "selector_type": {
+                              "const": "plugin_call"
+                            }
+                          },
+                          "required": [
+                            "selector_type"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "if": {
+                    "properties": {
+                      "action_type": {
+                        "enum": [
+                          "input_text",
+                          "key_down",
+                          "key_up",
+                          "navigate_to_url",
+                          "switch_to_window",
+                          "send_keys_to_alert",
+                          "scroll_by_amount",
+                          "take_screenshot"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "action_type"
+                    ]
+                  },
+                  "then": {
+                    "required": [
+                      "value"
+                    ]
+                  }
+                },
+                {
+                  "if": {
+                    "properties": {
+                      "action_type": {
+                        "const": "drag_and_drop"
+                      }
+                    },
+                    "required": [
+                      "action_type"
+                    ]
+                  },
+                  "then": {
+                    "required": [
+                      "selectors",
+                      "target_selectors"
+                    ]
+                  }
+                },
+                {
+                  "if": {
+                    "properties": {
+                      "action_type": {
+                        "const": "get_alert_text"
+                      }
+                    },
+                    "required": [
+                      "action_type"
+                    ]
+                  },
+                  "then": {
+                    "required": [
+                      "store_as"
+                    ]
+                  }
                 }
               ]
             }
@@ -644,7 +888,9 @@
                   "title": "Object Type Labels",
                   "description": "Optional labels to add to crowler_meta.object_type when this rule is called or matched. Labels are normalized and deduplicated.",
                   "type": "array",
-                  "items": { "type": "string" },
+                  "items": {
+                    "type": "string"
+                  },
                   "uniqueItems": true
                 },
                 "scope": {
@@ -684,9 +930,16 @@
                       },
                       "confidence": {
                         "type": "number",
-                        "description": "Optional. The confidence level for the match, ranging from 0 to 10."
+                        "description": "Optional. The confidence level for the match, ranging from 0 to 10.",
+                        "minimum": -10,
+                        "maximum": 10
                       }
-                    }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "key",
+                      "confidence"
+                    ]
                   },
                   "description": "Matching patterns for HTTP header fields to identify technology."
                 },
@@ -711,41 +964,35 @@
                         "description": "The pattern to match within the tag's attribute content. You can use Perl-Compatible Regular Expressions (PCRE) to write your signatures and patterns."
                       },
                       "text": {
-                        "type": "string",
-                        "description": "Optional. The text to match in the tag's innerText. You can use Perl-Compatible Regular Expressions (PCRE) to write your signatures and patterns."
+                        "description": "Optional. The text to match in the tag's innerText. You can use Perl-Compatible Regular Expressions (PCRE) to write your signatures and patterns.",
+                        "oneOf": [
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          {
+                            "type": "string",
+                            "deprecated": true
+                          }
+                        ]
                       },
                       "confidence": {
                         "type": "number",
-                        "description": "Optional. The confidence level for the detection, decimal number ranging from 0 to 10 (or whatever set in the detection_configuration)."
+                        "description": "Optional. The confidence level for the detection, decimal number ranging from 0 to 10 (or whatever set in the detection_configuration).",
+                        "minimum": -10,
+                        "maximum": 10
                       }
                     },
-                    "description": "Phrases or character sequences within page content indicative of specific technology."
+                    "description": "Phrases or character sequences within page content indicative of specific technology.",
+                    "additionalProperties": false,
+                    "required": [
+                      "key",
+                      "confidence"
+                    ]
                   },
                   "description": "Patterns within the page content that match specific technologies."
-                },
-                "certificates_patterns": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "properties": {
-                      "key": {
-                        "type": "string",
-                        "description": "The name of the field in an SSL/TLS certificate to find."
-                      },
-                      "value": {
-                        "type": "array",
-                        "items": {
-                          "type": "string"
-                        },
-                        "description": "The pattern to match within the field's value. You can use Perl-Compatible Regular Expressions (PCRE) to write your signatures and patterns."
-                      },
-                      "confidence": {
-                        "type": "number",
-                        "description": "Optional. The confidence level for the detection, decimal number ranging from 0 to 10 (or whatever set in the detection_configuration)."
-                      }
-                    }
-                  },
-                  "description": "Phrases or character sequences within certain certificate's fields indicative of specific technology."
                 },
                 "url_micro_signatures": {
                   "type": "array",
@@ -758,10 +1005,17 @@
                       },
                       "confidence": {
                         "type": "number",
-                        "description": "Optional. The confidence level for the match, decimal number ranging from 0 to 10 (or whatever set in the detection_configuration)."
+                        "description": "Optional. The confidence level for the match, decimal number ranging from 0 to 10 (or whatever set in the detection_configuration).",
+                        "minimum": -10,
+                        "maximum": 10
                       }
                     },
-                    "description": "Micro-signatures in URLs that indicate a specific technology, like '/wp-admin' for WordPress."
+                    "description": "Micro-signatures in URLs that indicate a specific technology, like '/wp-admin' for WordPress.",
+                    "additionalProperties": false,
+                    "required": [
+                      "value",
+                      "confidence"
+                    ]
                   },
                   "description": "URL patterns indicative of specific technologies."
                 },
@@ -770,15 +1024,30 @@
                   "items": {
                     "type": "object",
                     "properties": {
-                      "name": {
+                      "key": {
                         "type": "string",
                         "description": "The name attribute of the meta tag."
                       },
-                      "content": {
-                        "type": "string",
-                        "description": "The content attribute of the meta tag, which holds the value to match. You can use Perl-Compatible Regular Expressions (PCRE) to write your signatures and patterns."
+                      "value": {
+                        "type": "array",
+                        "description": "The content attribute of the meta tag, which holds the value to match. You can use Perl-Compatible Regular Expressions (PCRE) to write your signatures and patterns.",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "confidence": {
+                        "type": "number",
+                        "minimum": -10,
+                        "maximum": 10,
+                        "description": "Confidence contribution for this match."
                       }
-                    }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "key",
+                      "value",
+                      "confidence"
+                    ]
                   },
                   "description": "Matching patterns for meta tags to identify technology."
                 },
@@ -801,7 +1070,7 @@
                         "type": "string",
                         "description": "The name of the plugin to call."
                       },
-                      "plugin_parameters": {
+                      "plugin_args": {
                         "title": "Plugin's Parameters",
                         "description": "The parameters to pass to the plugin.",
                         "type": "array",
@@ -908,9 +1177,131 @@
                             "parameter_value": "my_db_password"
                           }
                         ]
+                      },
+                      "plugin_parameters": {
+                        "title": "Plugin's Parameters",
+                        "description": "Legacy alias for plugin_args.",
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "parameter_name": {
+                              "type": "string",
+                              "description": "The name of the parameter to pass to the plugin."
+                            },
+                            "parameter_value": {
+                              "description": "The value of the parameter to pass to the plugin.",
+                              "anyOf": [
+                                {
+                                  "title": "Object",
+                                  "type": "object"
+                                },
+                                {
+                                  "title": "String",
+                                  "type": "string"
+                                },
+                                {
+                                  "title": "Number",
+                                  "type": "number"
+                                },
+                                {
+                                  "title": "Boolean",
+                                  "type": "boolean"
+                                },
+                                {
+                                  "title": "Null",
+                                  "type": "null"
+                                },
+                                {
+                                  "title": "Integer",
+                                  "type": "integer"
+                                },
+                                {
+                                  "title": "Array of Strings",
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                },
+                                {
+                                  "title": "Array of Numbers",
+                                  "type": "array",
+                                  "items": {
+                                    "type": "number"
+                                  }
+                                },
+                                {
+                                  "title": "Array of Booleans",
+                                  "type": "array",
+                                  "items": {
+                                    "type": "boolean"
+                                  }
+                                },
+                                {
+                                  "title": "Array of Objects",
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object"
+                                  }
+                                },
+                                {
+                                  "title": "Array of Nulls",
+                                  "type": "array",
+                                  "items": {
+                                    "type": "null"
+                                  }
+                                },
+                                {
+                                  "title": "Array of Integers",
+                                  "type": "array",
+                                  "items": {
+                                    "type": "integer"
+                                  }
+                                }
+                              ],
+                              "examples": [
+                                "my_api_key",
+                                "my_db_password",
+                                "700",
+                                "true",
+                                "1.76",
+                                "['value1', 'value2']"
+                              ]
+                            }
+                          },
+                          "additionalProperties": false,
+                          "required": [
+                            "parameter_name",
+                            "parameter_value"
+                          ]
+                        },
+                        "examples": [
+                          {
+                            "parameter_name": "api_key",
+                            "parameter_value": "my_api_key"
+                          },
+                          {
+                            "parameter_name": "db_password",
+                            "parameter_value": "my_db_password"
+                          }
+                        ],
+                        "deprecated": true
                       }
                     },
-                    "additionalProperties": false
+                    "additionalProperties": false,
+                    "required": [
+                      "plugin_name"
+                    ],
+                    "allOf": [
+                      {
+                        "not": {
+                          "required": [
+                            "plugin_args",
+                            "plugin_parameters"
+                          ]
+                        }
+                      }
+                    ]
                   }
                 },
                 "external_detection": {
@@ -924,43 +1315,140 @@
                         "type": "string",
                         "enum": [
                           "abuse_ipdb",
-                          "alien_vault",
-                          "censys",
-                          "cisco_umbrella",
-                          "grey_noise",
-                          "google_safe_browsing",
-                          "hybrid_analysis",
-                          "ip_quality_score",
                           "ipvoid",
-                          "malware_domain_list",
-                          "shodan",
+                          "censys",
+                          "ssllabs",
+                          "url_haus",
+                          "threat_crowd",
+                          "cuckoo_url",
                           "virus_total",
-                          "url_haus"
+                          "phish_tank",
+                          "google_safe_browsing",
+                          "open_phish",
+                          "hybrid_analysis",
+                          "cisco_umbrella",
+                          "alien_vault",
+                          "shodan",
+                          "virus_total_file",
+                          "hybrid_analysis_file",
+                          "cuckoo_file"
                         ],
                         "examples": [
                           "abuse_ipdb",
-                          "alien_vault",
-                          "censys",
-                          "cisco_umbrella",
-                          "grey_noise",
-                          "google_safe_browsing",
-                          "hybrid_analysis",
-                          "ip_quality_score",
                           "ipvoid",
-                          "malware_domain_list",
-                          "shodan",
+                          "censys",
+                          "ssllabs",
+                          "url_haus",
+                          "threat_crowd",
+                          "cuckoo_url",
                           "virus_total",
-                          "url_haus"
+                          "phish_tank",
+                          "google_safe_browsing",
+                          "open_phish",
+                          "hybrid_analysis",
+                          "cisco_umbrella",
+                          "alien_vault",
+                          "shodan",
+                          "virus_total_file",
+                          "hybrid_analysis_file",
+                          "cuckoo_file"
                         ]
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "detection_params": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "param_name": {
+                              "type": "string"
+                            },
+                            "param_value": {}
+                          },
+                          "required": [
+                            "param_name",
+                            "param_value"
+                          ]
+                        }
                       }
-                    }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "provider"
+                    ]
                   }
                 },
                 "agent_calls": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/definitions/agentCall"
+                    "$ref": "#/$defs/agentCall"
                   }
+                },
+                "ssl_patterns": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string",
+                        "description": "The name of the field in an SSL/TLS certificate to find."
+                      },
+                      "value": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "The pattern to match within the field's value. You can use Perl-Compatible Regular Expressions (PCRE) to write your signatures and patterns."
+                      },
+                      "confidence": {
+                        "type": "number",
+                        "description": "Optional. The confidence level for the detection, decimal number ranging from 0 to 10 (or whatever set in the detection_configuration).",
+                        "minimum": -10,
+                        "maximum": 10
+                      }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "key",
+                      "confidence"
+                    ]
+                  },
+                  "description": "Phrases or character sequences within certain certificate's fields indicative of specific technology."
+                },
+                "certificates_patterns": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string",
+                        "description": "The name of the field in an SSL/TLS certificate to find."
+                      },
+                      "value": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "The pattern to match within the field's value. You can use Perl-Compatible Regular Expressions (PCRE) to write your signatures and patterns."
+                      },
+                      "confidence": {
+                        "type": "number",
+                        "description": "Optional. The confidence level for the detection, decimal number ranging from 0 to 10 (or whatever set in the detection_configuration).",
+                        "minimum": -10,
+                        "maximum": 10
+                      }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "key",
+                      "confidence"
+                    ]
+                  },
+                  "description": "Legacy alias for ssl_patterns.",
+                  "deprecated": true
                 }
               },
               "additionalProperties": false,
@@ -981,7 +1469,7 @@
                 },
                 {
                   "required": [
-                    "certificates_patterns"
+                    "ssl_patterns"
                   ]
                 },
                 {
@@ -1003,6 +1491,26 @@
                   "required": [
                     "plugin_calls"
                   ]
+                },
+                {
+                  "required": [
+                    "certificates_patterns"
+                  ]
+                },
+                {
+                  "required": [
+                    "agent_calls"
+                  ]
+                }
+              ],
+              "allOf": [
+                {
+                  "not": {
+                    "required": [
+                      "ssl_patterns",
+                      "certificates_patterns"
+                    ]
+                  }
                 }
               ]
             }
@@ -1022,7 +1530,9 @@
                   "title": "Object Type Labels",
                   "description": "Optional labels to add to crowler_meta.object_type when this rule is called or matched. Labels are normalized and deduplicated.",
                   "type": "array",
-                  "items": { "type": "string" },
+                  "items": {
+                    "type": "string"
+                  },
                   "uniqueItems": true
                 },
                 "scope": {
@@ -1057,7 +1567,9 @@
                         "enum": [
                           "css",
                           "xpath",
-                          "form"
+                          "form",
+                          "query",
+                          "path"
                         ]
                       },
                       "selector": {
@@ -1065,7 +1577,7 @@
                         "description": "The actual selector or form name used to find and interact with the target elements for fuzzing."
                       },
                       "agent_call": {
-                        "$ref": "#/definitions/agentCall"
+                        "$ref": "#/$defs/agentCall"
                       }
                     },
                     "required": [
@@ -1102,14 +1614,403 @@
                       "pattern": {
                         "type": "string",
                         "description": "A pattern to generate fuzzing values, applicable if 'fuzzing_type' is 'pattern_based'."
+                      },
+                      "selector": {
+                        "type": "string",
+                        "description": "The query parameter name or path token to fuzz."
                       }
                     },
                     "required": [
                       "parameter_name",
                       "fuzzing_type"
+                    ],
+                    "allOf": [
+                      {
+                        "if": {
+                          "properties": {
+                            "fuzzing_type": {
+                              "const": "fixed_list"
+                            }
+                          },
+                          "required": [
+                            "fuzzing_type"
+                          ]
+                        },
+                        "then": {
+                          "required": [
+                            "values"
+                          ]
+                        }
+                      },
+                      {
+                        "if": {
+                          "properties": {
+                            "fuzzing_type": {
+                              "const": "pattern_based"
+                            }
+                          },
+                          "required": [
+                            "fuzzing_type"
+                          ]
+                        },
+                        "then": {
+                          "required": [
+                            "pattern"
+                          ]
+                        }
+                      }
                     ]
                   },
                   "description": "Defines the parameters to fuzz and the strategy for generating fuzz values."
+                },
+                "lifecycle": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "pre_crawl": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "agent_call": {
+                          "type": "object",
+                          "properties": {
+                            "agent_name": {
+                              "type": "string"
+                            },
+                            "params": {
+                              "type": "object",
+                              "additionalProperties": true
+                            },
+                            "timeout": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "on_error": {
+                              "type": "string",
+                              "enum": [
+                                "fail",
+                                "continue",
+                                "ignore"
+                              ]
+                            },
+                            "store_as": {
+                              "type": "string"
+                            },
+                            "merge_strategy": {
+                              "type": "string",
+                              "enum": [
+                                "replace",
+                                "merge",
+                                "append",
+                                "ignore"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "agent_name"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "agent_call"
+                      ]
+                    },
+                    "pre_request": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "agent_call": {
+                          "type": "object",
+                          "properties": {
+                            "agent_name": {
+                              "type": "string"
+                            },
+                            "params": {
+                              "type": "object",
+                              "additionalProperties": true
+                            },
+                            "timeout": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "on_error": {
+                              "type": "string",
+                              "enum": [
+                                "fail",
+                                "continue",
+                                "ignore"
+                              ]
+                            },
+                            "store_as": {
+                              "type": "string"
+                            },
+                            "merge_strategy": {
+                              "type": "string",
+                              "enum": [
+                                "replace",
+                                "merge",
+                                "append",
+                                "ignore"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "agent_name"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "agent_call"
+                      ]
+                    },
+                    "post_response": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "agent_call": {
+                          "type": "object",
+                          "properties": {
+                            "agent_name": {
+                              "type": "string"
+                            },
+                            "params": {
+                              "type": "object",
+                              "additionalProperties": true
+                            },
+                            "timeout": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "on_error": {
+                              "type": "string",
+                              "enum": [
+                                "fail",
+                                "continue",
+                                "ignore"
+                              ]
+                            },
+                            "store_as": {
+                              "type": "string"
+                            },
+                            "merge_strategy": {
+                              "type": "string",
+                              "enum": [
+                                "replace",
+                                "merge",
+                                "append",
+                                "ignore"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "agent_name"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "agent_call"
+                      ]
+                    },
+                    "pre_fuzz": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "agent_call": {
+                          "type": "object",
+                          "properties": {
+                            "agent_name": {
+                              "type": "string"
+                            },
+                            "params": {
+                              "type": "object",
+                              "additionalProperties": true
+                            },
+                            "timeout": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "on_error": {
+                              "type": "string",
+                              "enum": [
+                                "fail",
+                                "continue",
+                                "ignore"
+                              ]
+                            },
+                            "store_as": {
+                              "type": "string"
+                            },
+                            "merge_strategy": {
+                              "type": "string",
+                              "enum": [
+                                "replace",
+                                "merge",
+                                "append",
+                                "ignore"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "agent_name"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "agent_call"
+                      ]
+                    },
+                    "per_fuzz_candidate": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "agent_call": {
+                          "type": "object",
+                          "properties": {
+                            "agent_name": {
+                              "type": "string"
+                            },
+                            "params": {
+                              "type": "object",
+                              "additionalProperties": true
+                            },
+                            "timeout": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "on_error": {
+                              "type": "string",
+                              "enum": [
+                                "fail",
+                                "continue",
+                                "ignore"
+                              ]
+                            },
+                            "store_as": {
+                              "type": "string"
+                            },
+                            "merge_strategy": {
+                              "type": "string",
+                              "enum": [
+                                "replace",
+                                "merge",
+                                "append",
+                                "ignore"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "agent_name"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "agent_call"
+                      ]
+                    },
+                    "post_fuzz": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "agent_call": {
+                          "type": "object",
+                          "properties": {
+                            "agent_name": {
+                              "type": "string"
+                            },
+                            "params": {
+                              "type": "object",
+                              "additionalProperties": true
+                            },
+                            "timeout": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "on_error": {
+                              "type": "string",
+                              "enum": [
+                                "fail",
+                                "continue",
+                                "ignore"
+                              ]
+                            },
+                            "store_as": {
+                              "type": "string"
+                            },
+                            "merge_strategy": {
+                              "type": "string",
+                              "enum": [
+                                "replace",
+                                "merge",
+                                "append",
+                                "ignore"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "agent_name"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "agent_call"
+                      ]
+                    },
+                    "post_crawl": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "agent_call": {
+                          "type": "object",
+                          "properties": {
+                            "agent_name": {
+                              "type": "string"
+                            },
+                            "params": {
+                              "type": "object",
+                              "additionalProperties": true
+                            },
+                            "timeout": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "on_error": {
+                              "type": "string",
+                              "enum": [
+                                "fail",
+                                "continue",
+                                "ignore"
+                              ]
+                            },
+                            "store_as": {
+                              "type": "string"
+                            },
+                            "merge_strategy": {
+                              "type": "string",
+                              "enum": [
+                                "replace",
+                                "merge",
+                                "append",
+                                "ignore"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "agent_name"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "agent_call"
+                      ]
+                    }
+                  }
                 }
               },
               "additionalProperties": false,
@@ -1137,9 +2038,29 @@
                     "DB_PASSWORD"
                   ]
                 },
-                "value": {
+                "properties": {
+                  "title": "Setting's Properties",
+                  "description": "Optional. Additional properties for the environment setting. These properties are used to define the behavior of the environment setting.",
+                  "type": "object",
+                  "properties": {
+                    "persistent": {
+                      "type": "boolean",
+                      "description": "Optional. Flag to indicate if the environment setting should be persistent after ruleset completes execution."
+                    },
+                    "static": {
+                      "type": "boolean",
+                      "description": "Optional. Flag to indicate if the environment setting should be static and not changeable. That means that the value will be set once and never changed."
+                    },
+                    "source": {
+                      "type": "string",
+                      "description": "Optional. The source of the environment setting. If not set manually then the current URL will be used as the source."
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "values": {
                   "title": "Setting's Value",
-                  "description": "A single or a set of values for the environment key.",
+                  "description": "A JSON-compatible value for the environment key.",
                   "anyOf": [
                     {
                       "title": "Object",
@@ -1206,6 +2127,10 @@
                       "items": {
                         "type": "integer"
                       }
+                    },
+                    {
+                      "title": "Array",
+                      "type": "array"
                     }
                   ],
                   "examples": [
@@ -1218,31 +2143,118 @@
                     "['value1', 'value2']"
                   ]
                 },
-                "properties": {
-                  "title": "Setting's Properties",
-                  "description": "Optional. Additional properties for the environment setting. These properties are used to define the behavior of the environment setting.",
-                  "type": "object",
-                  "properties": {
-                    "persistent": {
-                      "type": "boolean",
-                      "description": "Optional. Flag to indicate if the environment setting should be persistent after ruleset completes execution."
+                "value": {
+                  "title": "Setting's Value",
+                  "description": "Deprecated alias for values.",
+                  "anyOf": [
+                    {
+                      "title": "Object",
+                      "type": "object"
                     },
-                    "static": {
-                      "type": "boolean",
-                      "description": "Optional. Flag to indicate if the environment setting should be static and not changeable. That means that the value will be set once and never changed."
+                    {
+                      "title": "String",
+                      "type": "string"
                     },
-                    "source": {
-                      "type": "string",
-                      "description": "Optional. The source of the environment setting. If not set manually then the current URL will be used as the source."
+                    {
+                      "title": "Number",
+                      "type": "number"
+                    },
+                    {
+                      "title": "Boolean",
+                      "type": "boolean"
+                    },
+                    {
+                      "title": "Null",
+                      "type": "null"
+                    },
+                    {
+                      "title": "Integer",
+                      "type": "integer"
+                    },
+                    {
+                      "title": "Array of Strings",
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    {
+                      "title": "Array of Numbers",
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      }
+                    },
+                    {
+                      "title": "Array of Booleans",
+                      "type": "array",
+                      "items": {
+                        "type": "boolean"
+                      }
+                    },
+                    {
+                      "title": "Array of Objects",
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    {
+                      "title": "Array of Nulls",
+                      "type": "array",
+                      "items": {
+                        "type": "null"
+                      }
+                    },
+                    {
+                      "title": "Array of Integers",
+                      "type": "array",
+                      "items": {
+                        "type": "integer"
+                      }
+                    },
+                    {
+                      "title": "Array",
+                      "type": "array"
                     }
-                  },
-                  "additionalProperties": false
+                  ],
+                  "examples": [
+                    "my_api_key",
+                    "my_db_password",
+                    "my_secret_key",
+                    "500",
+                    "true",
+                    "1.76",
+                    "['value1', 'value2']"
+                  ],
+                  "deprecated": true
                 }
               },
               "additionalProperties": false,
               "required": [
-                "key",
-                "value"
+                "key"
+              ],
+              "oneOf": [
+                {
+                  "required": [
+                    "values"
+                  ],
+                  "not": {
+                    "required": [
+                      "value"
+                    ]
+                  }
+                },
+                {
+                  "required": [
+                    "value"
+                  ],
+                  "not": {
+                    "required": [
+                      "values"
+                    ]
+                  }
+                }
               ]
             }
           },
@@ -1295,16 +2307,16 @@
                   "additionalProperties": true
                 },
                 "agent_call": {
-                  "$ref": "#/definitions/agentCall"
+                  "$ref": "#/$defs/agentCall"
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": false,
+              "required": [
+                "step_type",
+                "details"
+              ]
             },
-            "description": "Rulesgroup's Post-processing steps for the scraped data to transform, validate, or clean it. This post_processing section runs within the context of the entire rulesgroup (so it will access the entire JSON of collected data). To use external APIs to process the data, use the 'transform' step type and, inside the 'details' object, specify the API endpoint and the required parameters. For example, in details, use { 'transform_type': 'api', 'api_url': 'https://api.example.com', 'timeout': 60, 'token': 'your-api-token' }.",
-            "required": [
-              "step_type",
-              "details"
-            ]
+            "description": "Rulesgroup's Post-processing steps for the scraped data to transform, validate, or clean it. This post_processing section runs within the context of the entire rulesgroup (so it will access the entire JSON of collected data). To use external APIs to process the data, use the 'transform' step type and, inside the 'details' object, specify the API endpoint and the required parameters. For example, in details, use { 'transform_type': 'api', 'api_url': 'https://api.example.com', 'timeout': 60, 'token': 'your-api-token' }."
           }
         },
         "additionalProperties": false
@@ -1346,7 +2358,7 @@
     "author",
     "description"
   ],
-  "definitions": {
+  "$defs": {
     "agentCall": {
       "type": "object",
       "properties": {
@@ -1386,6 +2398,97 @@
         "agent_name"
       ],
       "additionalProperties": false
+    },
+    "waitCondition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "condition_type"
+      ],
+      "properties": {
+        "condition_type": {
+          "type": "string",
+          "enum": [
+            "element_presence",
+            "element_visible",
+            "delay",
+            "plugin_call"
+          ]
+        },
+        "selector": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": [
+            "selector_type",
+            "selector"
+          ],
+          "properties": {
+            "selector_type": {
+              "type": "string",
+              "minLength": 1
+            },
+            "selector": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1
+        },
+        "plugin": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "condition_type": {
+                "enum": [
+                  "element_presence",
+                  "element_visible"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "selector"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "condition_type": {
+                "const": "delay"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "value"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "condition_type": {
+                "const": "plugin_call"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "plugin"
+            ]
+          }
+        }
+      ]
     }
   }
 }
