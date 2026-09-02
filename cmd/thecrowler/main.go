@@ -1091,7 +1091,7 @@ func logStatus(PipelineStatus *[]crowler.Status) {
 		updateMetrics(status)
 
 		// If the pipeline is completed or errored, delete metrics from Pushgateway
-		if status.PipelineRunning.Load() == 2 || status.PipelineRunning.Load() == 3 {
+		if (status.PipelineRunning.Load() == 2) || (status.PipelineRunning.Load() == 3) {
 			// Delete before resetting
 			deleteMetricsFor(status)
 		}

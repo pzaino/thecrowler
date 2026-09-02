@@ -112,6 +112,7 @@ type informationSeedVDIContext struct {
 	closed      bool
 	returned    bool
 	operationMu sync.Mutex
+	abortError  error
 }
 
 func (c *informationSeedVDIContext) GetWebDriver() *vdi.WebDriver          { return &c.wd }
@@ -123,6 +124,7 @@ func (c *informationSeedVDIContext) GetVDIOperationMutex() *sync.Mutex     { ret
 func (c *informationSeedVDIContext) GetVDIReturnedFlag() *bool             { return &c.returned }
 func (c *informationSeedVDIContext) SetVDIReturnedFlag(value bool)         { c.returned = value }
 func (c *informationSeedVDIContext) GetVDIInstance() *vdi.SeleniumInstance { return &c.instance }
+func (c *informationSeedVDIContext) GetVDIAbortError() error               { return c.abortError }
 
 type webdriverSession interface{ webDriver() vdi.WebDriver }
 
