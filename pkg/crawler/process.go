@@ -226,6 +226,18 @@ func (ctx *ProcessContext) GetVDIInstance() *vdi.SeleniumInstance {
 	return &ctx.SelInstance
 }
 
+func (ctx *ProcessContext) GetVDIAbortError() error {
+	if ctx == nil || ctx.Status == nil {
+		return nil
+	}
+
+	if (ctx.Status.DetectedState.Load() & 0x01) != 0 {
+		return errors.New("stale-processing detected")
+	}
+
+	return nil
+}
+
 // LoadSourceConfiguration extracts and prepares the source configuration
 // from the database Source entry and populates the ProcessContext fields.
 func (ctx *ProcessContext) LoadSourceConfiguration() error {

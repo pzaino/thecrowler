@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
@@ -536,6 +537,7 @@ type ProcessContextInterface interface {
 	GetVDIReturnedFlag() *bool
 	SetVDIReturnedFlag(bool)
 	GetVDIInstance() *SeleniumInstance
+	GetVDIAbortError() error
 }
 
 // WebDriverToSeleniumWebDriver converts a VDI WebDriver to a Selenium WebDriver
@@ -679,6 +681,30 @@ type ProxySettings struct {
 	ProxyURL  string
 	ProxyUser string
 	ProxyPass string
+}
+
+var seleniumHTTPClientOnce sync.Once
+
+func configureSeleniumHTTPClient(sessionCreationTimeout time.Duration) {
+	seleniumHTTPClientOnce.Do(func() {
+		client := selenium.HTTPClient
+		if client == nil {
+			client = http.DefaultClient
+		}
+
+		baseTransport := client.Transport
+		if baseTransport == nil {
+			baseTransport = http.DefaultTransport
+		}
+
+		clonedClient := *client
+		clonedClient.Transport = &seleniumTransport{
+			base:                   baseTransport,
+			sessionCreationTimeout: sessionCreationTimeout,
+		}
+
+		selenium.HTTPClient = &clonedClient
+	})
 }
 
 // ConnectVDI is responsible for connecting to the Selenium server instance
@@ -1104,6 +1130,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	maxRetry := 500
 	for i := 0; i < maxRetry; i++ {
 		urlType := "wd/hub"
+		configureSeleniumHTTPClient(60 * time.Second)
 		wd, err = selenium.NewRemote(caps, fmt.Sprintf(protocol+"://"+VDIHost+":%d/"+urlType, sel.Config.Port))
 		if err != nil {
 			if i == 0 || (i%maxRetry) == 0 {
