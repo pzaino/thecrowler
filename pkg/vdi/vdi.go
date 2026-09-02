@@ -707,6 +707,30 @@ func configureSeleniumHTTPClient(sessionCreationTimeout time.Duration) {
 	})
 }
 
+func waitForVDIRetry(ctx ProcessContextInterface, delay time.Duration) error {
+	if abortErr := ctx.GetVDIAbortError(); abortErr != nil {
+		return abortErr
+	}
+
+	timer := time.NewTimer(delay)
+	ticker := time.NewTicker(250 * time.Millisecond)
+
+	defer timer.Stop()
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-timer.C:
+			return nil
+
+		case <-ticker.C:
+			if abortErr := ctx.GetVDIAbortError(); abortErr != nil {
+				return abortErr
+			}
+		}
+	}
+}
+
 // ConnectVDI is responsible for connecting to the Selenium server instance
 func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType int) (WebDriver, error) {
 	if ctx == nil {
@@ -1128,19 +1152,45 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	// Connect to the WebDriver instance running remotely.
 	var wd WebDriver
 	maxRetry := 500
+
+	// Install the Selenium transport once before entering the retry loop.
+	// Only session creation requests are bounded by this timeout.
+	configureSeleniumHTTPClient(60 * time.Second)
 	for i := 0; i < maxRetry; i++ {
+		// The crawler monitor may already have decided that this pipeline
+		// must terminate.
+		if abortErr := ctx.GetVDIAbortError(); abortErr != nil {
+			return nil, abortErr
+		}
+
 		urlType := "wd/hub"
-		configureSeleniumHTTPClient(60 * time.Second)
+
 		wd, err = selenium.NewRemote(caps, fmt.Sprintf(protocol+"://"+VDIHost+":%d/"+urlType, sel.Config.Port))
-		if err != nil {
-			if i == 0 || (i%maxRetry) == 0 {
-				cmn.DebugMsg(cmn.DbgLvlError, VDIConnError, err, 5)
+		// The stale state may have been raised while NewRemote was waiting
+		// for the Selenium server.
+		if abortErr := ctx.GetVDIAbortError(); abortErr != nil {
+			// NewRemote may have succeeded at approximately the same time
+			// that the crawler declared the pipeline stale. Do not leak
+			// that newly-created session.
+			if wd != nil {
+				_ = wd.Quit()
 			}
-			time.Sleep(5 * time.Second)
-		} else {
+			return nil, abortErr
+		}
+
+		if err == nil {
 			break
 		}
+
+		if (i == 0) || ((i % maxRetry) == 0) {
+			cmn.DebugMsg(cmn.DbgLvlError, VDIConnError, err, 5)
+		}
+
+		if retryErr := waitForVDIRetry(ctx, 5*time.Second); retryErr != nil {
+			return nil, retryErr
+		}
 	}
+	// err may still be non-nil here (for example when we failed all the attempts), but we will return it to the caller for handling.
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "to connect to the VDI: %v, no more retries left, setting crawling as failed for '%s'", err, sel.Config.Name)
 		return nil, err

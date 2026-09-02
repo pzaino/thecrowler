@@ -533,6 +533,22 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		err = errors.New("timeout")
 		return err
 	case <-done:
+		if processCtx.Status.PipelineRunning.Load() == 3 {
+			if processCtx.Status.LastError != "" {
+				err = errors.New(processCtx.Status.LastError)
+			} else {
+				err = errors.New("crawling failed")
+			}
+
+			cmn.DebugMsg(
+				cmn.DbgLvlError,
+				"[DEBUG-CrawlWebsite] Crawling failed for source %s: %v",
+				args.Src.URL,
+				err,
+			)
+
+			return err
+		}
 		// Crawling completed successfully
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-CrawlWebsite] Crawling completed for source: %s", args.Src.URL)
 	}
