@@ -533,7 +533,9 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		err = errors.New("timeout")
 		return err
 	case <-done:
-		if processCtx.Status.PipelineRunning.Load() == 3 {
+		if processCtx.Status.LastError != "" ||
+			processCtx.Status.PipelineRunning.Load() == 3 {
+
 			if processCtx.Status.LastError != "" {
 				err = errors.New(processCtx.Status.LastError)
 			} else {
