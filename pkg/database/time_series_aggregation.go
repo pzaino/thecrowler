@@ -48,6 +48,7 @@ type TimeSeriesAggregationResult struct {
 	ObservationsProcessed int
 	AggregatesReplaced    int
 	BatchesProcessed      int
+	WindowsProcessed      int
 	Checkpoint            time.Time
 }
 
@@ -98,18 +99,25 @@ func ReaggregateTimeSeriesBackfill(ctx context.Context, db *Handler, backfill En
 
 // RunTimeSeriesAggregation performs a bounded incremental run. When Range is nil,
 // the durable checkpoint minus Overlap is used so delayed observations update existing buckets.
-func RunTimeSeriesAggregation(ctx context.Context, db *Handler, options TimeSeriesAggregationOptions) (result TimeSeriesAggregationResult, err error) {
+func RunTimeSeriesAggregation(
+	ctx context.Context,
+	db *Handler,
+	options TimeSeriesAggregationOptions,
+) (result TimeSeriesAggregationResult, err error) {
 	dbms, err := validateTimeSeriesDB(db)
 	if err != nil {
 		return result, err
 	}
+
 	if ctx == nil {
 		ctx = context.Background()
 	}
+
 	if options.Now.IsZero() {
 		options.Now = time.Now().UTC()
 	}
 	options.Now = options.Now.UTC()
+
 	if options.BatchSize <= 0 {
 		options.BatchSize = 1000
 	}
@@ -120,131 +128,524 @@ func RunTimeSeriesAggregation(ctx context.Context, db *Handler, options TimeSeri
 		options.RunKey = "timeseries-aggregation"
 	}
 
-	// The process lock avoids wasted duplicate computation. The transactional
-	// backend lock below is authoritative across processes.
 	timeSeriesAggregationMutex.Lock()
 	defer timeSeriesAggregationMutex.Unlock()
 
-	runRange := TimeSeriesRange{End: options.Now}
-	if options.Range != nil {
-		runRange = *options.Range
-	} else {
-		checkpoint, checkpointErr := timeSeriesAggregationCheckpoint(db, options.RunKey)
-		if checkpointErr != nil {
-			return result, checkpointErr
-		}
-		if checkpoint.IsZero() {
-			checkpoint = earliestTimeSeriesObservation(db)
-		}
-		runRange.Start = checkpoint.Add(-options.Overlap)
-	}
-	runRange.Start = runRange.Start.UTC()
-	runRange.End = runRange.End.UTC()
-	if runRange.Start.IsZero() || !runRange.Start.Before(runRange.End) {
-		return result, fmt.Errorf("time-series aggregation range must satisfy start < end")
-	}
-	result.Range = runRange
-
-	metrics, err := ListTimeSeriesMetrics(db, TimeSeriesMetricFilter{Enabled: boolPointer(true), Pagination: TimeSeriesPagination{Limit: 100000}})
+	metrics, err := ListTimeSeriesMetrics(
+		db,
+		TimeSeriesMetricFilter{
+			Enabled:    boolPointer(true),
+			Pagination: TimeSeriesPagination{Limit: 100000},
+		},
+	)
 	if err != nil {
 		return result, fmt.Errorf("list aggregation metrics: %w", err)
 	}
-	aggregates := make(map[string]*timeSeriesAggregateAccumulator)
-	metricRanges := make(map[uint64]TimeSeriesRange)
-	remaining := options.BatchSize * options.MaxBatches
+
+	// Explicit rebuilds remain atomic. Their observation budget is per metric,
+	// never shared across metrics.
+	if options.Range != nil {
+		affected := TimeSeriesRange{
+			Start: options.Range.Start.UTC(),
+			End:   options.Range.End.UTC(),
+		}
+
+		if affected.Start.IsZero() || !affected.Start.Before(affected.End) {
+			return result, fmt.Errorf(
+				"time-series aggregation range must satisfy start < end",
+			)
+		}
+
+		result, err = aggregateTimeSeriesWindow(
+			ctx,
+			db,
+			dbms,
+			metrics,
+			affected,
+			options.BatchSize,
+			options.BatchSize*options.MaxBatches,
+			options.RunKey,
+			affected.End,
+		)
+		if err != nil {
+			if stateErr := recordTimeSeriesAggregationFailure(
+				db,
+				dbms,
+				options.RunKey,
+				affected,
+				time.Time{},
+				err,
+			); stateErr != nil {
+				return result, fmt.Errorf(
+					"%w; persist aggregation failure: %v",
+					err,
+					stateErr,
+				)
+			}
+			return result, err
+		}
+
+		result.WindowsProcessed = 1
+		return result, nil
+	}
+
+	checkpoint, err := timeSeriesAggregationCheckpoint(db, options.RunKey)
+	if err != nil {
+		return result, err
+	}
+
+	if checkpoint.IsZero() {
+		checkpoint = earliestTimeSeriesObservation(db)
+	}
+
+	checkpoint = checkpoint.UTC()
+
+	if !checkpoint.Before(options.Now) {
+		result.Checkpoint = checkpoint
+		result.Range = TimeSeriesRange{
+			Start: checkpoint,
+			End:   checkpoint,
+		}
+		return result, nil
+	}
+
+	// Apply late-data overlap once for the invocation. Subsequent catch-up
+	// windows are contiguous and already belong to the same invocation.
+	initialStart := checkpoint.Add(-options.Overlap)
+
+	result.Range = TimeSeriesRange{
+		Start: initialStart,
+		End:   checkpoint,
+	}
+	result.Checkpoint = checkpoint
+
+	for window := 0; window < options.MaxBatches && checkpoint.Before(options.Now); window++ {
+
+		windowEnd, boundaryErr := nextTimeSeriesAggregationWindowEnd(
+			checkpoint,
+			options.Now,
+			metrics,
+		)
+		if boundaryErr != nil {
+			return result, boundaryErr
+		}
+
+		if !checkpoint.Before(windowEnd) {
+			return result, fmt.Errorf(
+				"time-series aggregation window did not advance checkpoint %s",
+				checkpoint.Format(time.RFC3339Nano),
+			)
+		}
+
+		windowStart := checkpoint
+		if window == 0 {
+			windowStart = initialStart
+		}
+
+		affected := TimeSeriesRange{
+			Start: windowStart,
+			End:   windowEnd,
+		}
+
+		// Incremental aggregation deliberately has no observation-count cutoff.
+		// The unit of atomic progress is the complete bucket-safe time window.
+		partial, aggregateErr := aggregateTimeSeriesWindow(
+			ctx,
+			db,
+			dbms,
+			metrics,
+			affected,
+			options.BatchSize,
+			0,
+			options.RunKey,
+			windowEnd,
+		)
+		if aggregateErr != nil {
+			if stateErr := recordTimeSeriesAggregationFailure(
+				db,
+				dbms,
+				options.RunKey,
+				affected,
+				checkpoint,
+				aggregateErr,
+			); stateErr != nil {
+				return result, fmt.Errorf(
+					"%w; persist aggregation failure: %v",
+					aggregateErr,
+					stateErr,
+				)
+			}
+			return result, aggregateErr
+		}
+
+		result.ObservationsProcessed += partial.ObservationsProcessed
+		result.AggregatesReplaced += partial.AggregatesReplaced
+		result.BatchesProcessed += partial.BatchesProcessed
+		result.WindowsProcessed++
+
+		checkpoint = windowEnd
+		result.Checkpoint = checkpoint
+		result.Range.End = checkpoint
+	}
+
+	return result, nil
+}
+
+func nextTimeSeriesAggregationWindowEnd(
+	checkpoint time.Time,
+	now time.Time,
+	metrics []TimeSeriesMetric,
+) (time.Time, error) {
+	checkpoint = checkpoint.UTC()
+	end := now.UTC()
+
 	for i := range metrics {
 		metric := metrics[i]
-		if metric.Bucket == cfg.TimeSeriesBucketNone || remaining <= 0 {
+
+		if metric.Bucket == cfg.TimeSeriesBucketNone {
 			continue
 		}
-		start, _, boundsErr := TimeSeriesBucketBounds(runRange.Start, metric.Bucket)
+
+		_, bucketEnd, err := TimeSeriesBucketBounds(
+			checkpoint,
+			metric.Bucket,
+		)
+		if err != nil {
+			return time.Time{}, fmt.Errorf(
+				"resolve aggregation boundary for metric %d: %w",
+				metric.ID,
+				err,
+			)
+		}
+
+		if bucketEnd.After(checkpoint) && bucketEnd.Before(end) {
+			end = bucketEnd
+		}
+	}
+
+	return end, nil
+}
+
+func aggregateTimeSeriesWindow(
+	ctx context.Context,
+	db *Handler,
+	dbms string,
+	metrics []TimeSeriesMetric,
+	affected TimeSeriesRange,
+	batchSize int,
+	metricBudget int,
+	runKey string,
+	checkpoint time.Time,
+) (result TimeSeriesAggregationResult, err error) {
+	result.Range = affected
+
+	aggregates := make(map[string]*timeSeriesAggregateAccumulator)
+	metricRanges := make(map[uint64]TimeSeriesRange)
+
+	for i := range metrics {
+		metric := metrics[i]
+
+		if metric.Bucket == cfg.TimeSeriesBucketNone {
+			continue
+		}
+
+		start, _, boundsErr := TimeSeriesBucketBounds(
+			affected.Start,
+			metric.Bucket,
+		)
 		if boundsErr != nil {
 			return result, boundsErr
 		}
-		_, end, boundsErr := TimeSeriesBucketBounds(runRange.End.Add(-time.Nanosecond), metric.Bucket)
+
+		_, end, boundsErr := TimeSeriesBucketBounds(
+			affected.End.Add(-time.Nanosecond),
+			metric.Bucket,
+		)
 		if boundsErr != nil {
 			return result, boundsErr
 		}
-		metricRange := TimeSeriesRange{Start: start, End: end}
+
+		metricRange := TimeSeriesRange{
+			Start: start,
+			End:   end,
+		}
 		metricRanges[metric.ID] = metricRange
+
 		offset := 0
-		for remaining > 0 {
-			limit := options.BatchSize
-			if limit > remaining {
+		remaining := metricBudget
+
+		for {
+			limit := batchSize
+
+			if metricBudget > 0 && remaining < limit {
 				limit = remaining
 			}
-			query := TimeSeriesQueryFilter{MetricID: &metric.ID, Start: &metricRange.Start, End: &metricRange.End, TimeBasis: metric.TimeBasis, Pagination: TimeSeriesPagination{Limit: limit, Offset: offset}}
-			page, queryErr := QueryTimeSeriesObservations(db, query)
-			if queryErr != nil {
-				return result, fmt.Errorf("query observations for metric %d: %w", metric.ID, queryErr)
+
+			if limit <= 0 {
+				return result, fmt.Errorf(
+					"time-series aggregation batch budget exhausted "+
+						"before metric %d range was complete",
+					metric.ID,
+				)
 			}
+
+			query := TimeSeriesQueryFilter{
+				MetricID:  &metric.ID,
+				Start:     &metricRange.Start,
+				End:       &metricRange.End,
+				TimeBasis: metric.TimeBasis,
+				Pagination: TimeSeriesPagination{
+					Limit:  limit,
+					Offset: offset,
+				},
+			}
+
+			page, queryErr := QueryTimeSeriesObservationsContext(
+				ctx,
+				db,
+				query,
+			)
+			if queryErr != nil {
+				return result, fmt.Errorf(
+					"query observations for metric %d: %w",
+					metric.ID,
+					queryErr,
+				)
+			}
+
 			for j := range page.Observations {
 				observation := page.Observations[j]
-				basis, ok := timeSeriesObservationBasis(observation, metric.TimeBasis)
-				if !ok || basis.Before(metricRange.Start) || !basis.Before(metricRange.End) {
+
+				basis, ok := timeSeriesObservationBasis(
+					observation,
+					metric.TimeBasis,
+				)
+				if !ok ||
+					basis.Before(metricRange.Start) ||
+					!basis.Before(metricRange.End) {
 					continue
 				}
-				if aggregateErr := addTimeSeriesObservation(aggregates, metric, observation, basis); aggregateErr != nil {
+
+				if aggregateErr := addTimeSeriesObservation(
+					aggregates,
+					metric,
+					observation,
+					basis,
+				); aggregateErr != nil {
 					return result, aggregateErr
 				}
+
 				result.ObservationsProcessed++
 			}
+
 			result.BatchesProcessed++
-			remaining -= page.Count
-			if page.HasMore && remaining <= 0 {
-				return result, fmt.Errorf("time-series aggregation batch budget exhausted before metric %d range was complete", metric.ID)
+
+			if metricBudget > 0 {
+				remaining -= page.Count
 			}
+
 			if !page.HasMore || page.Count == 0 {
 				break
 			}
+
+			if metricBudget > 0 && remaining <= 0 {
+				return result, fmt.Errorf(
+					"time-series aggregation batch budget exhausted "+
+						"before metric %d range was complete",
+					metric.ID,
+				)
+			}
+
 			offset += page.Count
 		}
 	}
 
 	computed := make([]TimeSeriesAggregate, 0, len(aggregates))
+
 	for _, accumulator := range aggregates {
 		finalizeTimeSeriesAggregate(accumulator)
 		computed = append(computed, accumulator.aggregate)
 	}
-	sort.Slice(computed, func(i, j int) bool { return computed[i].AggregateHash < computed[j].AggregateHash })
 
-	tx, err := (*db).BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	sort.Slice(computed, func(i, j int) bool {
+		return computed[i].AggregateHash < computed[j].AggregateHash
+	})
+
+	tx, err := (*db).BeginTx(
+		ctx,
+		&sql.TxOptions{Isolation: sql.LevelSerializable},
+	)
 	if err != nil {
-		return result, fmt.Errorf("begin aggregation replacement: %w", err)
+		return result, fmt.Errorf(
+			"begin aggregation replacement: %w",
+			err,
+		)
 	}
-	defer func() { _ = tx.Rollback() }()
-	if err = acquireTimeSeriesAggregationLock(ctx, tx, dbms, options.RunKey); err != nil {
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	if err = acquireTimeSeriesAggregationLock(
+		ctx,
+		tx,
+		dbms,
+		runKey,
+	); err != nil {
 		return result, err
 	}
-	for metricID, affected := range metricRanges {
+
+	for metricID, metricRange := range metricRanges {
 		p := newInformationSeedPlaceholders(dbms)
-		if _, err = tx.ExecContext(ctx, `DELETE FROM TimeSeriesAggregates WHERE metric_id = `+p.Next()+` AND bucket_start < `+p.Next()+` AND bucket_end > `+p.Next(), metricID, affected.End, affected.Start); err != nil {
-			return result, fmt.Errorf("delete affected aggregates: %w", err)
+
+		if _, err = tx.ExecContext(
+			ctx,
+			`DELETE FROM TimeSeriesAggregates
+			 WHERE metric_id = `+p.Next()+`
+			   AND bucket_start < `+p.Next()+`
+			   AND bucket_end > `+p.Next(),
+			metricID,
+			metricRange.End,
+			metricRange.Start,
+		); err != nil {
+			return result, fmt.Errorf(
+				"delete affected aggregates: %w",
+				err,
+			)
 		}
 	}
+
 	for i := range computed {
-		query, args, buildErr := buildTimeSeriesAggregateUpsert(dbms, &computed[i])
+		query, args, buildErr := buildTimeSeriesAggregateUpsert(
+			dbms,
+			&computed[i],
+		)
 		if buildErr != nil {
 			return result, buildErr
 		}
-		if _, err = tx.ExecContext(ctx, query, args...); err != nil {
-			return result, fmt.Errorf("replace aggregate %s: %w", computed[i].AggregateHash, err)
+
+		if _, err = tx.ExecContext(
+			ctx,
+			query,
+			args...,
+		); err != nil {
+			return result, fmt.Errorf(
+				"replace aggregate %s: %w",
+				computed[i].AggregateHash,
+				err,
+			)
 		}
 	}
+
 	result.AggregatesReplaced = len(computed)
-	result.Checkpoint = runRange.End
-	if err = recordTimeSeriesAggregationRun(ctx, tx, dbms, options.RunKey, runRange, result.Checkpoint, "completed", ""); err != nil {
+	result.Checkpoint = checkpoint.UTC()
+
+	if err = recordTimeSeriesAggregationRun(
+		ctx,
+		tx,
+		dbms,
+		runKey,
+		affected,
+		result.Checkpoint,
+		"completed",
+		"",
+	); err != nil {
 		return result, err
 	}
+
 	if dbms == DBMySQLStr {
-		if _, err = tx.ExecContext(ctx, `DO RELEASE_LOCK(?)`, options.RunKey); err != nil {
-			return result, fmt.Errorf("release aggregation lock: %w", err)
+		if _, err = tx.ExecContext(
+			ctx,
+			`DO RELEASE_LOCK(?)`,
+			runKey,
+		); err != nil {
+			return result, fmt.Errorf(
+				"release aggregation lock: %w",
+				err,
+			)
 		}
 	}
+
 	if err = tx.Commit(); err != nil {
-		return result, fmt.Errorf("commit aggregation replacement: %w", err)
+		return result, fmt.Errorf(
+			"commit aggregation replacement: %w",
+			err,
+		)
 	}
+
 	return result, nil
+}
+
+func recordTimeSeriesAggregationFailure(
+	db *Handler,
+	dbms string,
+	key string,
+	affected TimeSeriesRange,
+	checkpoint time.Time,
+	runErr error,
+) error {
+	if runErr == nil || errors.Is(runErr, ErrTimeSeriesAggregationRunning) {
+		return nil
+	}
+
+	var checkpointValue interface{}
+	if !checkpoint.IsZero() {
+		checkpointValue = checkpoint.UTC()
+	}
+
+	p := newInformationSeedPlaceholders(dbms)
+
+	args := []interface{}{
+		key,
+		"failed",
+		checkpointValue,
+		affected.Start.UTC(),
+		affected.End.UTC(),
+		runErr.Error(),
+	}
+
+	values := make([]string, len(args))
+	for i := range values {
+		values[i] = p.Next()
+	}
+
+	query := `
+		INSERT INTO TimeSeriesAggregationRuns (
+			run_key,
+			status,
+			checkpoint_at,
+			range_start,
+			range_end,
+			last_error
+		) VALUES (` + strings.Join(values, ",") + `)`
+
+	if dbms == DBMySQLStr {
+		query += `
+			ON DUPLICATE KEY UPDATE
+				status = VALUES(status),
+				range_start = VALUES(range_start),
+				range_end = VALUES(range_end),
+				last_error = VALUES(last_error),
+				last_updated_at = CURRENT_TIMESTAMP`
+	} else {
+		query += `
+			ON CONFLICT (run_key) DO UPDATE SET
+				status = excluded.status,
+				range_start = excluded.range_start,
+				range_end = excluded.range_end,
+				last_error = excluded.last_error,
+				last_updated_at = CURRENT_TIMESTAMP`
+	}
+
+	// Do not reuse the aggregation context here. A timeout/cancellation is
+	// precisely one of the failures that must still be recorded.
+	stateCtx, cancel := context.WithTimeout(
+		context.Background(),
+		5*time.Second,
+	)
+	defer cancel()
+
+	_, err := (*db).ExecContext(stateCtx, query, args...)
+	return err
 }
 
 func addTimeSeriesObservation(groups map[string]*timeSeriesAggregateAccumulator, metric TimeSeriesMetric, observation TimeSeriesObservation, basis time.Time) error {
