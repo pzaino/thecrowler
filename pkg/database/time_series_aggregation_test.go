@@ -202,3 +202,75 @@ func TestTimeSeriesAggregationIncrementalCompletesBucketLargerThanConfiguredPage
 		)
 	}
 }
+
+func TestEarliestTimeSeriesObservationSQLite(t *testing.T) {
+	db, closeDB := openEntityTimeSeriesTestDB(t)
+	defer closeDB()
+
+	metric, err := UpsertTimeSeriesMetric(
+		db,
+		&TimeSeriesMetric{
+			Key:           "earliest-observation",
+			DisplayName:   "earliest-observation",
+			SourceKind:    cfg.TimeSeriesSourceCustom,
+			ValueType:     cfg.TimeSeriesValueInteger,
+			Aggregate:     cfg.TimeSeriesAggregateAverage,
+			Bucket:        cfg.TimeSeriesBucketOneDay,
+			TimeBasis:     cfg.TimeSeriesTimeObservedAt,
+			DedupeScope:   cfg.TimeSeriesDedupeObject,
+			ObjectType:    cfg.TimeSeriesObjectWebObject,
+			FailurePolicy: cfg.TimeSeriesFailureLogSkip,
+			Selector:      []byte(`{}`),
+			Enabled:       true,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	start := time.Date(
+		2026,
+		time.August,
+		25,
+		0,
+		0,
+		0,
+		0,
+		time.UTC,
+	)
+
+	value := int64(1)
+
+	observation := TimeSeriesObservation{
+		MetricID:    metric.ID,
+		ObservedAt:  start,
+		CollectedAt: start,
+		BucketStart: start,
+		BucketEnd:   start.Add(24 * time.Hour),
+		Value: TimeSeriesValue{
+			Integer: &value,
+		},
+		ValueHash: "earliest-value",
+		DedupeKey: "earliest-observation",
+	}
+
+	if _, err = InsertTimeSeriesObservation(
+		db,
+		&observation,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := earliestTimeSeriesObservation(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !got.Equal(start) {
+		t.Fatalf(
+			"earliest observation = %s, want %s",
+			got,
+			start,
+		)
+	}
+}
