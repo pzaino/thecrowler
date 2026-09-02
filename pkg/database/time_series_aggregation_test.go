@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -86,5 +87,118 @@ func TestTimeSeriesRetentionDryRunAndMetricOverride(t *testing.T) {
 	}
 	if _, err = GetTimeSeriesMetricByID(db, metric.ID); err != nil {
 		t.Fatalf("metric definition deleted: %v", err)
+	}
+}
+
+func TestTimeSeriesAggregationIncrementalCompletesBucketLargerThanConfiguredPageBudget(t *testing.T) {
+	db, closeDB := openEntityTimeSeriesTestDB(t)
+	defer closeDB()
+
+	metric, err := UpsertTimeSeriesMetric(
+		db,
+		&TimeSeriesMetric{
+			Key:           "aggregation-large-daily",
+			DisplayName:   "aggregation-large-daily",
+			SourceKind:    cfg.TimeSeriesSourceCustom,
+			ValueType:     cfg.TimeSeriesValueInteger,
+			Aggregate:     cfg.TimeSeriesAggregateAverage,
+			Bucket:        cfg.TimeSeriesBucketOneDay,
+			TimeBasis:     cfg.TimeSeriesTimeObservedAt,
+			DedupeScope:   cfg.TimeSeriesDedupeObject,
+			ObjectType:    cfg.TimeSeriesObjectWebObject,
+			FailurePolicy: cfg.TimeSeriesFailureLogSkip,
+			Selector:      []byte(`{}`),
+			Enabled:       true,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	start := time.Date(
+		2026,
+		time.August,
+		25,
+		0,
+		0,
+		0,
+		0,
+		time.UTC,
+	)
+
+	for i := 0; i < 25; i++ {
+		value := int64(i)
+
+		observation := TimeSeriesObservation{
+			MetricID:    metric.ID,
+			ObservedAt:  start.Add(time.Duration(i) * time.Minute),
+			CollectedAt: start.Add(time.Duration(i) * time.Minute),
+			BucketStart: start,
+			BucketEnd:   start.Add(24 * time.Hour),
+			Scope: TimeSeriesScope{
+				ObjectType: "webobject",
+				ObjectID:   timeSeriesUint64Pointer(uint64(i + 1)),
+			},
+			Value: TimeSeriesValue{
+				Integer: &value,
+			},
+			ValueHash: fmt.Sprintf("value-%d", i),
+			DedupeKey: fmt.Sprintf("large-daily-%d", i),
+		}
+
+		if _, insertErr := InsertTimeSeriesObservation(
+			db,
+			&observation,
+		); insertErr != nil {
+			t.Fatal(insertErr)
+		}
+	}
+
+	result, err := RunTimeSeriesAggregation(
+		context.Background(),
+		db,
+		TimeSeriesAggregationOptions{
+			BatchSize:  2,
+			MaxBatches: 1,
+			Now:        start.Add(12 * time.Hour),
+			RunKey:     "test-large-daily",
+		},
+	)
+	if err != nil {
+		t.Fatalf("aggregation failed: %v", err)
+	}
+
+	if result.ObservationsProcessed != 25 {
+		t.Fatalf(
+			"observations processed = %d, want 25",
+			result.ObservationsProcessed,
+		)
+	}
+
+	if result.WindowsProcessed != 1 {
+		t.Fatalf(
+			"windows processed = %d, want 1",
+			result.WindowsProcessed,
+		)
+	}
+
+	aggregates, err := QueryTimeSeriesAggregates(
+		db,
+		TimeSeriesQueryFilter{
+			MetricID: &metric.ID,
+			Pagination: TimeSeriesPagination{
+				Limit: 100,
+			},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if aggregates.Count != 25 {
+		t.Fatalf(
+			"aggregate count = %d, want 25",
+			aggregates.Count,
+		)
 	}
 }

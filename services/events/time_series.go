@@ -34,11 +34,19 @@ func startTimeSeriesAggregationScheduler(db *cdb.Handler, config cfg.TimeSeriesC
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for now := range ticker.C {
-			ctx, cancel := context.WithTimeout(context.Background(), interval)
-			_, runErr := runTimeSeriesAggregation(ctx, db, config, now.UTC())
-			cancel()
+			_, runErr := runTimeSeriesAggregation(
+				context.Background(),
+				db,
+				config,
+				now.UTC(),
+			)
+
 			if runErr != nil && runErr != cdb.ErrTimeSeriesAggregationRunning {
-				cmn.DebugMsg(cmn.DbgLvlError, "Time-series aggregation failed: %v", runErr)
+				cmn.DebugMsg(
+					cmn.DbgLvlError,
+					"Time-series aggregation failed: %v",
+					runErr,
+				)
 			}
 		}
 	}()

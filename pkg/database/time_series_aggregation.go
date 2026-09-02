@@ -195,7 +195,19 @@ func RunTimeSeriesAggregation(
 	}
 
 	if checkpoint.IsZero() {
-		checkpoint = earliestTimeSeriesObservation(db)
+		checkpoint, err = earliestTimeSeriesObservation(db)
+		if err != nil {
+			return result, err
+		}
+	}
+
+	if checkpoint.IsZero() {
+		result.Checkpoint = options.Now
+		result.Range = TimeSeriesRange{
+			Start: options.Now,
+			End:   options.Now,
+		}
+		return result, nil
 	}
 
 	checkpoint = checkpoint.UTC()
@@ -834,9 +846,23 @@ func recordTimeSeriesAggregationRun(ctx context.Context, tx *sql.Tx, dbms, key s
 	}
 	query := `INSERT INTO TimeSeriesAggregationRuns (run_key,status,checkpoint_at,range_start,range_end,last_error,completed_at) VALUES (` + strings.Join(values, ",") + `,CURRENT_TIMESTAMP)`
 	if dbms == DBMySQLStr {
-		query += ` ON DUPLICATE KEY UPDATE status=VALUES(status),checkpoint_at=VALUES(checkpoint_at),range_start=VALUES(range_start),range_end=VALUES(range_end),last_error=VALUES(last_error),completed_at=CURRENT_TIMESTAMP,last_updated_at=CURRENT_TIMESTAMP`
+		query += `
+			ON DUPLICATE KEY UPDATE
+				status = VALUES(status),
+				range_start = VALUES(range_start),
+				range_end = VALUES(range_end),
+				last_error = VALUES(last_error),
+				completed_at = NULL,
+				last_updated_at = CURRENT_TIMESTAMP`
 	} else {
-		query += ` ON CONFLICT (run_key) DO UPDATE SET status=excluded.status,checkpoint_at=excluded.checkpoint_at,range_start=excluded.range_start,range_end=excluded.range_end,last_error=excluded.last_error,completed_at=CURRENT_TIMESTAMP,last_updated_at=CURRENT_TIMESTAMP`
+		query += `
+			ON CONFLICT (run_key) DO UPDATE SET
+				status = excluded.status,
+				range_start = excluded.range_start,
+				range_end = excluded.range_end,
+				last_error = excluded.last_error,
+				completed_at = NULL,
+				last_updated_at = CURRENT_TIMESTAMP`
 	}
 	_, err := tx.ExecContext(ctx, query, args...)
 	return err
@@ -858,12 +884,28 @@ func timeSeriesAggregationCheckpoint(db *Handler, key string) (time.Time, error)
 	return checkpoint.Time.UTC(), nil
 }
 
-func earliestTimeSeriesObservation(db *Handler) time.Time {
-	var earliest sql.NullTime
-	if err := (*db).QueryRow(`SELECT MIN(observed_at) FROM TimeSeriesObservations WHERE deleted_at IS NULL`).Scan(&earliest); err == nil && earliest.Valid {
-		return earliest.Time.UTC()
+func earliestTimeSeriesObservation(db *Handler) (time.Time, error) {
+	var earliest time.Time
+
+	err := (*db).QueryRow(`
+		SELECT observed_at
+		FROM TimeSeriesObservations
+		WHERE deleted_at IS NULL
+		ORDER BY observed_at ASC
+		LIMIT 1
+	`).Scan(&earliest)
+
+	if err == sql.ErrNoRows {
+		return time.Time{}, nil
 	}
-	return time.Now().UTC()
+	if err != nil {
+		return time.Time{}, fmt.Errorf(
+			"query earliest time-series observation: %w",
+			err,
+		)
+	}
+
+	return earliest.UTC(), nil
 }
 
 func buildTimeSeriesAggregateUpsert(dbms string, a *TimeSeriesAggregate) (string, []interface{}, error) {
