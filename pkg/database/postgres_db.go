@@ -309,6 +309,59 @@ func (handler *PostgresHandler) CheckConnection(_ cfg.Config) error {
 	return nil
 }
 
+const maxConnectionRetryInterval = 5 * time.Minute
+
+// WaitForConnection blocks until the database becomes reachable or the
+// optional total timeout expires.
+//
+// A totalTimeout of 0 means wait indefinitely.
+func (handler *PostgresHandler) WaitForConnection(c cfg.Config, totalTimeout time.Duration) error {
+	retryInterval := time.Duration(c.Database.RetryTime) * time.Second
+	if retryInterval <= 0 {
+		retryInterval = 5 * time.Second
+	}
+
+	startTime := time.Now()
+
+	for {
+		if err := handler.CheckConnection(c); err == nil {
+			return nil
+		}
+
+		sleepDuration := retryInterval
+
+		if totalTimeout > 0 {
+			remaining := totalTimeout - time.Since(startTime)
+			if remaining <= 0 {
+				return fmt.Errorf(
+					"timed out waiting for database connection after %s",
+					totalTimeout,
+				)
+			}
+
+			if sleepDuration > remaining {
+				sleepDuration = remaining
+			}
+		}
+
+		time.Sleep(sleepDuration)
+
+		if totalTimeout > 0 && time.Since(startTime) >= totalTimeout {
+			return fmt.Errorf(
+				"timed out waiting for database connection after %s",
+				totalTimeout,
+			)
+		}
+
+		if retryInterval < maxConnectionRetryInterval {
+			retryInterval *= 2
+			if retryInterval > maxConnectionRetryInterval {
+				retryInterval = maxConnectionRetryInterval
+			}
+		}
+	}
+}
+
 // NewListener creates a new listener
 func (handler *PostgresHandler) NewListener() Listener {
 	return &PostgresListener{

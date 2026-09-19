@@ -68,6 +68,7 @@ type Handler interface {
 	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
 	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
 	CheckConnection(c cfg.Config) error
+	WaitForConnection(c cfg.Config, totalTimeout time.Duration) error
 	NewListener() Listener
 }
 

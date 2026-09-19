@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
@@ -140,4 +141,7 @@ func (h *searchFunctionTestHandler) QueryContext(_ context.Context, query string
 	return nil, errors.New("unexpected QueryContext call")
 }
 func (h *searchFunctionTestHandler) CheckConnection(cfg.Config) error { return nil }
-func (h *searchFunctionTestHandler) NewListener() Listener            { return nil }
+func (h *searchFunctionTestHandler) WaitForConnection(cfg.Config, time.Duration) error {
+	return nil
+}
+func (h *searchFunctionTestHandler) NewListener() Listener { return nil }

@@ -51,7 +51,10 @@ func (h *testDatabaseHandler) QueryContext(ctx context.Context, query string, ar
 	return h.database.QueryContext(ctx, query, args...)
 }
 func (h *testDatabaseHandler) CheckConnection(cfg.Config) error { return h.database.Ping() }
-func (h *testDatabaseHandler) NewListener() db.Listener         { return nil }
+func (h *testDatabaseHandler) WaitForConnection(cfg.Config, time.Duration) error {
+	return h.database.Ping()
+}
+func (h *testDatabaseHandler) NewListener() db.Listener { return nil }
 
 var _ db.Handler = (*testDatabaseHandler)(nil)
 

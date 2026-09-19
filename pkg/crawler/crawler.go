@@ -930,7 +930,7 @@ func UpdateSourceState(db cdb.Handler, sourceURL string, crawlError error) {
 	var err error
 
 	// Before updating the source state, check if the database connection is still alive
-	err = db.CheckConnection(config)
+	err = db.WaitForConnection(config, 0)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, dbConnCheckErr, err)
 		return
@@ -978,7 +978,7 @@ func indexPage(ctx *ProcessContext, url string, pageInfo *PageInfo) (uint64, err
 	db := *ctx.db
 
 	// Before updating the source state, check if the database connection is still alive
-	err := db.CheckConnection(config)
+	err := db.WaitForConnection(config, 0)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, dbConnCheckErr, err)
 		return 0, err
@@ -1280,7 +1280,7 @@ func indexNetInfo(db cdb.Handler, url string, pageInfo *PageInfo, flags int) (ui
 	pageInfo.URL = url
 
 	// Before updating the source state, check if the database connection is still alive
-	err := db.CheckConnection(config)
+	err := db.WaitForConnection(config, 0)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, dbConnCheckErr, err)
 		return 0, err
