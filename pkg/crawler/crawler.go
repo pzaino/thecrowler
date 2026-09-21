@@ -1055,18 +1055,6 @@ func indexPage(ctx *ProcessContext, url string, pageInfo *PageInfo) (uint64, err
 	}
 	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] MetaTags inserted for indexID: %d", indexID)
 
-	// Insert into KeywordIndex
-	if pageInfo.Config.Crawler.CollectKeywords {
-		err = insertKeywordsWithTimeSeries(tx, indexID, pageInfo, pageInfo.Config)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Error inserting keywords for indexID: %d, error: %v", indexID, err)
-			cmn.DebugMsg(cmn.DbgLvlError, "inserting keywords: %v", err)
-			rollbackTransaction(tx)
-			return 0, err
-		}
-	}
-	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Keywords inserted for indexID: %d", indexID)
-
 	// Commit the transaction
 	err = commitTransaction(tx)
 	if err != nil {
@@ -1076,6 +1064,23 @@ func indexPage(ctx *ProcessContext, url string, pageInfo *PageInfo) (uint64, err
 		return 0, err
 	}
 	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Transaction committed successfully.")
+
+	// Out of transaction operations
+
+	// Store keywords only after the main page transaction has committed successfully.
+	if pageInfo.Config.Crawler.CollectKeywords {
+		err = insertKeywordsWithTimeSeries(db, indexID, pageInfo, pageInfo.Config)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Error inserting keywords for indexID: %d, error: %v", indexID, err)
+			cmn.DebugMsg(cmn.DbgLvlError, "inserting keywords: %v", err)
+
+			// The page transaction has already committed, so it cannot and must not
+			// be rolled back here. Return the committed indexID together with the
+			// keyword indexing error.
+			return indexID, err
+		}
+		cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Keywords inserted for indexID: %d", indexID)
+	}
 
 	// Return the index ID
 	return indexID, nil
@@ -1836,11 +1841,11 @@ func uniqueStrings(in []string) []string {
 	return out
 }
 
-func insertKeywords(tx *sql.Tx, indexID uint64, pageInfo *PageInfo) error {
-	return insertKeywordsWithTimeSeries(tx, indexID, pageInfo, nil)
+func insertKeywords(db cdb.Handler, indexID uint64, pageInfo *PageInfo) error {
+	return insertKeywordsWithTimeSeries(db, indexID, pageInfo, nil)
 }
 
-func insertKeywordsWithTimeSeries(tx *sql.Tx, indexID uint64, pageInfo *PageInfo, currCfg *cfg.Config) error {
+func insertKeywordsWithTimeSeries(db cdb.Handler, indexID uint64, pageInfo *PageInfo, currCfg *cfg.Config) error {
 	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Inserting keywords for indexID: %d", indexID)
 	occurrences := make(map[string]int64, len(pageInfo.Keywords))
 	for _, keyword := range pageInfo.Keywords {
@@ -1864,6 +1869,13 @@ func insertKeywordsWithTimeSeries(tx *sql.Tx, indexID uint64, pageInfo *PageInfo
 		}
 		seen[normalized] = struct{}{}
 		ordered = append(ordered, normalized)
+	}
+
+	// Keywords are intentionally stored in their own transaction, after the
+	// main page transaction has committed.
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("starting keyword transaction: %w", err)
 	}
 
 	emitter := newCrawlerIndexedArtifactEmitter(tx, currCfg)
@@ -1904,6 +1916,12 @@ func insertKeywordsWithTimeSeries(tx *sql.Tx, indexID uint64, pageInfo *PageInfo
 			}
 		}
 	}
+
+	if err := commitTransaction(tx); err != nil {
+		rollbackTransaction(tx)
+		return err
+	}
+
 	return nil
 }
 
