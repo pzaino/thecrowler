@@ -149,7 +149,10 @@ func (h *informationSeedAPITestHandler) QueryContext(ctx context.Context, query 
 	return h.db.QueryContext(ctx, query, args...)
 }
 func (h *informationSeedAPITestHandler) CheckConnection(cfg.Config) error { return nil }
-func (h *informationSeedAPITestHandler) NewListener() cdb.Listener        { return nil }
+func (h *informationSeedAPITestHandler) WaitForConnection(cfg.Config, time.Duration) error {
+	return nil
+}
+func (h *informationSeedAPITestHandler) NewListener() cdb.Listener { return nil }
 
 var _ cdb.Handler = (*informationSeedAPITestHandler)(nil)
 

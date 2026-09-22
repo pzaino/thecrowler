@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	_ "github.com/mattn/go-sqlite3"
@@ -217,7 +218,10 @@ func (h *sourceAPITestHandler) QueryContext(ctx context.Context, query string, a
 	return h.db.QueryContext(ctx, query, args...)
 }
 func (h *sourceAPITestHandler) CheckConnection(cfg.Config) error { return nil }
-func (h *sourceAPITestHandler) NewListener() cdb.Listener        { return nil }
+func (h *sourceAPITestHandler) WaitForConnection(cfg.Config, time.Duration) error {
+	return nil
+}
+func (h *sourceAPITestHandler) NewListener() cdb.Listener { return nil }
 
 var _ cdb.Handler = (*sourceAPITestHandler)(nil)
 

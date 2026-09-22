@@ -49,8 +49,9 @@ func (h sourceClaimTestHandler) QueryRowContext(ctx context.Context, query strin
 func (h sourceClaimTestHandler) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
 	return h.db.QueryContext(ctx, query, args...)
 }
-func (sourceClaimTestHandler) CheckConnection(cfg.Config) error { return nil }
-func (sourceClaimTestHandler) NewListener() cdb.Listener        { return nil }
+func (sourceClaimTestHandler) CheckConnection(cfg.Config) error                  { return nil }
+func (sourceClaimTestHandler) WaitForConnection(cfg.Config, time.Duration) error { return nil }
+func (sourceClaimTestHandler) NewListener() cdb.Listener                         { return nil }
 
 func TestRetrieveAvailableSourcesPreservesClaimSubPriority(t *testing.T) {
 	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherEqual))
