@@ -8,10 +8,12 @@ package crawler
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 	tse "github.com/pzaino/thecrowler/pkg/timeseries"
@@ -73,6 +75,56 @@ func newCrawlerIndexedArtifactEmitter(tx *sql.Tx, currCfg *cfg.Config) *tse.Emit
 		Config:         &currCfg.TimeSeries,
 		Logger:         crawlerTimeSeriesLogger{},
 	}
+}
+
+func emitIndexedArtifactsStandalone(
+	db cdb.Handler,
+	currCfg *cfg.Config,
+	inputs []tse.IndexedArtifactInput,
+) error {
+	if db == nil ||
+		currCfg == nil ||
+		!currCfg.TimeSeries.Enabled ||
+		len(inputs) == 0 {
+		return nil
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("starting indexed-artifact time-series transaction: %w", err)
+	}
+
+	committed := false
+	defer func() {
+		if !committed {
+			if rollbackErr := tx.Rollback(); rollbackErr != nil &&
+				!errors.Is(rollbackErr, sql.ErrTxDone) {
+				cmn.DebugMsg(
+					cmn.DbgLvlError,
+					"rolling back indexed-artifact time-series transaction: %v",
+					rollbackErr,
+				)
+			}
+		}
+	}()
+
+	emitter := newCrawlerIndexedArtifactEmitter(tx, currCfg)
+
+	for _, input := range inputs {
+		if err := emitter.EmitIndexedArtifact(input); err != nil {
+			return err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf(
+			"committing indexed-artifact time-series transaction: %w",
+			err,
+		)
+	}
+
+	committed = true
+	return nil
 }
 
 func decodeArtifactDetails(raw []byte) map[string]interface{} {
