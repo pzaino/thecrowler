@@ -1952,25 +1952,27 @@ func insertKeywordsWithTimeSeries(
 			count = storedOccurrences.Int64
 		}
 
-		timeSeriesInputs = append(
-			timeSeriesInputs,
-			tse.IndexedArtifactInput{
-				SourceKind:  cfg.TimeSeriesSourceKeyword,
-				IndexID:     indexID,
-				RowID:       uint64(keywordID),
-				LinkID:      keywordIndexID,
-				SubjectKey:  keyword,
-				Name:        keyword,
-				RawValue:    keyword,
-				Value:       count,
-				Occurrences: count,
-				Attributes: map[string]interface{}{
-					"keyword":     keyword,
-					"occurrences": count,
+		if collectTimeSeries {
+			timeSeriesInputs = append(
+				timeSeriesInputs,
+				tse.IndexedArtifactInput{
+					SourceKind:  cfg.TimeSeriesSourceKeyword,
+					IndexID:     indexID,
+					RowID:       uint64(keywordID),
+					LinkID:      keywordIndexID,
+					SubjectKey:  keyword,
+					Name:        keyword,
+					RawValue:    keyword,
+					Value:       count,
+					Occurrences: count,
+					Attributes: map[string]interface{}{
+						"keyword":     keyword,
+						"occurrences": count,
+					},
+					ObservedAt: time.Now().UTC(),
 				},
-				ObservedAt: time.Now().UTC(),
-			},
-		)
+			)
+		}
 	}
 
 	return emitIndexedArtifactsStandalone(db, currCfg, timeSeriesInputs)
