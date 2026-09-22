@@ -1797,26 +1797,48 @@ func canonicalKeyword(keyword string) string {
 	return strings.ToLower(norm.NFC.String(keyword))
 }
 
-func insertKeyword(tx *sql.Tx, keyword string) (int, error) {
+func insertKeyword(db cdb.Handler, keyword string) (int, error) {
 	keyword = canonicalKeyword(keyword)
 	if keyword == "" {
 		return 0, fmt.Errorf("invalid keyword")
 	}
 
-	// Serialize per keyword.
-	if _, err := tx.Exec(`SELECT pg_advisory_xact_lock(hashtext($1))`, keyword); err != nil {
+	var keywordID int
+
+	// Try to insert the keyword. ON CONFLICT DO NOTHING avoids rewriting
+	// an existing keyword row just to retrieve its ID.
+	err := db.QueryRow(`
+		INSERT INTO Keywords (keyword)
+		VALUES ($1)
+		ON CONFLICT (keyword) DO UPDATE
+		SET keyword = EXCLUDED.keyword
+		WHERE Keywords.last_updated_at <
+			CURRENT_TIMESTAMP - INTERVAL '30 seconds'
+		RETURNING keyword_id;`,
+		keyword,
+	).Scan(&keywordID)
+
+	if err == nil {
+		return keywordID, nil
+	}
+
+	if !errors.Is(err, sql.ErrNoRows) {
 		return 0, err
 	}
 
-	var keywordID int
-	err := tx.QueryRow(`
-		INSERT INTO Keywords (keyword)
-		VALUES ($1)
-		ON CONFLICT (keyword) DO UPDATE SET keyword = EXCLUDED.keyword
-		RETURNING keyword_id`, keyword).Scan(&keywordID)
+	// Another worker already inserted the keyword, or inserted it while this
+	// worker was attempting the INSERT. This is a separate statement, so under
+	// PostgreSQL READ COMMITTED it sees the newly committed row.
+	err = db.QueryRow(`
+		SELECT keyword_id
+		FROM Keywords
+		WHERE LOWER(keyword) = $1`,
+		keyword,
+	).Scan(&keywordID)
 	if err != nil {
 		return 0, err
 	}
+
 	return keywordID, nil
 }
 
@@ -1845,8 +1867,18 @@ func insertKeywords(db cdb.Handler, indexID uint64, pageInfo *PageInfo) error {
 	return insertKeywordsWithTimeSeries(db, indexID, pageInfo, nil)
 }
 
-func insertKeywordsWithTimeSeries(db cdb.Handler, indexID uint64, pageInfo *PageInfo, currCfg *cfg.Config) error {
-	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Inserting keywords for indexID: %d", indexID)
+func insertKeywordsWithTimeSeries(
+	db cdb.Handler,
+	indexID uint64,
+	pageInfo *PageInfo,
+	currCfg *cfg.Config,
+) error {
+	cmn.DebugMsg(
+		cmn.DbgLvlDebug4,
+		"[DEBUG-Indexing] Inserting keywords for indexID: %d",
+		indexID,
+	)
+
 	occurrences := make(map[string]int64, len(pageInfo.Keywords))
 	for _, keyword := range pageInfo.Keywords {
 		if normalized := canonicalKeyword(keyword); normalized != "" {
@@ -1857,72 +1889,93 @@ func insertKeywordsWithTimeSeries(db cdb.Handler, indexID uint64, pageInfo *Page
 	// Preserve the existing normalized/sorted PageInfo behavior.
 	pageInfo.Keywords = uniqueStrings(pageInfo.Keywords)
 	sort.Strings(pageInfo.Keywords)
+
 	ordered := make([]string, 0, len(occurrences))
 	seen := make(map[string]struct{}, len(occurrences))
+
 	for _, keyword := range pageInfo.Keywords {
 		normalized := canonicalKeyword(keyword)
 		if normalized == "" {
 			continue
 		}
+
 		if _, ok := seen[normalized]; ok {
 			continue
 		}
+
 		seen[normalized] = struct{}{}
 		ordered = append(ordered, normalized)
 	}
 
-	// Keywords are intentionally stored in their own transaction, after the
-	// main page transaction has committed.
-	tx, err := db.Begin()
-	if err != nil {
-		return fmt.Errorf("starting keyword transaction: %w", err)
+	//emitter := newCrawlerIndexedArtifactEmitter(db, currCfg)
+	collectTimeSeries := currCfg != nil && currCfg.TimeSeries.Enabled
+
+	var timeSeriesInputs []tse.IndexedArtifactInput
+	if collectTimeSeries {
+		timeSeriesInputs = make(
+			[]tse.IndexedArtifactInput,
+			0,
+			len(ordered),
+		)
 	}
 
-	emitter := newCrawlerIndexedArtifactEmitter(tx, currCfg)
 	for _, keyword := range ordered {
-		keywordID, err := insertKeyword(tx, keyword)
+		keywordID, err := insertKeyword(db, keyword)
 		if err != nil {
 			return err
 		}
+
 		count := occurrences[keyword]
 		if count < 1 {
 			count = 1
 		}
+
 		var keywordIndexID uint64
 		var storedOccurrences sql.NullInt64
-		err = tx.QueryRow(`
+
+		err = db.QueryRow(`
 			INSERT INTO KeywordIndex (keyword_id, index_id, occurrences)
 			VALUES ($1, $2, $3)
-			ON CONFLICT (keyword_id, index_id) DO UPDATE SET occurrences = EXCLUDED.occurrences
-			RETURNING keyword_index_id, occurrences`, keywordID, indexID, count).Scan(&keywordIndexID, &storedOccurrences)
+			ON CONFLICT (keyword_id, index_id)
+			DO UPDATE SET occurrences = EXCLUDED.occurrences
+			RETURNING keyword_index_id, occurrences`,
+			keywordID,
+			indexID,
+			count,
+		).Scan(&keywordIndexID, &storedOccurrences)
 		if err != nil {
 			return err
 		}
+
 		count = 1
 		if storedOccurrences.Valid {
 			count = storedOccurrences.Int64
 		}
-		if emitter != nil {
-			err = emitter.EmitIndexedArtifact(tse.IndexedArtifactInput{
-				SourceKind: cfg.TimeSeriesSourceKeyword, IndexID: indexID,
-				RowID: uint64(keywordID), LinkID: keywordIndexID,
-				SubjectKey: keyword, Name: keyword, RawValue: keyword, Value: count,
-				Occurrences: count,
-				Attributes:  map[string]interface{}{"keyword": keyword, "occurrences": count},
-				ObservedAt:  time.Now().UTC(),
-			})
-			if err != nil {
-				return err
-			}
+
+		if collectTimeSeries {
+			timeSeriesInputs = append(
+				timeSeriesInputs,
+				tse.IndexedArtifactInput{
+					SourceKind:  cfg.TimeSeriesSourceKeyword,
+					IndexID:     indexID,
+					RowID:       uint64(keywordID),
+					LinkID:      keywordIndexID,
+					SubjectKey:  keyword,
+					Name:        keyword,
+					RawValue:    keyword,
+					Value:       count,
+					Occurrences: count,
+					Attributes: map[string]interface{}{
+						"keyword":     keyword,
+						"occurrences": count,
+					},
+					ObservedAt: time.Now().UTC(),
+				},
+			)
 		}
 	}
 
-	if err := commitTransaction(tx); err != nil {
-		rollbackTransaction(tx)
-		return err
-	}
-
-	return nil
+	return emitIndexedArtifactsStandalone(db, currCfg, timeSeriesInputs)
 }
 
 // rollbackTransaction rolls back a transaction.
