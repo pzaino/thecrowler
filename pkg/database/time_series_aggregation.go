@@ -202,19 +202,16 @@ func RunTimeSeriesAggregation(
 	}
 
 	timeSeriesAggregationMutex.Lock()
-	defer timeSeriesAggregationMutex.Unlock()
-
 	lease, err := acquireTimeSeriesAggregationLease(ctx, db, dbms)
 	if err != nil {
+		timeSeriesAggregationMutex.Unlock()
 		return result, err
 	}
 	defer func() {
+		defer timeSeriesAggregationMutex.Unlock()
+
 		if releaseErr := lease.release(); releaseErr != nil {
-			if err == nil {
-				err = releaseErr
-			} else {
-				err = errors.Join(err, releaseErr)
-			}
+			err = errors.Join(err, releaseErr)
 		}
 	}()
 

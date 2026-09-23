@@ -71,6 +71,66 @@ func TestPostgresTimeSeriesAggregationLeaseClosesWhenAlreadyOwned(t *testing.T) 
 	}
 }
 
+func TestRunTimeSeriesAggregationStopsWhenPostgresLeaseAlreadyOwned(t *testing.T) {
+	database, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close() //nolint:errcheck
+
+	handler := Handler(&PostgresHandler{db: database, dbms: DBPostgresStr})
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT pg_try_advisory_lock(hashtext($1))`)).
+		WithArgs(timeSeriesAggregationLockKey).
+		WillReturnRows(sqlmock.NewRows([]string{"acquired"}).AddRow(false))
+
+	_, err = RunTimeSeriesAggregation(
+		context.Background(),
+		&handler,
+		TimeSeriesAggregationOptions{},
+	)
+	if !errors.Is(err, ErrTimeSeriesAggregationRunning) {
+		t.Fatalf("error = %v, want ErrTimeSeriesAggregationRunning", err)
+	}
+	if err = mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("aggregation accessed data after lease rejection: %v", err)
+	}
+}
+
+func TestRunTimeSeriesAggregationJoinsWorkAndLeaseReleaseErrors(t *testing.T) {
+	database, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close() //nolint:errcheck
+
+	workErr := errors.New("metric query failed")
+	releaseErr := errors.New("advisory unlock failed")
+	handler := Handler(&PostgresHandler{db: database, dbms: DBPostgresStr})
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT pg_try_advisory_lock(hashtext($1))`)).
+		WithArgs(timeSeriesAggregationLockKey).
+		WillReturnRows(sqlmock.NewRows([]string{"acquired"}).AddRow(true))
+	mock.ExpectQuery(`SELECT .* FROM TimeSeriesMetrics`).
+		WillReturnError(workErr)
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT pg_advisory_unlock(hashtext($1))`)).
+		WithArgs(timeSeriesAggregationLockKey).
+		WillReturnError(releaseErr)
+
+	_, err = RunTimeSeriesAggregation(
+		context.Background(),
+		&handler,
+		TimeSeriesAggregationOptions{},
+	)
+	if !errors.Is(err, workErr) {
+		t.Fatalf("error = %v, want original work error", err)
+	}
+	if !errors.Is(err, releaseErr) {
+		t.Fatalf("error = %v, want lease release error", err)
+	}
+	if err = mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestTimeSeriesAggregationPercentilesDeterministic(t *testing.T) {
 	values := []float64{1, 2, 3, 4, 5}
 	for percentile, want := range map[float64]float64{.50: 3, .75: 4, .90: 4.6, .95: 4.8, .99: 4.96} {
