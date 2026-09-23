@@ -22,6 +22,8 @@ import (
 
 const timeSeriesAggregationLockKey = "crowler:timeseries:aggregation"
 
+const timeSeriesAggregationReleaseTimeout = 5 * time.Second
+
 var (
 	// ErrTimeSeriesAggregationRunning indicates that another worker owns the aggregation lease.
 	ErrTimeSeriesAggregationRunning = errors.New("time-series aggregation already running")
@@ -81,6 +83,75 @@ type timeSeriesAggregateAccumulator struct {
 	lastTime  time.Time
 }
 
+// timeSeriesAggregationLease owns the dedicated PostgreSQL session on which
+// the advisory lock was acquired. PostgreSQL session locks must be released on
+// that exact connection.
+type timeSeriesAggregationLease struct {
+	conn *sql.Conn
+	key  string
+}
+
+func acquireTimeSeriesAggregationLease(ctx context.Context, db *Handler, dbms string) (*timeSeriesAggregationLease, error) {
+	lease := &timeSeriesAggregationLease{key: timeSeriesAggregationLockKey}
+	if dbms != DBPostgresStr {
+		return lease, nil
+	}
+
+	provider, ok := (*db).(DedicatedConnectionProvider)
+	if !ok {
+		return nil, fmt.Errorf("acquire aggregation lease: PostgreSQL handler does not provide dedicated connections")
+	}
+
+	conn, err := provider.Conn(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("reserve aggregation lease connection: %w", err)
+	}
+	lease.conn = conn
+
+	var acquired bool
+	err = conn.QueryRowContext(ctx, `SELECT pg_try_advisory_lock(hashtext($1))`, lease.key).Scan(&acquired)
+	if err != nil {
+		closeErr := conn.Close()
+		if closeErr != nil {
+			return nil, errors.Join(err, fmt.Errorf("close aggregation lease connection: %w", closeErr))
+		}
+		return nil, err
+	}
+	if !acquired {
+		closeErr := conn.Close()
+		if closeErr != nil {
+			return nil, errors.Join(ErrTimeSeriesAggregationRunning, fmt.Errorf("close aggregation lease connection: %w", closeErr))
+		}
+		return nil, ErrTimeSeriesAggregationRunning
+	}
+
+	return lease, nil
+}
+
+func (lease *timeSeriesAggregationLease) release() error {
+	if lease == nil || lease.conn == nil {
+		return nil
+	}
+
+	releaseCtx, cancel := context.WithTimeout(context.Background(), timeSeriesAggregationReleaseTimeout)
+	defer cancel()
+
+	var unlocked bool
+	unlockErr := lease.conn.QueryRowContext(releaseCtx, `SELECT pg_advisory_unlock(hashtext($1))`, lease.key).Scan(&unlocked)
+	if unlockErr == nil && !unlocked {
+		unlockErr = errors.New("aggregation advisory lock was not owned by the retained connection")
+	}
+	if unlockErr != nil {
+		unlockErr = fmt.Errorf("release aggregation lease: %w", unlockErr)
+	}
+
+	closeErr := lease.conn.Close()
+	if closeErr != nil {
+		closeErr = fmt.Errorf("close aggregation lease connection: %w", closeErr)
+	}
+	return errors.Join(unlockErr, closeErr)
+}
+
 // AggregateTimeSeriesRange recomputes complete buckets intersecting an explicit range.
 // Existing rows in those buckets are replaced in one transaction, which also repairs
 // groups whose entity or other scope assignment changed after their first aggregation.
@@ -132,6 +203,20 @@ func RunTimeSeriesAggregation(
 
 	timeSeriesAggregationMutex.Lock()
 	defer timeSeriesAggregationMutex.Unlock()
+
+	lease, err := acquireTimeSeriesAggregationLease(ctx, db, dbms)
+	if err != nil {
+		return result, err
+	}
+	defer func() {
+		if releaseErr := lease.release(); releaseErr != nil {
+			if err == nil {
+				err = releaseErr
+			} else {
+				err = errors.Join(err, releaseErr)
+			}
+		}
+	}()
 
 	metrics, err := ListTimeSeriesMetrics(
 		db,
@@ -824,14 +909,6 @@ func timeSeriesObservationBasis(observation TimeSeriesObservation, basis cfg.Tim
 
 func acquireTimeSeriesAggregationLock(ctx context.Context, tx *sql.Tx, dbms string) error {
 	switch dbms {
-	case DBPostgresStr:
-		var acquired bool
-		if err := tx.QueryRowContext(ctx, `SELECT pg_try_advisory_xact_lock(hashtext($1))`, timeSeriesAggregationLockKey).Scan(&acquired); err != nil {
-			return err
-		}
-		if !acquired {
-			return ErrTimeSeriesAggregationRunning
-		}
 	case DBMySQLStr:
 		var acquired sql.NullInt64
 		if err := tx.QueryRowContext(ctx, `SELECT GET_LOCK(?, 0)`, timeSeriesAggregationLockKey).Scan(&acquired); err != nil {

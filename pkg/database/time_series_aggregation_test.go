@@ -2,13 +2,74 @@ package database
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
+	"regexp"
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
+
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
+
+func TestPostgresTimeSeriesAggregationLeaseUsesRetainedConnection(t *testing.T) {
+	database, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close() //nolint:errcheck
+
+	handler := Handler(&PostgresHandler{db: database, dbms: DBPostgresStr})
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT pg_try_advisory_lock(hashtext($1))`)).
+		WithArgs(timeSeriesAggregationLockKey).
+		WillReturnRows(sqlmock.NewRows([]string{"acquired"}).AddRow(true))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT pg_advisory_unlock(hashtext($1))`)).
+		WithArgs(timeSeriesAggregationLockKey).
+		WillReturnRows(sqlmock.NewRows([]string{"unlocked"}).AddRow(true))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	lease, err := acquireTimeSeriesAggregationLease(ctx, &handler, DBPostgresStr)
+	if err != nil {
+		t.Fatalf("acquire lease: %v", err)
+	}
+	cancel()
+	if err = lease.release(); err != nil {
+		t.Fatalf("release lease after aggregation context cancellation: %v", err)
+	}
+	if err = mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPostgresTimeSeriesAggregationLeaseClosesWhenAlreadyOwned(t *testing.T) {
+	database, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close() //nolint:errcheck
+
+	database.SetMaxOpenConns(1)
+	handler := Handler(&PostgresHandler{db: database, dbms: DBPostgresStr})
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT pg_try_advisory_lock(hashtext($1))`)).
+		WithArgs(timeSeriesAggregationLockKey).
+		WillReturnRows(sqlmock.NewRows([]string{"acquired"}).AddRow(false))
+
+	lease, err := acquireTimeSeriesAggregationLease(context.Background(), &handler, DBPostgresStr)
+	if lease != nil {
+		t.Fatal("lease returned when advisory lock was already owned")
+	}
+	if !errors.Is(err, ErrTimeSeriesAggregationRunning) {
+		t.Fatalf("error = %v, want ErrTimeSeriesAggregationRunning", err)
+	}
+	if stats := database.Stats(); stats.InUse != 0 {
+		t.Fatalf("reserved connection remains in use: %+v", stats)
+	}
+	if err = mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestTimeSeriesAggregationPercentilesDeterministic(t *testing.T) {
 	values := []float64{1, 2, 3, 4, 5}
