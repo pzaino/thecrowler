@@ -20,6 +20,8 @@ import (
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
 
+const timeSeriesAggregationLockKey = "crowler:timeseries:aggregation"
+
 var (
 	// ErrTimeSeriesAggregationRunning indicates that another worker owns the aggregation lease.
 	ErrTimeSeriesAggregationRunning = errors.New("time-series aggregation already running")
@@ -507,7 +509,6 @@ func aggregateTimeSeriesWindow(
 		ctx,
 		tx,
 		dbms,
-		runKey,
 	); err != nil {
 		return result, err
 	}
@@ -574,7 +575,7 @@ func aggregateTimeSeriesWindow(
 		if _, err = tx.ExecContext(
 			ctx,
 			`DO RELEASE_LOCK(?)`,
-			runKey,
+			timeSeriesAggregationLockKey,
 		); err != nil {
 			return result, fmt.Errorf(
 				"release aggregation lock: %w",
@@ -821,11 +822,11 @@ func timeSeriesObservationBasis(observation TimeSeriesObservation, basis cfg.Tim
 	return time.Time{}, false
 }
 
-func acquireTimeSeriesAggregationLock(ctx context.Context, tx *sql.Tx, dbms, key string) error {
+func acquireTimeSeriesAggregationLock(ctx context.Context, tx *sql.Tx, dbms string) error {
 	switch dbms {
 	case DBPostgresStr:
 		var acquired bool
-		if err := tx.QueryRowContext(ctx, `SELECT pg_try_advisory_xact_lock(hashtext($1))`, key).Scan(&acquired); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT pg_try_advisory_xact_lock(hashtext($1))`, timeSeriesAggregationLockKey).Scan(&acquired); err != nil {
 			return err
 		}
 		if !acquired {
@@ -833,7 +834,7 @@ func acquireTimeSeriesAggregationLock(ctx context.Context, tx *sql.Tx, dbms, key
 		}
 	case DBMySQLStr:
 		var acquired sql.NullInt64
-		if err := tx.QueryRowContext(ctx, `SELECT GET_LOCK(?, 0)`, key).Scan(&acquired); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT GET_LOCK(?, 0)`, timeSeriesAggregationLockKey).Scan(&acquired); err != nil {
 			return err
 		}
 		if !acquired.Valid || acquired.Int64 != 1 {
