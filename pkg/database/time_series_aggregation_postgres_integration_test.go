@@ -5,7 +5,6 @@ package database
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -92,6 +91,14 @@ func assertPostgresAggregationUnchanged(t *testing.T, db *Handler, metricID uint
 	if err != nil || !checkpointAfter.Equal(checkpointBefore) {
 		t.Fatalf("checkpoint after rejected worker = %s, %v; want %s", checkpointAfter, err, checkpointBefore)
 	}
+	var status string
+	var lastError sql.NullString
+	if err = (*db).QueryRow(`SELECT status, last_error FROM TimeSeriesAggregationRuns WHERE run_key = $1`, runKey).Scan(&status, &lastError); err != nil {
+		t.Fatalf("read aggregation run after rejected worker: %v", err)
+	}
+	if status != "complete" || lastError.Valid {
+		t.Fatalf("aggregation run after rejected worker = status %q, last_error %#v; want unchanged complete state", status, lastError)
+	}
 	aggregates, err := QueryTimeSeriesAggregates(db, TimeSeriesQueryFilter{MetricID: &metricID})
 	if err != nil || aggregates.Count != 0 {
 		t.Fatalf("aggregates after rejected worker = %d, %v; want no replacement", aggregates.Count, err)
@@ -109,8 +116,8 @@ func TestPostgresTimeSeriesAggregationSameRunKeyContention(t *testing.T) {
 		t.Fatalf("worker A acquire lease: %v", err)
 	}
 	resultB, err := RunTimeSeriesAggregation(context.Background(), db, TimeSeriesAggregationOptions{Range: &rangeToRun, RunKey: runKey})
-	if !errors.Is(err, ErrTimeSeriesAggregationRunning) {
-		t.Fatalf("worker B error = %v, want ErrTimeSeriesAggregationRunning", err)
+	if err != ErrTimeSeriesAggregationRunning {
+		t.Fatalf("worker B error = %v, want unchanged ErrTimeSeriesAggregationRunning", err)
 	}
 	if resultB.AggregatesReplaced != 0 {
 		t.Fatalf("worker B replaced %d aggregates, want 0", resultB.AggregatesReplaced)
@@ -150,8 +157,8 @@ func TestPostgresTimeSeriesAggregationLeaseIsGlobalAcrossRunKeys(t *testing.T) {
 	}
 	defer func() { _ = workerA.release() }()
 	result, err := RunTimeSeriesAggregation(context.Background(), db, TimeSeriesAggregationOptions{Range: &rangeToRun, RunKey: otherRunKey})
-	if !errors.Is(err, ErrTimeSeriesAggregationRunning) {
-		t.Fatalf("worker with RunKey %q error = %v, want ErrTimeSeriesAggregationRunning while %q owns lease", otherRunKey, err, workerARunKey)
+	if err != ErrTimeSeriesAggregationRunning {
+		t.Fatalf("worker with RunKey %q error = %v, want unchanged ErrTimeSeriesAggregationRunning while %q owns lease", otherRunKey, err, workerARunKey)
 	}
 	if result.AggregatesReplaced != 0 {
 		t.Fatalf("second worker replaced %d aggregates, want 0", result.AggregatesReplaced)

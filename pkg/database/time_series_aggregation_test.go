@@ -123,12 +123,37 @@ func TestRunTimeSeriesAggregationLeaseContentionIsIndependentOfRunKey(t *testing
 			&handler,
 			TimeSeriesAggregationOptions{RunKey: runKey},
 		)
-		if !errors.Is(err, ErrTimeSeriesAggregationRunning) {
-			t.Fatalf("RunKey %q: error = %v, want ErrTimeSeriesAggregationRunning", runKey, err)
+		if err != ErrTimeSeriesAggregationRunning {
+			t.Fatalf("RunKey %q: error = %v, want unchanged ErrTimeSeriesAggregationRunning", runKey, err)
 		}
 	}
 	if err = mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("aggregation accessed metrics, checkpoints, observations, or replacements after lease rejection: %v", err)
+		t.Fatalf("losing worker read or updated its checkpoint, wrote failed state, or accessed aggregation data: %v", err)
+	}
+}
+
+func TestRecordTimeSeriesAggregationFailureIgnoresContention(t *testing.T) {
+	database, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close() //nolint:errcheck
+
+	handler := Handler(&PostgresHandler{db: database, dbms: DBPostgresStr})
+	runErr := fmt.Errorf("lease acquisition: %w", ErrTimeSeriesAggregationRunning)
+	err = recordTimeSeriesAggregationFailure(
+		&handler,
+		DBPostgresStr,
+		"losing-worker",
+		TimeSeriesRange{Start: time.Now().Add(-time.Hour), End: time.Now()},
+		time.Now().Add(-2*time.Hour),
+		runErr,
+	)
+	if err != nil {
+		t.Fatalf("record contention failure: %v", err)
+	}
+	if err = mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("contention wrote a failed run state or checkpoint: %v", err)
 	}
 }
 
