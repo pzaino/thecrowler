@@ -93,8 +93,16 @@ type timeSeriesAggregationLease struct {
 
 func acquireTimeSeriesAggregationLease(ctx context.Context, db *Handler, dbms string) (*timeSeriesAggregationLease, error) {
 	lease := &timeSeriesAggregationLease{key: timeSeriesAggregationLockKey}
-	if dbms != DBPostgresStr {
+	switch dbms {
+	case DBSQLiteStr:
+		// SQLite aggregation is serialized only by timeSeriesAggregationMutex.
+		// This no-op lease does not coordinate aggregation across processes.
 		return lease, nil
+	case DBPostgresStr:
+		// PostgreSQL advisory locks belong to a session, so retain one
+		// dedicated connection for the entire aggregation invocation.
+	default:
+		return nil, fmt.Errorf("unsupported database type for time-series aggregation lease: %s", dbms)
 	}
 
 	provider, ok := (*db).(DedicatedConnectionProvider)

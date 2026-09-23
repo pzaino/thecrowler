@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -68,6 +69,39 @@ func TestPostgresTimeSeriesAggregationLeaseClosesWhenAlreadyOwned(t *testing.T) 
 	}
 	if err = mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSQLiteTimeSeriesAggregationLeaseIsProcessLocalNoOp(t *testing.T) {
+	database, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close() //nolint:errcheck
+
+	handler := Handler(&SQLiteHandler{db: database, dbms: DBSQLiteStr})
+	lease, err := acquireTimeSeriesAggregationLease(context.Background(), &handler, DBSQLiteStr)
+	if err != nil {
+		t.Fatalf("acquire SQLite lease: %v", err)
+	}
+	if lease == nil || lease.conn != nil {
+		t.Fatalf("SQLite lease = %#v, want non-nil no-op lease", lease)
+	}
+	if err = lease.release(); err != nil {
+		t.Fatalf("release SQLite lease: %v", err)
+	}
+	if err = mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("SQLite lease unexpectedly accessed the database: %v", err)
+	}
+}
+
+func TestTimeSeriesAggregationLeaseRejectsUnsupportedDBMS(t *testing.T) {
+	lease, err := acquireTimeSeriesAggregationLease(context.Background(), nil, DBMySQLStr)
+	if lease != nil {
+		t.Fatalf("lease = %#v, want nil", lease)
+	}
+	if err == nil || !strings.Contains(err.Error(), "unsupported database type for time-series aggregation lease: mysql") {
+		t.Fatalf("error = %v, want explicit unsupported-DBMS error", err)
 	}
 }
 
