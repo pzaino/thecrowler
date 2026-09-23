@@ -918,19 +918,21 @@ func recordTimeSeriesAggregationRun(ctx context.Context, tx *sql.Tx, dbms, key s
 		query += `
 			ON DUPLICATE KEY UPDATE
 				status = VALUES(status),
+				checkpoint_at = VALUES(checkpoint_at),
 				range_start = VALUES(range_start),
 				range_end = VALUES(range_end),
 				last_error = VALUES(last_error),
-				completed_at = NULL,
+				completed_at = CURRENT_TIMESTAMP,
 				last_updated_at = CURRENT_TIMESTAMP`
 	} else {
 		query += `
 			ON CONFLICT (run_key) DO UPDATE SET
 				status = excluded.status,
+				checkpoint_at = excluded.checkpoint_at,
 				range_start = excluded.range_start,
 				range_end = excluded.range_end,
 				last_error = excluded.last_error,
-				completed_at = NULL,
+				completed_at = CURRENT_TIMESTAMP,
 				last_updated_at = CURRENT_TIMESTAMP`
 	}
 	_, err := tx.ExecContext(ctx, query, args...)

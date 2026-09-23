@@ -286,6 +286,80 @@ func TestTimeSeriesAggregationAllFunctionsAndLateObservation(t *testing.T) {
 	}
 }
 
+func TestTimeSeriesAggregationRepeatedRunKeepsCompletionTimestamp(t *testing.T) {
+	db, closeDB := openEntityTimeSeriesTestDB(t)
+	defer closeDB()
+
+	metric, err := UpsertTimeSeriesMetric(db, &TimeSeriesMetric{
+		Key:           "aggregation-repeated-completion",
+		DisplayName:   "aggregation-repeated-completion",
+		SourceKind:    cfg.TimeSeriesSourceCustom,
+		ValueType:     cfg.TimeSeriesValueDecimal,
+		Aggregate:     cfg.TimeSeriesAggregateAverage,
+		Bucket:        cfg.TimeSeriesBucketOneHour,
+		TimeBasis:     cfg.TimeSeriesTimeObservedAt,
+		DedupeScope:   cfg.TimeSeriesDedupeGlobal,
+		ObjectType:    cfg.TimeSeriesObjectWebObject,
+		FailurePolicy: cfg.TimeSeriesFailureLogSkip,
+		Selector:      []byte(`{}`),
+		Enabled:       true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	start := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	value := 3.5
+	if _, err = InsertTimeSeriesObservation(db, &TimeSeriesObservation{
+		MetricID:    metric.ID,
+		ObservedAt:  start.Add(time.Minute),
+		CollectedAt: start.Add(time.Minute),
+		BucketStart: start,
+		BucketEnd:   start.Add(time.Hour),
+		Value:       TimeSeriesValue{Numeric: &value},
+		ValueHash:   "repeated-completion-value",
+		DedupeKey:   "repeated-completion-observation",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	const runKey = "test-repeated-completion"
+	checkpoints := []time.Time{start.Add(30 * time.Minute), start.Add(45 * time.Minute)}
+	for i, wantCheckpoint := range checkpoints {
+		result, runErr := RunTimeSeriesAggregation(context.Background(), db, TimeSeriesAggregationOptions{
+			BatchSize:  10,
+			MaxBatches: 1,
+			Now:        wantCheckpoint,
+			RunKey:     runKey,
+		})
+		if runErr != nil {
+			t.Fatalf("aggregation %d: %v", i+1, runErr)
+		}
+		if !result.Checkpoint.Equal(wantCheckpoint) {
+			t.Fatalf("aggregation %d checkpoint = %s, want %s", i+1, result.Checkpoint, wantCheckpoint)
+		}
+
+		var status string
+		var checkpoint time.Time
+		var hasCompletedAt bool
+		if err = (*db).QueryRow(`
+			SELECT status, checkpoint_at, completed_at IS NOT NULL
+			FROM TimeSeriesAggregationRuns
+			WHERE run_key = ?`, runKey).Scan(&status, &checkpoint, &hasCompletedAt); err != nil {
+			t.Fatalf("read aggregation %d run state: %v", i+1, err)
+		}
+		if status != "completed" {
+			t.Fatalf("aggregation %d status = %q, want completed", i+1, status)
+		}
+		if !checkpoint.Equal(wantCheckpoint) {
+			t.Fatalf("aggregation %d stored checkpoint = %s, want %s", i+1, checkpoint, wantCheckpoint)
+		}
+		if !hasCompletedAt {
+			t.Fatalf("aggregation %d completed_at is NULL", i+1)
+		}
+	}
+}
+
 func TestTimeSeriesRetentionDryRunAndMetricOverride(t *testing.T) {
 	db, closeDB := openEntityTimeSeriesTestDB(t)
 	defer closeDB()
