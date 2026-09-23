@@ -27,7 +27,22 @@ const timeSeriesAggregationReleaseTimeout = 5 * time.Second
 const (
 	timeSeriesReplacementMaxAttempts = 3
 	timeSeriesReplacementRetryDelay  = 10 * time.Millisecond
+	// Each aggregate contributes 48 bind parameters. The maximum 250-row
+	// statement uses 12,000 parameters, comfortably below PostgreSQL's 65,535
+	// parameter limit and SQLite's 32,766 default.
+	timeSeriesAggregateUpsertMaxBatchSize = 250
+	timeSeriesSQLiteUpsertBatchSize       = 10
 )
+
+func timeSeriesAggregateUpsertBatchSize(dbms string) int {
+	// Local SQLite benchmarks show its large-statement parsing cost overtakes
+	// round-trip savings above small batches. PostgreSQL benefits from amortizing
+	// client/server round trips and remains well inside its parameter limit.
+	if dbms == DBSQLiteStr {
+		return timeSeriesSQLiteUpsertBatchSize
+	}
+	return timeSeriesAggregateUpsertMaxBatchSize
+}
 
 var (
 	// ErrTimeSeriesAggregationRunning indicates that another worker owns the aggregation lease.
@@ -626,7 +641,13 @@ func replaceTimeSeriesAggregates(ctx context.Context, db *Handler, dbms string, 
 		}
 		defer func() { _ = tx.Rollback() }()
 
-		for metricID, metricRange := range metricRanges {
+		metricIDs := make([]uint64, 0, len(metricRanges))
+		for metricID := range metricRanges {
+			metricIDs = append(metricIDs, metricID)
+		}
+		sort.Slice(metricIDs, func(i, j int) bool { return metricIDs[i] < metricIDs[j] })
+		for _, metricID := range metricIDs {
+			metricRange := metricRanges[metricID]
 			p := newInformationSeedPlaceholders(dbms)
 			if _, err = tx.ExecContext(ctx, `DELETE FROM TimeSeriesAggregates
 				 WHERE metric_id = `+p.Next()+`
@@ -636,13 +657,15 @@ func replaceTimeSeriesAggregates(ctx context.Context, db *Handler, dbms string, 
 			}
 		}
 
-		for i := range computed {
-			query, args, buildErr := buildTimeSeriesAggregateUpsert(dbms, &computed[i])
+		upsertBatchSize := timeSeriesAggregateUpsertBatchSize(dbms)
+		for start := 0; start < len(computed); start += upsertBatchSize {
+			end := min(start+upsertBatchSize, len(computed))
+			query, args, buildErr := buildTimeSeriesAggregateBatchUpsert(dbms, computed[start:end])
 			if buildErr != nil {
 				return buildErr
 			}
 			if _, err = tx.ExecContext(ctx, query, args...); err != nil {
-				return fmt.Errorf("replace aggregate %s: %w", computed[i].AggregateHash, err)
+				return fmt.Errorf("replace aggregates %s through %s: %w", computed[start].AggregateHash, computed[end-1].AggregateHash, err)
 			}
 		}
 
@@ -1002,26 +1025,48 @@ func buildTimeSeriesAggregateUpsert(dbms string, a *TimeSeriesAggregate) (string
 		}
 		a.AggregateHash = hash
 	}
-	dimensions, err := optionalCanonicalJSON(a.Dimensions)
-	if err != nil {
-		return "", nil, err
+	return buildTimeSeriesAggregateBatchUpsert(dbms, []TimeSeriesAggregate{*a})
+}
+
+func buildTimeSeriesAggregateBatchUpsert(dbms string, aggregates []TimeSeriesAggregate) (string, []interface{}, error) {
+	if len(aggregates) == 0 || len(aggregates) > timeSeriesAggregateUpsertMaxBatchSize {
+		return "", nil, fmt.Errorf("time-series aggregate upsert batch size must be between 1 and %d", timeSeriesAggregateUpsertMaxBatchSize)
 	}
-	lastJSON := optionalRawJSONForAggregate(a.LastValueJSON)
-	args := []interface{}{a.MetricID, a.BucketStart.UTC(), a.BucketEnd.UTC(), a.Scope.InformationSeedID, a.Scope.InformationSeedCandidateID, a.Scope.SourceID, a.Scope.SourceInformationSeedID, a.Scope.IndexID, a.Scope.EntityID, nullableString(a.Scope.SubjectType), a.Scope.SubjectID, nullableString(a.Scope.ObjectType), a.Scope.ObjectID, a.Scope.CorrelationRuleID, nullableString(a.Scope.CorrelationObjectType1), a.Scope.CorrelationObjectID1, nullableString(a.Scope.CorrelationObjectType2), a.Scope.CorrelationObjectID2, dimensions, a.ValueCount, a.OccurrenceTotal, a.DistinctValueCount, a.NumericCount, a.NumericSum, a.NumericMin, a.NumericMax, a.NumericAverage, a.Percentile50, a.Percentile75, a.Percentile90, a.Percentile95, a.Percentile99, a.First.ObservationID, a.First.ObservedAt, a.First.ValueNumeric, a.First.ValueText, nullableString(a.First.ValueHash), a.Last.ObservationID, a.Last.ObservedAt, a.Last.ValueNumeric, a.Last.ValueText, nullableString(a.Last.ValueHash), a.LastValueBoolean, lastJSON, a.FirstSeenAt, a.LastSeenAt, a.ChangeCount, a.AggregateHash}
+	const parametersPerAggregate = 48
+	args := make([]interface{}, 0, len(aggregates)*parametersPerAggregate)
 	p := newInformationSeedPlaceholders(dbms)
-	values := make([]string, len(args))
-	for i := range values {
-		values[i] = p.Next()
-	}
-	if dbms == DBPostgresStr {
-		for _, i := range []int{18, 43} {
-			if args[i] != nil {
-				values[i] += "::jsonb"
+	rows := make([]string, 0, len(aggregates))
+	for i := range aggregates {
+		a := &aggregates[i]
+		if a.AggregateHash == "" {
+			hash, err := TimeSeriesAggregateHash(*a)
+			if err != nil {
+				return "", nil, err
+			}
+			a.AggregateHash = hash
+		}
+		dimensions, err := optionalCanonicalJSON(a.Dimensions)
+		if err != nil {
+			return "", nil, err
+		}
+		lastJSON := optionalRawJSONForAggregate(a.LastValueJSON)
+		rowArgs := []interface{}{a.MetricID, a.BucketStart.UTC(), a.BucketEnd.UTC(), a.Scope.InformationSeedID, a.Scope.InformationSeedCandidateID, a.Scope.SourceID, a.Scope.SourceInformationSeedID, a.Scope.IndexID, a.Scope.EntityID, nullableString(a.Scope.SubjectType), a.Scope.SubjectID, nullableString(a.Scope.ObjectType), a.Scope.ObjectID, a.Scope.CorrelationRuleID, nullableString(a.Scope.CorrelationObjectType1), a.Scope.CorrelationObjectID1, nullableString(a.Scope.CorrelationObjectType2), a.Scope.CorrelationObjectID2, dimensions, a.ValueCount, a.OccurrenceTotal, a.DistinctValueCount, a.NumericCount, a.NumericSum, a.NumericMin, a.NumericMax, a.NumericAverage, a.Percentile50, a.Percentile75, a.Percentile90, a.Percentile95, a.Percentile99, a.First.ObservationID, a.First.ObservedAt, a.First.ValueNumeric, a.First.ValueText, nullableString(a.First.ValueHash), a.Last.ObservationID, a.Last.ObservedAt, a.Last.ValueNumeric, a.Last.ValueText, nullableString(a.Last.ValueHash), a.LastValueBoolean, lastJSON, a.FirstSeenAt, a.LastSeenAt, a.ChangeCount, a.AggregateHash}
+		values := make([]string, len(rowArgs))
+		for i := range values {
+			values[i] = p.Next()
+		}
+		if dbms == DBPostgresStr {
+			for _, i := range []int{18, 43} {
+				if rowArgs[i] != nil {
+					values[i] += "::jsonb"
+				}
 			}
 		}
+		args = append(args, rowArgs...)
+		rows = append(rows, "("+strings.Join(values, ",")+")")
 	}
 	fields := []string{"metric_id", "bucket_start", "bucket_end", "information_seed_id", "information_seed_candidate_id", "source_id", "source_information_seed_id", "index_id", "entity_id", "subject_type", "subject_id", "object_type", "object_id", "correlation_rule_id", "correlation_object_type_1", "correlation_object_id_1", "correlation_object_type_2", "correlation_object_id_2", "dimensions", "value_count", "occurrence_total", "distinct_value_count", "numeric_count", "numeric_sum", "numeric_min", "numeric_max", "numeric_avg", "percentile_50", "percentile_75", "percentile_90", "percentile_95", "percentile_99", "first_observation_id", "first_observed_at", "first_value_numeric", "first_value_text", "first_value_hash", "last_observation_id", "last_observed_at", "last_value_numeric", "last_value_text", "last_value_hash", "last_value_boolean", "last_value_json", "first_seen_at", "last_seen_at", "change_count", "aggregate_hash"}
-	query := `INSERT INTO TimeSeriesAggregates (` + strings.Join(fields, ",") + `) VALUES (` + strings.Join(values, ",") + ")"
+	query := `INSERT INTO TimeSeriesAggregates (` + strings.Join(fields, ",") + `) VALUES ` + strings.Join(rows, ",")
 	updates := make([]string, 0, len(fields))
 	for _, field := range fields[:len(fields)-1] {
 		if dbms == DBMySQLStr {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -343,6 +344,151 @@ func TestTimeSeriesAggregationAllFunctionsAndLateObservation(t *testing.T) {
 	result, _ = QueryTimeSeriesAggregates(db, TimeSeriesQueryFilter{MetricID: &metric.ID, Pagination: TimeSeriesPagination{Limit: 10}})
 	if len(result.Aggregates) != 1 || result.Aggregates[0].ValueCount != 5 || *result.Aggregates[0].NumericSum != 20 {
 		t.Fatalf("late observation not incorporated: %#v", result.Aggregates)
+	}
+}
+
+func TestTimeSeriesAggregateBatchUpsertEquivalentToSingleRows(t *testing.T) {
+	type fixture struct {
+		db      *Handler
+		closeDB func()
+		metric  *TimeSeriesMetric
+	}
+	newFixture := func(key string) fixture {
+		db, closeDB := openEntityTimeSeriesTestDB(t)
+		metric, err := UpsertTimeSeriesMetric(db, &TimeSeriesMetric{Key: key, DisplayName: key, SourceKind: cfg.TimeSeriesSourceCustom, ValueType: cfg.TimeSeriesValueDecimal, Aggregate: cfg.TimeSeriesAggregateAverage, Bucket: cfg.TimeSeriesBucketOneHour, TimeBasis: cfg.TimeSeriesTimeObservedAt, DedupeScope: cfg.TimeSeriesDedupeObject, ObjectType: cfg.TimeSeriesObjectWebObject, FailurePolicy: cfg.TimeSeriesFailureLogSkip, Selector: []byte(`{}`), Enabled: true})
+		if err != nil {
+			closeDB()
+			t.Fatal(err)
+		}
+		return fixture{db: db, closeDB: closeDB, metric: metric}
+	}
+	single := newFixture("single-row-semantics")
+	defer single.closeDB()
+	batched := newFixture("batch-semantics")
+	defer batched.closeDB()
+
+	build := func(metricID uint64, late bool) []TimeSeriesAggregate {
+		start := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+		rows := make([]TimeSeriesAggregate, 0, 257)
+		for i := 0; i < 257; i++ { // crosses the production chunk boundary
+			first, last := float64(i)+0.25, float64(i)+9.75
+			count := int64(3 + i%5)
+			if late && i%17 == 0 {
+				count++
+				last += 100
+			}
+			objectID := uint64(i + 1)
+			firstAt, lastAt := start.Add(time.Minute), start.Add(59*time.Minute)
+			sum := first + last
+			avg := sum / 2
+			rows = append(rows, TimeSeriesAggregate{
+				MetricID: metricID, BucketStart: start, BucketEnd: start.Add(time.Hour),
+				Scope: TimeSeriesScope{ObjectType: "webobject", ObjectID: &objectID}, Dimensions: map[string]interface{}{"region": []interface{}{"us", i % 3}, "shard": i % 17},
+				ValueCount: count, OccurrenceTotal: float64(count + 2), DistinctValueCount: count - 1, NumericCount: 2,
+				NumericSum: &sum, NumericMin: &first, NumericMax: &last, NumericAverage: &avg,
+				Percentile50: &avg, Percentile75: &last, Percentile90: &last, Percentile95: &last, Percentile99: &last,
+				First:       TimeSeriesAggregateEdge{ObservedAt: &firstAt, ValueNumeric: &first, ValueHash: fmt.Sprintf("first-%d", i)},
+				Last:        TimeSeriesAggregateEdge{ObservedAt: &lastAt, ValueNumeric: &last, ValueHash: fmt.Sprintf("last-%d", i)},
+				FirstSeenAt: &firstAt, LastSeenAt: &lastAt, ChangeCount: int64(i % 4),
+			})
+		}
+		return rows
+	}
+	write := func(db *Handler, rows []TimeSeriesAggregate, batchSize int) {
+		t.Helper()
+		tx, err := (*db).BeginTx(context.Background(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback() //nolint:errcheck
+		for start := 0; start < len(rows); start += batchSize {
+			end := min(start+batchSize, len(rows))
+			query, args, buildErr := buildTimeSeriesAggregateBatchUpsert(DBSQLiteStr, rows[start:end])
+			if buildErr != nil {
+				t.Fatal(buildErr)
+			}
+			if _, err = tx.Exec(query, args...); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err = tx.Commit(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The first pass covers insert semantics; the second simulates late data and
+	// covers aggregate_hash conflict updates without changing group identity.
+	for _, late := range []bool{false, true} {
+		write(single.db, build(single.metric.ID, late), 1)
+		write(batched.db, build(batched.metric.ID, late), timeSeriesAggregateUpsertBatchSize(DBSQLiteStr))
+	}
+	read := func(f fixture) []TimeSeriesAggregate {
+		result, err := QueryTimeSeriesAggregates(f.db, TimeSeriesQueryFilter{MetricID: &f.metric.ID, Pagination: TimeSeriesPagination{Limit: 1000}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := range result.Aggregates {
+			a := &result.Aggregates[i]
+			a.ID, a.MetricID = 0, 0
+			a.CreatedAt, a.LastUpdatedAt = time.Time{}, time.Time{}
+		}
+		return result.Aggregates
+	}
+	if got, want := read(batched), read(single); !reflect.DeepEqual(got, want) {
+		t.Fatalf("batched aggregates differ from single-row semantics\ngot:  %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestTimeSeriesAggregateBatchUpsertIsBoundedAndUsesPostgresPlaceholders(t *testing.T) {
+	rows := make([]TimeSeriesAggregate, timeSeriesAggregateUpsertMaxBatchSize)
+	for i := range rows {
+		rows[i] = TimeSeriesAggregate{MetricID: 1, BucketStart: time.Unix(int64(i), 0), BucketEnd: time.Unix(int64(i+1), 0), AggregateHash: fmt.Sprintf("hash-%d", i)}
+	}
+	query, args, err := buildTimeSeriesAggregateBatchUpsert(DBPostgresStr, rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(args) != timeSeriesAggregateUpsertMaxBatchSize*48 || !strings.Contains(query, "$12000") || strings.Contains(query, "?") {
+		t.Fatalf("unexpected PostgreSQL batch: args=%d query suffix present=%t", len(args), strings.Contains(query, "$12000"))
+	}
+	if _, _, err = buildTimeSeriesAggregateBatchUpsert(DBPostgresStr, append(rows, TimeSeriesAggregate{})); err == nil {
+		t.Fatal("oversized batch was accepted")
+	}
+}
+
+func BenchmarkTimeSeriesAggregateUpsertRoundTrips(b *testing.B) {
+	for _, batchSize := range []int{1, 10, 50, 100, timeSeriesAggregateUpsertMaxBatchSize} {
+		b.Run(fmt.Sprintf("batch_%d", batchSize), func(b *testing.B) {
+			db, closeDB := openEntityTimeSeriesTestDB(b)
+			defer closeDB()
+			metric, err := UpsertTimeSeriesMetric(db, &TimeSeriesMetric{Key: fmt.Sprintf("benchmark-%d", batchSize), DisplayName: "benchmark", SourceKind: cfg.TimeSeriesSourceCustom, ValueType: cfg.TimeSeriesValueDecimal, Aggregate: cfg.TimeSeriesAggregateAverage, Bucket: cfg.TimeSeriesBucketOneHour, TimeBasis: cfg.TimeSeriesTimeObservedAt, DedupeScope: cfg.TimeSeriesDedupeGlobal, ObjectType: cfg.TimeSeriesObjectWebObject, FailurePolicy: cfg.TimeSeriesFailureLogSkip, Selector: []byte(`{}`), Enabled: true})
+			if err != nil {
+				b.Fatal(err)
+			}
+			rows := make([]TimeSeriesAggregate, timeSeriesAggregateUpsertMaxBatchSize)
+			for i := range rows {
+				rows[i] = TimeSeriesAggregate{MetricID: metric.ID, BucketStart: time.Unix(int64(i), 0), BucketEnd: time.Unix(int64(i+1), 0), AggregateHash: fmt.Sprintf("benchmark-%d", i), Dimensions: map[string]interface{}{"cardinality": i}}
+			}
+			b.ResetTimer()
+			for n := 0; n < b.N; n++ {
+				tx, beginErr := (*db).BeginTx(context.Background(), nil)
+				if beginErr != nil {
+					b.Fatal(beginErr)
+				}
+				for start := 0; start < len(rows); start += batchSize {
+					end := min(start+batchSize, len(rows))
+					query, args, buildErr := buildTimeSeriesAggregateBatchUpsert(DBSQLiteStr, rows[start:end])
+					if buildErr != nil {
+						b.Fatal(buildErr)
+					}
+					if _, execErr := tx.Exec(query, args...); execErr != nil {
+						b.Fatal(execErr)
+					}
+				}
+				if err = tx.Commit(); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }
 
