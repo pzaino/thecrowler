@@ -36,6 +36,12 @@ type ConnectionPoolController interface {
 	ConnectionStats() sql.DBStats
 }
 
+// DedicatedConnectionProvider is optionally implemented by handlers which own
+// a database/sql connection pool that can provide a dedicated connection.
+type DedicatedConnectionProvider interface {
+	Conn(context.Context) (*sql.Conn, error)
+}
+
 // ListenerEventType represents the type of event that the listener has received.
 type ListenerEventType int
 

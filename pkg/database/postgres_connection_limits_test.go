@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -9,6 +10,26 @@ import (
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
+
+func TestPostgresHandlerProvidesDedicatedConnections(t *testing.T) {
+	var _ DedicatedConnectionProvider = (*PostgresHandler)(nil)
+}
+
+func TestPostgresConnRejectsUninitializedPool(t *testing.T) {
+	for _, handler := range []*PostgresHandler{nil, {}} {
+		conn, err := handler.Conn(context.Background())
+		if err == nil {
+			if conn != nil {
+				_ = conn.Close()
+			}
+			t.Fatal("Conn() returned nil error for uninitialized PostgreSQL pool")
+		}
+		if conn != nil {
+			_ = conn.Close()
+			t.Fatal("Conn() returned a connection for uninitialized PostgreSQL pool")
+		}
+	}
+}
 
 func TestDetermineConnectionLimits(t *testing.T) {
 	tests := []struct {
