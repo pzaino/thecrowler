@@ -24,6 +24,11 @@ const timeSeriesAggregationLockKey = "crowler:timeseries:aggregation"
 
 const timeSeriesAggregationReleaseTimeout = 5 * time.Second
 
+const (
+	timeSeriesReplacementMaxAttempts = 3
+	timeSeriesReplacementRetryDelay  = 10 * time.Millisecond
+)
+
 var (
 	// ErrTimeSeriesAggregationRunning indicates that another worker owns the aggregation lease.
 	ErrTimeSeriesAggregationRunning = errors.New("time-series aggregation already running")
@@ -590,92 +595,102 @@ func aggregateTimeSeriesWindow(
 		return computed[i].AggregateHash < computed[j].AggregateHash
 	})
 
-	txOptions := &sql.TxOptions{}
-
-	if dbms == DBPostgresStr {
-		txOptions.Isolation = sql.LevelReadCommitted
-	}
-
-	tx, err := (*db).BeginTx(
-		ctx,
-		txOptions,
-	)
-	if err != nil {
-		return result, fmt.Errorf(
-			"begin aggregation replacement: %w",
-			err,
-		)
-	}
-	defer func() {
-		_ = tx.Rollback()
-	}()
-
-	for metricID, metricRange := range metricRanges {
-		p := newInformationSeedPlaceholders(dbms)
-
-		if _, err = tx.ExecContext(
-			ctx,
-			`DELETE FROM TimeSeriesAggregates
-			 WHERE metric_id = `+p.Next()+`
-			   AND bucket_start < `+p.Next()+`
-			   AND bucket_end > `+p.Next(),
-			metricID,
-			metricRange.End,
-			metricRange.Start,
-		); err != nil {
-			return result, fmt.Errorf(
-				"delete affected aggregates: %w",
-				err,
-			)
-		}
-	}
-
-	for i := range computed {
-		query, args, buildErr := buildTimeSeriesAggregateUpsert(
-			dbms,
-			&computed[i],
-		)
-		if buildErr != nil {
-			return result, buildErr
-		}
-
-		if _, err = tx.ExecContext(
-			ctx,
-			query,
-			args...,
-		); err != nil {
-			return result, fmt.Errorf(
-				"replace aggregate %s: %w",
-				computed[i].AggregateHash,
-				err,
-			)
-		}
-	}
-
 	result.AggregatesReplaced = len(computed)
 	result.Checkpoint = checkpoint.UTC()
-
-	if err = recordTimeSeriesAggregationRun(
-		ctx,
-		tx,
-		dbms,
-		runKey,
-		affected,
-		result.Checkpoint,
-		"completed",
-		"",
-	); err != nil {
+	if err = replaceTimeSeriesAggregates(ctx, db, dbms, metricRanges, computed, runKey, affected, result.Checkpoint); err != nil {
 		return result, err
 	}
 
-	if err = tx.Commit(); err != nil {
-		return result, fmt.Errorf(
-			"commit aggregation replacement: %w",
-			err,
-		)
+	return result, nil
+}
+
+// replaceTimeSeriesAggregates retries the whole delete/insert/checkpoint unit.
+// Although the aggregation lease excludes other aggregators, crawler writes and
+// parent-row changes do not take that lease and can still participate in a
+// PostgreSQL deadlock. Restrict retries to PostgreSQL's transaction-retry states;
+// constraint violations and all other errors are returned unchanged.
+func replaceTimeSeriesAggregates(ctx context.Context, db *Handler, dbms string, metricRanges map[uint64]TimeSeriesRange, computed []TimeSeriesAggregate, runKey string, affected TimeSeriesRange, checkpoint time.Time) error {
+	attempts := 1
+	if dbms == DBPostgresStr {
+		attempts = timeSeriesReplacementMaxAttempts
 	}
 
-	return result, nil
+	return retryPostgresTransaction(ctx, attempts, timeSeriesReplacementRetryDelay, func() error {
+		txOptions := &sql.TxOptions{}
+		if dbms == DBPostgresStr {
+			txOptions.Isolation = sql.LevelReadCommitted
+		}
+		tx, err := (*db).BeginTx(ctx, txOptions)
+		if err != nil {
+			return fmt.Errorf("begin aggregation replacement: %w", err)
+		}
+		defer func() { _ = tx.Rollback() }()
+
+		for metricID, metricRange := range metricRanges {
+			p := newInformationSeedPlaceholders(dbms)
+			if _, err = tx.ExecContext(ctx, `DELETE FROM TimeSeriesAggregates
+				 WHERE metric_id = `+p.Next()+`
+				   AND bucket_start < `+p.Next()+`
+				   AND bucket_end > `+p.Next(), metricID, metricRange.End, metricRange.Start); err != nil {
+				return fmt.Errorf("delete affected aggregates: %w", err)
+			}
+		}
+
+		for i := range computed {
+			query, args, buildErr := buildTimeSeriesAggregateUpsert(dbms, &computed[i])
+			if buildErr != nil {
+				return buildErr
+			}
+			if _, err = tx.ExecContext(ctx, query, args...); err != nil {
+				return fmt.Errorf("replace aggregate %s: %w", computed[i].AggregateHash, err)
+			}
+		}
+
+		if err = recordTimeSeriesAggregationRun(ctx, tx, dbms, runKey, affected, checkpoint, "completed", ""); err != nil {
+			return err
+		}
+		if err = tx.Commit(); err != nil {
+			return fmt.Errorf("commit aggregation replacement: %w", err)
+		}
+		return nil
+	})
+}
+
+type sqlStateError interface {
+	SQLState() string
+}
+
+func retryPostgresTransaction(ctx context.Context, maxAttempts int, delay time.Duration, operation func() error) error {
+	if maxAttempts < 1 {
+		maxAttempts = 1
+	}
+	for attempt := 1; ; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		err := operation()
+		if err == nil || attempt == maxAttempts || !isRetryablePostgresTransactionError(err) {
+			return err
+		}
+		timer := time.NewTimer(delay * time.Duration(attempt))
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func isRetryablePostgresTransactionError(err error) bool {
+	var stateErr sqlStateError
+	if !errors.As(err, &stateErr) {
+		return false
+	}
+	state := stateErr.SQLState()
+	return state == "40001" || state == "40P01"
 }
 
 func recordTimeSeriesAggregationFailure(

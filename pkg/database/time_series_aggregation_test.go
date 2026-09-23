@@ -11,9 +11,69 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/lib/pq"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
+
+func TestRetryPostgresTransaction(t *testing.T) {
+	serializationFailure := func() error { return &pq.Error{Code: "40001"} }
+	deadlock := func() error { return &pq.Error{Code: "40P01"} }
+	foreignKeyViolation := func() error { return &pq.Error{Code: "23503"} }
+	uniqueViolation := func() error { return &pq.Error{Code: "23505"} }
+	arbitraryError := errors.New("query failed")
+
+	tests := []struct {
+		name        string
+		errors      []error
+		cancelAfter int
+		wantCalls   int
+		wantErr     error
+		wantState   string
+	}{
+		{name: "serialization failure eligible", errors: []error{serializationFailure(), nil}, wantCalls: 2},
+		{name: "deadlock eligible", errors: []error{deadlock(), nil}, wantCalls: 2},
+		{name: "foreign key violation ineligible", errors: []error{foreignKeyViolation()}, wantCalls: 1, wantState: "23503"},
+		{name: "unique violation ineligible", errors: []error{uniqueViolation()}, wantCalls: 1, wantState: "23505"},
+		{name: "arbitrary error ineligible", errors: []error{arbitraryError}, wantCalls: 1, wantErr: arbitraryError},
+		{name: "eligible errors exhausted", errors: []error{deadlock(), serializationFailure(), deadlock()}, wantCalls: 3, wantState: "40P01"},
+		{name: "successful after retry", errors: []error{serializationFailure(), deadlock(), nil}, wantCalls: 3},
+		{name: "context cancelled during backoff", errors: []error{serializationFailure()}, cancelAfter: 1, wantCalls: 1, wantErr: context.Canceled},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			calls := 0
+			err := retryPostgresTransaction(ctx, 3, time.Millisecond, func() error {
+				calls++
+				if calls == test.cancelAfter {
+					cancel()
+				}
+				if calls <= len(test.errors) {
+					return test.errors[calls-1]
+				}
+				return nil
+			})
+			if calls != test.wantCalls {
+				t.Fatalf("operation calls = %d, want %d", calls, test.wantCalls)
+			}
+			if test.wantErr != nil && !errors.Is(err, test.wantErr) {
+				t.Fatalf("error = %v, want %v", err, test.wantErr)
+			}
+			if test.wantErr == nil && test.wantState == "" && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if test.wantState != "" {
+				var stateErr sqlStateError
+				if !errors.As(err, &stateErr) || stateErr.SQLState() != test.wantState {
+					t.Fatalf("error = %v, want SQLSTATE %s", err, test.wantState)
+				}
+			}
+		})
+	}
+}
 
 func TestPostgresTimeSeriesAggregationLeaseUsesRetainedConnection(t *testing.T) {
 	database, mock, err := sqlmock.New()
