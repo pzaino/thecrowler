@@ -105,7 +105,7 @@ func TestTimeSeriesAggregationLeaseRejectsUnsupportedDBMS(t *testing.T) {
 	}
 }
 
-func TestRunTimeSeriesAggregationStopsWhenPostgresLeaseAlreadyOwned(t *testing.T) {
+func TestRunTimeSeriesAggregationLeaseContentionIsIndependentOfRunKey(t *testing.T) {
 	database, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
@@ -113,20 +113,62 @@ func TestRunTimeSeriesAggregationStopsWhenPostgresLeaseAlreadyOwned(t *testing.T
 	defer database.Close() //nolint:errcheck
 
 	handler := Handler(&PostgresHandler{db: database, dbms: DBPostgresStr})
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT pg_try_advisory_lock(hashtext($1))`)).
-		WithArgs(timeSeriesAggregationLockKey).
-		WillReturnRows(sqlmock.NewRows([]string{"acquired"}).AddRow(false))
+	for _, runKey := range []string{"tenant-a", "tenant-b"} {
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT pg_try_advisory_lock(hashtext($1))`)).
+			WithArgs(timeSeriesAggregationLockKey).
+			WillReturnRows(sqlmock.NewRows([]string{"acquired"}).AddRow(false))
 
-	_, err = RunTimeSeriesAggregation(
-		context.Background(),
-		&handler,
-		TimeSeriesAggregationOptions{},
-	)
-	if !errors.Is(err, ErrTimeSeriesAggregationRunning) {
-		t.Fatalf("error = %v, want ErrTimeSeriesAggregationRunning", err)
+		_, err = RunTimeSeriesAggregation(
+			context.Background(),
+			&handler,
+			TimeSeriesAggregationOptions{RunKey: runKey},
+		)
+		if !errors.Is(err, ErrTimeSeriesAggregationRunning) {
+			t.Fatalf("RunKey %q: error = %v, want ErrTimeSeriesAggregationRunning", runKey, err)
+		}
 	}
 	if err = mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("aggregation accessed data after lease rejection: %v", err)
+		t.Fatalf("aggregation accessed metrics, checkpoints, observations, or replacements after lease rejection: %v", err)
+	}
+}
+
+func TestTimeSeriesAggregationLeaseReleaseUsesFreshContextAndClosesLast(t *testing.T) {
+	primaryErr := errors.New("aggregation failed")
+	unlockErr := errors.New("unlock failed")
+	closeErr := errors.New("close failed")
+	events := make([]string, 0, 2)
+	lease := &timeSeriesAggregationLease{
+		key: timeSeriesAggregationLockKey,
+		unlock: func(ctx context.Context, key string) (bool, error) {
+			events = append(events, "unlock")
+			if key != timeSeriesAggregationLockKey {
+				t.Fatalf("unlock key = %q, want %q", key, timeSeriesAggregationLockKey)
+			}
+			if err := ctx.Err(); err != nil {
+				t.Fatalf("unlock context is already done: %v", err)
+			}
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				t.Fatal("unlock context has no deadline")
+			}
+			remaining := time.Until(deadline)
+			if remaining <= 0 || remaining > timeSeriesAggregationReleaseTimeout {
+				t.Fatalf("unlock context deadline remaining = %v, want (0, %v]", remaining, timeSeriesAggregationReleaseTimeout)
+			}
+			return false, unlockErr
+		},
+		close: func() error {
+			events = append(events, "close")
+			return closeErr
+		},
+	}
+
+	err := releaseTimeSeriesAggregationLease(lease, primaryErr)
+	if !errors.Is(err, primaryErr) || !errors.Is(err, unlockErr) || !errors.Is(err, closeErr) {
+		t.Fatalf("aggregation error = %v, want primary, unlock, and close errors", err)
+	}
+	if got := strings.Join(events, ","); got != "unlock,close" {
+		t.Fatalf("cleanup order = %q, want unlock,close", got)
 	}
 }
 

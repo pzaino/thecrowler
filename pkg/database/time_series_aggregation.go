@@ -87,8 +87,10 @@ type timeSeriesAggregateAccumulator struct {
 // the advisory lock was acquired. PostgreSQL session locks must be released on
 // that exact connection.
 type timeSeriesAggregationLease struct {
-	conn *sql.Conn
-	key  string
+	conn   *sql.Conn
+	key    string
+	unlock func(context.Context, string) (bool, error)
+	close  func() error
 }
 
 func acquireTimeSeriesAggregationLease(ctx context.Context, db *Handler, dbms string) (*timeSeriesAggregationLease, error) {
@@ -115,6 +117,12 @@ func acquireTimeSeriesAggregationLease(ctx context.Context, db *Handler, dbms st
 		return nil, fmt.Errorf("reserve aggregation lease connection: %w", err)
 	}
 	lease.conn = conn
+	lease.unlock = func(ctx context.Context, key string) (bool, error) {
+		var unlocked bool
+		err := conn.QueryRowContext(ctx, `SELECT pg_advisory_unlock(hashtext($1))`, key).Scan(&unlocked)
+		return unlocked, err
+	}
+	lease.close = conn.Close
 
 	var acquired bool
 	err = conn.QueryRowContext(ctx, `SELECT pg_try_advisory_lock(hashtext($1))`, lease.key).Scan(&acquired)
@@ -137,7 +145,7 @@ func acquireTimeSeriesAggregationLease(ctx context.Context, db *Handler, dbms st
 }
 
 func (lease *timeSeriesAggregationLease) release() error {
-	if lease == nil || lease.conn == nil {
+	if lease == nil || (lease.conn == nil && lease.unlock == nil && lease.close == nil) {
 		return nil
 	}
 
@@ -145,7 +153,10 @@ func (lease *timeSeriesAggregationLease) release() error {
 	defer cancel()
 
 	var unlocked bool
-	unlockErr := lease.conn.QueryRowContext(releaseCtx, `SELECT pg_advisory_unlock(hashtext($1))`, lease.key).Scan(&unlocked)
+	var unlockErr error
+	if lease.unlock != nil {
+		unlocked, unlockErr = lease.unlock(releaseCtx, lease.key)
+	}
 	if unlockErr == nil && !unlocked {
 		unlockErr = errors.New("aggregation advisory lock was not owned by the retained connection")
 	}
@@ -153,11 +164,18 @@ func (lease *timeSeriesAggregationLease) release() error {
 		unlockErr = fmt.Errorf("release aggregation lease: %w", unlockErr)
 	}
 
-	closeErr := lease.conn.Close()
+	var closeErr error
+	if lease.close != nil {
+		closeErr = lease.close()
+	}
 	if closeErr != nil {
 		closeErr = fmt.Errorf("close aggregation lease connection: %w", closeErr)
 	}
 	return errors.Join(unlockErr, closeErr)
+}
+
+func releaseTimeSeriesAggregationLease(lease *timeSeriesAggregationLease, primaryErr error) error {
+	return errors.Join(primaryErr, lease.release())
 }
 
 // AggregateTimeSeriesRange recomputes complete buckets intersecting an explicit range.
@@ -217,10 +235,7 @@ func RunTimeSeriesAggregation(
 	}
 	defer func() {
 		defer timeSeriesAggregationMutex.Unlock()
-
-		if releaseErr := lease.release(); releaseErr != nil {
-			err = errors.Join(err, releaseErr)
-		}
+		err = releaseTimeSeriesAggregationLease(lease, err)
 	}()
 
 	metrics, err := ListTimeSeriesMetrics(
