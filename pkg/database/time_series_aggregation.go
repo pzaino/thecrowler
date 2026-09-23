@@ -483,9 +483,15 @@ func aggregateTimeSeriesWindow(
 		return computed[i].AggregateHash < computed[j].AggregateHash
 	})
 
+	txOptions := &sql.TxOptions{}
+
+	if dbms == DBPostgresStr {
+		txOptions.Isolation = sql.LevelReadCommitted
+	}
+
 	tx, err := (*db).BeginTx(
 		ctx,
-		&sql.TxOptions{Isolation: sql.LevelSerializable},
+		txOptions,
 	)
 	if err != nil {
 		return result, fmt.Errorf(
