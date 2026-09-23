@@ -587,14 +587,6 @@ func aggregateTimeSeriesWindow(
 		_ = tx.Rollback()
 	}()
 
-	if err = acquireTimeSeriesAggregationLock(
-		ctx,
-		tx,
-		dbms,
-	); err != nil {
-		return result, err
-	}
-
 	for metricID, metricRange := range metricRanges {
 		p := newInformationSeedPlaceholders(dbms)
 
@@ -651,19 +643,6 @@ func aggregateTimeSeriesWindow(
 		"",
 	); err != nil {
 		return result, err
-	}
-
-	if dbms == DBMySQLStr {
-		if _, err = tx.ExecContext(
-			ctx,
-			`DO RELEASE_LOCK(?)`,
-			timeSeriesAggregationLockKey,
-		); err != nil {
-			return result, fmt.Errorf(
-				"release aggregation lock: %w",
-				err,
-			)
-		}
 	}
 
 	if err = tx.Commit(); err != nil {
@@ -902,20 +881,6 @@ func timeSeriesObservationBasis(observation TimeSeriesObservation, basis cfg.Tim
 		}
 	}
 	return time.Time{}, false
-}
-
-func acquireTimeSeriesAggregationLock(ctx context.Context, tx *sql.Tx, dbms string) error {
-	switch dbms {
-	case DBMySQLStr:
-		var acquired sql.NullInt64
-		if err := tx.QueryRowContext(ctx, `SELECT GET_LOCK(?, 0)`, timeSeriesAggregationLockKey).Scan(&acquired); err != nil {
-			return err
-		}
-		if !acquired.Valid || acquired.Int64 != 1 {
-			return ErrTimeSeriesAggregationRunning
-		}
-	}
-	return nil
 }
 
 func recordTimeSeriesAggregationRun(ctx context.Context, tx *sql.Tx, dbms, key string, affected TimeSeriesRange, checkpoint time.Time, status, lastError string) error {
