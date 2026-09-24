@@ -49,26 +49,17 @@ type IndexedArtifactScopeResolver interface {
 
 // EmitIndexedArtifact emits matching persisted-artifact metrics through the shared
 // parsing, privacy, change-detection, dedupe, and persistence path.
-func (e *Emitter) EmitIndexedArtifact(input IndexedArtifactInput) error {
+func (e *Emitter) EmitIndexedArtifact(snapshot *EnabledMetricSnapshot, input IndexedArtifactInput) error {
 	if e == nil || e.Repository == nil || e.ArtifactScopes == nil || e.Config == nil || !e.Config.Enabled {
 		return nil
 	}
 	if !isIndexedArtifactSource(input.SourceKind) {
 		return nil
 	}
-	enabled := true
-	metrics, err := e.Repository.ListMetrics(cdb.TimeSeriesMetricFilter{SourceKind: input.SourceKind, Enabled: &enabled, Pagination: cdb.TimeSeriesPagination{Limit: 10000}})
-	if err != nil {
-		recordEmitterOperation(metricOperationMetricLookup, "error")
-		return e.handleFailure(e.Config.Defaults.FailurePolicy, fmt.Sprintf("lookup %s metrics", input.SourceKind), err)
-	}
-	recordEmitterOperation(metricOperationMetricLookup, "success")
+	metrics := snapshot.source(input.SourceKind)
 	for i := range metrics {
 		metric := metrics[i]
-		if metric.SourceKind != input.SourceKind || !metric.Enabled {
-			continue
-		}
-		if err = e.emitIndexedArtifactMetric(metric, input); err != nil {
+		if err := e.emitIndexedArtifactMetric(snapshot, metric, input); err != nil {
 			policy := metric.FailurePolicy
 			if policy == "" {
 				policy = e.Config.Defaults.FailurePolicy
@@ -81,12 +72,12 @@ func (e *Emitter) EmitIndexedArtifact(input IndexedArtifactInput) error {
 	return nil
 }
 
-func (e *Emitter) emitIndexedArtifactMetric(metric cdb.TimeSeriesMetric, input IndexedArtifactInput) error {
+func (e *Emitter) emitIndexedArtifactMetric(snapshot *EnabledMetricSnapshot, metric cdb.TimeSeriesMetric, input IndexedArtifactInput) error {
 	selector, err := decodeMap(metric.Selector)
 	if err != nil {
 		return fmt.Errorf("decode selector: %w", err)
 	}
-	if e.preferNormalizedObjectAttribute(metric, input, selector) {
+	if e.preferNormalizedObjectAttribute(snapshot, metric, input, selector) {
 		return nil
 	}
 	selected, transformations, matched, err := selectIndexedArtifactValue(input, selector)
@@ -625,23 +616,14 @@ func artifactDerivation(selector map[string]interface{}, transformations []strin
 	return ""
 }
 
-func (e *Emitter) preferNormalizedObjectAttribute(_ cdb.TimeSeriesMetric, input IndexedArtifactInput, selector map[string]interface{}) bool {
+func (e *Emitter) preferNormalizedObjectAttribute(snapshot *EnabledMetricSnapshot, _ cdb.TimeSeriesMetric, input IndexedArtifactInput, selector map[string]interface{}) bool {
 	if input.ObjectType == "" || input.ObjectID == 0 || len(input.NormalizedAttributes) == 0 || e.Repository == nil {
 		return false
 	}
 	path := strings.TrimPrefix(strings.TrimPrefix(stringValue(selector["path"]), "$"), ".")
 	explicitKey := stringValue(selector["attribute_key"])
-	enabled := true
-	metrics, err := e.Repository.ListMetrics(cdb.TimeSeriesMetricFilter{SourceKind: cfg.TimeSeriesSourceObjectAttribute, Enabled: &enabled, Pagination: cdb.TimeSeriesPagination{Limit: 10000}})
-	if err != nil {
-		recordEmitterOperation(metricOperationMetricLookup, "error")
-		return false
-	}
-	recordEmitterOperation(metricOperationMetricLookup, "success")
+	metrics := snapshot.sourceObject(cfg.TimeSeriesSourceObjectAttribute, input.ObjectType)
 	for _, candidate := range metrics {
-		if !candidate.Enabled || string(candidate.ObjectType) != input.ObjectType {
-			continue
-		}
 		candidateSelector, decodeErr := decodeMap(candidate.Selector)
 		if decodeErr != nil {
 			continue

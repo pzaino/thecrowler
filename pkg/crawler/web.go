@@ -259,6 +259,11 @@ func insertScreenshotWithTimeSeries(db cdb.Handler, screenshot Screenshot, currC
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	emitter := newCrawlerIndexedArtifactEmitter(tx, currCfg)
+	snapshot, err := emitter.LoadEnabledMetricSnapshot()
+	if err != nil {
+		return err
+	}
 	var screenshotID uint64
 	err = tx.QueryRow(`
 		WITH inserted AS (
@@ -292,7 +297,7 @@ func insertScreenshotWithTimeSeries(db cdb.Handler, screenshot Screenshot, currC
 	}
 	observedAt := time.Now().UTC()
 	for _, kind := range []cfg.TimeSeriesSourceKind{cfg.TimeSeriesSourceScreenshot, cfg.TimeSeriesSourceFile} {
-		if err = emitPersistedArtifact(tx, currCfg, tse.IndexedArtifactInput{
+		if err = emitPersistedArtifact(tx, currCfg, snapshot, tse.IndexedArtifactInput{
 			SourceKind: kind, IndexID: screenshot.IndexID, RowID: screenshotID,
 			ObjectType: string(kind), ObjectID: screenshotID, SubjectKey: screenshot.ScreenshotLink,
 			Name: filepath.Base(screenshot.ScreenshotLink), RawValue: screenshot.ScreenshotLink,

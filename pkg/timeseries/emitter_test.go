@@ -12,6 +12,7 @@ import (
 )
 
 type fakeRepository struct {
+	listCalls    int
 	metrics      []cdb.TimeSeriesMetric
 	observations []cdb.TimeSeriesObservation
 	insertErr    error
@@ -19,6 +20,7 @@ type fakeRepository struct {
 }
 
 func (f *fakeRepository) ListMetrics(cdb.TimeSeriesMetricFilter) ([]cdb.TimeSeriesMetric, error) {
+	f.listCalls++
 	return f.metrics, f.listErr
 }
 func (f *fakeRepository) PreviousObservation(lookup cdb.TimeSeriesChangeLookup) (*cdb.TimeSeriesObservation, error) {
@@ -43,6 +45,15 @@ func (f *fakeRepository) InsertObservation(observation *cdb.TimeSeriesObservatio
 	copy.ID = uint64(len(f.observations) + 1)
 	f.observations = append(f.observations, copy)
 	return cdb.TimeSeriesInsertResult{ObservationID: copy.ID, Inserted: true}, nil
+}
+
+func mustSnapshot(t *testing.T, emitter *Emitter) *EnabledMetricSnapshot {
+	t.Helper()
+	snapshot, err := emitter.LoadEnabledMetricSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return snapshot
 }
 
 type fakeScopes struct {
@@ -97,7 +108,7 @@ func TestObjectAttributeTimeSeriesScopesDimensionsPrivacyAndChange(t *testing.T)
 	configuration := &cfg.TimeSeriesConfig{Enabled: true, Defaults: cfg.TimeSeriesMetricDefaults{FailurePolicy: cfg.TimeSeriesFailureLogSkip}, Privacy: cfg.TimeSeriesPrivacyConfig{StoreValueText: true, MaxValueLength: 2048, RedactPatterns: []string{`secret-[0-9]+`}}, Cardinality: cfg.TimeSeriesCardinalityConfig{MaxDimensions: 10, Overflow: cfg.TimeSeriesCardinalityDrop}}
 	emitter := Emitter{Repository: repo, Scopes: fakeScopes{scopes: []cdb.TimeSeriesScope{{SourceID: &source, InformationSeedID: &seed, SourceInformationSeedID: &sourceSeed, IndexID: &index, ObjectType: "webobject", ObjectID: &object, EntityID: &entity}}}, Config: configuration, Now: func() time.Time { return now }}
 	input := ObjectAttributeInput{ObjectType: "webobject", ObjectID: object, AttributeKey: "latency", RawValue: `{"value":"1500ms"}`, NormalizedValue: `{"value":"1500ms"}`, ObjectDetails: map[string]interface{}{"region": "west"}, SiblingAttributes: map[string]interface{}{"status": "ok"}, ObservedAt: now}
-	if err := emitter.EmitObjectAttribute(input); err != nil {
+	if err := emitter.EmitObjectAttribute(mustSnapshot(t, &emitter), input); err != nil {
 		t.Fatal(err)
 	}
 	if len(repo.observations) != 1 {
@@ -117,14 +128,14 @@ func TestObjectAttributeTimeSeriesScopesDimensionsPrivacyAndChange(t *testing.T)
 		t.Fatalf("new change state incorrect: %#v", first)
 	}
 	input.ObservedAt = now.Add(time.Hour)
-	if err := emitter.EmitObjectAttribute(input); err != nil {
+	if err := emitter.EmitObjectAttribute(mustSnapshot(t, &emitter), input); err != nil {
 		t.Fatal(err)
 	}
 	if got := repo.observations[1]; got.ChangeType != "unchanged" || got.IsChanged || got.PreviousValueHash == "" {
 		t.Fatalf("unchanged state incorrect: %#v", got)
 	}
 	input.RawValue, input.NormalizedValue, input.ObservedAt = `{"value":"2s"}`, `{"value":"2s"}`, now.Add(2*time.Hour)
-	if err := emitter.EmitObjectAttribute(input); err != nil {
+	if err := emitter.EmitObjectAttribute(mustSnapshot(t, &emitter), input); err != nil {
 		t.Fatal(err)
 	}
 	if got := repo.observations[2]; got.ChangeType != "changed" || !got.IsChanged || got.ChangeDeltaNumeric == nil || *got.ChangeDeltaNumeric != .5 {
@@ -141,10 +152,10 @@ func TestObjectAttributeTimeSeriesDirectSourceDedupeAndPolicies(t *testing.T) {
 	configuration := &cfg.TimeSeriesConfig{Enabled: true, Defaults: cfg.TimeSeriesMetricDefaults{FailurePolicy: cfg.TimeSeriesFailureLogSkip}, Privacy: cfg.TimeSeriesPrivacyConfig{MaxValueLength: 100}, Cardinality: cfg.TimeSeriesCardinalityConfig{MaxDimensions: 2, Overflow: cfg.TimeSeriesCardinalityDrop}}
 	emitter := Emitter{Repository: repo, Scopes: fakeScopes{scopes: []cdb.TimeSeriesScope{{SourceID: &source, IndexID: &index, ObjectType: "webobject", ObjectID: &object}}}, Config: configuration, Logger: logger, Now: func() time.Time { return now }}
 	input := ObjectAttributeInput{ObjectType: "webobject", ObjectID: object, AttributeKey: "name", RawValue: "Alice", NormalizedValue: "Alice", ObservedAt: now}
-	if err := emitter.EmitObjectAttribute(input); err != nil {
+	if err := emitter.EmitObjectAttribute(mustSnapshot(t, &emitter), input); err != nil {
 		t.Fatal(err)
 	}
-	if err := emitter.EmitObjectAttribute(input); err != nil {
+	if err := emitter.EmitObjectAttribute(mustSnapshot(t, &emitter), input); err != nil {
 		t.Fatal(err)
 	}
 	if len(repo.observations) != 1 {
@@ -154,14 +165,14 @@ func TestObjectAttributeTimeSeriesDirectSourceDedupeAndPolicies(t *testing.T) {
 		t.Fatalf("direct/hash-only observation incorrect: %#v", repo.observations[0])
 	}
 	repo.insertErr = errors.New("write failed")
-	if err := emitter.EmitObjectAttribute(ObjectAttributeInput{ObjectType: "webobject", ObjectID: object, AttributeKey: "name", RawValue: "Bob", NormalizedValue: "Bob", ObservedAt: now.Add(time.Hour)}); err != nil {
+	if err := emitter.EmitObjectAttribute(mustSnapshot(t, &emitter), ObjectAttributeInput{ObjectType: "webobject", ObjectID: object, AttributeKey: "name", RawValue: "Bob", NormalizedValue: "Bob", ObservedAt: now.Add(time.Hour)}); err != nil {
 		t.Fatalf("default policy interrupted indexing: %v", err)
 	}
 	if logger.calls == 0 {
 		t.Fatal("expected safe failure to be logged")
 	}
 	repo.metrics[0].FailurePolicy = cfg.TimeSeriesFailureFailIndexing
-	if err := emitter.EmitObjectAttribute(ObjectAttributeInput{ObjectType: "webobject", ObjectID: object, AttributeKey: "name", RawValue: "Carol", NormalizedValue: "Carol", ObservedAt: now.Add(2 * time.Hour)}); err == nil || !errors.Is(err, repo.insertErr) {
+	if err := emitter.EmitObjectAttribute(mustSnapshot(t, &emitter), ObjectAttributeInput{ObjectType: "webobject", ObjectID: object, AttributeKey: "name", RawValue: "Carol", NormalizedValue: "Carol", ObservedAt: now.Add(2 * time.Hour)}); err == nil || !errors.Is(err, repo.insertErr) {
 		t.Fatalf("expected fail_indexing error, got %v", err)
 	}
 }
@@ -169,7 +180,7 @@ func TestObjectAttributeTimeSeriesDirectSourceDedupeAndPolicies(t *testing.T) {
 func TestObjectAttributeSelectorMismatchDoesNotEmit(t *testing.T) {
 	repo := &fakeRepository{metrics: []cdb.TimeSeriesMetric{{ID: 1, Key: "x", SourceKind: cfg.TimeSeriesSourceObjectAttribute, ObjectType: cfg.TimeSeriesObjectWebObject, ValueType: cfg.TimeSeriesValueInteger, Bucket: cfg.TimeSeriesBucketNone, TimeBasis: cfg.TimeSeriesTimeObservedAt, DedupeScope: cfg.TimeSeriesDedupeObject, Selector: json.RawMessage(`{"attribute_key":"other"}`), Enabled: true}}}
 	emitter := Emitter{Repository: repo, Scopes: fakeScopes{}, Config: &cfg.TimeSeriesConfig{Enabled: true}}
-	if err := emitter.EmitObjectAttribute(ObjectAttributeInput{ObjectType: "webobject", ObjectID: 1, AttributeKey: "value", NormalizedValue: "1"}); err != nil {
+	if err := emitter.EmitObjectAttribute(mustSnapshot(t, &emitter), ObjectAttributeInput{ObjectType: "webobject", ObjectID: 1, AttributeKey: "value", NormalizedValue: "1"}); err != nil {
 		t.Fatal(err)
 	}
 	if len(repo.observations) != 0 {
@@ -201,7 +212,7 @@ func TestKeywordTimeSeriesGenericExactAndOccurrences(t *testing.T) {
 		Config:         &cfg.TimeSeriesConfig{Enabled: true, Defaults: cfg.TimeSeriesMetricDefaults{FailurePolicy: cfg.TimeSeriesFailureLogSkip}, Cardinality: cfg.TimeSeriesCardinalityConfig{MaxDimensions: 10, Overflow: cfg.TimeSeriesCardinalityDrop}},
 		Now:            func() time.Time { return now },
 	}
-	if err := emitter.EmitIndexedArtifact(IndexedArtifactInput{SourceKind: cfg.TimeSeriesSourceKeyword, IndexID: index, RowID: 11, LinkID: 12, SubjectKey: "crowler", Value: int64(9), Occurrences: 9, ObservedAt: now}); err != nil {
+	if err := emitter.EmitIndexedArtifact(mustSnapshot(t, &emitter), IndexedArtifactInput{SourceKind: cfg.TimeSeriesSourceKeyword, IndexID: index, RowID: 11, LinkID: 12, SubjectKey: "crowler", Value: int64(9), Occurrences: 9, ObservedAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	if len(repo.observations) != 3 {
@@ -227,6 +238,34 @@ func TestKeywordTimeSeriesGenericExactAndOccurrences(t *testing.T) {
 	}
 }
 
+func TestMetricSnapshotServesRepeatedArtifactEmissionsWithOneLookup(t *testing.T) {
+	now := time.Date(2026, 6, 6, 14, 0, 0, 0, time.UTC)
+	repo := &fakeRepository{metrics: []cdb.TimeSeriesMetric{
+		{ID: 1, Key: "keywords", SourceKind: cfg.TimeSeriesSourceKeyword, ValueType: cfg.TimeSeriesValueInteger, Bucket: cfg.TimeSeriesBucketNone, TimeBasis: cfg.TimeSeriesTimeObservedAt, DedupeScope: cfg.TimeSeriesDedupeNone, Selector: json.RawMessage(`{}`), Enabled: true},
+		{ID: 2, Key: "metatags", SourceKind: cfg.TimeSeriesSourceMetatag, ValueType: cfg.TimeSeriesValueString, Selector: json.RawMessage(`{}`), Enabled: true},
+		{ID: 3, Key: "disabled", SourceKind: cfg.TimeSeriesSourceKeyword, ValueType: cfg.TimeSeriesValueInteger, Selector: json.RawMessage(`{}`), Enabled: false},
+	}}
+	emitter := Emitter{Repository: repo, ArtifactScopes: fakeArtifactScopes{}, Config: &cfg.TimeSeriesConfig{Enabled: true, Defaults: cfg.TimeSeriesMetricDefaults{FailurePolicy: cfg.TimeSeriesFailureFailIndexing}, Privacy: cfg.TimeSeriesPrivacyConfig{StoreValueText: true}, Cardinality: cfg.TimeSeriesCardinalityConfig{MaxDimensions: 10}}}
+	snapshot := mustSnapshot(t, &emitter)
+	for i, occurrences := range []int64{3, 5} {
+		input := IndexedArtifactInput{SourceKind: cfg.TimeSeriesSourceKeyword, IndexID: 10, RowID: uint64(i + 1), LinkID: uint64(i + 20), SubjectKey: "crowler", Value: occurrences, Occurrences: occurrences, ObservedAt: now.Add(time.Duration(i) * time.Minute)}
+		if err := emitter.EmitIndexedArtifact(snapshot, input); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if repo.listCalls != 1 {
+		t.Fatalf("expected one metric-definition lookup, got %d", repo.listCalls)
+	}
+	if len(repo.observations) != 2 {
+		t.Fatalf("expected the same matching metric for both emissions, got %d observations", len(repo.observations))
+	}
+	for i, want := range []int64{3, 5} {
+		if got := repo.observations[i].Value.Integer; got == nil || *got != want || repo.observations[i].MetricID != 1 {
+			t.Fatalf("observation %d did not preserve matching/value behavior: %#v", i, repo.observations[i])
+		}
+	}
+}
+
 func TestMetaTagTimeSeriesTypedValueCaseInsensitiveNameAndTimestamp(t *testing.T) {
 	observed := time.Date(2026, 6, 6, 15, 0, 0, 0, time.UTC)
 	eventAt := "2026-06-05T10:30:00Z"
@@ -241,7 +280,7 @@ func TestMetaTagTimeSeriesTypedValueCaseInsensitiveNameAndTimestamp(t *testing.T
 	}
 	emitter := Emitter{Repository: repo, ArtifactScopes: fakeArtifactScopes{scopes: []cdb.TimeSeriesScope{{IndexID: &index}}}, Config: configuration, Now: func() time.Time { return observed }}
 	input := IndexedArtifactInput{SourceKind: cfg.TimeSeriesSourceMetatag, IndexID: index, RowID: 31, LinkID: 32, SubjectKey: "article:published_time", Name: "Article:Published_Time", RawValue: eventAt, Value: eventAt, ObservedAt: observed}
-	if err := emitter.EmitIndexedArtifact(input); err != nil {
+	if err := emitter.EmitIndexedArtifact(mustSnapshot(t, &emitter), input); err != nil {
 		t.Fatal(err)
 	}
 	if len(repo.observations) != 1 {
@@ -274,7 +313,7 @@ func TestMetaTagInvalidTimestampFollowsFailurePolicy(t *testing.T) {
 	configuration := &cfg.TimeSeriesConfig{Enabled: true, Defaults: cfg.TimeSeriesMetricDefaults{FailurePolicy: cfg.TimeSeriesFailureLogSkip}, Metrics: []cfg.TimeSeriesMetricConfig{{Key: "bad_time", TimestampSelector: map[string]interface{}{"from": "content"}}}}
 	emitter := Emitter{Repository: repo, ArtifactScopes: fakeArtifactScopes{}, Config: configuration, Logger: logger, Now: func() time.Time { return observed }}
 	input := IndexedArtifactInput{SourceKind: cfg.TimeSeriesSourceMetatag, IndexID: 1, RowID: 2, LinkID: 3, SubjectKey: "last-modified", RawValue: "not-a-time", Value: "not-a-time", ObservedAt: observed}
-	if err := emitter.EmitIndexedArtifact(input); err != nil {
+	if err := emitter.EmitIndexedArtifact(mustSnapshot(t, &emitter), input); err != nil {
 		t.Fatalf("log_skip should not fail indexing: %v", err)
 	}
 	if len(repo.observations) != 0 || logger.calls != 1 {
@@ -282,7 +321,7 @@ func TestMetaTagInvalidTimestampFollowsFailurePolicy(t *testing.T) {
 	}
 	metric.FailurePolicy = cfg.TimeSeriesFailureFailIndexing
 	repo.metrics[0] = metric
-	if err := emitter.EmitIndexedArtifact(input); err == nil {
+	if err := emitter.EmitIndexedArtifact(mustSnapshot(t, &emitter), input); err == nil {
 		t.Fatal("fail_indexing should return the timestamp parsing error")
 	}
 	if len(repo.observations) != 0 {
@@ -302,7 +341,7 @@ func TestHTTPInfoArtifactSelectorsPresenceValueAndCertificateDays(t *testing.T) 
 	index := uint64(5)
 	emitter := Emitter{Repository: repo, ArtifactScopes: fakeArtifactScopes{scopes: []cdb.TimeSeriesScope{{IndexID: &index}}}, Config: &cfg.TimeSeriesConfig{Enabled: true, Defaults: cfg.TimeSeriesMetricDefaults{FailurePolicy: cfg.TimeSeriesFailureLogSkip}, Privacy: cfg.TimeSeriesPrivacyConfig{StoreValueText: true, MaxValueLength: 2048}, Cardinality: cfg.TimeSeriesCardinalityConfig{MaxDimensions: 10, Overflow: cfg.TimeSeriesCardinalityDrop}}, Now: func() time.Time { return observed }}
 	details := map[string]interface{}{"response_headers": map[string]interface{}{"Server": []interface{}{"nginx"}}, "ssl_info": map[string]interface{}{"cert_expiration": "2026-06-16T12:00:00Z"}}
-	if err := emitter.EmitIndexedArtifact(IndexedArtifactInput{SourceKind: cfg.TimeSeriesSourceHTTPInfo, IndexID: index, RowID: 8, ObjectType: "httpinfo", ObjectID: 8, Details: details, ObservedAt: observed}); err != nil {
+	if err := emitter.EmitIndexedArtifact(mustSnapshot(t, &emitter), IndexedArtifactInput{SourceKind: cfg.TimeSeriesSourceHTTPInfo, IndexID: index, RowID: 8, ObjectType: "httpinfo", ObjectID: 8, Details: details, ObservedAt: observed}); err != nil {
 		t.Fatal(err)
 	}
 	if len(repo.observations) != 4 {
@@ -331,7 +370,7 @@ func TestNetInfoArtifactScalarWildcardCollectionAndCount(t *testing.T) {
 	repo := &fakeRepository{metrics: metrics}
 	emitter := Emitter{Repository: repo, ArtifactScopes: fakeArtifactScopes{}, Config: &cfg.TimeSeriesConfig{Enabled: true, Defaults: cfg.TimeSeriesMetricDefaults{FailurePolicy: cfg.TimeSeriesFailureLogSkip}, Privacy: cfg.TimeSeriesPrivacyConfig{StoreValueText: true, MaxValueLength: 2048}, Cardinality: cfg.TimeSeriesCardinalityConfig{MaxDimensions: 10, Overflow: cfg.TimeSeriesCardinalityDrop}}}
 	details := map[string]interface{}{"ips": map[string]interface{}{"country": []interface{}{"US"}}, "service_scout": map[string]interface{}{"hosts": []interface{}{map[string]interface{}{"ports": []interface{}{map[string]interface{}{"port": 80}, map[string]interface{}{"port": 443}}}}}}
-	if err := emitter.EmitIndexedArtifact(IndexedArtifactInput{SourceKind: cfg.TimeSeriesSourceNetInfo, IndexID: 4, RowID: 7, ObjectType: "netinfo", ObjectID: 7, Details: details, ObservedAt: observed}); err != nil {
+	if err := emitter.EmitIndexedArtifact(mustSnapshot(t, &emitter), IndexedArtifactInput{SourceKind: cfg.TimeSeriesSourceNetInfo, IndexID: 4, RowID: 7, ObjectType: "netinfo", ObjectID: 7, Details: details, ObservedAt: observed}); err != nil {
 		t.Fatal(err)
 	}
 	if len(repo.observations) != 2 || repo.observations[0].Value.Text == nil || *repo.observations[0].Value.Text != "US" || repo.observations[1].Value.Integer == nil || *repo.observations[1].Value.Integer != 2 {
@@ -345,7 +384,7 @@ func TestArtifactMetricPrefersEquivalentNormalizedObjectAttribute(t *testing.T) 
 	repo := &fakeRepository{metrics: []cdb.TimeSeriesMetric{artifact, attribute}}
 	emitter := Emitter{Repository: repo, ArtifactScopes: fakeArtifactScopes{}, Config: &cfg.TimeSeriesConfig{Enabled: true, Defaults: cfg.TimeSeriesMetricDefaults{FailurePolicy: cfg.TimeSeriesFailureLogSkip}, Cardinality: cfg.TimeSeriesCardinalityConfig{MaxDimensions: 10, Overflow: cfg.TimeSeriesCardinalityDrop}}}
 	input := IndexedArtifactInput{SourceKind: cfg.TimeSeriesSourceHTTPInfo, IndexID: 1, RowID: 2, ObjectType: "httpinfo", ObjectID: 2, Details: map[string]interface{}{"response_headers": map[string]interface{}{"Server": []interface{}{"nginx"}}}, NormalizedAttributes: map[string]interface{}{"server": "nginx"}, AttributePaths: map[string]string{"server": "response_headers.Server"}}
-	if err := emitter.EmitIndexedArtifact(input); err != nil {
+	if err := emitter.EmitIndexedArtifact(mustSnapshot(t, &emitter), input); err != nil {
 		t.Fatal(err)
 	}
 	if len(repo.observations) != 0 {
@@ -365,7 +404,7 @@ func TestWebObjectHashChangeStatesAcrossPersistedRows(t *testing.T) {
 		{SourceKind: cfg.TimeSeriesSourceWebObject, IndexID: index, RowID: 12, ObjectType: "webobject", ObjectID: 12, Hash: "hash-b", ObservedAt: at.Add(2 * time.Hour)},
 	}
 	for _, input := range inputs {
-		if err := emitter.EmitIndexedArtifact(input); err != nil {
+		if err := emitter.EmitIndexedArtifact(mustSnapshot(t, &emitter), input); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -383,7 +422,7 @@ func TestScreenshotAndFileMetadataSelectors(t *testing.T) {
 	emitter := Emitter{Repository: repo, ArtifactScopes: fakeArtifactScopes{}, Config: &cfg.TimeSeriesConfig{Enabled: true, Defaults: cfg.TimeSeriesMetricDefaults{FailurePolicy: cfg.TimeSeriesFailureLogSkip}, Privacy: cfg.TimeSeriesPrivacyConfig{StoreValueText: true, MaxValueLength: 2048}, Cardinality: cfg.TimeSeriesCardinalityConfig{MaxDimensions: 10, Overflow: cfg.TimeSeriesCardinalityDrop}}}
 	metadata := map[string]interface{}{"byte_size": 4096, "format": "png", "width": 1280, "height": 720, "location_hash": "stable-location"}
 	for _, kind := range []cfg.TimeSeriesSourceKind{cfg.TimeSeriesSourceScreenshot, cfg.TimeSeriesSourceFile} {
-		if err := emitter.EmitIndexedArtifact(IndexedArtifactInput{SourceKind: kind, IndexID: 1, RowID: 2, ObjectType: string(kind), ObjectID: 2, Details: metadata, Hash: "content-hash"}); err != nil {
+		if err := emitter.EmitIndexedArtifact(mustSnapshot(t, &emitter), IndexedArtifactInput{SourceKind: kind, IndexID: 1, RowID: 2, ObjectType: string(kind), ObjectID: 2, Details: metadata, Hash: "content-hash"}); err != nil {
 			t.Fatal(err)
 		}
 	}

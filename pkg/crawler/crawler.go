@@ -993,6 +993,12 @@ func indexPage(ctx *ProcessContext, url string, pageInfo *PageInfo) (uint64, err
 		return 0, err
 	}
 	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Transaction started...")
+	metricEmitter := newCrawlerIndexedArtifactEmitter(tx, ctx.GetConfig())
+	metricSnapshot, err := metricEmitter.LoadEnabledMetricSnapshot()
+	if err != nil {
+		rollbackTransaction(tx)
+		return 0, err
+	}
 
 	// Insert or update the page in SearchIndex
 	indexID, err := insertOrUpdateSearchIndex(tx, url, pageInfo)
@@ -1026,7 +1032,7 @@ func indexPage(ctx *ProcessContext, url string, pageInfo *PageInfo) (uint64, err
 	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] WebObjects updated with indexID: %d", indexID)
 
 	// Index object attributes for WebObjet
-	err = indexObjectAttributes(tx, objID, "webobject", detailsJSON, ctx.GetConfig())
+	err = indexObjectAttributes(tx, objID, "webobject", detailsJSON, ctx.GetConfig(), metricSnapshot)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Error inserting or updating Object Attributes: %v", err)
 		rollbackTransaction(tx)
@@ -1034,7 +1040,7 @@ func indexPage(ctx *ProcessContext, url string, pageInfo *PageInfo) (uint64, err
 	}
 	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Object Attributes indexed for objectID: %d", objID)
 
-	if err = emitPersistedArtifact(tx, ctx.GetConfig(), tse.IndexedArtifactInput{
+	if err = emitPersistedArtifact(tx, ctx.GetConfig(), metricSnapshot, tse.IndexedArtifactInput{
 		SourceKind: cfg.TimeSeriesSourceWebObject, IndexID: indexID, RowID: uint64(objID),
 		ObjectType: "webobject", ObjectID: uint64(objID), SubjectKey: objectHash, Hash: objectHash,
 		RawValue: string(detailsJSON), Value: objectHash, Details: decodeArtifactDetails(detailsJSON), ObservedAt: time.Now().UTC(), SourceUpdatedAt: utcNowPointer(),
@@ -1045,7 +1051,7 @@ func indexPage(ctx *ProcessContext, url string, pageInfo *PageInfo) (uint64, err
 
 	// Insert MetaTags
 	if pageInfo.Config.Crawler.CollectMetaTags {
-		err = insertMetaTagsWithTimeSeries(tx, indexID, pageInfo.MetaTags, pageInfo.Config)
+		err = insertMetaTagsWithTimeSeries(tx, indexID, pageInfo.MetaTags, pageInfo.Config, metricSnapshot)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Error inserting meta tags for indexID: %d, error: %v", indexID, err)
 			cmn.DebugMsg(cmn.DbgLvlError, "inserting meta tags: %v", err)
@@ -1092,6 +1098,7 @@ func indexObjectAttributes(
 	objectType string,
 	detailsJSON []byte,
 	currCfg *cfg.Config,
+	metricSnapshot *tse.EnabledMetricSnapshot,
 ) error {
 
 	if currCfg == nil || currCfg.AttributesIndexing.IsEmpty() {
@@ -1209,7 +1216,7 @@ func indexObjectAttributes(
 					}
 					continue
 				}
-				if err = emitter.EmitObjectAttribute(tse.ObjectAttributeInput{
+				if err = emitter.EmitObjectAttribute(metricSnapshot, tse.ObjectAttributeInput{
 					ObjectType: objectType, ObjectID: uint64(objectID), AttributeKey: attr.Key,
 					RawValue: raw, NormalizedValue: normalized, AttributeType: attr.IndexType,
 					SelectorPath: attr.Path, Transformations: append([]string(nil), attr.Normalizers...),
@@ -1297,6 +1304,12 @@ func indexNetInfo(db cdb.Handler, url string, pageInfo *PageInfo, flags int) (ui
 		cmn.DebugMsg(cmn.DbgLvlError, "starting transaction: %v", err)
 		return 0, err
 	}
+	metricEmitter := newCrawlerIndexedArtifactEmitter(tx, pageInfo.Config)
+	metricSnapshot, err := metricEmitter.LoadEnabledMetricSnapshot()
+	if err != nil {
+		rollbackTransaction(tx)
+		return 0, err
+	}
 
 	// Insert or update the page in SearchIndex
 	indexID, err := insertOrUpdateSearchIndex(tx, url, pageInfo)
@@ -1310,7 +1323,7 @@ func indexNetInfo(db cdb.Handler, url string, pageInfo *PageInfo, flags int) (ui
 	if flags == 1 || flags == 0 {
 		// Insert NetInfo into the database (if available)
 		if pageInfo.NetInfo != nil {
-			err = insertNetInfo(tx, indexID, pageInfo.NetInfo, pageInfo.Config)
+			err = insertNetInfo(tx, indexID, pageInfo.NetInfo, pageInfo.Config, metricSnapshot)
 			if err != nil {
 				cmn.DebugMsg(cmn.DbgLvlError, "inserting NetInfo: %v", err)
 				rollbackTransaction(tx)
@@ -1323,7 +1336,7 @@ func indexNetInfo(db cdb.Handler, url string, pageInfo *PageInfo, flags int) (ui
 	if flags == 2 || flags == 0 {
 		// Insert HTTPInfo into the database (if available)
 		if pageInfo.HTTPInfo != nil {
-			err = insertHTTPInfo(tx, indexID, pageInfo.HTTPInfo, pageInfo.Config)
+			err = insertHTTPInfo(tx, indexID, pageInfo.HTTPInfo, pageInfo.Config, metricSnapshot)
 			if err != nil {
 				cmn.DebugMsg(cmn.DbgLvlError, "inserting HTTPInfo: %v", err)
 				rollbackTransaction(tx)
@@ -1608,7 +1621,7 @@ func mergeMaps(dst, src map[string]interface{}) {
 // insertNetInfo inserts network information into the database for a given index ID.
 // It takes a transaction, index ID, and a NetInfo object as parameters.
 // It returns an error if there was a problem executing the SQL statement.
-func insertNetInfo(tx *sql.Tx, indexID uint64, netInfo *neti.NetInfo, currCfg *cfg.Config) error {
+func insertNetInfo(tx *sql.Tx, indexID uint64, netInfo *neti.NetInfo, currCfg *cfg.Config, snapshot *tse.EnabledMetricSnapshot) error {
 	// encode the NetInfo object as JSON
 	details, err := json.Marshal(netInfo)
 	if err != nil {
@@ -1647,10 +1660,10 @@ func insertNetInfo(tx *sql.Tx, indexID uint64, netInfo *neti.NetInfo, currCfg *c
 		return err
 	}
 
-	if err = indexObjectAttributes(tx, netinfoID, "netinfo", details, currCfg); err != nil {
+	if err = indexObjectAttributes(tx, netinfoID, "netinfo", details, currCfg, snapshot); err != nil {
 		return err
 	}
-	return emitPersistedArtifact(tx, currCfg, tse.IndexedArtifactInput{
+	return emitPersistedArtifact(tx, currCfg, snapshot, tse.IndexedArtifactInput{
 		SourceKind: cfg.TimeSeriesSourceNetInfo, IndexID: indexID, RowID: uint64(netinfoID),
 		ObjectType: "netinfo", ObjectID: uint64(netinfoID), SubjectKey: hash, Hash: hash,
 		RawValue: string(details), Value: hash, Details: decodeArtifactDetails(details), ObservedAt: time.Now().UTC(), SourceUpdatedAt: utcNowPointer(),
@@ -1660,7 +1673,7 @@ func insertNetInfo(tx *sql.Tx, indexID uint64, netInfo *neti.NetInfo, currCfg *c
 // insertHTTPInfo inserts HTTP header information into the database for a given index ID.
 // It takes a transaction, index ID, and an HTTPDetails object as parameters.
 // It returns an error if there was a problem executing the SQL statement.
-func insertHTTPInfo(tx *sql.Tx, indexID uint64, httpInfo *httpi.HTTPDetails, currCfg *cfg.Config) error {
+func insertHTTPInfo(tx *sql.Tx, indexID uint64, httpInfo *httpi.HTTPDetails, currCfg *cfg.Config, snapshot *tse.EnabledMetricSnapshot) error {
 	// Encode the HTTPDetails object as JSON
 	details, err := json.Marshal(httpInfo)
 	if err != nil {
@@ -1700,10 +1713,10 @@ func insertHTTPInfo(tx *sql.Tx, indexID uint64, httpInfo *httpi.HTTPDetails, cur
 		return err
 	}
 
-	if err = indexObjectAttributes(tx, httpinfoID, "httpinfo", details, currCfg); err != nil {
+	if err = indexObjectAttributes(tx, httpinfoID, "httpinfo", details, currCfg, snapshot); err != nil {
 		return err
 	}
-	return emitPersistedArtifact(tx, currCfg, tse.IndexedArtifactInput{
+	return emitPersistedArtifact(tx, currCfg, snapshot, tse.IndexedArtifactInput{
 		SourceKind: cfg.TimeSeriesSourceHTTPInfo, IndexID: indexID, RowID: uint64(httpinfoID),
 		ObjectType: "httpinfo", ObjectID: uint64(httpinfoID), SubjectKey: hash, Hash: hash,
 		RawValue: string(details), Value: hash, Details: decodeArtifactDetails(details), ObservedAt: time.Now().UTC(), SourceUpdatedAt: utcNowPointer(),
@@ -1726,10 +1739,10 @@ func truncateUTF8(s string, maxRunes int) string {
 // Each meta tag is inserted into the MetaTags table with the corresponding index ID, name, and content.
 // Returns an error if there was a problem executing the SQL statement.
 func insertMetaTags(tx *sql.Tx, indexID uint64, metaTags []MetaTag) error {
-	return insertMetaTagsWithTimeSeries(tx, indexID, metaTags, nil)
+	return insertMetaTagsWithTimeSeries(tx, indexID, metaTags, nil, nil)
 }
 
-func insertMetaTagsWithTimeSeries(tx *sql.Tx, indexID uint64, metaTags []MetaTag, currCfg *cfg.Config) error {
+func insertMetaTagsWithTimeSeries(tx *sql.Tx, indexID uint64, metaTags []MetaTag, currCfg *cfg.Config, snapshot *tse.EnabledMetricSnapshot) error {
 	emitter := newCrawlerIndexedArtifactEmitter(tx, currCfg)
 	for _, metatag := range metaTags {
 		name := metatag.Name
@@ -1771,7 +1784,7 @@ func insertMetaTagsWithTimeSeries(tx *sql.Tx, indexID uint64, metaTags []MetaTag
 		}
 		if emitter != nil {
 			canonicalName := strings.ToLower(strings.TrimSpace(norm.NFC.String(name)))
-			err = emitter.EmitIndexedArtifact(tse.IndexedArtifactInput{
+			err = emitter.EmitIndexedArtifact(snapshot, tse.IndexedArtifactInput{
 				SourceKind: cfg.TimeSeriesSourceMetatag, IndexID: indexID,
 				RowID: uint64(metatagID), LinkID: metatagIndexID,
 				SubjectKey: canonicalName, Name: name, RawValue: content, Value: content,

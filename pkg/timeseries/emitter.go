@@ -68,24 +68,68 @@ type Emitter struct {
 	Now            func() time.Time
 }
 
+// EnabledMetricSnapshot is an immutable set of enabled definitions for one
+// bounded page or indexing operation. Private indexes prevent mutation after
+// construction.
+type EnabledMetricSnapshot struct {
+	bySource       map[cfg.TimeSeriesSourceKind][]cdb.TimeSeriesMetric
+	bySourceObject map[cfg.TimeSeriesSourceKind]map[string][]cdb.TimeSeriesMetric
+}
+
+// LoadEnabledMetricSnapshot reads and groups enabled definitions exactly once.
+// A caller must create and discard one snapshot per indexing unit.
+func (e *Emitter) LoadEnabledMetricSnapshot() (*EnabledMetricSnapshot, error) {
+	if e == nil || e.Repository == nil || e.Config == nil || !e.Config.Enabled {
+		return &EnabledMetricSnapshot{}, nil
+	}
+	enabled := true
+	metrics, err := e.Repository.ListMetrics(cdb.TimeSeriesMetricFilter{Enabled: &enabled, Pagination: cdb.TimeSeriesPagination{Limit: 10000}})
+	if err != nil {
+		recordEmitterOperation(metricOperationMetricLookup, "error")
+		if failure := e.handleFailure(e.Config.Defaults.FailurePolicy, "lookup enabled metrics", err); failure != nil {
+			return nil, failure
+		}
+		return &EnabledMetricSnapshot{}, nil
+	}
+	recordEmitterOperation(metricOperationMetricLookup, "success")
+	s := &EnabledMetricSnapshot{bySource: make(map[cfg.TimeSeriesSourceKind][]cdb.TimeSeriesMetric), bySourceObject: make(map[cfg.TimeSeriesSourceKind]map[string][]cdb.TimeSeriesMetric)}
+	for _, metric := range metrics {
+		if !metric.Enabled {
+			continue
+		}
+		s.bySource[metric.SourceKind] = append(s.bySource[metric.SourceKind], metric)
+		if s.bySourceObject[metric.SourceKind] == nil {
+			s.bySourceObject[metric.SourceKind] = make(map[string][]cdb.TimeSeriesMetric)
+		}
+		objectType := string(metric.ObjectType)
+		s.bySourceObject[metric.SourceKind][objectType] = append(s.bySourceObject[metric.SourceKind][objectType], metric)
+	}
+	return s, nil
+}
+
+func (s *EnabledMetricSnapshot) source(kind cfg.TimeSeriesSourceKind) []cdb.TimeSeriesMetric {
+	if s == nil {
+		return nil
+	}
+	return s.bySource[kind]
+}
+
+func (s *EnabledMetricSnapshot) sourceObject(kind cfg.TimeSeriesSourceKind, objectType string) []cdb.TimeSeriesMetric {
+	if s == nil {
+		return nil
+	}
+	return s.bySourceObject[kind][objectType]
+}
+
 // EmitObjectAttribute emits all matching enabled metrics. Per-metric safe failures are logged and skipped.
-func (e *Emitter) EmitObjectAttribute(input ObjectAttributeInput) error {
+func (e *Emitter) EmitObjectAttribute(snapshot *EnabledMetricSnapshot, input ObjectAttributeInput) error {
 	if e == nil || e.Repository == nil || e.Scopes == nil || e.Config == nil || !e.Config.Enabled {
 		return nil
 	}
-	enabled := true
-	metrics, err := e.Repository.ListMetrics(cdb.TimeSeriesMetricFilter{SourceKind: cfg.TimeSeriesSourceObjectAttribute, Enabled: &enabled, Pagination: cdb.TimeSeriesPagination{Limit: 10000}})
-	if err != nil {
-		recordEmitterOperation(metricOperationMetricLookup, "error")
-		return e.handleFailure(e.Config.Defaults.FailurePolicy, "lookup object-attribute metrics", err)
-	}
-	recordEmitterOperation(metricOperationMetricLookup, "success")
+	metrics := snapshot.sourceObject(cfg.TimeSeriesSourceObjectAttribute, input.ObjectType)
 	for i := range metrics {
 		metric := metrics[i]
-		if metric.SourceKind != cfg.TimeSeriesSourceObjectAttribute || !metric.Enabled {
-			continue
-		}
-		if err = e.emitMetric(metric, input); err != nil {
+		if err := e.emitMetric(metric, input); err != nil {
 			policy := metric.FailurePolicy
 			if policy == "" {
 				policy = e.Config.Defaults.FailurePolicy
