@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
+
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
 
@@ -149,9 +151,20 @@ func TestTimeSeriesObservationDuplicateAndBatchRollback(t *testing.T) {
 	if err != nil || !first.Inserted || first.Duplicate {
 		t.Fatalf("first insert: %#v %v", first, err)
 	}
-	second, err := InsertTimeSeriesObservation(&handler, &o)
+	duplicate := o
+	duplicate.ValueHash = "different-value-with-same-dedupe-identity"
+	second, err := InsertTimeSeriesObservation(&handler, &duplicate)
 	if err != nil || !second.Duplicate || second.ObservationID != first.ObservationID {
 		t.Fatalf("duplicate insert: %#v %v", second, err)
+	}
+	var storedMetricID uint64
+	var storedValueHash, storedDedupeKey string
+	if err = db.QueryRow(`SELECT metric_id, value_hash, dedupe_key FROM TimeSeriesObservations WHERE observation_id=?`, first.ObservationID).
+		Scan(&storedMetricID, &storedValueHash, &storedDedupeKey); err != nil {
+		t.Fatalf("read inserted observation: %v", err)
+	}
+	if storedMetricID != o.MetricID || storedValueHash != o.ValueHash || storedDedupeKey != o.DedupeKey {
+		t.Fatalf("unexpected stored observation: metric=%d value_hash=%q dedupe_key=%q", storedMetricID, storedValueHash, storedDedupeKey)
 	}
 	bad := o
 	bad.DedupeKey = "bad"
@@ -164,5 +177,93 @@ func TestTimeSeriesObservationDuplicateAndBatchRollback(t *testing.T) {
 	var count int
 	if err = db.QueryRow(`SELECT COUNT(*) FROM TimeSeriesObservations WHERE dedupe_key='rolled-back'`).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("batch did not roll back: count=%d err=%v", count, err)
+	}
+}
+
+func TestPostgresTimeSeriesObservationInsertReturnsIDInOneStatement(t *testing.T) {
+	database, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	handler := Handler(&PostgresHandler{db: database, dbms: DBPostgresStr})
+	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	o := TimeSeriesObservation{
+		MetricID: 8, ObservedAt: now, CollectedAt: now.Add(time.Minute),
+		BucketStart: now, BucketEnd: now.Add(time.Hour), ValueHash: "value-hash",
+		DedupeKey: "postgres-new", Dimensions: map[string]interface{}{"region": "eu"},
+		Provenance: json.RawMessage(`{"source":"test"}`),
+	}
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`(?s)^INSERT INTO TimeSeriesObservations .* ON CONFLICT \(dedupe_key\) DO NOTHING RETURNING observation_id$`).
+		WillReturnRows(sqlmock.NewRows([]string{"observation_id"}).AddRow(uint64(91)))
+	mock.ExpectCommit()
+
+	result, err := InsertTimeSeriesObservation(&handler, &o)
+	if err != nil {
+		t.Fatalf("insert observation: %v", err)
+	}
+	if result.ObservationID != 91 || !result.Inserted || result.Duplicate || o.ID != 91 {
+		t.Fatalf("unexpected insert result: %#v observation ID=%d", result, o.ID)
+	}
+	if o.DedupeKey != "postgres-new" || o.ValueHash != "value-hash" || o.Dimensions["region"] != "eu" || string(o.Provenance) != `{"source":"test"}` {
+		t.Fatalf("insert mutated observation contents: %#v", o)
+	}
+	if err = mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("new-row path should issue exactly one persistence statement: %v", err)
+	}
+}
+
+func TestPostgresTimeSeriesObservationDuplicateLooksUpExistingID(t *testing.T) {
+	database, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	handler := Handler(&PostgresHandler{db: database, dbms: DBPostgresStr})
+	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	o := TimeSeriesObservation{MetricID: 8, ObservedAt: now, CollectedAt: now, BucketStart: now, BucketEnd: now.Add(time.Hour), ValueHash: "same-value", DedupeKey: "same-key"}
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`(?s)^INSERT INTO TimeSeriesObservations .* ON CONFLICT \(dedupe_key\) DO NOTHING RETURNING observation_id$`).
+		WillReturnRows(sqlmock.NewRows([]string{"observation_id"}))
+	mock.ExpectQuery(`^SELECT observation_id FROM TimeSeriesObservations WHERE dedupe_key = \$1$`).
+		WithArgs("same-key").WillReturnRows(sqlmock.NewRows([]string{"observation_id"}).AddRow(uint64(37)))
+	mock.ExpectCommit()
+
+	result, err := InsertTimeSeriesObservation(&handler, &o)
+	if err != nil {
+		t.Fatalf("insert duplicate: %v", err)
+	}
+	if result.ObservationID != 37 || result.Inserted || !result.Duplicate || o.ID != 37 {
+		t.Fatalf("unexpected duplicate result: %#v observation ID=%d", result, o.ID)
+	}
+	if err = mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPostgresTimeSeriesObservationInsertErrorRollsBack(t *testing.T) {
+	database, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	handler := Handler(&PostgresHandler{db: database, dbms: DBPostgresStr})
+	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	o := TimeSeriesObservation{MetricID: 8, ObservedAt: now, CollectedAt: now, BucketStart: now, BucketEnd: now.Add(time.Hour), ValueHash: "value", DedupeKey: "error-key"}
+	insertErr := errors.New("constraint failure unrelated to dedupe")
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`(?s)^INSERT INTO TimeSeriesObservations .* RETURNING observation_id$`).WillReturnError(insertErr)
+	mock.ExpectRollback()
+
+	_, err = InsertTimeSeriesObservation(&handler, &o)
+	if !errors.Is(err, insertErr) {
+		t.Fatalf("expected non-dedupe insert error, got %v", err)
+	}
+	if err = mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }

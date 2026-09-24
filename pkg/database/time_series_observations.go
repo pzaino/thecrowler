@@ -140,8 +140,11 @@ func insertTimeSeriesObservationTxContext(ctx context.Context, tx *sql.Tx, dbms 
 		change_delta_numeric, change_detected_at, dedupe_key, dimensions, provenance, provenance_hash) VALUES (` + strings.Join(values, ",") + `)`
 	if dbms == DBMySQLStr {
 		query += ` ON DUPLICATE KEY UPDATE dedupe_key=VALUES(dedupe_key)`
-	} else {
+	} else if dbms == DBSQLiteStr {
 		query += ` ON CONFLICT (dedupe_key) DO NOTHING`
+	}
+	if dbms == DBPostgresStr {
+		return insertPostgresTimeSeriesObservation(ctx, tx, query+` ON CONFLICT (dedupe_key) DO NOTHING RETURNING observation_id`, args, o)
 	}
 	result, err := tx.ExecContext(ctx, query, args...)
 	if err != nil {
@@ -158,6 +161,28 @@ func insertTimeSeriesObservationTxContext(ctx context.Context, tx *sql.Tx, dbms 
 	}
 	o.ID = id
 	return TimeSeriesInsertResult{ObservationID: id, Inserted: affected == 1, Duplicate: affected != 1}, nil
+}
+
+// insertPostgresTimeSeriesObservation uses RETURNING so a successful new insert
+// needs no follow-up query. Only the conflict/no-row case performs the dedupe
+// lookup needed to return the existing observation's identity.
+func insertPostgresTimeSeriesObservation(ctx context.Context, tx *sql.Tx, query string, args []interface{}, o *TimeSeriesObservation) (TimeSeriesInsertResult, error) {
+	var id uint64
+	err := tx.QueryRowContext(ctx, query, args...).Scan(&id)
+	if err == nil {
+		o.ID = id
+		return TimeSeriesInsertResult{ObservationID: id, Inserted: true, Duplicate: false}, nil
+	}
+	if err != sql.ErrNoRows {
+		return TimeSeriesInsertResult{}, fmt.Errorf("insert time-series observation: %w", err)
+	}
+
+	lookup := `SELECT observation_id FROM TimeSeriesObservations WHERE dedupe_key = $1`
+	if err = tx.QueryRowContext(ctx, lookup, o.DedupeKey).Scan(&id); err != nil {
+		return TimeSeriesInsertResult{}, fmt.Errorf("lookup existing time-series observation: %w", err)
+	}
+	o.ID = id
+	return TimeSeriesInsertResult{ObservationID: id, Inserted: false, Duplicate: true}, nil
 }
 
 func optionalCanonicalJSON(value map[string]interface{}) (interface{}, error) {
