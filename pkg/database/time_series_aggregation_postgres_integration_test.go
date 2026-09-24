@@ -266,7 +266,7 @@ func TestPostgresWebObjectHistorySurvivesReplacementAndFollowsSourceOwnership(t 
 			t.Fatal(err)
 		}
 		value, _ := json.Marshal(state["operational"])
-		o := TimeSeriesObservation{MetricID: metric.ID, ObservedAt: at, EffectiveAt: timePointer(at.Add(-time.Minute)), CollectedAt: at.Add(time.Second), SourceUpdatedAt: timePointer(at.Add(-time.Second)), BucketStart: at.Truncate(time.Hour), BucketEnd: at.Truncate(time.Hour).Add(time.Hour), Scope: TimeSeriesScope{SourceID: &source, IndexID: &indexID, SubjectType: "widget", SubjectID: &objectID, ObjectType: "webobject", ObjectID: &objectID}, Value: TimeSeriesValue{JSON: value}, Dimensions: map[string]interface{}{"region": state["region"], "kind": state["kind"]}, Provenance: json.RawMessage(fmt.Sprintf(`{"source_id":%d,"selector":"operational","document":%s}`, source, document))}
+		o := TimeSeriesObservation{MetricID: metric.ID, ObservedAt: at, EffectiveAt: integrationTimePointer(at.Add(-time.Minute)), CollectedAt: at.Add(time.Second), SourceUpdatedAt: integrationTimePointer(at.Add(-time.Second)), BucketStart: at.Truncate(time.Hour), BucketEnd: at.Truncate(time.Hour).Add(time.Hour), Scope: TimeSeriesScope{SourceID: &source, IndexID: &indexID, SubjectType: "widget", SubjectID: &objectID, ObjectType: "webobject", ObjectID: &objectID}, Value: TimeSeriesValue{JSON: value}, Dimensions: map[string]interface{}{"region": state["region"], "kind": state["kind"]}, Provenance: json.RawMessage(fmt.Sprintf(`{"source_id":%d,"selector":"operational","document":%s}`, source, document))}
 		prepared, prepErr := PrepareTimeSeriesObservation(o, cfg.TimeSeriesValueJSON, TimeSeriesPreparationPolicy{})
 		if prepErr != nil {
 			t.Fatal(prepErr)
@@ -281,7 +281,7 @@ func TestPostgresWebObjectHistorySurvivesReplacementAndFollowsSourceOwnership(t 
 			o.PreviousValueHash = previous.ValueHash
 			o.IsChanged = previous.ValueHash != o.ValueHash
 			o.ChangeType = "updated"
-			o.ChangeDetectedAt = timePointer(at)
+			o.ChangeDetectedAt = integrationTimePointer(at)
 		}
 		o.DedupeKey, err = TimeSeriesDedupeKey(metric.DedupeScope, metric.ID, o, "")
 		if err != nil {
@@ -352,7 +352,7 @@ func TestPostgresWebObjectHistorySurvivesReplacementAndFollowsSourceOwnership(t 
 	}
 }
 
-func timePointer(value time.Time) *time.Time { return &value }
+func integrationTimePointer(value time.Time) *time.Time { return &value }
 
 func TestPostgresDeterministicAggregateEquivalenceFixture(t *testing.T) {
 	db, sqlDB := openPostgresIntegrationTestDB(t)
@@ -405,7 +405,7 @@ func TestPostgresDeterministicAggregateEquivalenceFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := QueryTimeSeriesAggregates(db, TimeSeriesQueryFilter{Start: &start, End: timePointer(start.Add(2 * time.Hour)), Pagination: TimeSeriesPagination{Limit: 20}})
+	result, err := QueryTimeSeriesAggregates(db, TimeSeriesQueryFilter{Start: &start, End: integrationTimePointer(start.Add(2 * time.Hour)), Pagination: TimeSeriesPagination{Limit: 20}})
 	if err != nil {
 		t.Fatal(err)
 	}

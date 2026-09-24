@@ -103,6 +103,77 @@ type timeSeriesAggregateAccumulator struct {
 	lastTime  time.Time
 }
 
+// timeSeriesAggregationCursor is private to the aggregation scanner. Public
+// observation queries intentionally retain their offset-based API, while the
+// scanner uses the selected metric clock plus the immutable primary key to
+// make page boundaries deterministic.
+type timeSeriesAggregationCursor struct {
+	timestamp     time.Time
+	observationID uint64
+	valid         bool
+}
+
+func timeSeriesAggregationTimeColumn(basis cfg.TimeSeriesTimeBasis) (string, error) {
+	switch basis {
+	case "", cfg.TimeSeriesTimeObservedAt:
+		return "observed_at", nil
+	case cfg.TimeSeriesTimeEventAt:
+		return "effective_at", nil
+	case cfg.TimeSeriesTimeSourceTimestamp:
+		return "source_updated_at", nil
+	default:
+		return "", fmt.Errorf("unsupported time-series time basis %q", basis)
+	}
+}
+
+// queryTimeSeriesAggregationPage reads one keyset page. It deliberately does
+// not reuse QueryTimeSeriesObservationsContext: that function is a public,
+// offset-paginated query ordered by observed_at for backwards compatibility.
+func queryTimeSeriesAggregationPage(ctx context.Context, db *Handler, dbms string, metricID uint64, basis cfg.TimeSeriesTimeBasis, scanRange TimeSeriesRange, cursor timeSeriesAggregationCursor, limit int) (TimeSeriesObservationQueryResult, error) {
+	column, err := timeSeriesAggregationTimeColumn(basis)
+	if err != nil {
+		return TimeSeriesObservationQueryResult{}, err
+	}
+	filter := TimeSeriesQueryFilter{MetricID: &metricID, Start: &scanRange.Start, End: &scanRange.End, TimeBasis: basis}
+	conditions, args, p, err := buildTimeSeriesQueryConditions(dbms, filter, "o")
+	if err != nil {
+		return TimeSeriesObservationQueryResult{}, err
+	}
+	if cursor.valid {
+		later := p.Next()
+		equal := p.Next()
+		id := p.Next()
+		conditions = append(conditions, "(o."+column+" > "+later+" OR (o."+column+" = "+equal+" AND o.observation_id > "+id+"))")
+		args = append(args, cursor.timestamp.UTC(), cursor.timestamp.UTC(), cursor.observationID)
+	}
+	query := `SELECT ` + prefixColumns(timeSeriesObservationColumns, "o") +
+		` FROM TimeSeriesObservations o WHERE ` + strings.Join(conditions, " AND ") +
+		` ORDER BY o.` + column + ` ASC, o.observation_id ASC LIMIT ` + p.Next()
+	args = append(args, limit+1)
+
+	rows, err := (*db).QueryContext(ctx, query, args...)
+	if err != nil {
+		return TimeSeriesObservationQueryResult{}, fmt.Errorf("query time-series aggregation page: %w", err)
+	}
+	defer rows.Close()
+	observations := make([]TimeSeriesObservation, 0, limit+1)
+	for rows.Next() {
+		observation, scanErr := scanTimeSeriesObservation(rows.Scan)
+		if scanErr != nil {
+			return TimeSeriesObservationQueryResult{}, scanErr
+		}
+		observations = append(observations, *observation)
+	}
+	if err = rows.Err(); err != nil {
+		return TimeSeriesObservationQueryResult{}, err
+	}
+	hasMore := len(observations) > limit
+	if hasMore {
+		observations = observations[:limit]
+	}
+	return TimeSeriesObservationQueryResult{Observations: observations, Count: len(observations), HasMore: hasMore}, nil
+}
+
 // timeSeriesAggregationLease owns the dedicated PostgreSQL session on which
 // the advisory lock was acquired. PostgreSQL session locks must be released on
 // that exact connection.
@@ -510,7 +581,7 @@ func aggregateTimeSeriesWindow(
 		}
 		metricRanges[metric.ID] = metricRange
 
-		offset := 0
+		cursor := timeSeriesAggregationCursor{}
 		remaining := metricBudget
 
 		for {
@@ -528,22 +599,7 @@ func aggregateTimeSeriesWindow(
 				)
 			}
 
-			query := TimeSeriesQueryFilter{
-				MetricID:  &metric.ID,
-				Start:     &metricRange.Start,
-				End:       &metricRange.End,
-				TimeBasis: metric.TimeBasis,
-				Pagination: TimeSeriesPagination{
-					Limit:  limit,
-					Offset: offset,
-				},
-			}
-
-			page, queryErr := QueryTimeSeriesObservationsContext(
-				ctx,
-				db,
-				query,
-			)
+			page, queryErr := queryTimeSeriesAggregationPage(ctx, db, dbms, metric.ID, metric.TimeBasis, metricRange, cursor, limit)
 			if queryErr != nil {
 				return result, fmt.Errorf(
 					"query observations for metric %d: %w",
@@ -578,6 +634,17 @@ func aggregateTimeSeriesWindow(
 				result.ObservationsProcessed++
 			}
 
+			// Do not publish a continuation point until every row in the page
+			// has been incorporated successfully.
+			if page.Count > 0 {
+				last := page.Observations[page.Count-1]
+				basisTime, ok := timeSeriesObservationBasis(last, metric.TimeBasis)
+				if !ok {
+					return result, fmt.Errorf("metric %d aggregation page ended with an invalid %s timestamp", metric.ID, metric.TimeBasis)
+				}
+				cursor = timeSeriesAggregationCursor{timestamp: basisTime, observationID: last.ID, valid: true}
+			}
+
 			result.BatchesProcessed++
 
 			if metricBudget > 0 {
@@ -596,7 +663,6 @@ func aggregateTimeSeriesWindow(
 				)
 			}
 
-			offset += page.Count
 		}
 	}
 

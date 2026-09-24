@@ -347,6 +347,131 @@ func TestTimeSeriesAggregationAllFunctionsAndLateObservation(t *testing.T) {
 	}
 }
 
+func TestTimeSeriesAggregationKeysetMatchesReference(t *testing.T) {
+	bases := []cfg.TimeSeriesTimeBasis{
+		cfg.TimeSeriesTimeObservedAt,
+		cfg.TimeSeriesTimeEventAt,
+		cfg.TimeSeriesTimeSourceTimestamp,
+	}
+	for _, basis := range bases {
+		basis := basis
+		for _, size := range []int{0, 1, 4, 7} { // empty, one page, exact boundary, and multiple pages
+			t.Run(fmt.Sprintf("%s/rows_%d", basis, size), func(t *testing.T) {
+				db, closeDB := openEntityTimeSeriesTestDB(t)
+				defer closeDB()
+				metric, err := UpsertTimeSeriesMetric(db, &TimeSeriesMetric{Key: fmt.Sprintf("keyset-%s-%d", basis, size), DisplayName: "keyset", SourceKind: cfg.TimeSeriesSourceCustom, ValueType: cfg.TimeSeriesValueDecimal, Aggregate: cfg.TimeSeriesAggregateAverage, Bucket: cfg.TimeSeriesBucketOneHour, TimeBasis: basis, DedupeScope: cfg.TimeSeriesDedupeGlobal, ObjectType: cfg.TimeSeriesObjectWebObject, FailurePolicy: cfg.TimeSeriesFailureLogSkip, Selector: []byte(`{}`), Enabled: true})
+				if err != nil {
+					t.Fatal(err)
+				}
+				start := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+				want := make([]uint64, 0, size)
+				for i := 0; i < size; i++ {
+					// Repeated timestamps exercise the observation_id tie-breaker;
+					// observed_at is reversed to catch ordering by the wrong clock.
+					active := start.Add(time.Duration(i/2+1) * time.Minute)
+					observed := start.Add(time.Duration(size-i+20) * time.Minute)
+					value := float64(i)
+					o := TimeSeriesObservation{MetricID: metric.ID, ObservedAt: observed, CollectedAt: observed, BucketStart: start, BucketEnd: start.Add(time.Hour), Value: TimeSeriesValue{Numeric: &value}, ValueHash: fmt.Sprintf("v-%d", i), DedupeKey: fmt.Sprintf("keyset-%s-%d-%d", basis, size, i)}
+					switch basis {
+					case cfg.TimeSeriesTimeObservedAt:
+						o.ObservedAt = active
+					case cfg.TimeSeriesTimeEventAt:
+						o.EffectiveAt = timePointer(active)
+					case cfg.TimeSeriesTimeSourceTimestamp:
+						o.SourceUpdatedAt = timePointer(active)
+					}
+					inserted, insertErr := InsertTimeSeriesObservation(db, &o)
+					if insertErr != nil {
+						t.Fatal(insertErr)
+					}
+					want = append(want, inserted.ObservationID)
+				}
+
+				// A soft-deleted row must not disturb either page boundaries or results.
+				if size > 4 {
+					if _, err = (*db).Exec(`UPDATE TimeSeriesObservations SET deleted_at = CURRENT_TIMESTAMP WHERE observation_id = ?`, want[2]); err != nil {
+						t.Fatal(err)
+					}
+					want = append(want[:2], want[3:]...)
+				}
+
+				scanRange := TimeSeriesRange{Start: start, End: start.Add(time.Hour)}
+				cursor := timeSeriesAggregationCursor{}
+				got := make([]uint64, 0, len(want))
+				for {
+					page, pageErr := queryTimeSeriesAggregationPage(context.Background(), db, DBSQLiteStr, metric.ID, basis, scanRange, cursor, 2)
+					if pageErr != nil {
+						t.Fatal(pageErr)
+					}
+					for _, observation := range page.Observations {
+						got = append(got, observation.ID)
+					}
+					if page.Count > 0 {
+						last := page.Observations[page.Count-1]
+						at, ok := timeSeriesObservationBasis(last, basis)
+						if !ok {
+							t.Fatal("page returned an observation without its active timestamp")
+						}
+						cursor = timeSeriesAggregationCursor{timestamp: at, observationID: last.ID, valid: true}
+					}
+					if !page.HasMore {
+						break
+					}
+				}
+				if !reflect.DeepEqual(got, want) {
+					t.Fatalf("keyset IDs = %v, reference IDs = %v", got, want)
+				}
+			})
+		}
+	}
+}
+
+func TestTimeSeriesAggregationKeysetIncludesLateRowsAfterCursor(t *testing.T) {
+	db, closeDB := openEntityTimeSeriesTestDB(t)
+	defer closeDB()
+	metric, err := UpsertTimeSeriesMetric(db, &TimeSeriesMetric{Key: "keyset-late", DisplayName: "keyset late", SourceKind: cfg.TimeSeriesSourceCustom, ValueType: cfg.TimeSeriesValueDecimal, Aggregate: cfg.TimeSeriesAggregateAverage, Bucket: cfg.TimeSeriesBucketOneHour, TimeBasis: cfg.TimeSeriesTimeObservedAt, DedupeScope: cfg.TimeSeriesDedupeGlobal, ObjectType: cfg.TimeSeriesObjectWebObject, FailurePolicy: cfg.TimeSeriesFailureLogSkip, Selector: []byte(`{}`), Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
+	insert := func(minute int, key string) uint64 {
+		value := float64(minute)
+		o := TimeSeriesObservation{MetricID: metric.ID, ObservedAt: start.Add(time.Duration(minute) * time.Minute), CollectedAt: start, BucketStart: start, BucketEnd: start.Add(time.Hour), Value: TimeSeriesValue{Numeric: &value}, ValueHash: key, DedupeKey: key}
+		result, insertErr := InsertTimeSeriesObservation(db, &o)
+		if insertErr != nil {
+			t.Fatal(insertErr)
+		}
+		return result.ObservationID
+	}
+	insert(1, "late-1")
+	insert(2, "late-2")
+	rng := TimeSeriesRange{Start: start, End: start.Add(time.Hour)}
+	first, err := queryTimeSeriesAggregationPage(context.Background(), db, DBSQLiteStr, metric.ID, metric.TimeBasis, rng, timeSeriesAggregationCursor{}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := first.Observations[0]
+	lateID := insert(3, "late-3")
+	second, err := queryTimeSeriesAggregationPage(context.Background(), db, DBSQLiteStr, metric.ID, metric.TimeBasis, rng, timeSeriesAggregationCursor{timestamp: last.ObservedAt, observationID: last.ID, valid: true}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Observations) != 2 || second.Observations[1].ID != lateID {
+		t.Fatalf("continuation did not include eligible late row: %#v", second.Observations)
+	}
+}
+
+func TestTimeSeriesAggregationKeysetHonorsContextCancellation(t *testing.T) {
+	db, closeDB := openEntityTimeSeriesTestDB(t)
+	defer closeDB()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := queryTimeSeriesAggregationPage(ctx, db, DBSQLiteStr, 1, cfg.TimeSeriesTimeObservedAt, TimeSeriesRange{Start: time.Now().Add(-time.Hour), End: time.Now()}, timeSeriesAggregationCursor{}, 2)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want context cancellation", err)
+	}
+}
+
 func TestTimeSeriesAggregateBatchUpsertEquivalentToSingleRows(t *testing.T) {
 	type fixture struct {
 		db      *Handler
