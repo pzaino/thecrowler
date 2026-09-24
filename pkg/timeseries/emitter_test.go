@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
@@ -193,8 +194,85 @@ type fakeArtifactScopes struct {
 	err    error
 }
 
+type countingArtifactScopes struct {
+	scopes []cdb.TimeSeriesScope
+	calls  int
+}
+
+func (f *countingArtifactScopes) ResolveIndexedArtifactScopes(IndexedArtifactInput) ([]cdb.TimeSeriesScope, error) {
+	f.calls++
+	return f.scopes, nil
+}
+
 func (f fakeArtifactScopes) ResolveIndexedArtifactScopes(IndexedArtifactInput) ([]cdb.TimeSeriesScope, error) {
 	return f.scopes, f.err
+}
+
+func TestIndexedArtifactScopeSnapshotIsResolvedOnceAndCopiedExactly(t *testing.T) {
+	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	dimensions, err := json.Marshal([]cfg.TimeSeriesDimensionConfig{{Key: "channel", Selector: map[string]interface{}{"constant": "reference"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	metrics := []cdb.TimeSeriesMetric{
+		{ID: 901, Key: "reference-a", SourceKind: cfg.TimeSeriesSourceHTTPInfo, ValueType: cfg.TimeSeriesValueString, Bucket: cfg.TimeSeriesBucketNone, TimeBasis: cfg.TimeSeriesTimeObservedAt, DedupeScope: cfg.TimeSeriesDedupeObject, Selector: json.RawMessage(`{"from":"details","path":"status"}`), Dimensions: dimensions, Enabled: true},
+		{ID: 902, Key: "reference-b", SourceKind: cfg.TimeSeriesSourceHTTPInfo, ValueType: cfg.TimeSeriesValueString, Bucket: cfg.TimeSeriesBucketNone, TimeBasis: cfg.TimeSeriesTimeObservedAt, DedupeScope: cfg.TimeSeriesDedupeObject, Selector: json.RawMessage(`{"from":"details","path":"status"}`), Dimensions: dimensions, Enabled: true},
+	}
+	id := func(value uint64) *uint64 { return &value }
+	tests := []struct {
+		name   string
+		scopes []cdb.TimeSeriesScope
+	}{
+		{name: "source only", scopes: []cdb.TimeSeriesScope{{SourceID: id(1)}}},
+		{name: "source plus index", scopes: []cdb.TimeSeriesScope{{SourceID: id(2), IndexID: id(20)}}},
+		{name: "information seed ownership", scopes: []cdb.TimeSeriesScope{{SourceID: id(3), InformationSeedID: id(30), InformationSeedCandidateID: id(31), SourceInformationSeedID: id(32), IndexID: id(33)}}},
+		{name: "entity ownership", scopes: []cdb.TimeSeriesScope{{SourceID: id(4), IndexID: id(40), EntityID: id(41)}}},
+		{name: "complete historical identity", scopes: []cdb.TimeSeriesScope{{SourceID: id(5), IndexID: id(50), SubjectType: "old-subject", SubjectID: id(51), SubjectText: "old-text", ObjectType: "old-object", ObjectID: id(52), CorrelationRuleID: id(53), CorrelationObjectType1: "left", CorrelationObjectID1: id(54), CorrelationObjectType2: "right", CorrelationObjectID2: id(55)}}},
+		{name: "multiple resolved scopes", scopes: []cdb.TimeSeriesScope{{SourceID: id(6), IndexID: id(60)}, {SourceID: id(7), IndexID: id(60), InformationSeedID: id(61), EntityID: id(62)}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &fakeRepository{metrics: metrics}
+			resolver := &countingArtifactScopes{scopes: tc.scopes}
+			emitter := Emitter{Repository: repo, ArtifactScopes: resolver, Config: &cfg.TimeSeriesConfig{Enabled: true, Defaults: cfg.TimeSeriesMetricDefaults{FailurePolicy: cfg.TimeSeriesFailureFailIndexing}, Privacy: cfg.TimeSeriesPrivacyConfig{StoreValueText: true}, Cardinality: cfg.TimeSeriesCardinalityConfig{MaxDimensions: 10}}, Now: func() time.Time { return now }}
+			input := IndexedArtifactInput{SourceKind: cfg.TimeSeriesSourceHTTPInfo, IndexID: 99, RowID: 70, ObjectType: "httpinfo", ObjectID: 71, Details: map[string]interface{}{"status": "ok"}, ObservedAt: now}
+			if err := emitter.EmitIndexedArtifact(mustSnapshot(t, &emitter), input); err != nil {
+				t.Fatal(err)
+			}
+			if resolver.calls != 1 {
+				t.Fatalf("scope resolution calls = %d, want 1", resolver.calls)
+			}
+			if len(repo.observations) != len(metrics)*len(tc.scopes) {
+				t.Fatalf("observations = %d, want %d", len(repo.observations), len(metrics)*len(tc.scopes))
+			}
+			for scopeIndex, ownership := range tc.scopes {
+				expected := cloneTimeSeriesScope(ownership)
+				expected.SubjectType = string(input.SourceKind)
+				expected.SubjectID = id(input.RowID)
+				expected.SubjectText = indexedArtifactSubject(input)
+				expected.ObjectType = input.ObjectType
+				expected.ObjectID = id(input.ObjectID)
+				first := repo.observations[scopeIndex]
+				second := repo.observations[len(tc.scopes)+scopeIndex]
+				if !reflect.DeepEqual(first.Scope, expected) || !reflect.DeepEqual(second.Scope, expected) {
+					t.Fatalf("scope mismatch:\nfirst: %#v\nsecond: %#v\nwant: %#v", first.Scope, second.Scope, expected)
+				}
+				if !reflect.DeepEqual(first.Value, second.Value) || first.ValueHash != second.ValueHash || !reflect.DeepEqual(first.Dimensions, second.Dimensions) || !reflect.DeepEqual(first.Provenance, second.Provenance) || first.ProvenanceHash != second.ProvenanceHash {
+					t.Fatalf("snapshot path differs from reference path:\nfirst: %#v\nsecond: %#v", first, second)
+				}
+				if first.Scope.SourceID != nil && second.Scope.SourceID != nil && first.Scope.SourceID == second.Scope.SourceID {
+					t.Fatal("observations share scope pointer storage")
+				}
+			}
+			// Mutating operational resolver data after emission must not alter history.
+			if len(tc.scopes) > 0 && tc.scopes[0].SourceID != nil {
+				*tc.scopes[0].SourceID = 9999
+				if repo.observations[0].Scope.SourceID == nil || *repo.observations[0].Scope.SourceID == 9999 {
+					t.Fatal("observation retained a dependency on resolver storage")
+				}
+			}
+		})
+	}
 }
 
 func TestKeywordTimeSeriesGenericExactAndOccurrences(t *testing.T) {
