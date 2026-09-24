@@ -471,7 +471,7 @@ Entity assignment is **immediate** when the resolver can see an `EntityMembershi
 
 The events service starts incremental aggregation only when both `timeseries.enabled` and `timeseries.aggregation.enabled` are true. `schedule` is a Go duration. Each run is bounded by `batch_size * max_batches` and stores a checkpoint. The next run starts at `checkpoint - overlap`, allowing late observations to replace already materialized complete buckets. Aggregation failure is logged and does not fail indexing/event work.
 
-Aggregation uses four distinct mechanisms; none should be described as a transaction-scoped aggregation lock:
+Aggregation uses four distinct mechanisms
 
 1. A **process-local mutex** admits only one aggregation invocation in a process. It does not coordinate separate processes.
 2. A **backend cluster-wide writer lease** admits one aggregation writer across application instances. PostgreSQL implements this with one fixed, global session-level advisory-lock identity. The identity is deliberately independent of `RunKey`.
