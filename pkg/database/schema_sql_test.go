@@ -90,6 +90,46 @@ func TestTimeSeriesRelease113MigrationsReplaceSourceOwnership(t *testing.T) {
 	}
 }
 
+func TestPostgresTimeSeriesRelease114Indexes(t *testing.T) {
+	t.Parallel()
+
+	files := []string{"postgresql-setup.pgsql", "db_migrations/postgresql-migration-v1.14.pgsql"}
+	wanted := []string{
+		"idx_timeseriesobservations_active_metric_observed",
+		"ON TimeSeriesObservations(metric_id, observed_at, observation_id)",
+		"idx_timeseriesobservations_active_metric_effective",
+		"ON TimeSeriesObservations(metric_id, effective_at, observation_id)",
+		"idx_timeseriesobservations_active_metric_source_updated",
+		"ON TimeSeriesObservations(metric_id, source_updated_at, observation_id)",
+		"idx_timeseriesaggregates_active_metric_bucket",
+		"ON TimeSeriesAggregates(metric_id, bucket_start, aggregate_id)",
+		"WHERE deleted_at IS NULL",
+	}
+	for _, file := range files {
+		content, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read %s: %v", file, err)
+		}
+		for _, fragment := range wanted {
+			if !strings.Contains(strings.ToUpper(string(content)), strings.ToUpper(fragment)) {
+				t.Errorf("%s missing index fragment %q", file, fragment)
+			}
+		}
+	}
+
+	migration, err := os.ReadFile("db_migrations/postgresql-migration-v1.14.pgsql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	upper := strings.ToUpper(string(migration))
+	if !strings.Contains(upper, "DROP INDEX IF EXISTS IDX_TIMESERIESAGGREGATES_METRIC_BUCKET") {
+		t.Error("migration must replace the aggregate index whose prefix is equivalent")
+	}
+	if strings.Contains(upper, "CREATE INDEX CONCURRENTLY") {
+		t.Error("transactional migration must not contain CREATE INDEX CONCURRENTLY")
+	}
+}
+
 func TestSourceSubPriorityFreshInstallAndUpgradeCoverage(t *testing.T) {
 	t.Parallel()
 	files := []string{
@@ -202,7 +242,6 @@ func TestTimeSeriesSchemaSQLContainsFreshInstallAndUpgradeCoverage(t *testing.T)
 		"idx_timeseriesobservations_seed_candidate",
 		"idx_timeseriesobservations_subject",
 		"idx_timeseriesobservations_correlation_rule",
-		"idx_timeseriesaggregates_metric_bucket",
 		"idx_timeseriesaggregates_aggregate_hash",
 		"ON DELETE SET NULL",
 	}

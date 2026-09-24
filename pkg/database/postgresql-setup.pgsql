@@ -127,10 +127,10 @@ CREATE TABLE IF NOT EXISTS DBSchemaVersion (
 DO $$
 BEGIN
     IF NOT EXISTS (
-        SELECT 1 FROM DBSchemaVersion WHERE version = '1.13'
+        SELECT 1 FROM DBSchemaVersion WHERE version = '1.14'
     ) THEN
         INSERT INTO DBSchemaVersion (version, description)
-        VALUES ('1.13', 'CROWler DB schema version 1.13');
+        VALUES ('1.14', 'CROWler DB schema version 1.14');
     END IF;
 END
 $$;
@@ -2322,7 +2322,10 @@ CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_object ON TimeSeriesObserv
 CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_correlation_rule ON TimeSeriesObservations(correlation_rule_id, observed_at);
 CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_dedupe_key ON TimeSeriesObservations(dedupe_key);
 CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_dimensions_gin ON TimeSeriesObservations USING GIN(dimensions);
-CREATE INDEX IF NOT EXISTS idx_timeseriesaggregates_metric_bucket ON TimeSeriesAggregates(metric_id, bucket_start);
+CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_active_metric_observed ON TimeSeriesObservations(metric_id, observed_at, observation_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_active_metric_effective ON TimeSeriesObservations(metric_id, effective_at, observation_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_active_metric_source_updated ON TimeSeriesObservations(metric_id, source_updated_at, observation_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_timeseriesaggregates_active_metric_bucket ON TimeSeriesAggregates(metric_id, bucket_start, aggregate_id) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_timeseriesaggregates_seed ON TimeSeriesAggregates(information_seed_id, bucket_start);
 CREATE INDEX IF NOT EXISTS idx_timeseriesaggregates_seed_candidate ON TimeSeriesAggregates(information_seed_candidate_id, bucket_start);
 CREATE INDEX IF NOT EXISTS idx_timeseriesaggregates_source ON TimeSeriesAggregates(source_id, bucket_start);
