@@ -76,8 +76,10 @@ func (e *Emitter) EmitObjectAttribute(input ObjectAttributeInput) error {
 	enabled := true
 	metrics, err := e.Repository.ListMetrics(cdb.TimeSeriesMetricFilter{SourceKind: cfg.TimeSeriesSourceObjectAttribute, Enabled: &enabled, Pagination: cdb.TimeSeriesPagination{Limit: 10000}})
 	if err != nil {
+		recordEmitterOperation(metricOperationMetricLookup, "error")
 		return e.handleFailure(e.Config.Defaults.FailurePolicy, "lookup object-attribute metrics", err)
 	}
+	recordEmitterOperation(metricOperationMetricLookup, "success")
 	for i := range metrics {
 		metric := metrics[i]
 		if metric.SourceKind != cfg.TimeSeriesSourceObjectAttribute || !metric.Enabled {
@@ -115,8 +117,10 @@ func (e *Emitter) emitMetric(metric cdb.TimeSeriesMetric, input ObjectAttributeI
 
 	scopes, err := e.Scopes.ResolveScopes(input)
 	if err != nil {
+		recordEmitterOperation(metricOperationScopeResolution, "error")
 		return fmt.Errorf("resolve scopes: %w", err)
 	}
+	recordEmitterOperation(metricOperationScopeResolution, "success")
 	if len(scopes) == 0 {
 		id := input.ObjectID
 		scopes = []cdb.TimeSeriesScope{{ObjectType: input.ObjectType, ObjectID: &id}}
@@ -143,12 +147,15 @@ func (e *Emitter) emitMetric(metric cdb.TimeSeriesMetric, input ObjectAttributeI
 	basePolicy := e.preparationPolicy(metric)
 	cardinalityPolicy := e.cardinalityPolicy(metric)
 	for _, scope := range scopes {
+		recordEmitterOperation(metricOperationObservationAttempt, "attempted")
 		policy := basePolicy
 		if e.Cardinality != nil {
 			policy.CardinalityExceeded, err = e.Cardinality.Exceeded(metric, scope, dimensions, cardinalityPolicy)
 			if err != nil {
+				recordEmitterOperation(metricOperationCardinalityCheck, "error")
 				return fmt.Errorf("check cardinality: %w", err)
 			}
+			recordEmitterOperation(metricOperationCardinalityCheck, "success")
 		}
 		observation := cdb.TimeSeriesObservation{MetricID: metric.ID, ObservedAt: observedAt, EffectiveAt: effectiveAt, CollectedAt: e.now(), SourceUpdatedAt: sourceUpdatedAt, BucketStart: bucketStart, BucketEnd: bucketEnd, Scope: scope, Value: value, Dimensions: cloneMap(dimensions)}
 		prepared, prepareErr := cdb.PrepareTimeSeriesObservation(observation, metric.ValueType, policy)
@@ -158,7 +165,13 @@ func (e *Emitter) emitMetric(metric cdb.TimeSeriesMetric, input ObjectAttributeI
 		observation = prepared.Observation
 		previous, previousErr := e.Repository.PreviousObservation(cdb.TimeSeriesChangeLookup{MetricID: metric.ID, Scope: scope, Dimensions: observation.Dimensions, Before: observedAt, TimeBasis: metric.TimeBasis})
 		if previousErr != nil && !errors.Is(previousErr, cdb.ErrTimeSeriesObservationNotFound) {
+			recordEmitterOperation(metricOperationPreviousLookup, "error")
 			return fmt.Errorf("lookup previous observation: %w", previousErr)
+		}
+		if errors.Is(previousErr, cdb.ErrTimeSeriesObservationNotFound) {
+			recordEmitterOperation(metricOperationPreviousLookup, "not_found")
+		} else {
+			recordEmitterOperation(metricOperationPreviousLookup, "found")
 		}
 		applyChange(&observation, previous, previousErr, observedAt)
 		nonce := ""
@@ -201,8 +214,16 @@ func (e *Emitter) emitMetric(metric cdb.TimeSeriesMetric, input ObjectAttributeI
 		if err != nil {
 			return err
 		}
-		if _, err = e.Repository.InsertObservation(&observation); err != nil {
+		insertResult, insertErr := e.Repository.InsertObservation(&observation)
+		if insertErr != nil {
+			recordEmitterOperation(metricOperationInsert, "error")
+			err = insertErr
 			return err
+		}
+		if insertResult.Duplicate {
+			recordEmitterOperation(metricOperationInsert, "duplicate")
+		} else {
+			recordEmitterOperation(metricOperationInsert, "inserted")
 		}
 	}
 	return nil

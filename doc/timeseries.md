@@ -526,6 +526,123 @@ if err == nil {
 }
 ```
 
+## Production database performance observation
+
+Application metrics are deliberately lightweight. The emitter publishes
+`crowler_timeseries_emitter_operations_total{operation,outcome}` for observation attempts,
+inserts (including the `duplicate` outcome), metric-definition lookups, previous-observation
+lookups, cardinality checks, and scope resolution. The fixed `operation` and `outcome` values
+are the only labels: metric keys, query text, scope IDs, URLs, dimensions, and other
+deployment-controlled values are never labels. Aggregation publishes the unlabeled counters
+`crowler_timeseries_aggregation_rows_scanned_total`,
+`crowler_timeseries_aggregation_windows_completed_total`, and
+`crowler_timeseries_aggregation_retries_total`.
+
+SQL pool pressure comes only from the existing, process-local `database/sql.DBStats` sample.
+Alongside open/in-use/idle connections, `crowler_db_pool_wait_count` and
+`crowler_db_pool_wait_duration_seconds` expose its cumulative `WaitCount` and `WaitDuration`.
+Collecting these gauges does **not** issue a PostgreSQL query. A rising wait duration together
+with sustained in-use connections near the process quota indicates contention; flat wait
+counters do not. Because these values are per process and reset on restart, compare rates and
+keep `service_type`/`instance` when aggregating them.
+
+### Enable `pg_stat_statements` in production
+
+Use PostgreSQL's `pg_stat_statements` for server-side query-family totals. Enable it through
+`shared_preload_libraries` (a server restart is normally required), then create the extension
+once in the CROWler database as a suitably privileged operator:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+```
+
+Keep statement tracking enabled for the measurement interval and make sure PostgreSQL I/O
+timing is enabled (`track_io_timing = on`) if non-zero block read/write timings are required.
+On PostgreSQL versions that support it, `track_wal_io_timing` is separate. Extension rows are
+normalized statement families, not individual executions; protect access because even
+normalized query text can disclose schema and workload details.
+
+The following supplied top-30 report ranks total execution time and retains calls, row count,
+shared-buffer activity, temporary I/O, and available block/temp-I/O timing fields. On older
+PostgreSQL/extension versions that lack `temp_blk_read_time` or `temp_blk_write_time`, remove
+those two selected columns (use `\d+ pg_stat_statements` to confirm the installed view):
+
+```sql
+SELECT queryid,
+       calls,
+       round(total_exec_time::numeric, 2) AS total_exec_ms,
+       round(mean_exec_time::numeric, 2) AS mean_exec_ms,
+       rows,
+       shared_blks_hit,
+       shared_blks_read,
+       shared_blks_dirtied,
+       shared_blks_written,
+       temp_blks_read,
+       temp_blks_written,
+       round(blk_read_time::numeric, 2) AS blk_read_ms,
+       round(blk_write_time::numeric, 2) AS blk_write_ms,
+       round(temp_blk_read_time::numeric, 2) AS temp_blk_read_ms,
+       round(temp_blk_write_time::numeric, 2) AS temp_blk_write_ms,
+       query
+FROM pg_stat_statements
+WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
+ORDER BY total_exec_time DESC
+LIMIT 30;
+```
+
+Inspect work that is active *now* separately through `pg_stat_activity`; this is an operator
+diagnostic query and is never executed by CROWler instrumentation:
+
+```sql
+SELECT pid,
+       application_name,
+       state,
+       wait_event_type,
+       wait_event,
+       now() - query_start AS query_age,
+       now() - xact_start AS transaction_age,
+       query
+FROM pg_stat_activity
+WHERE datname = current_database()
+  AND pid <> pg_backend_pid()
+  AND state <> 'idle'
+ORDER BY query_start;
+```
+
+### Map measurements to CROWler query families
+
+Map normalized statements by stable table/operation shape rather than exporting their text as
+a Prometheus label:
+
+* `TimeSeriesMetrics` selects are **metric lookup** work.
+* `TimeSeriesObservations` inserts are **observation insert/deduplication** work; the select by
+  `dedupe_key` returns the persisted ID. Observation selects ordered newest-first are
+  **previous-observation lookup** work, while paginated range selects are **aggregation scans**
+  or API raw-observation reads.
+* `TimeSeriesAggregates` deletes and batched upserts plus `TimeSeriesAggregationRuns` writes are
+  the **aggregation replacement/checkpoint** family.
+* Ownership/entity joins used by resolver code are **scope resolution**, and distinct
+  series/dimension checks are **cardinality enforcement**.
+
+Correlate a family with the application counters: for example, divide a statement family's
+call delta by the emitter operation delta to detect unexpected round trips, compare aggregation
+row deltas with `rows_scanned`, and compare replacement calls/retries with completed windows.
+Duplicates are expected idempotency outcomes, so track their rate rather than treating every
+duplicate as an error.
+
+For a before/after test, use the same PostgreSQL version, data volume, CROWler configuration,
+crawl/reaggregation range, concurrency, and warm-up. Capture the top-30 report and application
+counter values at both interval boundaries and subtract cumulative values; alternatively, in an
+isolated test database, call `SELECT pg_stat_statements_reset();` immediately before each run.
+Compare calls, total/mean execution time, rows-per-call, shared-block hit/read ratios, temporary
+blocks, block/temp-I/O time, pool wait deltas, rows scanned, completed windows, and retries.
+Do not reset shared production statistics merely to simplify a comparison. Use `EXPLAIN
+(ANALYZE, BUFFERS)` only for a safely reproduced representative normalized statement, not by
+automatically replaying text harvested from production.
+
+This instrumentation wraps existing calls and consumes their returned results. It adds no
+hot-path SQL and performs no PostgreSQL query merely to generate a metric.
+
 ## Storage portability and PostgreSQL partitioning
 
 The v1 database schema and metric/observation/aggregate CRUD, query, dedupe, checkpoint persistence, backfill, and retention SQL cover PostgreSQL, MySQL, and SQLite through backend-specific SQL. JSON is canonicalized so hashing/grouping remains stable across engines. Aggregation execution has a narrower support boundary: PostgreSQL has a verified cluster-wide writer lease, SQLite is safe only within one process, and MySQL is rejected by the runner until a backend lease is implemented. The currently shipped crawler-side scope/cardinality adapter uses PostgreSQL transaction SQL, so automatic index-owned artifact emission is the PostgreSQL-wired end-to-end path; integrations targeting MySQL or SQLite must use the portable database repository interfaces (and backend-aware lifecycle writers) rather than assuming that PostgreSQL adapter is portable.

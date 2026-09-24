@@ -551,6 +551,7 @@ func aggregateTimeSeriesWindow(
 					queryErr,
 				)
 			}
+			timeSeriesAggregationRowsScanned.Add(float64(page.Count))
 
 			for j := range page.Observations {
 				observation := page.Observations[j]
@@ -615,6 +616,7 @@ func aggregateTimeSeriesWindow(
 	if err = replaceTimeSeriesAggregates(ctx, db, dbms, metricRanges, computed, runKey, affected, result.Checkpoint); err != nil {
 		return result, err
 	}
+	timeSeriesAggregationWindowsCompleted.Inc()
 
 	return result, nil
 }
@@ -695,6 +697,7 @@ func retryPostgresTransaction(ctx context.Context, maxAttempts int, delay time.D
 		if err == nil || attempt == maxAttempts || !isRetryablePostgresTransactionError(err) {
 			return err
 		}
+		timeSeriesAggregationRetries.Inc()
 		timer := time.NewTimer(delay * time.Duration(attempt))
 		select {
 		case <-ctx.Done():
