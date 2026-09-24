@@ -10,7 +10,7 @@ import (
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
 
-func openEntityTimeSeriesTestDB(t *testing.T) (*Handler, func()) {
+func openEntityTimeSeriesTestDB(t testing.TB) (*Handler, func()) {
 	t.Helper()
 	db := openSQLiteMemoryDB(t)
 	schema, err := os.ReadFile("sqlite-setup.sqlite3")

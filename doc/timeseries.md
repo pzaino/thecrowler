@@ -319,7 +319,7 @@ Treat these as patterns to adapt, not as built-in metrics. The selector keys mus
 * **Metric definition** — stable key, source kind, value type, default aggregate, bucket, time basis, dedupe scope, selectors, dimensions, retention/cardinality/privacy flags, unit, and enabled state.
 * **Raw observation** — one typed value plus observed/effective/collection times, bucket bounds, resolved scope, dimensions, value hash, change metadata, dedupe key, and privacy-aware provenance.
 * **Aggregate bucket** — materialized values for one metric, bucket, scope, and dimension set. It stores count, occurrence total, sum, average, min/max, distinct count, first/last values, percentiles, and first/last-seen times as applicable.
-* **Aggregation run** — optional operational record/checkpoint used by bounded incremental or explicit-range aggregation. Runs coordinate through a process lock and a backend lock; another owner returns `ErrTimeSeriesAggregationRunning`.
+* **Aggregation run** — durable operational state, keyed by `RunKey`, used to record the checkpoint and outcome of bounded incremental or explicit-range aggregation. `RunKey` is **not** the writer-lock identity: differently named runs still contend for the same backend-wide aggregation writer lease.
 
 A bucket of `none` records raw observations but is skipped by aggregation.
 
@@ -471,7 +471,20 @@ Entity assignment is **immediate** when the resolver can see an `EntityMembershi
 
 The events service starts incremental aggregation only when both `timeseries.enabled` and `timeseries.aggregation.enabled` are true. `schedule` is a Go duration. Each run is bounded by `batch_size * max_batches` and stores a checkpoint. The next run starts at `checkpoint - overlap`, allowing late observations to replace already materialized complete buckets. Aggregation failure is logged and does not fail indexing/event work.
 
-An explicit range is UTC and half-open. `AggregateTimeSeriesRange` expands the request to complete metric buckets, deletes/replaces affected aggregate groups in one transaction, and therefore repairs grouping after scope changes. `ReaggregateTimeSeriesBackfill` converts the entity backfill's inclusive affected end to the required half-open range.
+Aggregation uses four distinct mechanisms
+
+1. A **process-local mutex** admits only one aggregation invocation in a process. It does not coordinate separate processes.
+2. A **backend cluster-wide writer lease** admits one aggregation writer across application instances. PostgreSQL implements this with one fixed, global session-level advisory-lock identity. The identity is deliberately independent of `RunKey`.
+3. **Short atomic replacement transactions** publish each fully computed window. Computation and observation scanning happen outside these transactions; the transaction contains deletion of the affected aggregate rows, replacement upserts, and checkpoint/run persistence as one atomic unit.
+4. **Durable checkpoints identified by `RunKey`** determine where a named incremental run resumes and record its status/range. They provide resumability, not mutual exclusion. Consequently, choosing another `RunKey` does not permit a concurrent writer.
+
+For PostgreSQL, the runner reserves one dedicated database session, acquires its session-level advisory lock **before any metric, checkpoint, or observation reads**, and retains both that session and lock across every window in the invocation. It explicitly unlocks on that same connection and then closes it. PostgreSQL also automatically releases the session lock if the owning connection disconnects, including an unexpected disconnect. A contender returns `ErrTimeSeriesAggregationRunning` without doing aggregation work.
+
+PostgreSQL replacement transactions remain at `READ COMMITTED`; the writer lease, rather than a stronger transaction isolation level or a transaction-scoped advisory lock, serializes aggregators. Each short transaction atomically performs affected-row deletes, replacement aggregate upserts, and checkpoint/run persistence. Aggregate computation stays outside the transaction so a multi-window invocation does not hold one long-running transaction.
+
+An explicit range is UTC and half-open. `AggregateTimeSeriesRange` expands the request to complete metric buckets and uses the same atomic replacement transaction, thereby repairing grouping after scope changes. `ReaggregateTimeSeriesBackfill` converts the entity backfill's inclusive affected end to the required half-open range.
+
+Backend coordination status is explicit: PostgreSQL has the verified cluster-wide session lease described above. SQLite has only the process-local mutex; its no-op backend lease cannot coordinate writers in different processes, so deployments must ensure that only one process aggregates. MySQL time-series schema/repository SQL exists, but the aggregation runner currently rejects MySQL because no cluster-wide aggregation lease is implemented; coordinated MySQL aggregation is therefore **not supported or verified**.
 
 Retention is not scheduled by the v1 events scheduler. Call `PruneTimeSeriesRetention` from administrative code. It applies global raw/aggregate durations, honors per-metric retention JSON when registered, counts candidates in dry-run mode, deletes in bounded batches otherwise, and never deletes metric definitions.
 
@@ -515,7 +528,7 @@ if err == nil {
 
 ## Storage portability and PostgreSQL partitioning
 
-The v1 database schema, metric/observation/aggregate CRUD, query, dedupe, aggregation, run checkpoints, backfill, and retention layers support PostgreSQL, MySQL, and SQLite through backend-specific SQL. JSON is canonicalized so hashing/grouping remains stable across engines. The currently shipped crawler-side scope/cardinality adapter uses PostgreSQL transaction SQL, so automatic index-owned artifact emission is the PostgreSQL-wired end-to-end path; integrations targeting MySQL or SQLite must use the portable database repository interfaces (and backend-aware lifecycle writers) rather than assuming that PostgreSQL adapter is portable.
+The v1 database schema and metric/observation/aggregate CRUD, query, dedupe, checkpoint persistence, backfill, and retention SQL cover PostgreSQL, MySQL, and SQLite through backend-specific SQL. JSON is canonicalized so hashing/grouping remains stable across engines. Aggregation execution has a narrower support boundary: PostgreSQL has a verified cluster-wide writer lease, SQLite is safe only within one process, and MySQL is rejected by the runner until a backend lease is implemented. The currently shipped crawler-side scope/cardinality adapter uses PostgreSQL transaction SQL, so automatic index-owned artifact emission is the PostgreSQL-wired end-to-end path; integrations targeting MySQL or SQLite must use the portable database repository interfaces (and backend-aware lifecycle writers) rather than assuming that PostgreSQL adapter is portable.
 
 The configuration field `timeseries.storage.backend` currently accepts only `postgres`; it describes the optional time-series storage/partitioning policy and does not override the main `database.type`. MySQL and SQLite use their normal unpartitioned time-series tables. `storage.table_prefix` is validated but the shipped table names remain `TimeSeriesMetrics`, `TimeSeriesObservations`, `TimeSeriesAggregates`, and `TimeSeriesAggregationRuns`.
 

@@ -390,4 +390,14 @@ The backfill deliberately does **not** update `TimeSeriesAggregates`. Its result
 
 `TimeSeriesMetrics`, `TimeSeriesObservations`, `TimeSeriesAggregates`, `TimeSeriesAggregationRuns`, and `EntityObservationBackfillCheckpoints` implement the v1 analytical projection on PostgreSQL, MySQL, and SQLite. Search and discovery tables remain authoritative; aggregate rows can be rebuilt from retained observations, and entity backfill updates raw scope before explicit reaggregation.
 
+### Aggregation coordination and atomicity
+
+Time-series aggregation separates four concerns: a process-local mutex, a backend cluster-wide writer lease, short atomic replacement transactions, and durable checkpoints identified by `RunKey`. These are not interchangeable. In particular, `RunKey` names checkpoint/run state and is **not** the writer-lock identity; all run keys contend for the same backend writer lease.
+
+On PostgreSQL, an invocation reserves one dedicated session and acquires a session-level advisory lock on the fixed aggregation lease identity before reading metrics, checkpoints, or observations. It holds that lock on the reserved session across every window, releases it explicitly on the same connection, and then closes the connection. PostgreSQL releases the session lock automatically if its owning connection disconnects. This is a session-scoped lease, not a transaction-scoped lock.
+
+Window computation and observation reads occur outside the replacement transaction. PostgreSQL replacement transactions stay at `READ COMMITTED` and are intentionally short: affected aggregate deletes, replacement upserts, and checkpoint/run persistence commit atomically. Thus the lease serializes aggregation invocations while each transaction makes one computed window durable without keeping a transaction open during computation.
+
+SQLite's backend lease is a no-op, so only the in-process mutex coordinates aggregation; separate SQLite-using processes are not mutually excluded and must not aggregate concurrently. MySQL has time-series schema and repository SQL, but the aggregation runner currently rejects it because a cluster-wide writer lease has not been implemented. MySQL aggregation coordination is therefore not supported or verified.
+
 PostgreSQL partitioning configuration is optional and declarative in v1; automatic partition creation is not part of the shipped startup path. MySQL and SQLite use unpartitioned tables. See [Time-series observations and aggregates](timeseries.md#storage-portability-and-postgresql-partitioning).

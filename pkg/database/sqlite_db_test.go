@@ -171,7 +171,7 @@ func TestEnsureSQLiteSourceInformationSeedProvenanceMigratesLegacyTable(t *testi
 	}
 }
 
-func openSQLiteMemoryDB(t *testing.T) *sql.DB {
+func openSQLiteMemoryDB(t testing.TB) *sql.DB {
 	t.Helper()
 
 	db, err := sql.Open("sqlite3", ":memory:")

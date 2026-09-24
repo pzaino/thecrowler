@@ -2,12 +2,17 @@ package main
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 )
+
+func isTimeSeriesAggregationContention(err error) bool {
+	return errors.Is(err, cdb.ErrTimeSeriesAggregationRunning)
+}
 
 // runTimeSeriesAggregation is deliberately independent from HTTP event handling:
 // aggregation failures are logged and never propagate into indexing/event work.
@@ -41,7 +46,7 @@ func startTimeSeriesAggregationScheduler(db *cdb.Handler, config cfg.TimeSeriesC
 				now.UTC(),
 			)
 
-			if runErr != nil && runErr != cdb.ErrTimeSeriesAggregationRunning {
+			if runErr != nil && !isTimeSeriesAggregationContention(runErr) {
 				cmn.DebugMsg(
 					cmn.DbgLvlError,
 					"Time-series aggregation failed: %v",

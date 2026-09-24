@@ -84,3 +84,21 @@ run where it can reach the loopback fixture server created by the Go test (for
 example, as a local process or with compatible host networking). When the
 environment variable is absent, or Selenium/Chrome cannot create a session,
 the optional test skips and reports the exact prerequisite that is missing.
+
+## PostgreSQL integration tests
+
+Tests that exercise PostgreSQL session semantics are compiled behind the
+`integration` build tag and require an explicitly enabled, already initialized
+TheCROWler PostgreSQL database:
+
+```bash
+THECROWLER_POSTGRES_INTEGRATION=1 go test -tags=integration ./pkg/database -run PostgresTimeSeriesAggregation
+```
+
+The harness uses the repository's `DOCKER_POSTGRES_DB_HOST`,
+`DOCKER_POSTGRES_DB_PORT`, `DOCKER_POSTGRES_DB_NAME`,
+`DOCKER_POSTGRES_DB_USER` (or `DOCKER_POSTGRES_USER`),
+`DOCKER_POSTGRES_PASSWORD`, and `DOCKER_POSTGRES_SSL_MODE` conventions. Defaults
+match the local PostgreSQL container (`127.0.0.1:5432`, database `SitesIndex`,
+user/password `postgres`, and disabled SSL). The database must have been
+initialized with `pkg/database/postgresql-setup.pgsql`.

@@ -74,6 +74,14 @@ func (handler *PostgresHandler) ConnectionStats() sql.DBStats {
 	return handler.db.Stats()
 }
 
+// Conn returns a dedicated connection from the existing PostgreSQL pool.
+func (handler *PostgresHandler) Conn(ctx context.Context) (*sql.Conn, error) {
+	if handler == nil || handler.db == nil {
+		return nil, fmt.Errorf("cannot get dedicated connection: PostgreSQL connection pool is not initialized")
+	}
+	return handler.db.Conn(ctx)
+}
+
 // Connect connects to the database
 func (handler *PostgresHandler) Connect(c cfg.Config) error {
 	connectionString := buildConnectionString(c)

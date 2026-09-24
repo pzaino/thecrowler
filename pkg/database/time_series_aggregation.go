@@ -20,6 +20,30 @@ import (
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
 
+const timeSeriesAggregationLockKey = "crowler:timeseries:aggregation"
+
+const timeSeriesAggregationReleaseTimeout = 5 * time.Second
+
+const (
+	timeSeriesReplacementMaxAttempts = 3
+	timeSeriesReplacementRetryDelay  = 10 * time.Millisecond
+	// Each aggregate contributes 48 bind parameters. The maximum 250-row
+	// statement uses 12,000 parameters, comfortably below PostgreSQL's 65,535
+	// parameter limit and SQLite's 32,766 default.
+	timeSeriesAggregateUpsertMaxBatchSize = 250
+	timeSeriesSQLiteUpsertBatchSize       = 10
+)
+
+func timeSeriesAggregateUpsertBatchSize(dbms string) int {
+	// Local SQLite benchmarks show its large-statement parsing cost overtakes
+	// round-trip savings above small batches. PostgreSQL benefits from amortizing
+	// client/server round trips and remains well inside its parameter limit.
+	if dbms == DBSQLiteStr {
+		return timeSeriesSQLiteUpsertBatchSize
+	}
+	return timeSeriesAggregateUpsertMaxBatchSize
+}
+
 var (
 	// ErrTimeSeriesAggregationRunning indicates that another worker owns the aggregation lease.
 	ErrTimeSeriesAggregationRunning = errors.New("time-series aggregation already running")
@@ -79,6 +103,101 @@ type timeSeriesAggregateAccumulator struct {
 	lastTime  time.Time
 }
 
+// timeSeriesAggregationLease owns the dedicated PostgreSQL session on which
+// the advisory lock was acquired. PostgreSQL session locks must be released on
+// that exact connection.
+type timeSeriesAggregationLease struct {
+	conn   *sql.Conn
+	key    string
+	unlock func(context.Context, string) (bool, error)
+	close  func() error
+}
+
+func acquireTimeSeriesAggregationLease(ctx context.Context, db *Handler, dbms string) (*timeSeriesAggregationLease, error) {
+	lease := &timeSeriesAggregationLease{key: timeSeriesAggregationLockKey}
+	switch dbms {
+	case DBSQLiteStr:
+		// SQLite aggregation is serialized only by timeSeriesAggregationMutex.
+		// This no-op lease does not coordinate aggregation across processes.
+		return lease, nil
+	case DBPostgresStr:
+		// PostgreSQL advisory locks belong to a session, so retain one
+		// dedicated connection for the entire aggregation invocation.
+	default:
+		return nil, fmt.Errorf("unsupported database type for time-series aggregation lease: %s", dbms)
+	}
+
+	provider, ok := (*db).(DedicatedConnectionProvider)
+	if !ok {
+		return nil, fmt.Errorf("acquire aggregation lease: PostgreSQL handler does not provide dedicated connections")
+	}
+
+	conn, err := provider.Conn(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("reserve aggregation lease connection: %w", err)
+	}
+	lease.conn = conn
+	lease.unlock = func(ctx context.Context, key string) (bool, error) {
+		var unlocked bool
+		err := conn.QueryRowContext(ctx, `SELECT pg_advisory_unlock(hashtext($1))`, key).Scan(&unlocked)
+		return unlocked, err
+	}
+	lease.close = conn.Close
+
+	var acquired bool
+	err = conn.QueryRowContext(ctx, `SELECT pg_try_advisory_lock(hashtext($1))`, lease.key).Scan(&acquired)
+	if err != nil {
+		closeErr := conn.Close()
+		if closeErr != nil {
+			return nil, errors.Join(err, fmt.Errorf("close aggregation lease connection: %w", closeErr))
+		}
+		return nil, err
+	}
+	if !acquired {
+		closeErr := conn.Close()
+		if closeErr != nil {
+			return nil, errors.Join(ErrTimeSeriesAggregationRunning, fmt.Errorf("close aggregation lease connection: %w", closeErr))
+		}
+		return nil, ErrTimeSeriesAggregationRunning
+	}
+
+	return lease, nil
+}
+
+func (lease *timeSeriesAggregationLease) release() error {
+	if lease == nil || (lease.conn == nil && lease.unlock == nil && lease.close == nil) {
+		return nil
+	}
+
+	releaseCtx, cancel := context.WithTimeout(context.Background(), timeSeriesAggregationReleaseTimeout)
+	defer cancel()
+
+	var unlocked bool
+	var unlockErr error
+	if lease.unlock != nil {
+		unlocked, unlockErr = lease.unlock(releaseCtx, lease.key)
+	}
+	if unlockErr == nil && !unlocked {
+		unlockErr = errors.New("aggregation advisory lock was not owned by the retained connection")
+	}
+	if unlockErr != nil {
+		unlockErr = fmt.Errorf("release aggregation lease: %w", unlockErr)
+	}
+
+	var closeErr error
+	if lease.close != nil {
+		closeErr = lease.close()
+	}
+	if closeErr != nil {
+		closeErr = fmt.Errorf("close aggregation lease connection: %w", closeErr)
+	}
+	return errors.Join(unlockErr, closeErr)
+}
+
+func releaseTimeSeriesAggregationLease(lease *timeSeriesAggregationLease, primaryErr error) error {
+	return errors.Join(primaryErr, lease.release())
+}
+
 // AggregateTimeSeriesRange recomputes complete buckets intersecting an explicit range.
 // Existing rows in those buckets are replaced in one transaction, which also repairs
 // groups whose entity or other scope assignment changed after their first aggregation.
@@ -129,7 +248,15 @@ func RunTimeSeriesAggregation(
 	}
 
 	timeSeriesAggregationMutex.Lock()
-	defer timeSeriesAggregationMutex.Unlock()
+	lease, err := acquireTimeSeriesAggregationLease(ctx, db, dbms)
+	if err != nil {
+		timeSeriesAggregationMutex.Unlock()
+		return result, err
+	}
+	defer func() {
+		defer timeSeriesAggregationMutex.Unlock()
+		err = releaseTimeSeriesAggregationLease(lease, err)
+	}()
 
 	metrics, err := ListTimeSeriesMetrics(
 		db,
@@ -483,108 +610,110 @@ func aggregateTimeSeriesWindow(
 		return computed[i].AggregateHash < computed[j].AggregateHash
 	})
 
-	tx, err := (*db).BeginTx(
-		ctx,
-		&sql.TxOptions{Isolation: sql.LevelSerializable},
-	)
-	if err != nil {
-		return result, fmt.Errorf(
-			"begin aggregation replacement: %w",
-			err,
-		)
-	}
-	defer func() {
-		_ = tx.Rollback()
-	}()
-
-	if err = acquireTimeSeriesAggregationLock(
-		ctx,
-		tx,
-		dbms,
-		runKey,
-	); err != nil {
-		return result, err
-	}
-
-	for metricID, metricRange := range metricRanges {
-		p := newInformationSeedPlaceholders(dbms)
-
-		if _, err = tx.ExecContext(
-			ctx,
-			`DELETE FROM TimeSeriesAggregates
-			 WHERE metric_id = `+p.Next()+`
-			   AND bucket_start < `+p.Next()+`
-			   AND bucket_end > `+p.Next(),
-			metricID,
-			metricRange.End,
-			metricRange.Start,
-		); err != nil {
-			return result, fmt.Errorf(
-				"delete affected aggregates: %w",
-				err,
-			)
-		}
-	}
-
-	for i := range computed {
-		query, args, buildErr := buildTimeSeriesAggregateUpsert(
-			dbms,
-			&computed[i],
-		)
-		if buildErr != nil {
-			return result, buildErr
-		}
-
-		if _, err = tx.ExecContext(
-			ctx,
-			query,
-			args...,
-		); err != nil {
-			return result, fmt.Errorf(
-				"replace aggregate %s: %w",
-				computed[i].AggregateHash,
-				err,
-			)
-		}
-	}
-
 	result.AggregatesReplaced = len(computed)
 	result.Checkpoint = checkpoint.UTC()
-
-	if err = recordTimeSeriesAggregationRun(
-		ctx,
-		tx,
-		dbms,
-		runKey,
-		affected,
-		result.Checkpoint,
-		"completed",
-		"",
-	); err != nil {
+	if err = replaceTimeSeriesAggregates(ctx, db, dbms, metricRanges, computed, runKey, affected, result.Checkpoint); err != nil {
 		return result, err
-	}
-
-	if dbms == DBMySQLStr {
-		if _, err = tx.ExecContext(
-			ctx,
-			`DO RELEASE_LOCK(?)`,
-			runKey,
-		); err != nil {
-			return result, fmt.Errorf(
-				"release aggregation lock: %w",
-				err,
-			)
-		}
-	}
-
-	if err = tx.Commit(); err != nil {
-		return result, fmt.Errorf(
-			"commit aggregation replacement: %w",
-			err,
-		)
 	}
 
 	return result, nil
+}
+
+// replaceTimeSeriesAggregates retries the whole delete/insert/checkpoint unit.
+// Although the aggregation lease excludes other aggregators, crawler writes and
+// parent-row changes do not take that lease and can still participate in a
+// PostgreSQL deadlock. Restrict retries to PostgreSQL's transaction-retry states;
+// constraint violations and all other errors are returned unchanged.
+func replaceTimeSeriesAggregates(ctx context.Context, db *Handler, dbms string, metricRanges map[uint64]TimeSeriesRange, computed []TimeSeriesAggregate, runKey string, affected TimeSeriesRange, checkpoint time.Time) error {
+	attempts := 1
+	if dbms == DBPostgresStr {
+		attempts = timeSeriesReplacementMaxAttempts
+	}
+
+	return retryPostgresTransaction(ctx, attempts, timeSeriesReplacementRetryDelay, func() error {
+		txOptions := &sql.TxOptions{}
+		if dbms == DBPostgresStr {
+			txOptions.Isolation = sql.LevelReadCommitted
+		}
+		tx, err := (*db).BeginTx(ctx, txOptions)
+		if err != nil {
+			return fmt.Errorf("begin aggregation replacement: %w", err)
+		}
+		defer func() { _ = tx.Rollback() }()
+
+		metricIDs := make([]uint64, 0, len(metricRanges))
+		for metricID := range metricRanges {
+			metricIDs = append(metricIDs, metricID)
+		}
+		sort.Slice(metricIDs, func(i, j int) bool { return metricIDs[i] < metricIDs[j] })
+		for _, metricID := range metricIDs {
+			metricRange := metricRanges[metricID]
+			p := newInformationSeedPlaceholders(dbms)
+			if _, err = tx.ExecContext(ctx, `DELETE FROM TimeSeriesAggregates
+				 WHERE metric_id = `+p.Next()+`
+				   AND bucket_start < `+p.Next()+`
+				   AND bucket_end > `+p.Next(), metricID, metricRange.End, metricRange.Start); err != nil {
+				return fmt.Errorf("delete affected aggregates: %w", err)
+			}
+		}
+
+		upsertBatchSize := timeSeriesAggregateUpsertBatchSize(dbms)
+		for start := 0; start < len(computed); start += upsertBatchSize {
+			end := min(start+upsertBatchSize, len(computed))
+			query, args, buildErr := buildTimeSeriesAggregateBatchUpsert(dbms, computed[start:end])
+			if buildErr != nil {
+				return buildErr
+			}
+			if _, err = tx.ExecContext(ctx, query, args...); err != nil {
+				return fmt.Errorf("replace aggregates %s through %s: %w", computed[start].AggregateHash, computed[end-1].AggregateHash, err)
+			}
+		}
+
+		if err = recordTimeSeriesAggregationRun(ctx, tx, dbms, runKey, affected, checkpoint, "completed", ""); err != nil {
+			return err
+		}
+		if err = tx.Commit(); err != nil {
+			return fmt.Errorf("commit aggregation replacement: %w", err)
+		}
+		return nil
+	})
+}
+
+type sqlStateError interface {
+	SQLState() string
+}
+
+func retryPostgresTransaction(ctx context.Context, maxAttempts int, delay time.Duration, operation func() error) error {
+	if maxAttempts < 1 {
+		maxAttempts = 1
+	}
+	for attempt := 1; ; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		err := operation()
+		if err == nil || attempt == maxAttempts || !isRetryablePostgresTransactionError(err) {
+			return err
+		}
+		timer := time.NewTimer(delay * time.Duration(attempt))
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func isRetryablePostgresTransactionError(err error) bool {
+	var stateErr sqlStateError
+	if !errors.As(err, &stateErr) {
+		return false
+	}
+	state := stateErr.SQLState()
+	return state == "40001" || state == "40P01"
 }
 
 func recordTimeSeriesAggregationFailure(
@@ -815,28 +944,6 @@ func timeSeriesObservationBasis(observation TimeSeriesObservation, basis cfg.Tim
 	return time.Time{}, false
 }
 
-func acquireTimeSeriesAggregationLock(ctx context.Context, tx *sql.Tx, dbms, key string) error {
-	switch dbms {
-	case DBPostgresStr:
-		var acquired bool
-		if err := tx.QueryRowContext(ctx, `SELECT pg_try_advisory_xact_lock(hashtext($1))`, key).Scan(&acquired); err != nil {
-			return err
-		}
-		if !acquired {
-			return ErrTimeSeriesAggregationRunning
-		}
-	case DBMySQLStr:
-		var acquired sql.NullInt64
-		if err := tx.QueryRowContext(ctx, `SELECT GET_LOCK(?, 0)`, key).Scan(&acquired); err != nil {
-			return err
-		}
-		if !acquired.Valid || acquired.Int64 != 1 {
-			return ErrTimeSeriesAggregationRunning
-		}
-	}
-	return nil
-}
-
 func recordTimeSeriesAggregationRun(ctx context.Context, tx *sql.Tx, dbms, key string, affected TimeSeriesRange, checkpoint time.Time, status, lastError string) error {
 	p := newInformationSeedPlaceholders(dbms)
 	args := []interface{}{key, status, checkpoint, affected.Start, affected.End, nullableString(lastError)}
@@ -849,19 +956,21 @@ func recordTimeSeriesAggregationRun(ctx context.Context, tx *sql.Tx, dbms, key s
 		query += `
 			ON DUPLICATE KEY UPDATE
 				status = VALUES(status),
+				checkpoint_at = VALUES(checkpoint_at),
 				range_start = VALUES(range_start),
 				range_end = VALUES(range_end),
 				last_error = VALUES(last_error),
-				completed_at = NULL,
+				completed_at = CURRENT_TIMESTAMP,
 				last_updated_at = CURRENT_TIMESTAMP`
 	} else {
 		query += `
 			ON CONFLICT (run_key) DO UPDATE SET
 				status = excluded.status,
+				checkpoint_at = excluded.checkpoint_at,
 				range_start = excluded.range_start,
 				range_end = excluded.range_end,
 				last_error = excluded.last_error,
-				completed_at = NULL,
+				completed_at = CURRENT_TIMESTAMP,
 				last_updated_at = CURRENT_TIMESTAMP`
 	}
 	_, err := tx.ExecContext(ctx, query, args...)
@@ -916,26 +1025,48 @@ func buildTimeSeriesAggregateUpsert(dbms string, a *TimeSeriesAggregate) (string
 		}
 		a.AggregateHash = hash
 	}
-	dimensions, err := optionalCanonicalJSON(a.Dimensions)
-	if err != nil {
-		return "", nil, err
+	return buildTimeSeriesAggregateBatchUpsert(dbms, []TimeSeriesAggregate{*a})
+}
+
+func buildTimeSeriesAggregateBatchUpsert(dbms string, aggregates []TimeSeriesAggregate) (string, []interface{}, error) {
+	if len(aggregates) == 0 || len(aggregates) > timeSeriesAggregateUpsertMaxBatchSize {
+		return "", nil, fmt.Errorf("time-series aggregate upsert batch size must be between 1 and %d", timeSeriesAggregateUpsertMaxBatchSize)
 	}
-	lastJSON := optionalRawJSONForAggregate(a.LastValueJSON)
-	args := []interface{}{a.MetricID, a.BucketStart.UTC(), a.BucketEnd.UTC(), a.Scope.InformationSeedID, a.Scope.InformationSeedCandidateID, a.Scope.SourceID, a.Scope.SourceInformationSeedID, a.Scope.IndexID, a.Scope.EntityID, nullableString(a.Scope.SubjectType), a.Scope.SubjectID, nullableString(a.Scope.ObjectType), a.Scope.ObjectID, a.Scope.CorrelationRuleID, nullableString(a.Scope.CorrelationObjectType1), a.Scope.CorrelationObjectID1, nullableString(a.Scope.CorrelationObjectType2), a.Scope.CorrelationObjectID2, dimensions, a.ValueCount, a.OccurrenceTotal, a.DistinctValueCount, a.NumericCount, a.NumericSum, a.NumericMin, a.NumericMax, a.NumericAverage, a.Percentile50, a.Percentile75, a.Percentile90, a.Percentile95, a.Percentile99, a.First.ObservationID, a.First.ObservedAt, a.First.ValueNumeric, a.First.ValueText, nullableString(a.First.ValueHash), a.Last.ObservationID, a.Last.ObservedAt, a.Last.ValueNumeric, a.Last.ValueText, nullableString(a.Last.ValueHash), a.LastValueBoolean, lastJSON, a.FirstSeenAt, a.LastSeenAt, a.ChangeCount, a.AggregateHash}
+	const parametersPerAggregate = 48
+	args := make([]interface{}, 0, len(aggregates)*parametersPerAggregate)
 	p := newInformationSeedPlaceholders(dbms)
-	values := make([]string, len(args))
-	for i := range values {
-		values[i] = p.Next()
-	}
-	if dbms == DBPostgresStr {
-		for _, i := range []int{18, 43} {
-			if args[i] != nil {
-				values[i] += "::jsonb"
+	rows := make([]string, 0, len(aggregates))
+	for i := range aggregates {
+		a := &aggregates[i]
+		if a.AggregateHash == "" {
+			hash, err := TimeSeriesAggregateHash(*a)
+			if err != nil {
+				return "", nil, err
+			}
+			a.AggregateHash = hash
+		}
+		dimensions, err := optionalCanonicalJSON(a.Dimensions)
+		if err != nil {
+			return "", nil, err
+		}
+		lastJSON := optionalRawJSONForAggregate(a.LastValueJSON)
+		rowArgs := []interface{}{a.MetricID, a.BucketStart.UTC(), a.BucketEnd.UTC(), a.Scope.InformationSeedID, a.Scope.InformationSeedCandidateID, a.Scope.SourceID, a.Scope.SourceInformationSeedID, a.Scope.IndexID, a.Scope.EntityID, nullableString(a.Scope.SubjectType), a.Scope.SubjectID, nullableString(a.Scope.ObjectType), a.Scope.ObjectID, a.Scope.CorrelationRuleID, nullableString(a.Scope.CorrelationObjectType1), a.Scope.CorrelationObjectID1, nullableString(a.Scope.CorrelationObjectType2), a.Scope.CorrelationObjectID2, dimensions, a.ValueCount, a.OccurrenceTotal, a.DistinctValueCount, a.NumericCount, a.NumericSum, a.NumericMin, a.NumericMax, a.NumericAverage, a.Percentile50, a.Percentile75, a.Percentile90, a.Percentile95, a.Percentile99, a.First.ObservationID, a.First.ObservedAt, a.First.ValueNumeric, a.First.ValueText, nullableString(a.First.ValueHash), a.Last.ObservationID, a.Last.ObservedAt, a.Last.ValueNumeric, a.Last.ValueText, nullableString(a.Last.ValueHash), a.LastValueBoolean, lastJSON, a.FirstSeenAt, a.LastSeenAt, a.ChangeCount, a.AggregateHash}
+		values := make([]string, len(rowArgs))
+		for i := range values {
+			values[i] = p.Next()
+		}
+		if dbms == DBPostgresStr {
+			for _, i := range []int{18, 43} {
+				if rowArgs[i] != nil {
+					values[i] += "::jsonb"
+				}
 			}
 		}
+		args = append(args, rowArgs...)
+		rows = append(rows, "("+strings.Join(values, ",")+")")
 	}
 	fields := []string{"metric_id", "bucket_start", "bucket_end", "information_seed_id", "information_seed_candidate_id", "source_id", "source_information_seed_id", "index_id", "entity_id", "subject_type", "subject_id", "object_type", "object_id", "correlation_rule_id", "correlation_object_type_1", "correlation_object_id_1", "correlation_object_type_2", "correlation_object_id_2", "dimensions", "value_count", "occurrence_total", "distinct_value_count", "numeric_count", "numeric_sum", "numeric_min", "numeric_max", "numeric_avg", "percentile_50", "percentile_75", "percentile_90", "percentile_95", "percentile_99", "first_observation_id", "first_observed_at", "first_value_numeric", "first_value_text", "first_value_hash", "last_observation_id", "last_observed_at", "last_value_numeric", "last_value_text", "last_value_hash", "last_value_boolean", "last_value_json", "first_seen_at", "last_seen_at", "change_count", "aggregate_hash"}
-	query := `INSERT INTO TimeSeriesAggregates (` + strings.Join(fields, ",") + `) VALUES (` + strings.Join(values, ",") + ")"
+	query := `INSERT INTO TimeSeriesAggregates (` + strings.Join(fields, ",") + `) VALUES ` + strings.Join(rows, ",")
 	updates := make([]string, 0, len(fields))
 	for _, field := range fields[:len(fields)-1] {
 		if dbms == DBMySQLStr {
