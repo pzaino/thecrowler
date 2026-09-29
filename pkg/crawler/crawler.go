@@ -33,6 +33,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/lib/pq"
 	"golang.org/x/text/unicode/norm"
 
 	"github.com/PuerkitoBio/goquery"
@@ -1892,9 +1893,34 @@ func insertKeywordsWithTimeSeries(
 		indexID,
 	)
 
+	ordered, occurrences := preparePageKeywords(pageInfo)
+
+	collectTimeSeries := currCfg != nil && currCfg.TimeSeries.Enabled
+	var timeSeriesInputs []tse.IndexedArtifactInput
+
+	var persisted []persistedKeyword
+	var err error
+	if db.DBMS() == cdb.DBPostgresStr {
+		persisted, err = upsertPostgresKeywords(db, indexID, ordered, occurrences)
+	} else {
+		persisted, err = upsertPortableKeywords(db, indexID, ordered, occurrences)
+	}
+	if err != nil {
+		return err
+	}
+
+	if collectTimeSeries {
+		timeSeriesInputs = keywordTimeSeriesInputs(indexID, persisted)
+	}
+
+	return emitIndexedArtifactsStandalone(db, currCfg, timeSeriesInputs)
+}
+
+func preparePageKeywords(pageInfo *PageInfo) ([]string, map[string]int64) {
 	occurrences := make(map[string]int64, len(pageInfo.Keywords))
 	for _, keyword := range pageInfo.Keywords {
-		if normalized := canonicalKeyword(keyword); normalized != "" {
+		normalized := canonicalKeyword(keyword)
+		if normalized != "" {
 			occurrences[normalized]++
 		}
 	}
@@ -1905,13 +1931,11 @@ func insertKeywordsWithTimeSeries(
 
 	ordered := make([]string, 0, len(occurrences))
 	seen := make(map[string]struct{}, len(occurrences))
-
 	for _, keyword := range pageInfo.Keywords {
 		normalized := canonicalKeyword(keyword)
 		if normalized == "" {
 			continue
 		}
-
 		if _, ok := seen[normalized]; ok {
 			continue
 		}
@@ -1919,23 +1943,39 @@ func insertKeywordsWithTimeSeries(
 		seen[normalized] = struct{}{}
 		ordered = append(ordered, normalized)
 	}
+	return ordered, occurrences
+}
 
-	//emitter := newCrawlerIndexedArtifactEmitter(db, currCfg)
-	collectTimeSeries := currCfg != nil && currCfg.TimeSeries.Enabled
-
-	var timeSeriesInputs []tse.IndexedArtifactInput
-	if collectTimeSeries {
-		timeSeriesInputs = make(
-			[]tse.IndexedArtifactInput,
-			0,
-			len(ordered),
-		)
+func keywordTimeSeriesInputs(indexID uint64, persisted []persistedKeyword) []tse.IndexedArtifactInput {
+	inputs := make([]tse.IndexedArtifactInput, 0, len(persisted))
+	for _, stored := range persisted {
+		inputs = append(inputs, tse.IndexedArtifactInput{
+			SourceKind: cfg.TimeSeriesSourceKeyword, IndexID: indexID,
+			RowID: uint64(stored.keywordID), LinkID: stored.keywordIndexID,
+			SubjectKey: stored.keyword, Name: stored.keyword, RawValue: stored.keyword,
+			Value: stored.occurrences, Occurrences: stored.occurrences,
+			Attributes: map[string]interface{}{
+				"keyword": stored.keyword, "occurrences": stored.occurrences,
+			},
+			ObservedAt: time.Now().UTC(),
+		})
 	}
+	return inputs
+}
 
+type persistedKeyword struct {
+	keyword        string
+	keywordID      int64
+	keywordIndexID uint64
+	occurrences    int64
+}
+
+func upsertPortableKeywords(db cdb.Handler, indexID uint64, ordered []string, occurrences map[string]int64) ([]persistedKeyword, error) {
+	result := make([]persistedKeyword, 0, len(ordered))
 	for _, keyword := range ordered {
 		keywordID, err := insertKeyword(db, keyword)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		count := occurrences[keyword]
@@ -1957,7 +1997,7 @@ func insertKeywordsWithTimeSeries(
 			count,
 		).Scan(&keywordIndexID, &storedOccurrences)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		count = 1
@@ -1965,30 +2005,94 @@ func insertKeywordsWithTimeSeries(
 			count = storedOccurrences.Int64
 		}
 
-		if collectTimeSeries {
-			timeSeriesInputs = append(
-				timeSeriesInputs,
-				tse.IndexedArtifactInput{
-					SourceKind:  cfg.TimeSeriesSourceKeyword,
-					IndexID:     indexID,
-					RowID:       uint64(keywordID),
-					LinkID:      keywordIndexID,
-					SubjectKey:  keyword,
-					Name:        keyword,
-					RawValue:    keyword,
-					Value:       count,
-					Occurrences: count,
-					Attributes: map[string]interface{}{
-						"keyword":     keyword,
-						"occurrences": count,
-					},
-					ObservedAt: time.Now().UTC(),
-				},
+		result = append(result, persistedKeyword{keyword, int64(keywordID), keywordIndexID, count})
+	}
+	return result, nil
+}
+
+// PostgreSQL arrays keep the statement and parameter counts bounded. Batches are
+// committed together, so callers never observe a page with only some keyword links.
+const postgresKeywordBatchSize = 500
+
+func upsertPostgresKeywords(db cdb.Handler, indexID uint64, ordered []string, occurrences map[string]int64) ([]persistedKeyword, error) {
+	if len(ordered) == 0 {
+		return nil, nil
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	result := make([]persistedKeyword, 0, len(ordered))
+	for start := 0; start < len(ordered); start += postgresKeywordBatchSize {
+		end := min(start+postgresKeywordBatchSize, len(ordered))
+		keywords := ordered[start:end]
+		counts := make([]int64, len(keywords))
+		for i, keyword := range keywords {
+			counts[i] = occurrences[keyword]
+			if counts[i] < 1 {
+				counts[i] = 1
+			}
+		}
+
+		_, queryErr := tx.Exec(`
+			WITH input AS (
+				SELECT keyword FROM unnest($1::text[]) AS i(keyword)
 			)
+			INSERT INTO Keywords (keyword)
+			SELECT keyword FROM input
+			ON CONFLICT (keyword) DO UPDATE SET keyword = EXCLUDED.keyword
+			WHERE Keywords.last_updated_at < CURRENT_TIMESTAMP - INTERVAL '30 seconds'`,
+			pq.Array(keywords))
+		if queryErr != nil {
+			return nil, queryErr
+		}
+
+		// Resolving in a second statement is intentional. Under READ COMMITTED it
+		// obtains a fresh snapshot after a concurrent conflicting inserter commits.
+		rows, queryErr := tx.Query(`
+			WITH input AS (
+				SELECT keyword, occurrences, ordinality
+				FROM unnest($1::text[], $2::bigint[]) WITH ORDINALITY AS i(keyword, occurrences, ordinality)
+			), resolved AS (
+				SELECT i.keyword, i.occurrences, i.ordinality, k.keyword_id
+				FROM input i JOIN Keywords k ON LOWER(k.keyword) = i.keyword
+			), linked AS (
+				INSERT INTO KeywordIndex (keyword_id, index_id, occurrences)
+				SELECT keyword_id, $3, occurrences FROM resolved
+				ON CONFLICT (keyword_id, index_id) DO UPDATE SET occurrences = EXCLUDED.occurrences
+				RETURNING keyword_index_id, keyword_id, occurrences
+			)
+			SELECT r.keyword, r.keyword_id, l.keyword_index_id, l.occurrences
+			FROM resolved r JOIN linked l USING (keyword_id)
+			ORDER BY r.ordinality`, pq.Array(keywords), pq.Array(counts), indexID)
+		if queryErr != nil {
+			return nil, queryErr
+		}
+		for rows.Next() {
+			var stored persistedKeyword
+			if err = rows.Scan(&stored.keyword, &stored.keywordID, &stored.keywordIndexID, &stored.occurrences); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			result = append(result, stored)
+		}
+		if err = rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		if err = rows.Close(); err != nil {
+			return nil, err
+		}
+		if len(result) != end {
+			return nil, fmt.Errorf("PostgreSQL keyword upsert returned %d of %d rows", len(result), end)
 		}
 	}
-
-	return emitIndexedArtifactsStandalone(db, currCfg, timeSeriesInputs)
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 // rollbackTransaction rolls back a transaction.
