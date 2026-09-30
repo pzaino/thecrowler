@@ -90,17 +90,20 @@ type TimeSeriesScope struct {
 
 // TimeSeriesObservation is an append-only metric fact.
 type TimeSeriesObservation struct {
-	ID                    uint64
-	MetricID              uint64
-	ObservedAt            time.Time
-	EffectiveAt           *time.Time
-	CollectedAt           time.Time
-	SourceUpdatedAt       *time.Time
-	BucketStart           time.Time
-	BucketEnd             time.Time
-	Scope                 TimeSeriesScope
-	Value                 TimeSeriesValue
-	ValueHash             string
+	ID              uint64
+	MetricID        uint64
+	ObservedAt      time.Time
+	EffectiveAt     *time.Time
+	CollectedAt     time.Time
+	SourceUpdatedAt *time.Time
+	BucketStart     time.Time
+	BucketEnd       time.Time
+	Scope           TimeSeriesScope
+	Value           TimeSeriesValue
+	ValueHash       string
+	// SeriesHash is a derived lookup accelerator. MetricID, Scope, and
+	// Dimensions remain the authoritative logical series identity.
+	SeriesHash            string
 	PreviousObservationID *uint64
 	PreviousValueHash     string
 	IsChanged             bool
@@ -179,6 +182,9 @@ type TimeSeriesMetricFilter struct {
 // TimeSeriesQueryFilter is shared by raw and aggregate queries. Dimensions are
 // matched as a portable subset in Go, avoiding backend-specific JSON operators.
 type TimeSeriesQueryFilter struct {
+	// SeriesHash is an internal acceleration hint; callers should normally
+	// provide the authoritative metric/scope/dimension fields instead.
+	SeriesHash                 string
 	MetricID                   *uint64
 	MetricKey                  string
 	InformationSeedID          *uint64

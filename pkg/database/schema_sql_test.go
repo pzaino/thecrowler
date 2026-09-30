@@ -130,6 +130,45 @@ func TestPostgresTimeSeriesRelease114Indexes(t *testing.T) {
 	}
 }
 
+func TestPostgresTimeSeriesRelease114SeriesHashRollout(t *testing.T) {
+	t.Parallel()
+	setup, err := os.ReadFile("postgresql-setup.pgsql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.ToUpper(string(setup)), "SERIES_HASH VARCHAR(64) NOT NULL") {
+		t.Fatal("fresh schema does not enforce the derived series hash")
+	}
+	migration, err := os.ReadFile("db_migrations/postgresql-migration-v1.14.pgsql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	upper := strings.ToUpper(string(migration))
+	ordered := []string{
+		"ADD COLUMN IF NOT EXISTS SERIES_HASH VARCHAR(64)",
+		"UPDATE TIMESERIESOBSERVATIONS O SET SERIES_HASH",
+		"CHECK (SERIES_HASH IS NOT NULL) NOT VALID",
+		"VALIDATE CONSTRAINT TIMESERIESOBSERVATIONS_SERIES_HASH_PRESENT",
+		"ALTER COLUMN SERIES_HASH SET NOT NULL",
+		"IDX_TIMESERIESOBSERVATIONS_SERIES_HISTORY",
+		"ON TIMESERIESOBSERVATIONS(SERIES_HASH, OBSERVED_AT, OBSERVATION_ID)",
+	}
+	position := -1
+	for _, fragment := range ordered {
+		next := strings.Index(upper, fragment)
+		if next < 0 {
+			t.Fatalf("migration missing rollout fragment %q", fragment)
+		}
+		if next <= position {
+			t.Fatalf("migration rollout fragment %q is out of order", fragment)
+		}
+		position = next
+	}
+	if strings.Contains(upper, "UNIQUE INDEX") || strings.Contains(upper, "UNIQUE (SERIES_HASH") {
+		t.Fatal("series_hash must not redefine grouping or uniqueness")
+	}
+}
+
 func TestSourceSubPriorityFreshInstallAndUpgradeCoverage(t *testing.T) {
 	t.Parallel()
 	files := []string{

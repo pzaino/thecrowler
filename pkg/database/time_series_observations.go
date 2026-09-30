@@ -21,7 +21,7 @@ const timeSeriesObservationColumns = `observation_id, metric_id, observed_at, ef
 	source_id, source_information_seed_id, index_id, entity_id, subject_type, subject_id,
 	object_type, object_id, correlation_rule_id, correlation_object_type_1, correlation_object_id_1,
 	correlation_object_type_2, correlation_object_id_2, value_numeric, value_integer, value_boolean,
-	value_text, value_json, value_timestamp, value_hash, previous_observation_id, previous_value_hash,
+	value_text, value_json, value_timestamp, value_hash, series_hash, previous_observation_id, previous_value_hash,
 	is_changed, change_type, change_delta_numeric, change_detected_at, dedupe_key, dimensions,
 	provenance, provenance_hash, created_at, deleted_at, last_updated_at`
 
@@ -100,6 +100,11 @@ func insertTimeSeriesObservationTxContext(ctx context.Context, tx *sql.Tx, dbms 
 	if o.ValueHash == "" {
 		return TimeSeriesInsertResult{}, fmt.Errorf("time-series observation value hash is required")
 	}
+	seriesHash, err := TimeSeriesSeriesHash(o.MetricID, o.Scope, o.Dimensions)
+	if err != nil {
+		return TimeSeriesInsertResult{}, fmt.Errorf("hash time-series logical series: %w", err)
+	}
+	o.SeriesHash = seriesHash
 	if o.CollectedAt.IsZero() {
 		o.CollectedAt = time.Now().UTC()
 	}
@@ -118,14 +123,14 @@ func insertTimeSeriesObservationTxContext(ctx context.Context, tx *sql.Tx, dbms 
 	if err != nil {
 		return TimeSeriesInsertResult{}, err
 	}
-	args := []interface{}{o.MetricID, o.ObservedAt.UTC(), o.EffectiveAt, o.CollectedAt.UTC(), o.SourceUpdatedAt, o.BucketStart.UTC(), o.BucketEnd.UTC(), o.Scope.InformationSeedID, o.Scope.InformationSeedCandidateID, o.Scope.SourceID, o.Scope.SourceInformationSeedID, o.Scope.IndexID, o.Scope.EntityID, nullableString(o.Scope.SubjectType), o.Scope.SubjectID, nullableString(o.Scope.ObjectType), o.Scope.ObjectID, o.Scope.CorrelationRuleID, nullableString(o.Scope.CorrelationObjectType1), o.Scope.CorrelationObjectID1, nullableString(o.Scope.CorrelationObjectType2), o.Scope.CorrelationObjectID2, o.Value.Numeric, o.Value.Integer, o.Value.Boolean, o.Value.Text, valueJSON, o.Value.Timestamp, o.ValueHash, o.PreviousObservationID, nullableString(o.PreviousValueHash), o.IsChanged, nullableString(o.ChangeType), o.ChangeDeltaNumeric, o.ChangeDetectedAt, o.DedupeKey, dimensions, provenance, nullableString(o.ProvenanceHash)}
+	args := []interface{}{o.MetricID, o.ObservedAt.UTC(), o.EffectiveAt, o.CollectedAt.UTC(), o.SourceUpdatedAt, o.BucketStart.UTC(), o.BucketEnd.UTC(), o.Scope.InformationSeedID, o.Scope.InformationSeedCandidateID, o.Scope.SourceID, o.Scope.SourceInformationSeedID, o.Scope.IndexID, o.Scope.EntityID, nullableString(o.Scope.SubjectType), o.Scope.SubjectID, nullableString(o.Scope.ObjectType), o.Scope.ObjectID, o.Scope.CorrelationRuleID, nullableString(o.Scope.CorrelationObjectType1), o.Scope.CorrelationObjectID1, nullableString(o.Scope.CorrelationObjectType2), o.Scope.CorrelationObjectID2, o.Value.Numeric, o.Value.Integer, o.Value.Boolean, o.Value.Text, valueJSON, o.Value.Timestamp, o.ValueHash, o.SeriesHash, o.PreviousObservationID, nullableString(o.PreviousValueHash), o.IsChanged, nullableString(o.ChangeType), o.ChangeDeltaNumeric, o.ChangeDetectedAt, o.DedupeKey, dimensions, provenance, nullableString(o.ProvenanceHash)}
 	p := newInformationSeedPlaceholders(dbms)
 	values := make([]string, len(args))
 	for i := range values {
 		values[i] = p.Next()
 	}
 	if dbms == DBPostgresStr {
-		for _, idx := range []int{26, 36, 37} {
+		for _, idx := range []int{26, 37, 38} {
 			if args[idx] != nil {
 				values[idx] += "::jsonb"
 			}
@@ -136,7 +141,7 @@ func insertTimeSeriesObservationTxContext(ctx context.Context, tx *sql.Tx, dbms 
 		source_information_seed_id, index_id, entity_id, subject_type, subject_id, object_type, object_id,
 		correlation_rule_id, correlation_object_type_1, correlation_object_id_1, correlation_object_type_2,
 		correlation_object_id_2, value_numeric, value_integer, value_boolean, value_text, value_json,
-		value_timestamp, value_hash, previous_observation_id, previous_value_hash, is_changed, change_type,
+		value_timestamp, value_hash, series_hash, previous_observation_id, previous_value_hash, is_changed, change_type,
 		change_delta_numeric, change_detected_at, dedupe_key, dimensions, provenance, provenance_hash) VALUES (` + strings.Join(values, ",") + `)`
 	if dbms == DBMySQLStr {
 		query += ` ON DUPLICATE KEY UPDATE dedupe_key=VALUES(dedupe_key)`
@@ -347,6 +352,9 @@ func buildTimeSeriesQueryConditions(dbms string, f TimeSeriesQueryFilter, alias 
 	if f.MetricID != nil {
 		add("metric_id", *f.MetricID)
 	}
+	if f.SeriesHash != "" {
+		add("series_hash", f.SeriesHash)
+	}
 	if f.MetricKey != "" {
 		c = append(c, col("metric_id")+" = (SELECT metric_id FROM TimeSeriesMetrics WHERE metric_key = "+p.Next()+" AND deleted_at IS NULL)")
 		a = append(a, f.MetricKey)
@@ -444,11 +452,11 @@ func scanTimeSeriesObservation(scan func(...interface{}) error) (*TimeSeriesObse
 	o := &TimeSeriesObservation{}
 	var effective, sourceUpdated, valueTimestamp, changeDetected, deleted sql.NullTime
 	var ids [15]sql.NullInt64
-	var subjectType, objectType, cType1, cType2, valueText, valueJSON, previousHash, changeType, dimensions, provenance, provenanceHash sql.NullString
+	var subjectType, objectType, cType1, cType2, valueText, valueJSON, seriesHash, previousHash, changeType, dimensions, provenance, provenanceHash sql.NullString
 	var numeric, delta sql.NullFloat64
 	var integer sql.NullInt64
 	var boolean sql.NullBool
-	err := scan(&o.ID, &o.MetricID, &o.ObservedAt, &effective, &o.CollectedAt, &sourceUpdated, &o.BucketStart, &o.BucketEnd, &ids[0], &ids[1], &ids[2], &ids[3], &ids[4], &ids[5], &subjectType, &ids[6], &objectType, &ids[7], &ids[8], &cType1, &ids[9], &cType2, &ids[10], &numeric, &integer, &boolean, &valueText, &valueJSON, &valueTimestamp, &o.ValueHash, &ids[11], &previousHash, &o.IsChanged, &changeType, &delta, &changeDetected, &o.DedupeKey, &dimensions, &provenance, &provenanceHash, &o.CreatedAt, &deleted, &o.LastUpdatedAt)
+	err := scan(&o.ID, &o.MetricID, &o.ObservedAt, &effective, &o.CollectedAt, &sourceUpdated, &o.BucketStart, &o.BucketEnd, &ids[0], &ids[1], &ids[2], &ids[3], &ids[4], &ids[5], &subjectType, &ids[6], &objectType, &ids[7], &ids[8], &cType1, &ids[9], &cType2, &ids[10], &numeric, &integer, &boolean, &valueText, &valueJSON, &valueTimestamp, &o.ValueHash, &seriesHash, &ids[11], &previousHash, &o.IsChanged, &changeType, &delta, &changeDetected, &o.DedupeKey, &dimensions, &provenance, &provenanceHash, &o.CreatedAt, &deleted, &o.LastUpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -485,6 +493,7 @@ func scanTimeSeriesObservation(scan func(...interface{}) error) (*TimeSeriesObse
 		o.Value.JSON = json.RawMessage(valueJSON.String)
 	}
 	o.Value.Timestamp = nullTimePtr(valueTimestamp)
+	o.SeriesHash = seriesHash.String
 	o.PreviousObservationID = nullUintPtr(ids[11])
 	o.PreviousValueHash = previousHash.String
 	o.ChangeType = changeType.String
@@ -541,8 +550,13 @@ func FindPreviousTimeSeriesObservation(db *Handler, lookup TimeSeriesChangeLooku
 	if lookup.MetricID == 0 {
 		return nil, fmt.Errorf("time-series change lookup metric ID is required")
 	}
+	seriesHash, err := TimeSeriesSeriesHash(lookup.MetricID, lookup.Scope, lookup.Dimensions)
+	if err != nil {
+		return nil, err
+	}
 	filter := TimeSeriesQueryFilter{
-		MetricID: &lookup.MetricID, InformationSeedID: lookup.Scope.InformationSeedID,
+		SeriesHash: seriesHash,
+		MetricID:   &lookup.MetricID, InformationSeedID: lookup.Scope.InformationSeedID,
 		InformationSeedCandidateID: lookup.Scope.InformationSeedCandidateID,
 		SourceID:                   lookup.Scope.SourceID, SourceInformationSeedID: lookup.Scope.SourceInformationSeedID,
 		IndexID: lookup.Scope.IndexID, EntityID: lookup.Scope.EntityID,
@@ -560,8 +574,10 @@ func FindPreviousTimeSeriesObservation(db *Handler, lookup TimeSeriesChangeLooku
 	if err != nil {
 		return nil, err
 	}
-	if len(result.Observations) == 0 {
-		return nil, ErrTimeSeriesObservationNotFound
+	for i := range result.Observations {
+		if timeSeriesLogicalSeriesEqual(lookup.MetricID, lookup.Scope, lookup.Dimensions, result.Observations[i]) {
+			return &result.Observations[i], nil
+		}
 	}
-	return &result.Observations[0], nil
+	return nil, ErrTimeSeriesObservationNotFound
 }

@@ -33,6 +33,65 @@ func TestTimeSeriesCanonicalHashes(t *testing.T) {
 	}
 }
 
+func TestTimeSeriesSeriesHashIsCanonicalAndIncludesCompleteGrouping(t *testing.T) {
+	ids := []uint64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+	scope := TimeSeriesScope{
+		InformationSeedID: &ids[0], InformationSeedCandidateID: &ids[1], SourceID: &ids[2],
+		SourceInformationSeedID: &ids[3], IndexID: &ids[4], EntityID: &ids[5],
+		SubjectType: "subject", SubjectID: &ids[6], ObjectType: "object", ObjectID: &ids[7],
+		CorrelationRuleID: &ids[8], CorrelationObjectType1: "left", CorrelationObjectID1: &ids[8],
+		CorrelationObjectType2: "right", CorrelationObjectID2: &ids[9],
+	}
+	left := map[string]interface{}{"number": json.Number("1"), "nested": map[string]interface{}{"b": true, "a": "x"}}
+	right := map[string]interface{}{"nested": map[string]interface{}{"a": "x", "b": true}, "number": 1}
+	want, err := TimeSeriesSeriesHash(42, scope, left)
+	if err != nil {
+		t.Fatal(err)
+	}
+	equivalent, err := TimeSeriesSeriesHash(42, scope, right)
+	if err != nil || want != equivalent {
+		t.Fatalf("equivalent logical groups differ: %q != %q (%v)", want, equivalent, err)
+	}
+
+	assertDifferent := func(name string, metricID uint64, changed TimeSeriesScope, dimensions map[string]interface{}) {
+		t.Helper()
+		got, hashErr := TimeSeriesSeriesHash(metricID, changed, dimensions)
+		if hashErr != nil {
+			t.Fatalf("%s: %v", name, hashErr)
+		}
+		if got == want {
+			t.Errorf("%s difference was omitted from series identity", name)
+		}
+	}
+	assertDifferent("metric", 43, scope, left)
+	assertDifferent("dimensions", 42, scope, map[string]interface{}{"number": 2, "nested": map[string]interface{}{"a": "x", "b": true}})
+	mutations := []struct {
+		name string
+		edit func(*TimeSeriesScope)
+	}{
+		{"information seed", func(s *TimeSeriesScope) { s.InformationSeedID = nil }},
+		{"candidate", func(s *TimeSeriesScope) { s.InformationSeedCandidateID = nil }},
+		{"source", func(s *TimeSeriesScope) { s.SourceID = nil }},
+		{"source seed", func(s *TimeSeriesScope) { s.SourceInformationSeedID = nil }},
+		{"index", func(s *TimeSeriesScope) { s.IndexID = nil }},
+		{"entity", func(s *TimeSeriesScope) { s.EntityID = nil }},
+		{"subject type", func(s *TimeSeriesScope) { s.SubjectType = "other" }},
+		{"subject id", func(s *TimeSeriesScope) { s.SubjectID = nil }},
+		{"object type", func(s *TimeSeriesScope) { s.ObjectType = "other" }},
+		{"object id", func(s *TimeSeriesScope) { s.ObjectID = nil }},
+		{"rule", func(s *TimeSeriesScope) { s.CorrelationRuleID = nil }},
+		{"correlation type 1", func(s *TimeSeriesScope) { s.CorrelationObjectType1 = "other" }},
+		{"correlation id 1", func(s *TimeSeriesScope) { s.CorrelationObjectID1 = nil }},
+		{"correlation type 2", func(s *TimeSeriesScope) { s.CorrelationObjectType2 = "other" }},
+		{"correlation id 2", func(s *TimeSeriesScope) { s.CorrelationObjectID2 = nil }},
+	}
+	for _, mutation := range mutations {
+		changed := scope
+		mutation.edit(&changed)
+		assertDifferent(mutation.name, 42, changed, left)
+	}
+}
+
 func TestTimeSeriesExtendedValueAndProvenanceHashes(t *testing.T) {
 	count := int64(1)
 	if hash, err := TimeSeriesValueHash(cfg.TimeSeriesValueCount, TimeSeriesValue{Integer: &count}); err != nil || hash == "" {
@@ -137,7 +196,7 @@ func TestTimeSeriesObservationDuplicateAndBatchRollback(t *testing.T) {
 		information_seed_id INTEGER, information_seed_candidate_id INTEGER, source_id INTEGER, source_information_seed_id INTEGER, index_id INTEGER, entity_id INTEGER,
 		subject_type TEXT, subject_id INTEGER, object_type TEXT, object_id INTEGER, correlation_rule_id INTEGER, correlation_object_type_1 TEXT,
 		correlation_object_id_1 INTEGER, correlation_object_type_2 TEXT, correlation_object_id_2 INTEGER, value_numeric NUMERIC, value_integer INTEGER,
-		value_boolean INTEGER, value_text TEXT, value_json TEXT, value_timestamp TIMESTAMP, value_hash TEXT NOT NULL, previous_observation_id INTEGER,
+		value_boolean INTEGER, value_text TEXT, value_json TEXT, value_timestamp TIMESTAMP, value_hash TEXT NOT NULL, series_hash TEXT, previous_observation_id INTEGER,
 		previous_value_hash TEXT, is_changed INTEGER NOT NULL, change_type TEXT, change_delta_numeric NUMERIC, change_detected_at TIMESTAMP,
 		dedupe_key TEXT NOT NULL UNIQUE, dimensions TEXT, provenance TEXT, provenance_hash TEXT, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		deleted_at TIMESTAMP, last_updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)`)
@@ -158,13 +217,17 @@ func TestTimeSeriesObservationDuplicateAndBatchRollback(t *testing.T) {
 		t.Fatalf("duplicate insert: %#v %v", second, err)
 	}
 	var storedMetricID uint64
-	var storedValueHash, storedDedupeKey string
-	if err = db.QueryRow(`SELECT metric_id, value_hash, dedupe_key FROM TimeSeriesObservations WHERE observation_id=?`, first.ObservationID).
-		Scan(&storedMetricID, &storedValueHash, &storedDedupeKey); err != nil {
+	var storedValueHash, storedSeriesHash, storedDedupeKey string
+	if err = db.QueryRow(`SELECT metric_id, value_hash, series_hash, dedupe_key FROM TimeSeriesObservations WHERE observation_id=?`, first.ObservationID).
+		Scan(&storedMetricID, &storedValueHash, &storedSeriesHash, &storedDedupeKey); err != nil {
 		t.Fatalf("read inserted observation: %v", err)
 	}
 	if storedMetricID != o.MetricID || storedValueHash != o.ValueHash || storedDedupeKey != o.DedupeKey {
 		t.Fatalf("unexpected stored observation: metric=%d value_hash=%q dedupe_key=%q", storedMetricID, storedValueHash, storedDedupeKey)
+	}
+	wantSeriesHash, hashErr := TimeSeriesSeriesHash(o.MetricID, o.Scope, o.Dimensions)
+	if hashErr != nil || o.SeriesHash != wantSeriesHash || storedSeriesHash != wantSeriesHash {
+		t.Fatalf("series hash was not populated deterministically: object=%q stored=%q want=%q err=%v", o.SeriesHash, storedSeriesHash, wantSeriesHash, hashErr)
 	}
 	bad := o
 	bad.DedupeKey = "bad"

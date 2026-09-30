@@ -2218,6 +2218,7 @@ CREATE TABLE IF NOT EXISTS TimeSeriesObservations (
     value_json JSONB,
     value_timestamp TIMESTAMPTZ,
     value_hash VARCHAR(64) NOT NULL,
+    series_hash VARCHAR(64) NOT NULL,
     previous_observation_id BIGINT REFERENCES TimeSeriesObservations(observation_id) ON DELETE SET NULL,
     previous_value_hash VARCHAR(64),
     is_changed BOOLEAN NOT NULL DEFAULT FALSE,
@@ -2322,6 +2323,7 @@ CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_object ON TimeSeriesObserv
 CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_correlation_rule ON TimeSeriesObservations(correlation_rule_id, observed_at);
 CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_dedupe_key ON TimeSeriesObservations(dedupe_key);
 CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_dimensions_gin ON TimeSeriesObservations USING GIN(dimensions);
+CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_series_history ON TimeSeriesObservations(series_hash, observed_at, observation_id);
 CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_active_metric_observed ON TimeSeriesObservations(metric_id, observed_at, observation_id) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_active_metric_effective ON TimeSeriesObservations(metric_id, effective_at, observation_id) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_active_metric_source_updated ON TimeSeriesObservations(metric_id, source_updated_at, observation_id) WHERE deleted_at IS NULL;

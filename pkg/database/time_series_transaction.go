@@ -86,7 +86,11 @@ func (r TransactionTimeSeriesRepository) PreviousObservationContext(ctx context.
 	if lookup.MetricID == 0 {
 		return nil, fmt.Errorf("time-series change lookup metric ID is required")
 	}
-	filter := TimeSeriesQueryFilter{MetricID: &lookup.MetricID, InformationSeedID: lookup.Scope.InformationSeedID, InformationSeedCandidateID: lookup.Scope.InformationSeedCandidateID, SourceID: lookup.Scope.SourceID, SourceInformationSeedID: lookup.Scope.SourceInformationSeedID, IndexID: lookup.Scope.IndexID, EntityID: lookup.Scope.EntityID, SubjectType: lookup.Scope.SubjectType, SubjectID: lookup.Scope.SubjectID, ObjectType: lookup.Scope.ObjectType, ObjectID: lookup.Scope.ObjectID, CorrelationRuleID: lookup.Scope.CorrelationRuleID, CorrelationObjectType1: lookup.Scope.CorrelationObjectType1, CorrelationObjectID1: lookup.Scope.CorrelationObjectID1, CorrelationObjectType2: lookup.Scope.CorrelationObjectType2, CorrelationObjectID2: lookup.Scope.CorrelationObjectID2, Dimensions: lookup.Dimensions, End: &lookup.Before, TimeBasis: lookup.TimeBasis, IncludeDeleted: true, Descending: true}
+	seriesHash, err := TimeSeriesSeriesHash(lookup.MetricID, lookup.Scope, lookup.Dimensions)
+	if err != nil {
+		return nil, err
+	}
+	filter := TimeSeriesQueryFilter{SeriesHash: seriesHash, MetricID: &lookup.MetricID, InformationSeedID: lookup.Scope.InformationSeedID, InformationSeedCandidateID: lookup.Scope.InformationSeedCandidateID, SourceID: lookup.Scope.SourceID, SourceInformationSeedID: lookup.Scope.SourceInformationSeedID, IndexID: lookup.Scope.IndexID, EntityID: lookup.Scope.EntityID, SubjectType: lookup.Scope.SubjectType, SubjectID: lookup.Scope.SubjectID, ObjectType: lookup.Scope.ObjectType, ObjectID: lookup.Scope.ObjectID, CorrelationRuleID: lookup.Scope.CorrelationRuleID, CorrelationObjectType1: lookup.Scope.CorrelationObjectType1, CorrelationObjectID1: lookup.Scope.CorrelationObjectID1, CorrelationObjectType2: lookup.Scope.CorrelationObjectType2, CorrelationObjectID2: lookup.Scope.CorrelationObjectID2, Dimensions: lookup.Dimensions, End: &lookup.Before, TimeBasis: lookup.TimeBasis, IncludeDeleted: true, Descending: true}
 	conditions, args, _, err := buildTimeSeriesQueryConditions(r.DBMS, filter, "o")
 	if err != nil {
 		return nil, err
@@ -102,7 +106,7 @@ func (r TransactionTimeSeriesRepository) PreviousObservationContext(ctx context.
 		if scanErr != nil {
 			return nil, scanErr
 		}
-		if dimensionsContain(observation.Dimensions, lookup.Dimensions) {
+		if timeSeriesLogicalSeriesEqual(lookup.MetricID, lookup.Scope, lookup.Dimensions, *observation) {
 			return observation, nil
 		}
 	}

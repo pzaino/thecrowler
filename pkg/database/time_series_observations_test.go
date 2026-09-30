@@ -44,7 +44,7 @@ func newTimeSeriesObservationFixture(t *testing.T) (*sql.DB, *recordingTimeSerie
 		object_id INTEGER, correlation_rule_id INTEGER, correlation_object_type_1 TEXT,
 		correlation_object_id_1 INTEGER, correlation_object_type_2 TEXT, correlation_object_id_2 INTEGER,
 		value_numeric NUMERIC, value_integer INTEGER, value_boolean INTEGER, value_text TEXT,
-		value_json TEXT, value_timestamp TIMESTAMP, value_hash TEXT NOT NULL, previous_observation_id INTEGER,
+		value_json TEXT, value_timestamp TIMESTAMP, value_hash TEXT NOT NULL, series_hash TEXT, previous_observation_id INTEGER,
 		previous_value_hash TEXT, is_changed INTEGER NOT NULL DEFAULT 0, change_type TEXT,
 		change_delta_numeric NUMERIC, change_detected_at TIMESTAMP, dedupe_key TEXT NOT NULL,
 		dimensions TEXT, provenance TEXT, provenance_hash TEXT, created_at TIMESTAMP NOT NULL,
