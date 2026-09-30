@@ -9,6 +9,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -547,37 +548,53 @@ func dimensionsContain(actual, expected map[string]interface{}) bool {
 
 // FindPreviousTimeSeriesObservation hides change-state SQL from emitters.
 func FindPreviousTimeSeriesObservation(db *Handler, lookup TimeSeriesChangeLookup) (*TimeSeriesObservation, error) {
+	dbms, err := validateTimeSeriesDB(db)
+	if err != nil {
+		return nil, err
+	}
 	if lookup.MetricID == 0 {
 		return nil, fmt.Errorf("time-series change lookup metric ID is required")
 	}
+	query, args, err := previousTimeSeriesObservationQuery(dbms, lookup)
+	if err != nil {
+		return nil, err
+	}
+	observation, err := scanTimeSeriesObservation(func(dest ...interface{}) error {
+		return (*db).QueryRowContext(context.Background(), query, args...).Scan(dest...)
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrTimeSeriesObservationNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("lookup previous time-series observation: %w", err)
+	}
+	return observation, nil
+}
+
+// previousTimeSeriesObservationQuery is the single reference query used by
+// handler- and transaction-backed emitters. Logically deleted observations are
+// deliberately eligible: their presence is what lets emitters classify the
+// next value as reappeared. Operational tables must not be joined here because
+// their current lifecycle state cannot redefine an historical series.
+func previousTimeSeriesObservationQuery(dbms string, lookup TimeSeriesChangeLookup) (string, []interface{}, error) {
 	seriesHash, err := TimeSeriesSeriesHash(lookup.MetricID, lookup.Scope, lookup.Dimensions)
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
-	filter := TimeSeriesQueryFilter{
-		SeriesHash: seriesHash,
-		MetricID:   &lookup.MetricID, InformationSeedID: lookup.Scope.InformationSeedID,
-		InformationSeedCandidateID: lookup.Scope.InformationSeedCandidateID,
-		SourceID:                   lookup.Scope.SourceID, SourceInformationSeedID: lookup.Scope.SourceInformationSeedID,
-		IndexID: lookup.Scope.IndexID, EntityID: lookup.Scope.EntityID,
-		SubjectType: lookup.Scope.SubjectType, SubjectID: lookup.Scope.SubjectID,
-		ObjectType: lookup.Scope.ObjectType, ObjectID: lookup.Scope.ObjectID,
-		CorrelationRuleID:      lookup.Scope.CorrelationRuleID,
-		CorrelationObjectType1: lookup.Scope.CorrelationObjectType1,
-		CorrelationObjectID1:   lookup.Scope.CorrelationObjectID1,
-		CorrelationObjectType2: lookup.Scope.CorrelationObjectType2,
-		CorrelationObjectID2:   lookup.Scope.CorrelationObjectID2,
-		Dimensions:             lookup.Dimensions, End: &lookup.Before, TimeBasis: lookup.TimeBasis, IncludeDeleted: true,
-		Pagination: TimeSeriesPagination{Limit: 10000},
+	timeColumn := "observed_at"
+	switch lookup.TimeBasis {
+	case "", cfg.TimeSeriesTimeObservedAt:
+	case cfg.TimeSeriesTimeEventAt:
+		timeColumn = "effective_at"
+	case cfg.TimeSeriesTimeSourceTimestamp:
+		timeColumn = "source_updated_at"
+	default:
+		return "", nil, fmt.Errorf("unsupported time-series time basis %q", lookup.TimeBasis)
 	}
-	result, err := QueryTimeSeriesObservations(db, filter)
-	if err != nil {
-		return nil, err
-	}
-	for i := range result.Observations {
-		if timeSeriesLogicalSeriesEqual(lookup.MetricID, lookup.Scope, lookup.Dimensions, result.Observations[i]) {
-			return &result.Observations[i], nil
-		}
-	}
-	return nil, ErrTimeSeriesObservationNotFound
+	p := newInformationSeedPlaceholders(dbms)
+	query := `SELECT ` + prefixColumns(timeSeriesObservationColumns, "o") +
+		` FROM TimeSeriesObservations o WHERE o.metric_id = ` + p.Next() +
+		` AND o.series_hash = ` + p.Next() + ` AND o.` + timeColumn + ` < ` + p.Next() +
+		` ORDER BY o.` + timeColumn + ` DESC, o.observation_id DESC LIMIT 1`
+	return query, []interface{}{lookup.MetricID, seriesHash, lookup.Before.UTC()}, nil
 }

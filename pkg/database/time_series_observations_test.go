@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
 
 // recordingTimeSeriesHandler keeps these tests on the repository's SQLite
@@ -19,6 +21,92 @@ type recordingTimeSeriesHandler struct {
 	args         [][]interface{}
 	cancel       context.CancelFunc
 	cancelOnCall int
+}
+
+func TestPreviousObservationReferenceEquivalence(t *testing.T) {
+	bases := []struct {
+		name  string
+		basis cfg.TimeSeriesTimeBasis
+		set   func(*TimeSeriesObservation, time.Time)
+	}{
+		{"observed", cfg.TimeSeriesTimeObservedAt, func(o *TimeSeriesObservation, at time.Time) { o.ObservedAt = at }},
+		{"event", cfg.TimeSeriesTimeEventAt, func(o *TimeSeriesObservation, at time.Time) { o.EffectiveAt = &at }},
+		{"source", cfg.TimeSeriesTimeSourceTimestamp, func(o *TimeSeriesObservation, at time.Time) { o.SourceUpdatedAt = &at }},
+	}
+	for _, tc := range bases {
+		t.Run(tc.name, func(t *testing.T) {
+			db, _, handler := newTimeSeriesObservationFixture(t)
+			defer db.Close()
+			// These current operational rows intentionally have opposite lifecycle
+			// states. Previous-observation lookup must depend on neither table.
+			if _, err := db.Exec(`CREATE TABLE WebObjects (object_id INTEGER, deleted_at TIMESTAMP); CREATE TABLE Sources (source_id INTEGER, deleted_at TIMESTAMP); INSERT INTO WebObjects VALUES (91, CURRENT_TIMESTAMP); INSERT INTO Sources VALUES (7, NULL)`); err != nil {
+				t.Fatal(err)
+			}
+			source, object := uint64(7), uint64(91)
+			scope := TimeSeriesScope{SourceID: &source, ObjectType: "web_object", ObjectID: &object, SubjectType: "url"}
+			dimensions := map[string]interface{}{"region": "eu", "nested": map[string]interface{}{"tier": 2}}
+			base := time.Date(2026, 9, 30, 10, 0, 0, 0, time.UTC)
+			insert := func(id uint64, active time.Time, value string, rowScope TimeSeriesScope, rowDimensions map[string]interface{}) {
+				o := TimeSeriesObservation{ID: id, MetricID: 12, ObservedAt: base.Add(time.Duration(id) * time.Minute), CollectedAt: base, BucketStart: base, BucketEnd: base.Add(time.Hour), Scope: rowScope, ValueHash: value, DedupeKey: fmt.Sprintf("dedupe-%s-%d", tc.name, id), Dimensions: rowDimensions, IsChanged: true}
+				tc.set(&o, active)
+				series, err := TimeSeriesSeriesHash(o.MetricID, o.Scope, o.Dimensions)
+				if err != nil {
+					t.Fatal(err)
+				}
+				dims, _ := CanonicalTimeSeriesJSON(o.Dimensions)
+				_, err = db.Exec(`INSERT INTO TimeSeriesObservations (observation_id,metric_id,observed_at,effective_at,collected_at,source_updated_at,bucket_start,bucket_end,source_id,subject_type,object_type,object_id,value_hash,series_hash,is_changed,dedupe_key,dimensions,created_at,last_updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, o.ID, o.MetricID, o.ObservedAt, o.EffectiveAt, o.CollectedAt, o.SourceUpdatedAt, o.BucketStart, o.BucketEnd, source, o.Scope.SubjectType, o.Scope.ObjectType, object, o.ValueHash, series, o.IsChanged, o.DedupeKey, string(dims), base, base)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			insert(1, base.Add(time.Minute), "old", scope, dimensions)
+			insert(2, base.Add(2*time.Minute), "same-time-lower-id", scope, dimensions)
+			insert(3, base.Add(2*time.Minute), "winner", scope, dimensions)
+			insert(4, base.Add(3*time.Minute), "at-boundary", scope, dimensions)
+			// Later rows in another complete scope and another dimension cannot win.
+			otherScope := scope
+			other := uint64(92)
+			otherScope.ObjectID = &other
+			insert(20, base.Add(2*time.Minute+30*time.Second), "other-scope", otherScope, dimensions)
+			insert(21, base.Add(2*time.Minute+45*time.Second), "other-dimensions", scope, map[string]interface{}{"region": "us", "nested": map[string]interface{}{"tier": 2}})
+
+			lookup := TimeSeriesChangeLookup{MetricID: 12, Scope: scope, Dimensions: dimensions, Before: base.Add(3 * time.Minute), TimeBasis: tc.basis}
+			got, err := FindPreviousTimeSeriesObservation(handler, lookup)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.ID != 3 || got.ValueHash != "winner" {
+				t.Fatalf("previous = (%d,%q), want (3,winner)", got.ID, got.ValueHash)
+			}
+			query, _, queryErr := previousTimeSeriesObservationQuery(DBSQLiteStr, lookup)
+			if queryErr != nil {
+				t.Fatal(queryErr)
+			}
+			activeColumn := map[cfg.TimeSeriesTimeBasis]string{cfg.TimeSeriesTimeObservedAt: "observed_at", cfg.TimeSeriesTimeEventAt: "effective_at", cfg.TimeSeriesTimeSourceTimestamp: "source_updated_at"}[tc.basis]
+			if !strings.Contains(query, "o.metric_id = $1 AND o.series_hash = $2 AND o."+activeColumn+" < $3") || !strings.Contains(query, "ORDER BY o."+activeColumn+" DESC, o.observation_id DESC LIMIT 1") || strings.Contains(strings.ToUpper(query), " JOIN ") {
+				t.Fatalf("non-reference previous query: %s", query)
+			}
+
+			deletedAt := base.Add(4 * time.Minute)
+			if _, err = db.Exec(`UPDATE TimeSeriesObservations SET deleted_at=? WHERE observation_id=3`, deletedAt); err != nil {
+				t.Fatal(err)
+			}
+			got, err = FindPreviousTimeSeriesObservation(handler, lookup)
+			if err != nil || got.ID != 3 || got.DeletedAt == nil {
+				t.Fatalf("logically deleted previous = %#v, %v", got, err)
+			}
+
+			tx, err := db.BeginTx(context.Background(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			txGot, err := (TransactionTimeSeriesRepository{Tx: tx, DBMS: DBSQLiteStr}).PreviousObservationContext(context.Background(), lookup)
+			_ = tx.Rollback()
+			if err != nil || txGot.ID != got.ID || txGot.ValueHash != got.ValueHash || (txGot.DeletedAt == nil) != (got.DeletedAt == nil) {
+				t.Fatalf("transaction result %#v differs from handler %#v: %v", txGot, got, err)
+			}
+		})
+	}
 }
 
 func (h *recordingTimeSeriesHandler) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {

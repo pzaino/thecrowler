@@ -57,6 +57,47 @@ func mustSnapshot(t *testing.T, emitter *Emitter) *EnabledMetricSnapshot {
 	return snapshot
 }
 
+func TestApplyChangeReferenceFields(t *testing.T) {
+	at := time.Date(2026, 9, 30, 12, 30, 0, 0, time.UTC)
+	oldValue := 10.0
+	previous := cdb.TimeSeriesObservation{ID: 41, ValueHash: "old-hash", Value: cdb.TimeSeriesValue{Numeric: &oldValue}}
+	tests := []struct {
+		name          string
+		valueHash     string
+		value         float64
+		deleted       bool
+		wantChanged   bool
+		wantType      string
+		wantDetection bool
+		wantDelta     float64
+	}{
+		{"unchanged", "old-hash", 10, false, false, "unchanged", false, 0},
+		{"changed", "new-hash", 13.5, false, true, "changed", true, 3.5},
+		{"reappeared", "old-hash", 10, true, true, "reappeared", true, 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			prior := previous
+			if tc.deleted {
+				deletedAt := at.Add(-time.Minute)
+				prior.DeletedAt = &deletedAt
+			}
+			value := tc.value
+			observation := cdb.TimeSeriesObservation{ValueHash: tc.valueHash, Value: cdb.TimeSeriesValue{Numeric: &value}}
+			applyChange(&observation, &prior, nil, at)
+			if observation.PreviousObservationID == nil || *observation.PreviousObservationID != prior.ID || observation.PreviousValueHash != prior.ValueHash || observation.IsChanged != tc.wantChanged || observation.ChangeType != tc.wantType {
+				t.Fatalf("change identity/state = %#v", observation)
+			}
+			if (observation.ChangeDetectedAt != nil) != tc.wantDetection || (observation.ChangeDetectedAt != nil && !observation.ChangeDetectedAt.Equal(at)) {
+				t.Fatalf("detection time = %v, want present=%t at %s", observation.ChangeDetectedAt, tc.wantDetection, at)
+			}
+			if observation.ChangeDeltaNumeric == nil || *observation.ChangeDeltaNumeric != tc.wantDelta {
+				t.Fatalf("numeric delta = %v, want %v", observation.ChangeDeltaNumeric, tc.wantDelta)
+			}
+		})
+	}
+}
+
 type fakeScopes struct {
 	scopes []cdb.TimeSeriesScope
 	err    error
