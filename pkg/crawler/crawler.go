@@ -1740,11 +1740,8 @@ func truncateUTF8(s string, maxRunes int) string {
 // Each meta tag is inserted into the MetaTags table with the corresponding index ID, name, and content.
 // Returns an error if there was a problem executing the SQL statement.
 func insertMetaTags(tx *sql.Tx, indexID uint64, metaTags []MetaTag) error {
-	return insertMetaTagsWithTimeSeries(tx, indexID, metaTags, nil, nil)
-}
-
-func insertMetaTagsWithTimeSeries(tx *sql.Tx, indexID uint64, metaTags []MetaTag, currCfg *cfg.Config, snapshot *tse.EnabledMetricSnapshot) error {
-	emitter := newCrawlerIndexedArtifactEmitter(tx, currCfg)
+	// Keep the legacy per-row path used by the portable database integrations;
+	// the crawler's PostgreSQL path below is deliberately set-oriented.
 	for _, metatag := range metaTags {
 		name := metatag.Name
 		if len(name) > 256 {
@@ -1760,44 +1757,140 @@ func insertMetaTagsWithTimeSeries(tx *sql.Tx, indexID uint64, metaTags []MetaTag
 		if !utf8.ValidString(content) {
 			content = strings.ToValidUTF8(content, "")
 		}
-
 		var metatagID int64
 		err := tx.QueryRow(`SELECT metatag_id FROM MetaTags WHERE name = $1 AND content = $2`, name, content).Scan(&metatagID)
-		if err == sql.ErrNoRows {
-			err = tx.QueryRow(`
-				INSERT INTO MetaTags (name, content)
-				VALUES ($1, $2)
+		if errors.Is(err, sql.ErrNoRows) {
+			err = tx.QueryRow(`INSERT INTO MetaTags (name, content) VALUES ($1, $2)
 				ON CONFLICT (name, content) DO UPDATE SET name = EXCLUDED.name
 				RETURNING metatag_id`, name, content).Scan(&metatagID)
 		}
 		if err != nil {
 			return err
 		}
-
-		var metatagIndexID uint64
-		err = tx.QueryRow(`
-			INSERT INTO MetaTagsIndex (index_id, metatag_id)
-			VALUES ($1, $2)
+		if err = tx.QueryRow(`INSERT INTO MetaTagsIndex (index_id, metatag_id) VALUES ($1, $2)
 			ON CONFLICT (index_id, metatag_id) DO UPDATE SET metatag_id = EXCLUDED.metatag_id
-			RETURNING sim_id`, indexID, metatagID).Scan(&metatagIndexID)
+			RETURNING sim_id`, indexID, metatagID).Scan(new(uint64)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func insertMetaTagsWithTimeSeries(tx *sql.Tx, indexID uint64, metaTags []MetaTag, currCfg *cfg.Config, snapshot *tse.EnabledMetricSnapshot) error {
+	emitter := newCrawlerIndexedArtifactEmitter(tx, currCfg)
+	prepared := prepareMetaTags(metaTags)
+	for start := 0; start < len(prepared); start += postgresMetaTagBatchSize {
+		end := min(start+postgresMetaTagBatchSize, len(prepared))
+		persisted, err := persistPostgresMetaTagBatch(tx, indexID, prepared[start:end])
 		if err != nil {
 			return err
 		}
-		if emitter != nil {
-			canonicalName := strings.ToLower(strings.TrimSpace(norm.NFC.String(name)))
-			err = emitter.EmitIndexedArtifact(snapshot, tse.IndexedArtifactInput{
-				SourceKind: cfg.TimeSeriesSourceMetatag, IndexID: indexID,
-				RowID: uint64(metatagID), LinkID: metatagIndexID,
-				SubjectKey: canonicalName, Name: name, RawValue: content, Value: content,
-				Attributes: map[string]interface{}{"name": name, "content": content},
-				ObservedAt: time.Now().UTC(),
-			})
-			if err != nil {
-				return err
+		for _, stored := range persisted {
+			if emitter != nil {
+				err = emitter.EmitIndexedArtifact(snapshot, metaTagTimeSeriesInput(indexID, stored))
+				if err != nil {
+					return err
+				}
 			}
 		}
 	}
 	return nil
+}
+
+func metaTagTimeSeriesInput(indexID uint64, stored persistedMetaTag) tse.IndexedArtifactInput {
+	canonicalName := strings.ToLower(strings.TrimSpace(norm.NFC.String(stored.name)))
+	return tse.IndexedArtifactInput{
+		SourceKind: cfg.TimeSeriesSourceMetatag, IndexID: indexID,
+		RowID: uint64(stored.metatagID), LinkID: stored.metatagIndexID,
+		SubjectKey: canonicalName, Name: stored.name, RawValue: stored.content, Value: stored.content,
+		Attributes: map[string]interface{}{"name": stored.name, "content": stored.content},
+		ObservedAt: time.Now().UTC(),
+	}
+}
+
+const postgresMetaTagBatchSize = 500
+
+type persistedMetaTag struct {
+	name, content  string
+	metatagID      int64
+	metatagIndexID uint64
+}
+
+// prepareMetaTags performs cleanup before truncation so malformed byte sequences
+// cannot turn into replacement runes at a boundary. PostgreSQL's name column is
+// VARCHAR(255); content retains the crawler's established 1024-rune limit.
+func prepareMetaTags(metaTags []MetaTag) []persistedMetaTag {
+	result := make([]persistedMetaTag, 0, len(metaTags))
+	type metaTagKey struct{ name, content string }
+	seen := make(map[metaTagKey]struct{}, len(metaTags))
+	for _, metatag := range metaTags {
+		name := truncateUTF8(strings.ToValidUTF8(metatag.Name, ""), 255)
+		content := truncateUTF8(strings.ToValidUTF8(metatag.Content, ""), 1024)
+		key := metaTagKey{name: name, content: content}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, persistedMetaTag{name: name, content: content})
+	}
+	return result
+}
+
+// persistPostgresMetaTagBatch uses array parameters so both statement count and
+// parameter count remain bounded. The resolving statement runs after INSERT's
+// conflict waits, recovering the authoritative row and relationship identities.
+func persistPostgresMetaTagBatch(tx *sql.Tx, indexID uint64, batch []persistedMetaTag) ([]persistedMetaTag, error) {
+	if len(batch) == 0 {
+		return nil, nil
+	}
+	names, contents := make([]string, len(batch)), make([]string, len(batch))
+	for i := range batch {
+		names[i], contents[i] = batch[i].name, batch[i].content
+	}
+	if _, err := tx.Exec(`
+		WITH input AS (
+			SELECT name, content FROM unnest($1::text[], $2::text[]) AS i(name, content)
+		)
+		INSERT INTO MetaTags (name, content)
+		SELECT name, content FROM input
+		ON CONFLICT (name, content) DO NOTHING`, pq.Array(names), pq.Array(contents)); err != nil {
+		return nil, err
+	}
+	rows, err := tx.Query(`
+		WITH input AS (
+			SELECT name, content, ordinality
+			FROM unnest($1::text[], $2::text[]) WITH ORDINALITY AS i(name, content, ordinality)
+		), resolved AS (
+			SELECT i.name, i.content, i.ordinality, m.metatag_id
+			FROM input i JOIN MetaTags m ON m.name = i.name AND m.content = i.content
+		), linked AS (
+			INSERT INTO MetaTagsIndex (index_id, metatag_id)
+			SELECT $3, metatag_id FROM resolved
+			ON CONFLICT (index_id, metatag_id) DO UPDATE SET metatag_id = EXCLUDED.metatag_id
+			RETURNING sim_id, metatag_id
+		)
+		SELECT r.name, r.content, r.metatag_id, l.sim_id
+		FROM resolved r JOIN linked l USING (metatag_id)
+		ORDER BY r.ordinality`, pq.Array(names), pq.Array(contents), indexID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]persistedMetaTag, 0, len(batch))
+	for rows.Next() {
+		var stored persistedMetaTag
+		if err = rows.Scan(&stored.name, &stored.content, &stored.metatagID, &stored.metatagIndexID); err != nil {
+			return nil, err
+		}
+		result = append(result, stored)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(result) != len(batch) {
+		return nil, fmt.Errorf("PostgreSQL metatag upsert returned %d of %d rows", len(result), len(batch))
+	}
+	return result, nil
 }
 
 func canonicalKeyword(keyword string) string {
