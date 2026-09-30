@@ -28,6 +28,13 @@ const timeSeriesObservationColumns = `observation_id, metric_id, observed_at, ef
 
 const timeSeriesObservationDimensionChunkSize = 1000
 
+const (
+	// Each observation contributes 40 bind parameters. Keeping chunks to 250
+	// rows (10,000 parameters) leaves ample room below PostgreSQL's 65,535
+	// parameter limit and avoids exceptionally large statements.
+	timeSeriesPostgresObservationBatchSize = 250
+)
+
 // InsertTimeSeriesObservation inserts one fact. A duplicate dedupe_key returns a
 // successful result with Duplicate=true and the existing observation ID.
 func InsertTimeSeriesObservation(db *Handler, observation *TimeSeriesObservation) (TimeSeriesInsertResult, error) {
@@ -68,6 +75,19 @@ func InsertTimeSeriesObservations(db *Handler, observations []TimeSeriesObservat
 	if err != nil {
 		return nil, fmt.Errorf("begin time-series observation batch: %w", err)
 	}
+	if dbms == DBPostgresStr {
+		results, insertErr := insertPostgresTimeSeriesObservationsTx(context.Background(), tx, observations)
+		if insertErr != nil {
+			_ = (*db).Rollback(tx)
+			return nil, insertErr
+		}
+		if err = (*db).Commit(tx); err != nil {
+			_ = (*db).Rollback(tx)
+			return nil, fmt.Errorf("commit time-series observation batch: %w", err)
+		}
+		return results, nil
+	}
+
 	results := make([]TimeSeriesInsertResult, 0, len(observations))
 	for i := range observations {
 		result, insertErr := insertTimeSeriesObservationTx(tx, dbms, &observations[i])
@@ -89,61 +109,12 @@ func insertTimeSeriesObservationTx(tx *sql.Tx, dbms string, o *TimeSeriesObserva
 }
 
 func insertTimeSeriesObservationTxContext(ctx context.Context, tx *sql.Tx, dbms string, o *TimeSeriesObservation) (TimeSeriesInsertResult, error) {
-	if o.MetricID == 0 {
-		return TimeSeriesInsertResult{}, fmt.Errorf("time-series observation metric ID is required")
-	}
-	if o.ObservedAt.IsZero() {
-		return TimeSeriesInsertResult{}, fmt.Errorf("time-series observation observed_at is required")
-	}
-	if o.DedupeKey == "" {
-		return TimeSeriesInsertResult{}, fmt.Errorf("time-series observation dedupe key is required")
-	}
-	if o.ValueHash == "" {
-		return TimeSeriesInsertResult{}, fmt.Errorf("time-series observation value hash is required")
-	}
-	seriesHash, err := TimeSeriesSeriesHash(o.MetricID, o.Scope, o.Dimensions)
-	if err != nil {
-		return TimeSeriesInsertResult{}, fmt.Errorf("hash time-series logical series: %w", err)
-	}
-	o.SeriesHash = seriesHash
-	if o.CollectedAt.IsZero() {
-		o.CollectedAt = time.Now().UTC()
-	}
-	if o.BucketStart.IsZero() || o.BucketEnd.IsZero() {
-		return TimeSeriesInsertResult{}, fmt.Errorf("time-series observation bucket bounds are required")
-	}
-	dimensions, err := optionalCanonicalJSON(o.Dimensions)
+	args, err := prepareTimeSeriesObservationInsert(dbms, o)
 	if err != nil {
 		return TimeSeriesInsertResult{}, err
 	}
-	provenance, err := optionalCanonicalRawJSON(o.Provenance)
-	if err != nil {
-		return TimeSeriesInsertResult{}, err
-	}
-	valueJSON, err := optionalCanonicalRawJSON(o.Value.JSON)
-	if err != nil {
-		return TimeSeriesInsertResult{}, err
-	}
-	args := []interface{}{o.MetricID, o.ObservedAt.UTC(), o.EffectiveAt, o.CollectedAt.UTC(), o.SourceUpdatedAt, o.BucketStart.UTC(), o.BucketEnd.UTC(), o.Scope.InformationSeedID, o.Scope.InformationSeedCandidateID, o.Scope.SourceID, o.Scope.SourceInformationSeedID, o.Scope.IndexID, o.Scope.EntityID, nullableString(o.Scope.SubjectType), o.Scope.SubjectID, nullableString(o.Scope.ObjectType), o.Scope.ObjectID, o.Scope.CorrelationRuleID, nullableString(o.Scope.CorrelationObjectType1), o.Scope.CorrelationObjectID1, nullableString(o.Scope.CorrelationObjectType2), o.Scope.CorrelationObjectID2, o.Value.Numeric, o.Value.Integer, o.Value.Boolean, o.Value.Text, valueJSON, o.Value.Timestamp, o.ValueHash, o.SeriesHash, o.PreviousObservationID, nullableString(o.PreviousValueHash), o.IsChanged, nullableString(o.ChangeType), o.ChangeDeltaNumeric, o.ChangeDetectedAt, o.DedupeKey, dimensions, provenance, nullableString(o.ProvenanceHash)}
-	p := newInformationSeedPlaceholders(dbms)
-	values := make([]string, len(args))
-	for i := range values {
-		values[i] = p.Next()
-	}
-	if dbms == DBPostgresStr {
-		for _, idx := range []int{26, 37, 38} {
-			if args[idx] != nil {
-				values[idx] += "::jsonb"
-			}
-		}
-	}
-	query := `INSERT INTO TimeSeriesObservations (metric_id, observed_at, effective_at, collected_at, source_updated_at,
-		bucket_start, bucket_end, information_seed_id, information_seed_candidate_id, source_id,
-		source_information_seed_id, index_id, entity_id, subject_type, subject_id, object_type, object_id,
-		correlation_rule_id, correlation_object_type_1, correlation_object_id_1, correlation_object_type_2,
-		correlation_object_id_2, value_numeric, value_integer, value_boolean, value_text, value_json,
-		value_timestamp, value_hash, series_hash, previous_observation_id, previous_value_hash, is_changed, change_type,
-		change_delta_numeric, change_detected_at, dedupe_key, dimensions, provenance, provenance_hash) VALUES (` + strings.Join(values, ",") + `)`
+	values := timeSeriesObservationInsertPlaceholders(dbms, len(args), 0)
+	query := timeSeriesObservationInsertPrefix + ` VALUES (` + strings.Join(values, ",") + `)`
 	if dbms == DBMySQLStr {
 		query += ` ON DUPLICATE KEY UPDATE dedupe_key=VALUES(dedupe_key)`
 	} else if dbms == DBSQLiteStr {
@@ -167,6 +138,180 @@ func insertTimeSeriesObservationTxContext(ctx context.Context, tx *sql.Tx, dbms 
 	}
 	o.ID = id
 	return TimeSeriesInsertResult{ObservationID: id, Inserted: affected == 1, Duplicate: affected != 1}, nil
+}
+
+const timeSeriesObservationInsertPrefix = `INSERT INTO TimeSeriesObservations (metric_id, observed_at, effective_at, collected_at, source_updated_at,
+		bucket_start, bucket_end, information_seed_id, information_seed_candidate_id, source_id,
+		source_information_seed_id, index_id, entity_id, subject_type, subject_id, object_type, object_id,
+		correlation_rule_id, correlation_object_type_1, correlation_object_id_1, correlation_object_type_2,
+		correlation_object_id_2, value_numeric, value_integer, value_boolean, value_text, value_json,
+		value_timestamp, value_hash, series_hash, previous_observation_id, previous_value_hash, is_changed, change_type,
+		change_delta_numeric, change_detected_at, dedupe_key, dimensions, provenance, provenance_hash)`
+
+func prepareTimeSeriesObservationInsert(dbms string, o *TimeSeriesObservation) ([]interface{}, error) {
+	if o.MetricID == 0 {
+		return nil, fmt.Errorf("time-series observation metric ID is required")
+	}
+	if o.ObservedAt.IsZero() {
+		return nil, fmt.Errorf("time-series observation observed_at is required")
+	}
+	if o.DedupeKey == "" {
+		return nil, fmt.Errorf("time-series observation dedupe key is required")
+	}
+	if o.ValueHash == "" {
+		return nil, fmt.Errorf("time-series observation value hash is required")
+	}
+	seriesHash, err := TimeSeriesSeriesHash(o.MetricID, o.Scope, o.Dimensions)
+	if err != nil {
+		return nil, fmt.Errorf("hash time-series logical series: %w", err)
+	}
+	o.SeriesHash = seriesHash
+	if o.CollectedAt.IsZero() {
+		o.CollectedAt = time.Now().UTC()
+	}
+	if o.BucketStart.IsZero() || o.BucketEnd.IsZero() {
+		return nil, fmt.Errorf("time-series observation bucket bounds are required")
+	}
+	dimensions, err := optionalCanonicalJSON(o.Dimensions)
+	if err != nil {
+		return nil, err
+	}
+	provenance, err := optionalCanonicalRawJSON(o.Provenance)
+	if err != nil {
+		return nil, err
+	}
+	valueJSON, err := optionalCanonicalRawJSON(o.Value.JSON)
+	if err != nil {
+		return nil, err
+	}
+	args := []interface{}{o.MetricID, o.ObservedAt.UTC(), o.EffectiveAt, o.CollectedAt.UTC(), o.SourceUpdatedAt, o.BucketStart.UTC(), o.BucketEnd.UTC(), o.Scope.InformationSeedID, o.Scope.InformationSeedCandidateID, o.Scope.SourceID, o.Scope.SourceInformationSeedID, o.Scope.IndexID, o.Scope.EntityID, nullableString(o.Scope.SubjectType), o.Scope.SubjectID, nullableString(o.Scope.ObjectType), o.Scope.ObjectID, o.Scope.CorrelationRuleID, nullableString(o.Scope.CorrelationObjectType1), o.Scope.CorrelationObjectID1, nullableString(o.Scope.CorrelationObjectType2), o.Scope.CorrelationObjectID2, o.Value.Numeric, o.Value.Integer, o.Value.Boolean, o.Value.Text, valueJSON, o.Value.Timestamp, o.ValueHash, o.SeriesHash, o.PreviousObservationID, nullableString(o.PreviousValueHash), o.IsChanged, nullableString(o.ChangeType), o.ChangeDeltaNumeric, o.ChangeDetectedAt, o.DedupeKey, dimensions, provenance, nullableString(o.ProvenanceHash)}
+	return args, nil
+}
+
+func timeSeriesObservationInsertPlaceholders(dbms string, count, offset int) []string {
+	values := make([]string, count)
+	for i := range values {
+		values[i] = informationSeedPlaceholderForDBMS(dbms, offset+i+1)
+	}
+	if dbms == DBPostgresStr {
+		for _, idx := range []int{26, 37, 38} {
+			if idx < count {
+				values[idx] += "::jsonb"
+			}
+		}
+	}
+	return values
+}
+
+// insertPostgresTimeSeriesObservationsTx inserts bounded chunks inside the
+// caller's transaction. RETURNING identifies newly inserted keys, then one
+// set-oriented lookup resolves every conflicting key (including keys repeated
+// earlier in this call).
+func insertPostgresTimeSeriesObservationsTx(ctx context.Context, tx *sql.Tx, observations []TimeSeriesObservation) ([]TimeSeriesInsertResult, error) {
+	results := make([]TimeSeriesInsertResult, len(observations))
+	for start := 0; start < len(observations); start += timeSeriesPostgresObservationBatchSize {
+		end := start + timeSeriesPostgresObservationBatchSize
+		if end > len(observations) {
+			end = len(observations)
+		}
+
+		args := make([]interface{}, 0, (end-start)*40)
+		rowsSQL := make([]string, 0, end-start)
+		for i := start; i < end; i++ {
+			rowArgs, err := prepareTimeSeriesObservationInsert(DBPostgresStr, &observations[i])
+			if err != nil {
+				return nil, fmt.Errorf("insert time-series observation batch item %d: %w", i, err)
+			}
+			placeholders := timeSeriesObservationInsertPlaceholders(DBPostgresStr, len(rowArgs), len(args))
+			rowsSQL = append(rowsSQL, `(`+strings.Join(placeholders, ",")+`)`)
+			args = append(args, rowArgs...)
+		}
+
+		query := timeSeriesObservationInsertPrefix + ` VALUES ` + strings.Join(rowsSQL, ",") +
+			` ON CONFLICT (dedupe_key) DO NOTHING RETURNING observation_id, dedupe_key`
+		rows, err := tx.QueryContext(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("insert time-series observation batch chunk starting at item %d: %w", start, err)
+		}
+		insertedIDs := make(map[string]uint64, end-start)
+		for rows.Next() {
+			var id uint64
+			var key string
+			if err = rows.Scan(&id, &key); err != nil {
+				_ = rows.Close()
+				return nil, fmt.Errorf("scan inserted time-series observation batch chunk: %w", err)
+			}
+			insertedIDs[key] = id
+		}
+		if err = rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("read inserted time-series observation batch chunk: %w", err)
+		}
+		if err = rows.Close(); err != nil {
+			return nil, fmt.Errorf("close inserted time-series observation batch chunk: %w", err)
+		}
+
+		unresolved := make([]string, 0, end-start)
+		seenUnresolved := make(map[string]struct{}, end-start)
+		claimedInserted := make(map[string]bool, len(insertedIDs))
+		for i := start; i < end; i++ {
+			key := observations[i].DedupeKey
+			if id, ok := insertedIDs[key]; ok && !claimedInserted[key] {
+				results[i] = TimeSeriesInsertResult{ObservationID: id, Inserted: true}
+				observations[i].ID = id
+				claimedInserted[key] = true
+				continue
+			}
+			if _, ok := seenUnresolved[key]; !ok {
+				seenUnresolved[key] = struct{}{}
+				unresolved = append(unresolved, key)
+			}
+		}
+		if len(unresolved) == 0 {
+			continue
+		}
+
+		lookupArgs := make([]interface{}, len(unresolved))
+		lookupPlaceholders := make([]string, len(unresolved))
+		for i, key := range unresolved {
+			lookupArgs[i] = key
+			lookupPlaceholders[i] = informationSeedPlaceholderForDBMS(DBPostgresStr, i+1)
+		}
+		lookup := `SELECT observation_id, dedupe_key FROM TimeSeriesObservations WHERE dedupe_key IN (` + strings.Join(lookupPlaceholders, ",") + `)`
+		lookupRows, err := tx.QueryContext(ctx, lookup, lookupArgs...)
+		if err != nil {
+			return nil, fmt.Errorf("lookup existing time-series observation batch chunk: %w", err)
+		}
+		existingIDs := make(map[string]uint64, len(unresolved))
+		for lookupRows.Next() {
+			var id uint64
+			var key string
+			if err = lookupRows.Scan(&id, &key); err != nil {
+				_ = lookupRows.Close()
+				return nil, fmt.Errorf("scan existing time-series observation batch chunk: %w", err)
+			}
+			existingIDs[key] = id
+		}
+		if err = lookupRows.Err(); err != nil {
+			_ = lookupRows.Close()
+			return nil, fmt.Errorf("read existing time-series observation batch chunk: %w", err)
+		}
+		if err = lookupRows.Close(); err != nil {
+			return nil, fmt.Errorf("close existing time-series observation batch chunk: %w", err)
+		}
+		for i := start; i < end; i++ {
+			if results[i].Inserted {
+				continue
+			}
+			id, ok := existingIDs[observations[i].DedupeKey]
+			if !ok {
+				return nil, fmt.Errorf("lookup existing time-series observation batch item %d: no row for dedupe key", i)
+			}
+			results[i] = TimeSeriesInsertResult{ObservationID: id, Duplicate: true}
+			observations[i].ID = id
+		}
+	}
+	return results, nil
 }
 
 // insertPostgresTimeSeriesObservation uses RETURNING so a successful new insert
