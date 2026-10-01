@@ -207,10 +207,11 @@ func NewConfig() *Config {
 		},
 		Email: DefaultEmailConfig(),
 		Crawler: Crawler{
-			QueryTimer:     5,
-			Workers:        1,
-			VDIName:        "",
-			SourcePriority: "",
+			QueryTimer:          5,
+			Workers:             1,
+			IndexingConcurrency: 1,
+			VDIName:             "",
+			SourcePriority:      "",
 			Engine: []CustomEngine{
 				{
 					VDIName: []string{
@@ -745,6 +746,7 @@ func (c *Config) validateRemoteSSLMode() {
 func (c *Config) validateCrawler() {
 	c.setDefaultQueryTimer()
 	c.setDefaultWorkers()
+	c.setDefaultIndexingConcurrency()
 	c.setEngineInstance()
 	c.setDefaultVDIName()
 	c.setDefaultSourcePriority()
@@ -768,6 +770,12 @@ func (c *Config) validateCrawler() {
 	c.setChangeUserAgent()
 	c.setDefaultResetCookiesPolicy()
 	c.setDefaultControl()
+}
+
+func (c *Config) setDefaultIndexingConcurrency() {
+	if c.Crawler.IndexingConcurrency < 1 {
+		c.Crawler.IndexingConcurrency = 1
+	}
 }
 
 func (c *Config) setDefaultQueryTimer() {
@@ -2269,6 +2277,11 @@ func combineCrawlerBasicSettings(dstCfg *Crawler, srcCfg map[string]interface{})
 	if srcCfg["workers"] != nil {
 		if val, ok := srcCfg["workers"].(float64); ok {
 			dstCfg.Workers = int(val)
+		}
+	}
+	if srcCfg["indexing_concurrency"] != nil {
+		if val, ok := srcCfg["indexing_concurrency"].(float64); ok {
+			dstCfg.IndexingConcurrency = int(val)
 		}
 	}
 	if srcCfg["interval"] != nil {

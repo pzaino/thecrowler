@@ -254,6 +254,14 @@
             10
           ]
         },
+        "indexing_concurrency": {
+          "title": "Page indexing database concurrency",
+          "description": "Maximum number of pages allowed in the synchronous database-heavy indexing section. This is independent of crawler workers and the database connection-pool maximum.",
+          "type": "integer",
+          "minimum": 1,
+          "default": 1,
+          "examples": [1, 2, 4]
+        },
         "engine": {
           "title": "CROWler Engine Configuration for each CROWler Engine instance",
           "description": "This is the configuration for each CROWler Engine instance. This section is used to customize the CROWler Engine behavior for each instance.",

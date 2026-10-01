@@ -75,7 +75,7 @@ var (
 	config cfg.Config // Configuration "object"
 )
 
-var indexPageMutex sync.Mutex // Mutex to ensure that only one goroutine is indexing a page at a time
+var pageIndexingAdmissions = newIndexingAdmissionRegistry()
 
 // CrawlWebsite is responsible for crawling a website, it's the main entry point
 // and it's called from the main.go when there is a Source to crawl.
@@ -890,6 +890,13 @@ func (ctx *ProcessContext) GetHTTPInfo(url string, htmlContent string) {
 
 // IndexPage is responsible for indexing a crawled page in the database
 func (ctx *ProcessContext) IndexPage(pageInfo *PageInfo) (uint64, error) {
+	return ctx.IndexPageContext(context.Background(), pageInfo)
+}
+
+// IndexPageContext synchronously indexes a page. Cancellation can stop a page
+// while it is waiting for indexing admission; after admission, persistence runs
+// to completion so a partially observed page/change chain is never introduced.
+func (ctx *ProcessContext) IndexPageContext(waitCtx context.Context, pageInfo *PageInfo) (uint64, error) {
 	(*pageInfo).sourceID = ctx.source.ID
 	(*pageInfo).Config = &ctx.config
 	if ctx.crowlerMeta == nil {
@@ -897,7 +904,7 @@ func (ctx *ProcessContext) IndexPage(pageInfo *PageInfo) (uint64, error) {
 	}
 	ctx.crowlerMeta.EnsureSourceUID(ctx.source)
 	(*pageInfo).CrowlerMeta = ctx.crowlerMeta
-	return indexPage(ctx, ctx.source.URL, pageInfo)
+	return indexPageContext(waitCtx, ctx, ctx.source.URL, pageInfo)
 }
 
 // IndexNetInfo indexes the network information of a source in the database
@@ -955,12 +962,14 @@ func UpdateSourceState(db cdb.Handler, sourceURL string, crawlError error) {
 
 // indexPage is responsible for indexing a crawled page in the database
 // I had to write this function quickly, so it's not very efficient.
-// In an ideal world, I would have used multiple transactions to index the page
-// and avoid deadlocks when inserting keywords. However, using a mutex to enter
-// this function (and so treat it as a critical section) should be enough for now.
-// Another thought is, the mutex also helps slow down the crawling process, which
-// is a good thing. You don't want to overwhelm the Source site with requests.
+// Persistence is synchronous and guarded by the page-indexing admission controller.
+// The permit spans the transaction and post-commit keyword writes so callers never
+// observe reordered or incomplete per-page change chains.
 func indexPage(ctx *ProcessContext, url string, pageInfo *PageInfo) (uint64, error) {
+	return indexPageContext(context.Background(), ctx, url, pageInfo)
+}
+
+func indexPageContext(waitCtx context.Context, ctx *ProcessContext, url string, pageInfo *PageInfo) (uint64, error) {
 	if pageInfo == nil {
 		return 0, errors.New("pageInfo cannot be nil")
 	}
@@ -975,11 +984,19 @@ func indexPage(ctx *ProcessContext, url string, pageInfo *PageInfo) (uint64, err
 
 	pageInfo.URL = url
 	EnsurePageCrowlerMeta(pageInfo, ctx.source, ctx.srcCfg)
+	if waitCtx == nil {
+		waitCtx = context.Background()
+	}
+	release, err := pageIndexingAdmissions.acquire(waitCtx, ctx.config.Crawler.IndexingConcurrency)
+	if err != nil {
+		return 0, err
+	}
+	defer release()
 
 	db := *ctx.db
 
 	// Before updating the source state, check if the database connection is still alive
-	err := db.WaitForConnection(config, 0)
+	err = db.WaitForConnection(config, 0)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, dbConnCheckErr, err)
 		return 0, err
