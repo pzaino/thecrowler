@@ -90,6 +90,23 @@ func TestTimeSeriesRelease113MigrationsReplaceSourceOwnership(t *testing.T) {
 	}
 }
 
+func TestTimeSeriesRelease114CardinalityState(t *testing.T) {
+	t.Parallel()
+	files := []string{"postgresql-setup.pgsql", "mysql-setup.mysql", "sqlite-setup.sqlite3", "db_migrations/postgresql-migration-v1.14.pgsql", "db_migrations/mysql-migration-v1.14.mysql", "db_migrations/sqlite-migration-v1.14.sqlite3"}
+	for _, file := range files {
+		content, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read %s: %v", file, err)
+		}
+		upper := strings.ToUpper(string(content))
+		for _, fragment := range []string{"TIMESERIESACTIVESERIES", "TIMESERIESACTIVEDIMENSIONVALUES", "REFERENCE_COUNT", "PRIMARY KEY"} {
+			if !strings.Contains(upper, fragment) {
+				t.Errorf("%s missing exact cardinality state fragment %q", file, fragment)
+			}
+		}
+	}
+}
+
 func TestPostgresTimeSeriesRelease114Indexes(t *testing.T) {
 	t.Parallel()
 

@@ -121,7 +121,11 @@ func insertTimeSeriesObservationTxContext(ctx context.Context, tx *sql.Tx, dbms 
 		query += ` ON CONFLICT (dedupe_key) DO NOTHING`
 	}
 	if dbms == DBPostgresStr {
-		return insertPostgresTimeSeriesObservation(ctx, tx, query+` ON CONFLICT (dedupe_key) DO NOTHING RETURNING observation_id`, args, o)
+		result, insertErr := insertPostgresTimeSeriesObservation(ctx, tx, query+` ON CONFLICT (dedupe_key) DO NOTHING RETURNING observation_id`, args, o)
+		if insertErr == nil && result.Inserted {
+			insertErr = incrementTimeSeriesCardinality(ctx, tx, dbms, o)
+		}
+		return result, insertErr
 	}
 	result, err := tx.ExecContext(ctx, query, args...)
 	if err != nil {
@@ -137,7 +141,13 @@ func insertTimeSeriesObservationTxContext(ctx context.Context, tx *sql.Tx, dbms 
 		return TimeSeriesInsertResult{}, fmt.Errorf("lookup inserted time-series observation: %w", err)
 	}
 	o.ID = id
-	return TimeSeriesInsertResult{ObservationID: id, Inserted: affected == 1, Duplicate: affected != 1}, nil
+	insertResult := TimeSeriesInsertResult{ObservationID: id, Inserted: affected == 1, Duplicate: affected != 1}
+	if insertResult.Inserted {
+		if err = incrementTimeSeriesCardinality(ctx, tx, dbms, o); err != nil {
+			return TimeSeriesInsertResult{}, err
+		}
+	}
+	return insertResult, nil
 }
 
 const timeSeriesObservationInsertPrefix = `INSERT INTO TimeSeriesObservations (metric_id, observed_at, effective_at, collected_at, source_updated_at,
@@ -268,6 +278,13 @@ func insertPostgresTimeSeriesObservationsTx(ctx context.Context, tx *sql.Tx, obs
 			}
 		}
 		if len(unresolved) == 0 {
+			for i := start; i < end; i++ {
+				if results[i].Inserted {
+					if err = incrementTimeSeriesCardinality(ctx, tx, DBPostgresStr, &observations[i]); err != nil {
+						return nil, err
+					}
+				}
+			}
 			continue
 		}
 
@@ -309,6 +326,13 @@ func insertPostgresTimeSeriesObservationsTx(ctx context.Context, tx *sql.Tx, obs
 			}
 			results[i] = TimeSeriesInsertResult{ObservationID: id, Duplicate: true}
 			observations[i].ID = id
+		}
+		for i := start; i < end; i++ {
+			if results[i].Inserted {
+				if err = incrementTimeSeriesCardinality(ctx, tx, DBPostgresStr, &observations[i]); err != nil {
+					return nil, err
+				}
+			}
 		}
 	}
 	return results, nil

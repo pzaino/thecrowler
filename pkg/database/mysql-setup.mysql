@@ -826,6 +826,20 @@ CREATE TABLE IF NOT EXISTS TimeSeriesObservations (
     CONSTRAINT fk_timeseriesobservations_previous FOREIGN KEY (previous_observation_id) REFERENCES TimeSeriesObservations(observation_id) ON DELETE SET NULL
 ) ENGINE=InnoDB;
 
+CREATE TABLE IF NOT EXISTS TimeSeriesActiveSeries (
+    metric_id BIGINT NOT NULL, series_hash VARCHAR(64) NOT NULL, series_identity TEXT NOT NULL,
+    reference_count BIGINT NOT NULL, PRIMARY KEY (metric_id, series_hash),
+    CONSTRAINT fk_ts_active_series_metric FOREIGN KEY (metric_id) REFERENCES TimeSeriesMetrics(metric_id) ON DELETE RESTRICT,
+    CHECK (reference_count > 0)
+) ENGINE=InnoDB;
+CREATE TABLE IF NOT EXISTS TimeSeriesActiveDimensionValues (
+    metric_id BIGINT NOT NULL, dimension_key VARCHAR(255) NOT NULL, value_hash VARCHAR(64) NOT NULL,
+    canonical_value TEXT NOT NULL, reference_count BIGINT NOT NULL,
+    PRIMARY KEY (metric_id, dimension_key, value_hash),
+    CONSTRAINT fk_ts_active_dimension_metric FOREIGN KEY (metric_id) REFERENCES TimeSeriesMetrics(metric_id) ON DELETE RESTRICT,
+    CHECK (reference_count > 0)
+) ENGINE=InnoDB;
+
 CREATE TABLE IF NOT EXISTS TimeSeriesAggregates (
     aggregate_id BIGINT AUTO_INCREMENT PRIMARY KEY,
     metric_id BIGINT NOT NULL,

@@ -2234,6 +2234,22 @@ CREATE TABLE IF NOT EXISTS TimeSeriesObservations (
     last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS TimeSeriesActiveSeries (
+    metric_id BIGINT NOT NULL REFERENCES TimeSeriesMetrics(metric_id) ON DELETE RESTRICT,
+    series_hash VARCHAR(64) NOT NULL,
+    series_identity TEXT NOT NULL,
+    reference_count BIGINT NOT NULL CHECK (reference_count > 0),
+    PRIMARY KEY (metric_id, series_hash)
+);
+CREATE TABLE IF NOT EXISTS TimeSeriesActiveDimensionValues (
+    metric_id BIGINT NOT NULL REFERENCES TimeSeriesMetrics(metric_id) ON DELETE RESTRICT,
+    dimension_key TEXT NOT NULL,
+    value_hash VARCHAR(64) NOT NULL,
+    canonical_value TEXT NOT NULL,
+    reference_count BIGINT NOT NULL CHECK (reference_count > 0),
+    PRIMARY KEY (metric_id, dimension_key, value_hash)
+);
+
 CREATE TABLE IF NOT EXISTS TimeSeriesAggregates (
     aggregate_id BIGSERIAL PRIMARY KEY,
     metric_id BIGINT NOT NULL REFERENCES TimeSeriesMetrics(metric_id) ON DELETE RESTRICT,

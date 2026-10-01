@@ -1211,6 +1211,27 @@ func PruneTimeSeriesRetention(ctx context.Context, db *Handler, options TimeSeri
 				continue
 			}
 			for batch := 0; batch < options.MaxBatches; batch++ {
+				if kind == "raw" {
+					tx, beginErr := (*db).BeginTx(ctx, nil)
+					if beginErr != nil {
+						return result, beginErr
+					}
+					p = newInformationSeedPlaceholders(dbms)
+					n, deleteErr := deleteTimeSeriesObservationsWithAccounting(ctx, tx, dbms, `metric_id = `+p.Next()+` AND `+timeColumn+` < `+p.Next(), []interface{}{metric.ID, cutoff}, options.BatchSize)
+					if deleteErr != nil {
+						_ = tx.Rollback()
+						return result, deleteErr
+					}
+					if commitErr := tx.Commit(); commitErr != nil {
+						return result, commitErr
+					}
+					result.RawDeleted += n
+					result.BatchesProcessed++
+					if n < int64(options.BatchSize) {
+						break
+					}
+					continue
+				}
 				p = newInformationSeedPlaceholders(dbms)
 				idColumn := "observation_id"
 				if kind == "aggregate" {
