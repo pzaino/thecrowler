@@ -165,6 +165,34 @@ func canonicalScopeParts(scope TimeSeriesScope) []string {
 	}
 }
 
+// TimeSeriesSeriesHash identifies the complete logical series represented by
+// an observation. It deliberately reuses the same complete scope framing as
+// aggregate grouping and adds only the metric and canonical dimensions; the
+// hash is an acceleration hint, never an authoritative replacement for those
+// columns.
+func TimeSeriesSeriesHash(metricID uint64, scope TimeSeriesScope, dimensions map[string]interface{}) (string, error) {
+	dimensionHash, err := TimeSeriesDimensionHash(dimensions)
+	if err != nil {
+		return "", err
+	}
+	parts := []string{"series", fmt.Sprintf("metric=%d", metricID)}
+	parts = append(parts, canonicalScopeParts(scope)...)
+	parts = append(parts, "dimension_hash="+dimensionHash)
+	return timeSeriesSHA256(parts...), nil
+}
+
+// timeSeriesLogicalSeriesEqual verifies authoritative identity columns after a
+// hash-assisted lookup, protecting correctness even in the event of a hash
+// collision.
+func timeSeriesLogicalSeriesEqual(metricID uint64, scope TimeSeriesScope, dimensions map[string]interface{}, observation TimeSeriesObservation) bool {
+	if observation.MetricID != metricID || strings.Join(canonicalScopeParts(observation.Scope), "\x00") != strings.Join(canonicalScopeParts(scope), "\x00") {
+		return false
+	}
+	want, wantErr := CanonicalTimeSeriesJSON(dimensions)
+	got, gotErr := CanonicalTimeSeriesJSON(observation.Dimensions)
+	return wantErr == nil && gotErr == nil && bytes.Equal(want, got)
+}
+
 // TimeSeriesDedupeKey returns a key framed by the selected scope:
 //   - none: includes a caller nonce, allowing every event;
 //   - source: includes source/seed/index ownership;

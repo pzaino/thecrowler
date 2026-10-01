@@ -23,8 +23,6 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/lib/pq"
-
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
 
@@ -494,12 +492,7 @@ func UpdateSource(db *Handler, source *Source) error {
 
 // DeleteSource removes a source from the database by ID.
 func DeleteSource(db *Handler, sourceID uint64) error {
-	query := `DELETE FROM Sources WHERE source_id = $1`
-	_, err := (*db).Exec(query, sourceID)
-	if err != nil {
-		return fmt.Errorf("failed to delete source with ID %d: %v", sourceID, err)
-	}
-	return nil
+	return deleteSourcesWithTimeSeriesCleanup(db, []uint64{sourceID})
 }
 
 // DeleteSources removes multiple sources from the database by ID.
@@ -522,20 +515,35 @@ func DeleteSources(db *Handler, sourceIDs []uint64) error {
 		return nil
 	}
 
-	if (*db).DBMS() == DBPostgresStr {
-		_, err := (*db).Exec(`DELETE FROM Sources WHERE source_id = ANY($1)`, pq.Array(ids))
-		if err != nil {
-			return fmt.Errorf("failed to delete %d sources: %v", len(ids), err)
-		}
+	converted := make([]uint64, len(ids))
+	for i := range ids {
+		converted[i] = uint64(ids[i])
+	}
+	return deleteSourcesWithTimeSeriesCleanup(db, converted)
+}
+
+func deleteSourcesWithTimeSeriesCleanup(db *Handler, sourceIDs []uint64) error {
+	if len(sourceIDs) == 0 {
 		return nil
 	}
-
-	tx, err := (*db).Begin()
+	dbms := (*db).DBMS()
+	tx, err := (*db).BeginTx(context.Background(), nil)
 	if err != nil {
 		return fmt.Errorf("failed to start source deletion transaction: %w", err)
 	}
-	for _, sourceID := range ids {
-		if _, err = tx.Exec(`DELETE FROM Sources WHERE source_id = $1`, sourceID); err != nil {
+	for _, sourceID := range sourceIDs {
+		p := newInformationSeedPlaceholders(dbms)
+		if _, err = deleteTimeSeriesObservationsWithAccounting(context.Background(), tx, dbms, `source_id = `+p.Next(), []interface{}{sourceID}, 0); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("clean time-series observations for source %d: %w", sourceID, err)
+		}
+		p = newInformationSeedPlaceholders(dbms)
+		if _, err = tx.Exec(`DELETE FROM TimeSeriesAggregates WHERE source_id = `+p.Next(), sourceID); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("clean time-series aggregates for source %d: %w", sourceID, err)
+		}
+		p = newInformationSeedPlaceholders(dbms)
+		if _, err = tx.Exec(`DELETE FROM Sources WHERE source_id = `+p.Next(), sourceID); err != nil {
 			if rollbackErr := tx.Rollback(); rollbackErr != nil {
 				return fmt.Errorf("failed to rollback source deletion transaction: %w (original error: %v)", rollbackErr, err)
 			}

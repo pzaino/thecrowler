@@ -47,26 +47,90 @@ type IndexedArtifactScopeResolver interface {
 	ResolveIndexedArtifactScopes(input IndexedArtifactInput) ([]cdb.TimeSeriesScope, error)
 }
 
+// resolvedArtifactScopes is the immutable ownership and identity snapshot for
+// one persisted artifact. The slice and its pointer fields are kept private so
+// metric evaluation cannot mutate the snapshot returned by the crawler.
+type resolvedArtifactScopes struct {
+	scopes []cdb.TimeSeriesScope
+}
+
+func artifactScopeID(value uint64) *uint64 {
+	copy := value
+	return &copy
+}
+
+// cloneTimeSeriesScope copies every field in the historical scope model,
+// including independent storage for each optional identifier.
+func cloneTimeSeriesScope(scope cdb.TimeSeriesScope) cdb.TimeSeriesScope {
+	clone := scope
+	clone.InformationSeedID = cloneArtifactScopeID(scope.InformationSeedID)
+	clone.InformationSeedCandidateID = cloneArtifactScopeID(scope.InformationSeedCandidateID)
+	clone.SourceID = cloneArtifactScopeID(scope.SourceID)
+	clone.SourceInformationSeedID = cloneArtifactScopeID(scope.SourceInformationSeedID)
+	clone.IndexID = cloneArtifactScopeID(scope.IndexID)
+	clone.EntityID = cloneArtifactScopeID(scope.EntityID)
+	clone.SubjectID = cloneArtifactScopeID(scope.SubjectID)
+	clone.ObjectID = cloneArtifactScopeID(scope.ObjectID)
+	clone.CorrelationRuleID = cloneArtifactScopeID(scope.CorrelationRuleID)
+	clone.CorrelationObjectID1 = cloneArtifactScopeID(scope.CorrelationObjectID1)
+	clone.CorrelationObjectID2 = cloneArtifactScopeID(scope.CorrelationObjectID2)
+	return clone
+}
+
+func cloneArtifactScopeID(value *uint64) *uint64 {
+	if value == nil {
+		return nil
+	}
+	return artifactScopeID(*value)
+}
+
+func (e *Emitter) resolveIndexedArtifactScopes(input IndexedArtifactInput) (resolvedArtifactScopes, error) {
+	resolved, err := e.ArtifactScopes.ResolveIndexedArtifactScopes(input)
+	if err != nil {
+		recordEmitterOperation(metricOperationScopeResolution, "error")
+		return resolvedArtifactScopes{}, fmt.Errorf("resolve scopes: %w", err)
+	}
+	recordEmitterOperation(metricOperationScopeResolution, "success")
+	if len(resolved) == 0 {
+		indexID := input.IndexID
+		resolved = []cdb.TimeSeriesScope{{IndexID: &indexID}}
+	}
+
+	snapshot := resolvedArtifactScopes{scopes: make([]cdb.TimeSeriesScope, len(resolved))}
+	for i := range resolved {
+		scope := cloneTimeSeriesScope(resolved[i])
+		scope.SubjectType = string(input.SourceKind)
+		scope.SubjectID = artifactScopeID(input.RowID)
+		scope.SubjectText = indexedArtifactSubject(input)
+		if input.ObjectType != "" && input.ObjectID != 0 {
+			scope.ObjectType = input.ObjectType
+			scope.ObjectID = artifactScopeID(input.ObjectID)
+		}
+		snapshot.scopes[i] = scope
+	}
+	return snapshot, nil
+}
+
 // EmitIndexedArtifact emits matching persisted-artifact metrics through the shared
 // parsing, privacy, change-detection, dedupe, and persistence path.
-func (e *Emitter) EmitIndexedArtifact(input IndexedArtifactInput) error {
+func (e *Emitter) EmitIndexedArtifact(snapshot *EnabledMetricSnapshot, input IndexedArtifactInput) error {
 	if e == nil || e.Repository == nil || e.ArtifactScopes == nil || e.Config == nil || !e.Config.Enabled {
 		return nil
 	}
 	if !isIndexedArtifactSource(input.SourceKind) {
 		return nil
 	}
-	enabled := true
-	metrics, err := e.Repository.ListMetrics(cdb.TimeSeriesMetricFilter{SourceKind: input.SourceKind, Enabled: &enabled, Pagination: cdb.TimeSeriesPagination{Limit: 10000}})
+	metrics := snapshot.source(input.SourceKind)
+	if len(metrics) == 0 {
+		return nil
+	}
+	resolvedScopes, err := e.resolveIndexedArtifactScopes(input)
 	if err != nil {
-		return e.handleFailure(e.Config.Defaults.FailurePolicy, fmt.Sprintf("lookup %s metrics", input.SourceKind), err)
+		return e.handleFailure(e.Config.Defaults.FailurePolicy, "resolve artifact scopes", err)
 	}
 	for i := range metrics {
 		metric := metrics[i]
-		if metric.SourceKind != input.SourceKind || !metric.Enabled {
-			continue
-		}
-		if err = e.emitIndexedArtifactMetric(metric, input); err != nil {
+		if err := e.emitIndexedArtifactMetric(snapshot, metric, input, resolvedScopes); err != nil {
 			policy := metric.FailurePolicy
 			if policy == "" {
 				policy = e.Config.Defaults.FailurePolicy
@@ -79,12 +143,12 @@ func (e *Emitter) EmitIndexedArtifact(input IndexedArtifactInput) error {
 	return nil
 }
 
-func (e *Emitter) emitIndexedArtifactMetric(metric cdb.TimeSeriesMetric, input IndexedArtifactInput) error {
+func (e *Emitter) emitIndexedArtifactMetric(snapshot *EnabledMetricSnapshot, metric cdb.TimeSeriesMetric, input IndexedArtifactInput, resolvedScopes resolvedArtifactScopes) error {
 	selector, err := decodeMap(metric.Selector)
 	if err != nil {
 		return fmt.Errorf("decode selector: %w", err)
 	}
-	if e.preferNormalizedObjectAttribute(metric, input, selector) {
+	if e.preferNormalizedObjectAttribute(snapshot, metric, input, selector) {
 		return nil
 	}
 	selected, transformations, matched, err := selectIndexedArtifactValue(input, selector)
@@ -94,14 +158,6 @@ func (e *Emitter) emitIndexedArtifactMetric(metric cdb.TimeSeriesMetric, input I
 	value, err := parseIndexedArtifactValue(metric.ValueType, selected)
 	if err != nil {
 		return err
-	}
-	scopes, err := e.ArtifactScopes.ResolveIndexedArtifactScopes(input)
-	if err != nil {
-		return fmt.Errorf("resolve scopes: %w", err)
-	}
-	if len(scopes) == 0 {
-		indexID := input.IndexID
-		scopes = []cdb.TimeSeriesScope{{IndexID: &indexID}}
 	}
 	dimensions, err := e.resolveIndexedArtifactDimensions(metric, input, selected)
 	if err == nil {
@@ -124,23 +180,19 @@ func (e *Emitter) emitIndexedArtifactMetric(metric cdb.TimeSeriesMetric, input I
 	}
 	basePolicy := e.preparationPolicy(metric)
 	cardinalityPolicy := e.cardinalityPolicy(metric)
-	for _, resolved := range scopes {
-		scope := resolved
-		scope.SubjectType = string(input.SourceKind)
-		subjectID := input.RowID
-		scope.SubjectID = &subjectID
-		scope.SubjectText = indexedArtifactSubject(input)
-		if input.ObjectType != "" && input.ObjectID != 0 {
-			objectID := input.ObjectID
-			scope.ObjectType = input.ObjectType
-			scope.ObjectID = &objectID
-		}
+	for i := range resolvedScopes.scopes {
+		recordEmitterOperation(metricOperationObservationAttempt, "attempted")
+		// Every observation owns a complete copy; neither preparation nor a
+		// historical lookup can retain or alter the artifact snapshot.
+		scope := cloneTimeSeriesScope(resolvedScopes.scopes[i])
 		policy := basePolicy
 		if e.Cardinality != nil {
 			policy.CardinalityExceeded, err = e.Cardinality.Exceeded(metric, scope, dimensions, cardinalityPolicy)
 			if err != nil {
+				recordEmitterOperation(metricOperationCardinalityCheck, "error")
 				return fmt.Errorf("check cardinality: %w", err)
 			}
+			recordEmitterOperation(metricOperationCardinalityCheck, "success")
 		}
 		observation := cdb.TimeSeriesObservation{MetricID: metric.ID, ObservedAt: observedAt, EffectiveAt: effectiveAt, CollectedAt: e.now(), SourceUpdatedAt: sourceUpdatedAt, BucketStart: bucketStart, BucketEnd: bucketEnd, Scope: scope, Value: value, Dimensions: cloneMap(dimensions)}
 		prepared, prepareErr := cdb.PrepareTimeSeriesObservation(observation, metric.ValueType, policy)
@@ -151,7 +203,13 @@ func (e *Emitter) emitIndexedArtifactMetric(metric cdb.TimeSeriesMetric, input I
 		lookupScope := indexedArtifactChangeScope(scope, input, selector)
 		previous, previousErr := e.Repository.PreviousObservation(cdb.TimeSeriesChangeLookup{MetricID: metric.ID, Scope: lookupScope, Dimensions: observation.Dimensions, Before: observedAt, TimeBasis: metric.TimeBasis})
 		if previousErr != nil && !errors.Is(previousErr, cdb.ErrTimeSeriesObservationNotFound) {
+			recordEmitterOperation(metricOperationPreviousLookup, "error")
 			return fmt.Errorf("lookup previous observation: %w", previousErr)
+		}
+		if errors.Is(previousErr, cdb.ErrTimeSeriesObservationNotFound) {
+			recordEmitterOperation(metricOperationPreviousLookup, "not_found")
+		} else {
+			recordEmitterOperation(metricOperationPreviousLookup, "found")
 		}
 		applyChange(&observation, previous, previousErr, observedAt)
 		nonce := ""
@@ -216,8 +274,16 @@ func (e *Emitter) emitIndexedArtifactMetric(metric cdb.TimeSeriesMetric, input I
 		if err != nil {
 			return err
 		}
-		if _, err = e.Repository.InsertObservation(&observation); err != nil {
+		insertResult, insertErr := e.Repository.InsertObservation(&observation)
+		if insertErr != nil {
+			recordEmitterOperation(metricOperationInsert, "error")
+			err = insertErr
 			return err
+		}
+		if insertResult.Duplicate {
+			recordEmitterOperation(metricOperationInsert, "duplicate")
+		} else {
+			recordEmitterOperation(metricOperationInsert, "inserted")
 		}
 	}
 	return nil
@@ -604,21 +670,14 @@ func artifactDerivation(selector map[string]interface{}, transformations []strin
 	return ""
 }
 
-func (e *Emitter) preferNormalizedObjectAttribute(_ cdb.TimeSeriesMetric, input IndexedArtifactInput, selector map[string]interface{}) bool {
+func (e *Emitter) preferNormalizedObjectAttribute(snapshot *EnabledMetricSnapshot, _ cdb.TimeSeriesMetric, input IndexedArtifactInput, selector map[string]interface{}) bool {
 	if input.ObjectType == "" || input.ObjectID == 0 || len(input.NormalizedAttributes) == 0 || e.Repository == nil {
 		return false
 	}
 	path := strings.TrimPrefix(strings.TrimPrefix(stringValue(selector["path"]), "$"), ".")
 	explicitKey := stringValue(selector["attribute_key"])
-	enabled := true
-	metrics, err := e.Repository.ListMetrics(cdb.TimeSeriesMetricFilter{SourceKind: cfg.TimeSeriesSourceObjectAttribute, Enabled: &enabled, Pagination: cdb.TimeSeriesPagination{Limit: 10000}})
-	if err != nil {
-		return false
-	}
+	metrics := snapshot.sourceObject(cfg.TimeSeriesSourceObjectAttribute, input.ObjectType)
 	for _, candidate := range metrics {
-		if !candidate.Enabled || string(candidate.ObjectType) != input.ObjectType {
-			continue
-		}
 		candidateSelector, decodeErr := decodeMap(candidate.Selector)
 		if decodeErr != nil {
 			continue

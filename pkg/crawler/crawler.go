@@ -33,6 +33,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/lib/pq"
 	"golang.org/x/text/unicode/norm"
 
 	"github.com/PuerkitoBio/goquery"
@@ -74,7 +75,7 @@ var (
 	config cfg.Config // Configuration "object"
 )
 
-var indexPageMutex sync.Mutex // Mutex to ensure that only one goroutine is indexing a page at a time
+var pageIndexingAdmissions = newIndexingAdmissionRegistry()
 
 // CrawlWebsite is responsible for crawling a website, it's the main entry point
 // and it's called from the main.go when there is a Source to crawl.
@@ -889,6 +890,13 @@ func (ctx *ProcessContext) GetHTTPInfo(url string, htmlContent string) {
 
 // IndexPage is responsible for indexing a crawled page in the database
 func (ctx *ProcessContext) IndexPage(pageInfo *PageInfo) (uint64, error) {
+	return ctx.IndexPageContext(context.Background(), pageInfo)
+}
+
+// IndexPageContext synchronously indexes a page. Cancellation can stop a page
+// while it is waiting for indexing admission; after admission, persistence runs
+// to completion so a partially observed page/change chain is never introduced.
+func (ctx *ProcessContext) IndexPageContext(waitCtx context.Context, pageInfo *PageInfo) (uint64, error) {
 	(*pageInfo).sourceID = ctx.source.ID
 	(*pageInfo).Config = &ctx.config
 	if ctx.crowlerMeta == nil {
@@ -896,7 +904,7 @@ func (ctx *ProcessContext) IndexPage(pageInfo *PageInfo) (uint64, error) {
 	}
 	ctx.crowlerMeta.EnsureSourceUID(ctx.source)
 	(*pageInfo).CrowlerMeta = ctx.crowlerMeta
-	return indexPage(ctx, ctx.source.URL, pageInfo)
+	return indexPageContext(waitCtx, ctx, ctx.source.URL, pageInfo)
 }
 
 // IndexNetInfo indexes the network information of a source in the database
@@ -954,12 +962,14 @@ func UpdateSourceState(db cdb.Handler, sourceURL string, crawlError error) {
 
 // indexPage is responsible for indexing a crawled page in the database
 // I had to write this function quickly, so it's not very efficient.
-// In an ideal world, I would have used multiple transactions to index the page
-// and avoid deadlocks when inserting keywords. However, using a mutex to enter
-// this function (and so treat it as a critical section) should be enough for now.
-// Another thought is, the mutex also helps slow down the crawling process, which
-// is a good thing. You don't want to overwhelm the Source site with requests.
+// Persistence is synchronous and guarded by the page-indexing admission controller.
+// The permit spans the transaction and post-commit keyword writes so callers never
+// observe reordered or incomplete per-page change chains.
 func indexPage(ctx *ProcessContext, url string, pageInfo *PageInfo) (uint64, error) {
+	return indexPageContext(context.Background(), ctx, url, pageInfo)
+}
+
+func indexPageContext(waitCtx context.Context, ctx *ProcessContext, url string, pageInfo *PageInfo) (uint64, error) {
 	if pageInfo == nil {
 		return 0, errors.New("pageInfo cannot be nil")
 	}
@@ -974,11 +984,19 @@ func indexPage(ctx *ProcessContext, url string, pageInfo *PageInfo) (uint64, err
 
 	pageInfo.URL = url
 	EnsurePageCrowlerMeta(pageInfo, ctx.source, ctx.srcCfg)
+	if waitCtx == nil {
+		waitCtx = context.Background()
+	}
+	release, err := pageIndexingAdmissions.acquire(waitCtx, ctx.config.Crawler.IndexingConcurrency)
+	if err != nil {
+		return 0, err
+	}
+	defer release()
 
 	db := *ctx.db
 
 	// Before updating the source state, check if the database connection is still alive
-	err := db.WaitForConnection(config, 0)
+	err = db.WaitForConnection(config, 0)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, dbConnCheckErr, err)
 		return 0, err
@@ -993,6 +1011,12 @@ func indexPage(ctx *ProcessContext, url string, pageInfo *PageInfo) (uint64, err
 		return 0, err
 	}
 	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Transaction started...")
+	metricEmitter := newCrawlerIndexedArtifactEmitter(tx, ctx.GetConfig())
+	metricSnapshot, err := metricEmitter.LoadEnabledMetricSnapshot()
+	if err != nil {
+		rollbackTransaction(tx)
+		return 0, err
+	}
 
 	// Insert or update the page in SearchIndex
 	indexID, err := insertOrUpdateSearchIndex(tx, url, pageInfo)
@@ -1026,7 +1050,7 @@ func indexPage(ctx *ProcessContext, url string, pageInfo *PageInfo) (uint64, err
 	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] WebObjects updated with indexID: %d", indexID)
 
 	// Index object attributes for WebObjet
-	err = indexObjectAttributes(tx, objID, "webobject", detailsJSON, ctx.GetConfig())
+	err = indexObjectAttributes(tx, objID, "webobject", detailsJSON, ctx.GetConfig(), metricSnapshot)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Error inserting or updating Object Attributes: %v", err)
 		rollbackTransaction(tx)
@@ -1034,7 +1058,7 @@ func indexPage(ctx *ProcessContext, url string, pageInfo *PageInfo) (uint64, err
 	}
 	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Object Attributes indexed for objectID: %d", objID)
 
-	if err = emitPersistedArtifact(tx, ctx.GetConfig(), tse.IndexedArtifactInput{
+	if err = emitPersistedArtifact(tx, ctx.GetConfig(), metricSnapshot, tse.IndexedArtifactInput{
 		SourceKind: cfg.TimeSeriesSourceWebObject, IndexID: indexID, RowID: uint64(objID),
 		ObjectType: "webobject", ObjectID: uint64(objID), SubjectKey: objectHash, Hash: objectHash,
 		RawValue: string(detailsJSON), Value: objectHash, Details: decodeArtifactDetails(detailsJSON), ObservedAt: time.Now().UTC(), SourceUpdatedAt: utcNowPointer(),
@@ -1045,7 +1069,7 @@ func indexPage(ctx *ProcessContext, url string, pageInfo *PageInfo) (uint64, err
 
 	// Insert MetaTags
 	if pageInfo.Config.Crawler.CollectMetaTags {
-		err = insertMetaTagsWithTimeSeries(tx, indexID, pageInfo.MetaTags, pageInfo.Config)
+		err = insertMetaTagsWithTimeSeries(tx, indexID, pageInfo.MetaTags, pageInfo.Config, metricSnapshot)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Error inserting meta tags for indexID: %d, error: %v", indexID, err)
 			cmn.DebugMsg(cmn.DbgLvlError, "inserting meta tags: %v", err)
@@ -1092,6 +1116,7 @@ func indexObjectAttributes(
 	objectType string,
 	detailsJSON []byte,
 	currCfg *cfg.Config,
+	metricSnapshot *tse.EnabledMetricSnapshot,
 ) error {
 
 	if currCfg == nil || currCfg.AttributesIndexing.IsEmpty() {
@@ -1209,7 +1234,7 @@ func indexObjectAttributes(
 					}
 					continue
 				}
-				if err = emitter.EmitObjectAttribute(tse.ObjectAttributeInput{
+				if err = emitter.EmitObjectAttribute(metricSnapshot, tse.ObjectAttributeInput{
 					ObjectType: objectType, ObjectID: uint64(objectID), AttributeKey: attr.Key,
 					RawValue: raw, NormalizedValue: normalized, AttributeType: attr.IndexType,
 					SelectorPath: attr.Path, Transformations: append([]string(nil), attr.Normalizers...),
@@ -1297,6 +1322,12 @@ func indexNetInfo(db cdb.Handler, url string, pageInfo *PageInfo, flags int) (ui
 		cmn.DebugMsg(cmn.DbgLvlError, "starting transaction: %v", err)
 		return 0, err
 	}
+	metricEmitter := newCrawlerIndexedArtifactEmitter(tx, pageInfo.Config)
+	metricSnapshot, err := metricEmitter.LoadEnabledMetricSnapshot()
+	if err != nil {
+		rollbackTransaction(tx)
+		return 0, err
+	}
 
 	// Insert or update the page in SearchIndex
 	indexID, err := insertOrUpdateSearchIndex(tx, url, pageInfo)
@@ -1310,7 +1341,7 @@ func indexNetInfo(db cdb.Handler, url string, pageInfo *PageInfo, flags int) (ui
 	if flags == 1 || flags == 0 {
 		// Insert NetInfo into the database (if available)
 		if pageInfo.NetInfo != nil {
-			err = insertNetInfo(tx, indexID, pageInfo.NetInfo, pageInfo.Config)
+			err = insertNetInfo(tx, indexID, pageInfo.NetInfo, pageInfo.Config, metricSnapshot)
 			if err != nil {
 				cmn.DebugMsg(cmn.DbgLvlError, "inserting NetInfo: %v", err)
 				rollbackTransaction(tx)
@@ -1323,7 +1354,7 @@ func indexNetInfo(db cdb.Handler, url string, pageInfo *PageInfo, flags int) (ui
 	if flags == 2 || flags == 0 {
 		// Insert HTTPInfo into the database (if available)
 		if pageInfo.HTTPInfo != nil {
-			err = insertHTTPInfo(tx, indexID, pageInfo.HTTPInfo, pageInfo.Config)
+			err = insertHTTPInfo(tx, indexID, pageInfo.HTTPInfo, pageInfo.Config, metricSnapshot)
 			if err != nil {
 				cmn.DebugMsg(cmn.DbgLvlError, "inserting HTTPInfo: %v", err)
 				rollbackTransaction(tx)
@@ -1608,7 +1639,7 @@ func mergeMaps(dst, src map[string]interface{}) {
 // insertNetInfo inserts network information into the database for a given index ID.
 // It takes a transaction, index ID, and a NetInfo object as parameters.
 // It returns an error if there was a problem executing the SQL statement.
-func insertNetInfo(tx *sql.Tx, indexID uint64, netInfo *neti.NetInfo, currCfg *cfg.Config) error {
+func insertNetInfo(tx *sql.Tx, indexID uint64, netInfo *neti.NetInfo, currCfg *cfg.Config, snapshot *tse.EnabledMetricSnapshot) error {
 	// encode the NetInfo object as JSON
 	details, err := json.Marshal(netInfo)
 	if err != nil {
@@ -1647,10 +1678,10 @@ func insertNetInfo(tx *sql.Tx, indexID uint64, netInfo *neti.NetInfo, currCfg *c
 		return err
 	}
 
-	if err = indexObjectAttributes(tx, netinfoID, "netinfo", details, currCfg); err != nil {
+	if err = indexObjectAttributes(tx, netinfoID, "netinfo", details, currCfg, snapshot); err != nil {
 		return err
 	}
-	return emitPersistedArtifact(tx, currCfg, tse.IndexedArtifactInput{
+	return emitPersistedArtifact(tx, currCfg, snapshot, tse.IndexedArtifactInput{
 		SourceKind: cfg.TimeSeriesSourceNetInfo, IndexID: indexID, RowID: uint64(netinfoID),
 		ObjectType: "netinfo", ObjectID: uint64(netinfoID), SubjectKey: hash, Hash: hash,
 		RawValue: string(details), Value: hash, Details: decodeArtifactDetails(details), ObservedAt: time.Now().UTC(), SourceUpdatedAt: utcNowPointer(),
@@ -1660,7 +1691,7 @@ func insertNetInfo(tx *sql.Tx, indexID uint64, netInfo *neti.NetInfo, currCfg *c
 // insertHTTPInfo inserts HTTP header information into the database for a given index ID.
 // It takes a transaction, index ID, and an HTTPDetails object as parameters.
 // It returns an error if there was a problem executing the SQL statement.
-func insertHTTPInfo(tx *sql.Tx, indexID uint64, httpInfo *httpi.HTTPDetails, currCfg *cfg.Config) error {
+func insertHTTPInfo(tx *sql.Tx, indexID uint64, httpInfo *httpi.HTTPDetails, currCfg *cfg.Config, snapshot *tse.EnabledMetricSnapshot) error {
 	// Encode the HTTPDetails object as JSON
 	details, err := json.Marshal(httpInfo)
 	if err != nil {
@@ -1700,10 +1731,10 @@ func insertHTTPInfo(tx *sql.Tx, indexID uint64, httpInfo *httpi.HTTPDetails, cur
 		return err
 	}
 
-	if err = indexObjectAttributes(tx, httpinfoID, "httpinfo", details, currCfg); err != nil {
+	if err = indexObjectAttributes(tx, httpinfoID, "httpinfo", details, currCfg, snapshot); err != nil {
 		return err
 	}
-	return emitPersistedArtifact(tx, currCfg, tse.IndexedArtifactInput{
+	return emitPersistedArtifact(tx, currCfg, snapshot, tse.IndexedArtifactInput{
 		SourceKind: cfg.TimeSeriesSourceHTTPInfo, IndexID: indexID, RowID: uint64(httpinfoID),
 		ObjectType: "httpinfo", ObjectID: uint64(httpinfoID), SubjectKey: hash, Hash: hash,
 		RawValue: string(details), Value: hash, Details: decodeArtifactDetails(details), ObservedAt: time.Now().UTC(), SourceUpdatedAt: utcNowPointer(),
@@ -1726,11 +1757,8 @@ func truncateUTF8(s string, maxRunes int) string {
 // Each meta tag is inserted into the MetaTags table with the corresponding index ID, name, and content.
 // Returns an error if there was a problem executing the SQL statement.
 func insertMetaTags(tx *sql.Tx, indexID uint64, metaTags []MetaTag) error {
-	return insertMetaTagsWithTimeSeries(tx, indexID, metaTags, nil)
-}
-
-func insertMetaTagsWithTimeSeries(tx *sql.Tx, indexID uint64, metaTags []MetaTag, currCfg *cfg.Config) error {
-	emitter := newCrawlerIndexedArtifactEmitter(tx, currCfg)
+	// Keep the legacy per-row path used by the portable database integrations;
+	// the crawler's PostgreSQL path below is deliberately set-oriented.
 	for _, metatag := range metaTags {
 		name := metatag.Name
 		if len(name) > 256 {
@@ -1746,44 +1774,151 @@ func insertMetaTagsWithTimeSeries(tx *sql.Tx, indexID uint64, metaTags []MetaTag
 		if !utf8.ValidString(content) {
 			content = strings.ToValidUTF8(content, "")
 		}
-
 		var metatagID int64
 		err := tx.QueryRow(`SELECT metatag_id FROM MetaTags WHERE name = $1 AND content = $2`, name, content).Scan(&metatagID)
-		if err == sql.ErrNoRows {
-			err = tx.QueryRow(`
-				INSERT INTO MetaTags (name, content)
-				VALUES ($1, $2)
+		if errors.Is(err, sql.ErrNoRows) {
+			err = tx.QueryRow(`INSERT INTO MetaTags (name, content) VALUES ($1, $2)
 				ON CONFLICT (name, content) DO UPDATE SET name = EXCLUDED.name
 				RETURNING metatag_id`, name, content).Scan(&metatagID)
 		}
 		if err != nil {
 			return err
 		}
-
-		var metatagIndexID uint64
-		err = tx.QueryRow(`
-			INSERT INTO MetaTagsIndex (index_id, metatag_id)
-			VALUES ($1, $2)
+		if err = tx.QueryRow(`INSERT INTO MetaTagsIndex (index_id, metatag_id) VALUES ($1, $2)
 			ON CONFLICT (index_id, metatag_id) DO UPDATE SET metatag_id = EXCLUDED.metatag_id
-			RETURNING sim_id`, indexID, metatagID).Scan(&metatagIndexID)
+			RETURNING sim_id`, indexID, metatagID).Scan(new(uint64)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func insertMetaTagsWithTimeSeries(tx *sql.Tx, indexID uint64, metaTags []MetaTag, currCfg *cfg.Config, snapshot *tse.EnabledMetricSnapshot) error {
+	emitter := newCrawlerIndexedArtifactEmitter(tx, currCfg)
+	prepared := prepareMetaTags(metaTags)
+	for start := 0; start < len(prepared); start += postgresMetaTagBatchSize {
+		end := min(start+postgresMetaTagBatchSize, len(prepared))
+		persisted, err := persistPostgresMetaTagBatch(tx, indexID, prepared[start:end])
 		if err != nil {
 			return err
 		}
-		if emitter != nil {
-			canonicalName := strings.ToLower(strings.TrimSpace(norm.NFC.String(name)))
-			err = emitter.EmitIndexedArtifact(tse.IndexedArtifactInput{
-				SourceKind: cfg.TimeSeriesSourceMetatag, IndexID: indexID,
-				RowID: uint64(metatagID), LinkID: metatagIndexID,
-				SubjectKey: canonicalName, Name: name, RawValue: content, Value: content,
-				Attributes: map[string]interface{}{"name": name, "content": content},
-				ObservedAt: time.Now().UTC(),
-			})
-			if err != nil {
-				return err
+		for _, stored := range persisted {
+			if emitter != nil {
+				err = emitter.EmitIndexedArtifact(snapshot, metaTagTimeSeriesInput(indexID, stored))
+				if err != nil {
+					return err
+				}
 			}
 		}
 	}
 	return nil
+}
+
+func metaTagTimeSeriesInput(indexID uint64, stored persistedMetaTag) tse.IndexedArtifactInput {
+	canonicalName := strings.ToLower(strings.TrimSpace(norm.NFC.String(stored.name)))
+	return tse.IndexedArtifactInput{
+		SourceKind: cfg.TimeSeriesSourceMetatag, IndexID: indexID,
+		RowID: uint64(stored.metatagID), LinkID: stored.metatagIndexID,
+		SubjectKey: canonicalName, Name: stored.name, RawValue: stored.content, Value: stored.content,
+		Attributes: map[string]interface{}{"name": stored.name, "content": stored.content},
+		ObservedAt: time.Now().UTC(),
+	}
+}
+
+const postgresMetaTagBatchSize = 500
+
+type persistedMetaTag struct {
+	name, content  string
+	metatagID      int64
+	metatagIndexID uint64
+}
+
+// prepareMetaTags performs cleanup before truncation so malformed byte sequences
+// cannot turn into replacement runes at a boundary. PostgreSQL's name column is
+// VARCHAR(255); content retains the crawler's established 1024-rune limit.
+func prepareMetaTags(metaTags []MetaTag) []persistedMetaTag {
+	result := make([]persistedMetaTag, 0, len(metaTags))
+	type metaTagKey struct{ name, content string }
+	seen := make(map[metaTagKey]struct{}, len(metaTags))
+	for _, metatag := range metaTags {
+		name := truncateUTF8(strings.ToValidUTF8(metatag.Name, ""), 255)
+		content := truncateUTF8(strings.ToValidUTF8(metatag.Content, ""), 1024)
+		key := metaTagKey{name: name, content: content}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, persistedMetaTag{name: name, content: content})
+	}
+	return result
+}
+
+// persistPostgresMetaTagBatch uses array parameters so both statement count and
+// parameter count remain bounded. The resolving statement runs after INSERT's
+// conflict waits, recovering the authoritative row and relationship identities.
+func persistPostgresMetaTagBatch(tx *sql.Tx, indexID uint64, batch []persistedMetaTag) ([]persistedMetaTag, error) {
+	if len(batch) == 0 {
+		return nil, nil
+	}
+	names, contents := make([]string, len(batch)), make([]string, len(batch))
+	for i := range batch {
+		names[i], contents[i] = batch[i].name, batch[i].content
+	}
+	if _, err := tx.Exec(`
+		WITH input AS (
+			SELECT name, content FROM unnest($1::text[], $2::text[]) AS i(name, content)
+		)
+		INSERT INTO MetaTags (name, content)
+		SELECT name, content FROM input
+		ON CONFLICT (name, content) DO NOTHING`, pq.Array(names), pq.Array(contents)); err != nil {
+		return nil, err
+	}
+	// Link insertion and identity lookup are separate statements on purpose. A
+	// conflicting INSERT waits for its concurrent owner, and the following
+	// READ COMMITTED snapshot can then see that owner's committed row. Avoiding
+	// a dummy UPDATE preserves the relationship timestamps and skips its WAL.
+	if _, err := tx.Exec(`
+		WITH input AS (
+			SELECT name, content
+			FROM unnest($1::text[], $2::text[]) AS i(name, content)
+		), resolved AS (
+			SELECT m.metatag_id
+			FROM input i JOIN MetaTags m ON m.name = i.name AND m.content = i.content
+		)
+		INSERT INTO MetaTagsIndex (index_id, metatag_id)
+		SELECT $3, metatag_id FROM resolved
+		ON CONFLICT (index_id, metatag_id) DO NOTHING`, pq.Array(names), pq.Array(contents), indexID); err != nil {
+		return nil, err
+	}
+	rows, err := tx.Query(`
+		WITH input AS (
+			SELECT name, content, ordinality
+			FROM unnest($1::text[], $2::text[]) WITH ORDINALITY AS i(name, content, ordinality)
+		)
+		SELECT i.name, i.content, m.metatag_id, mi.sim_id
+		FROM input i
+		JOIN MetaTags m ON m.name = i.name AND m.content = i.content
+		JOIN MetaTagsIndex mi ON mi.metatag_id = m.metatag_id AND mi.index_id = $3
+		ORDER BY i.ordinality`, pq.Array(names), pq.Array(contents), indexID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]persistedMetaTag, 0, len(batch))
+	for rows.Next() {
+		var stored persistedMetaTag
+		if err = rows.Scan(&stored.name, &stored.content, &stored.metatagID, &stored.metatagIndexID); err != nil {
+			return nil, err
+		}
+		result = append(result, stored)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(result) != len(batch) {
+		return nil, fmt.Errorf("PostgreSQL metatag upsert returned %d of %d rows", len(result), len(batch))
+	}
+	return result, nil
 }
 
 func canonicalKeyword(keyword string) string {
@@ -1879,9 +2014,34 @@ func insertKeywordsWithTimeSeries(
 		indexID,
 	)
 
+	ordered, occurrences := preparePageKeywords(pageInfo)
+
+	collectTimeSeries := currCfg != nil && currCfg.TimeSeries.Enabled
+	var timeSeriesInputs []tse.IndexedArtifactInput
+
+	var persisted []persistedKeyword
+	var err error
+	if db.DBMS() == cdb.DBPostgresStr {
+		persisted, err = upsertPostgresKeywords(db, indexID, ordered, occurrences)
+	} else {
+		persisted, err = upsertPortableKeywords(db, indexID, ordered, occurrences)
+	}
+	if err != nil {
+		return err
+	}
+
+	if collectTimeSeries {
+		timeSeriesInputs = keywordTimeSeriesInputs(indexID, persisted)
+	}
+
+	return emitIndexedArtifactsStandalone(db, currCfg, timeSeriesInputs)
+}
+
+func preparePageKeywords(pageInfo *PageInfo) ([]string, map[string]int64) {
 	occurrences := make(map[string]int64, len(pageInfo.Keywords))
 	for _, keyword := range pageInfo.Keywords {
-		if normalized := canonicalKeyword(keyword); normalized != "" {
+		normalized := canonicalKeyword(keyword)
+		if normalized != "" {
 			occurrences[normalized]++
 		}
 	}
@@ -1892,13 +2052,11 @@ func insertKeywordsWithTimeSeries(
 
 	ordered := make([]string, 0, len(occurrences))
 	seen := make(map[string]struct{}, len(occurrences))
-
 	for _, keyword := range pageInfo.Keywords {
 		normalized := canonicalKeyword(keyword)
 		if normalized == "" {
 			continue
 		}
-
 		if _, ok := seen[normalized]; ok {
 			continue
 		}
@@ -1906,23 +2064,39 @@ func insertKeywordsWithTimeSeries(
 		seen[normalized] = struct{}{}
 		ordered = append(ordered, normalized)
 	}
+	return ordered, occurrences
+}
 
-	//emitter := newCrawlerIndexedArtifactEmitter(db, currCfg)
-	collectTimeSeries := currCfg != nil && currCfg.TimeSeries.Enabled
-
-	var timeSeriesInputs []tse.IndexedArtifactInput
-	if collectTimeSeries {
-		timeSeriesInputs = make(
-			[]tse.IndexedArtifactInput,
-			0,
-			len(ordered),
-		)
+func keywordTimeSeriesInputs(indexID uint64, persisted []persistedKeyword) []tse.IndexedArtifactInput {
+	inputs := make([]tse.IndexedArtifactInput, 0, len(persisted))
+	for _, stored := range persisted {
+		inputs = append(inputs, tse.IndexedArtifactInput{
+			SourceKind: cfg.TimeSeriesSourceKeyword, IndexID: indexID,
+			RowID: uint64(stored.keywordID), LinkID: stored.keywordIndexID,
+			SubjectKey: stored.keyword, Name: stored.keyword, RawValue: stored.keyword,
+			Value: stored.occurrences, Occurrences: stored.occurrences,
+			Attributes: map[string]interface{}{
+				"keyword": stored.keyword, "occurrences": stored.occurrences,
+			},
+			ObservedAt: time.Now().UTC(),
+		})
 	}
+	return inputs
+}
 
+type persistedKeyword struct {
+	keyword        string
+	keywordID      int64
+	keywordIndexID uint64
+	occurrences    int64
+}
+
+func upsertPortableKeywords(db cdb.Handler, indexID uint64, ordered []string, occurrences map[string]int64) ([]persistedKeyword, error) {
+	result := make([]persistedKeyword, 0, len(ordered))
 	for _, keyword := range ordered {
 		keywordID, err := insertKeyword(db, keyword)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		count := occurrences[keyword]
@@ -1944,7 +2118,7 @@ func insertKeywordsWithTimeSeries(
 			count,
 		).Scan(&keywordIndexID, &storedOccurrences)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		count = 1
@@ -1952,30 +2126,94 @@ func insertKeywordsWithTimeSeries(
 			count = storedOccurrences.Int64
 		}
 
-		if collectTimeSeries {
-			timeSeriesInputs = append(
-				timeSeriesInputs,
-				tse.IndexedArtifactInput{
-					SourceKind:  cfg.TimeSeriesSourceKeyword,
-					IndexID:     indexID,
-					RowID:       uint64(keywordID),
-					LinkID:      keywordIndexID,
-					SubjectKey:  keyword,
-					Name:        keyword,
-					RawValue:    keyword,
-					Value:       count,
-					Occurrences: count,
-					Attributes: map[string]interface{}{
-						"keyword":     keyword,
-						"occurrences": count,
-					},
-					ObservedAt: time.Now().UTC(),
-				},
+		result = append(result, persistedKeyword{keyword, int64(keywordID), keywordIndexID, count})
+	}
+	return result, nil
+}
+
+// PostgreSQL arrays keep the statement and parameter counts bounded. Batches are
+// committed together, so callers never observe a page with only some keyword links.
+const postgresKeywordBatchSize = 500
+
+func upsertPostgresKeywords(db cdb.Handler, indexID uint64, ordered []string, occurrences map[string]int64) ([]persistedKeyword, error) {
+	if len(ordered) == 0 {
+		return nil, nil
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	result := make([]persistedKeyword, 0, len(ordered))
+	for start := 0; start < len(ordered); start += postgresKeywordBatchSize {
+		end := min(start+postgresKeywordBatchSize, len(ordered))
+		keywords := ordered[start:end]
+		counts := make([]int64, len(keywords))
+		for i, keyword := range keywords {
+			counts[i] = occurrences[keyword]
+			if counts[i] < 1 {
+				counts[i] = 1
+			}
+		}
+
+		_, queryErr := tx.Exec(`
+			WITH input AS (
+				SELECT keyword FROM unnest($1::text[]) AS i(keyword)
 			)
+			INSERT INTO Keywords (keyword)
+			SELECT keyword FROM input
+			ON CONFLICT (keyword) DO UPDATE SET keyword = EXCLUDED.keyword
+			WHERE Keywords.last_updated_at < CURRENT_TIMESTAMP - INTERVAL '30 seconds'`,
+			pq.Array(keywords))
+		if queryErr != nil {
+			return nil, queryErr
+		}
+
+		// Resolving in a second statement is intentional. Under READ COMMITTED it
+		// obtains a fresh snapshot after a concurrent conflicting inserter commits.
+		rows, queryErr := tx.Query(`
+			WITH input AS (
+				SELECT keyword, occurrences, ordinality
+				FROM unnest($1::text[], $2::bigint[]) WITH ORDINALITY AS i(keyword, occurrences, ordinality)
+			), resolved AS (
+				SELECT i.keyword, i.occurrences, i.ordinality, k.keyword_id
+				FROM input i JOIN Keywords k ON LOWER(k.keyword) = i.keyword
+			), linked AS (
+				INSERT INTO KeywordIndex (keyword_id, index_id, occurrences)
+				SELECT keyword_id, $3, occurrences FROM resolved
+				ON CONFLICT (keyword_id, index_id) DO UPDATE SET occurrences = EXCLUDED.occurrences
+				RETURNING keyword_index_id, keyword_id, occurrences
+			)
+			SELECT r.keyword, r.keyword_id, l.keyword_index_id, l.occurrences
+			FROM resolved r JOIN linked l USING (keyword_id)
+			ORDER BY r.ordinality`, pq.Array(keywords), pq.Array(counts), indexID)
+		if queryErr != nil {
+			return nil, queryErr
+		}
+		for rows.Next() {
+			var stored persistedKeyword
+			if err = rows.Scan(&stored.keyword, &stored.keywordID, &stored.keywordIndexID, &stored.occurrences); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			result = append(result, stored)
+		}
+		if err = rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		if err = rows.Close(); err != nil {
+			return nil, err
+		}
+		if len(result) != end {
+			return nil, fmt.Errorf("PostgreSQL keyword upsert returned %d of %d rows", len(result), end)
 		}
 	}
-
-	return emitIndexedArtifactsStandalone(db, currCfg, timeSeriesInputs)
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 // rollbackTransaction rolls back a transaction.

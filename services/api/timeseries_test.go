@@ -288,7 +288,7 @@ func TestTimeSeriesObservationsOmitHashesProvenanceAndProtectedValues(t *testing
 	metric := testTimeSeriesMetric()
 	metric.HashOnly = true
 	secret := "secret"
-	fake := &fakeTimeSeriesAPIRepository{metric: metric, observations: cdb.TimeSeriesObservationQueryResult{Observations: []cdb.TimeSeriesObservation{{ID: 9, MetricID: metric.ID, ObservedAt: time.Now(), CollectedAt: time.Now(), BucketStart: time.Now(), BucketEnd: time.Now().Add(time.Hour), Value: cdb.TimeSeriesValue{Text: &secret}, ValueHash: "private", Provenance: json.RawMessage(`{"secret":true}`), ProvenanceHash: "private", Dimensions: map[string]interface{}{}}}}}
+	fake := &fakeTimeSeriesAPIRepository{metric: metric, observations: cdb.TimeSeriesObservationQueryResult{Observations: []cdb.TimeSeriesObservation{{ID: 9, MetricID: metric.ID, ObservedAt: time.Now(), CollectedAt: time.Now(), BucketStart: time.Now(), BucketEnd: time.Now().Add(time.Hour), Value: cdb.TimeSeriesValue{Text: &secret}, ValueHash: "private", SeriesHash: "private-series", Provenance: json.RawMessage(`{"secret":true}`), ProvenanceHash: "private", Dimensions: map[string]interface{}{}}}}}
 	useFakeTimeSeriesRepository(t, fake)
 
 	res := httptest.NewRecorder()
@@ -298,7 +298,7 @@ func TestTimeSeriesObservationsOmitHashesProvenanceAndProtectedValues(t *testing
 		t.Fatalf("status = %d, body=%s", res.Code, res.Body.String())
 	}
 	body := res.Body.String()
-	for _, forbidden := range []string{"secret", "value_hash", "provenance"} {
+	for _, forbidden := range []string{"secret", "value_hash", "series_hash", "private-series", "provenance"} {
 		if strings.Contains(body, forbidden) {
 			t.Fatalf("response exposed %q: %s", forbidden, body)
 		}

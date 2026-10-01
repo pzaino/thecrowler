@@ -179,7 +179,7 @@ Defaults keep repetitive metric entries short. A metric-specific field always wi
     overlap: 15m
 ```
 
-Aggregation reads raw observations and materializes query-friendly buckets. The events service runs it only when both `timeseries.enabled` and `timeseries.aggregation.enabled` are true. `schedule` is how often the service wakes up. `batch_size * max_batches` is the maximum work per run, so the example processes at most 10,000 observations before yielding. `overlap` rewinds the checkpoint by 15 minutes so late observations can repair recently completed buckets.
+Aggregation reads raw observations and materializes query-friendly buckets. The events service runs it only when both `timeseries.enabled` and `timeseries.aggregation.enabled` are true. `schedule` is how often the service wakes up. `max_batches` bounds observation scan pages and `max_duration` bounds wall-clock work per run. Budgets are checked between atomic windows, so a window can safely exceed a soft budget but is never partially published. `overlap` rewinds the checkpoint by 15 minutes so late observations can repair recently completed buckets.
 
 Use a short schedule for dashboards, a larger batch window for backfills, and enough overlap to cover normal crawl/indexing delay. If aggregation is disabled, raw observations can still exist, but aggregate-first chart routes have no new materialized buckets until you run aggregation manually.
 
@@ -401,6 +401,12 @@ Information Seed/correlation lifecycle emitters produce `new`, `unchanged`, and 
 
 ### Cardinality overflow
 
+The exact series and per-dimension-value identities, reference-count lifecycle,
+transaction boundaries, Source/retention/metric cleanup rules, and the future
+administrative rebuild procedure are specified in the
+[cardinality identity and lifecycle contract](timeseries-cardinality-accounting.md).
+That document is a design contract; production enforcement remains unchanged.
+
 `drop`, `hash`, `overflow_bucket`. Limits are `max_series_per_metric`, `max_dimensions`, and `max_values_per_dimension`. Metric-level settings may override global settings. `drop` is the safest default. When the crawler cardinality guard reports an overflow, `hash` switches the observation value to hash-only storage while retaining its dimensions; `overflow_bucket` replaces the dimension set with `{"overflow":"__overflow__"}`. These behaviors prevent direct value retention or unbounded new groups, but operators should still choose conservative limits.
 
 ## Selectors and examples
@@ -440,7 +446,8 @@ The top-level `timeseries` object is optional and defaults to disabled. Duration
 | `retention.aggregated` | Administrative aggregate retention horizon. Not scheduled automatically in v1. | `365d` |
 | `aggregation.enabled` | Lets the events service run incremental aggregation when the top-level feature is also enabled. | `false` |
 | `aggregation.schedule` | Events-service aggregation interval. | `5m` |
-| `aggregation.batch_size` / `max_batches` | Upper bound on observations processed per run. | `1000` / `10` |
+| `aggregation.batch_size` / `max_batches` | Observation page size and soft page budget, checked between complete windows. | `1000` / `10` |
+| `aggregation.max_duration` | Soft wall-clock work budget, checked only after a complete atomic window. | `1m` |
 | `aggregation.overlap` | Rewind applied to the checkpoint so late observations can repair complete buckets. | `15m` |
 | `storage.backend` | Declarative storage/partitioning backend. Currently only `postgres`. | `postgres` |
 | `storage.table_prefix` | Validated prefix for deployment policy; shipped table names are fixed. | `timeseries` |
@@ -469,7 +476,7 @@ Entity assignment is **immediate** when the resolver can see an `EntityMembershi
 
 ## Aggregation, late data, reaggregation, and retention
 
-The events service starts incremental aggregation only when both `timeseries.enabled` and `timeseries.aggregation.enabled` are true. `schedule` is a Go duration. Each run is bounded by `batch_size * max_batches` and stores a checkpoint. The next run starts at `checkpoint - overlap`, allowing late observations to replace already materialized complete buckets. Aggregation failure is logged and does not fail indexing/event work.
+The events service starts incremental aggregation only when both `timeseries.enabled` and `timeseries.aggregation.enabled` are true. `schedule` is a Go duration. Each run uses observation-page and wall-clock budgets and stores a checkpoint after every complete atomic window. Budgets are checked only between windows, so oversized windows finish before the run yields. The next run starts at `checkpoint - overlap`, allowing late observations to replace already materialized complete buckets. Aggregation failure is logged and does not fail indexing/event work.
 
 Aggregation uses four distinct mechanisms
 
@@ -525,6 +532,123 @@ if err == nil {
         database.TimeSeriesAggregationOptions{BatchSize: 1000, MaxBatches: 100, RunKey: "entity-backfill"})
 }
 ```
+
+## Production database performance observation
+
+Application metrics are deliberately lightweight. The emitter publishes
+`crowler_timeseries_emitter_operations_total{operation,outcome}` for observation attempts,
+inserts (including the `duplicate` outcome), metric-definition lookups, previous-observation
+lookups, cardinality checks, and scope resolution. The fixed `operation` and `outcome` values
+are the only labels: metric keys, query text, scope IDs, URLs, dimensions, and other
+deployment-controlled values are never labels. Aggregation publishes the unlabeled counters
+`crowler_timeseries_aggregation_rows_scanned_total`,
+`crowler_timeseries_aggregation_windows_completed_total`, and
+`crowler_timeseries_aggregation_retries_total`.
+
+SQL pool pressure comes only from the existing, process-local `database/sql.DBStats` sample.
+Alongside open/in-use/idle connections, `crowler_db_pool_wait_count` and
+`crowler_db_pool_wait_duration_seconds` expose its cumulative `WaitCount` and `WaitDuration`.
+Collecting these gauges does **not** issue a PostgreSQL query. A rising wait duration together
+with sustained in-use connections near the process quota indicates contention; flat wait
+counters do not. Because these values are per process and reset on restart, compare rates and
+keep `service_type`/`instance` when aggregating them.
+
+### Enable `pg_stat_statements` in production
+
+Use PostgreSQL's `pg_stat_statements` for server-side query-family totals. Enable it through
+`shared_preload_libraries` (a server restart is normally required), then create the extension
+once in the CROWler database as a suitably privileged operator:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+```
+
+Keep statement tracking enabled for the measurement interval and make sure PostgreSQL I/O
+timing is enabled (`track_io_timing = on`) if non-zero block read/write timings are required.
+On PostgreSQL versions that support it, `track_wal_io_timing` is separate. Extension rows are
+normalized statement families, not individual executions; protect access because even
+normalized query text can disclose schema and workload details.
+
+The following supplied top-30 report ranks total execution time and retains calls, row count,
+shared-buffer activity, temporary I/O, and available block/temp-I/O timing fields. On older
+PostgreSQL/extension versions that lack `temp_blk_read_time` or `temp_blk_write_time`, remove
+those two selected columns (use `\d+ pg_stat_statements` to confirm the installed view):
+
+```sql
+SELECT queryid,
+       calls,
+       round(total_exec_time::numeric, 2) AS total_exec_ms,
+       round(mean_exec_time::numeric, 2) AS mean_exec_ms,
+       rows,
+       shared_blks_hit,
+       shared_blks_read,
+       shared_blks_dirtied,
+       shared_blks_written,
+       temp_blks_read,
+       temp_blks_written,
+       round(blk_read_time::numeric, 2) AS blk_read_ms,
+       round(blk_write_time::numeric, 2) AS blk_write_ms,
+       round(temp_blk_read_time::numeric, 2) AS temp_blk_read_ms,
+       round(temp_blk_write_time::numeric, 2) AS temp_blk_write_ms,
+       query
+FROM pg_stat_statements
+WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
+ORDER BY total_exec_time DESC
+LIMIT 30;
+```
+
+Inspect work that is active *now* separately through `pg_stat_activity`; this is an operator
+diagnostic query and is never executed by CROWler instrumentation:
+
+```sql
+SELECT pid,
+       application_name,
+       state,
+       wait_event_type,
+       wait_event,
+       now() - query_start AS query_age,
+       now() - xact_start AS transaction_age,
+       query
+FROM pg_stat_activity
+WHERE datname = current_database()
+  AND pid <> pg_backend_pid()
+  AND state <> 'idle'
+ORDER BY query_start;
+```
+
+### Map measurements to CROWler query families
+
+Map normalized statements by stable table/operation shape rather than exporting their text as
+a Prometheus label:
+
+* `TimeSeriesMetrics` selects are **metric lookup** work.
+* `TimeSeriesObservations` inserts are **observation insert/deduplication** work; the select by
+  `dedupe_key` returns the persisted ID. Observation selects ordered newest-first are
+  **previous-observation lookup** work, while paginated range selects are **aggregation scans**
+  or API raw-observation reads.
+* `TimeSeriesAggregates` deletes and batched upserts plus `TimeSeriesAggregationRuns` writes are
+  the **aggregation replacement/checkpoint** family.
+* Ownership/entity joins used by resolver code are **scope resolution**, and distinct
+  series/dimension checks are **cardinality enforcement**.
+
+Correlate a family with the application counters: for example, divide a statement family's
+call delta by the emitter operation delta to detect unexpected round trips, compare aggregation
+row deltas with `rows_scanned`, and compare replacement calls/retries with completed windows.
+Duplicates are expected idempotency outcomes, so track their rate rather than treating every
+duplicate as an error.
+
+For a before/after test, use the same PostgreSQL version, data volume, CROWler configuration,
+crawl/reaggregation range, concurrency, and warm-up. Capture the top-30 report and application
+counter values at both interval boundaries and subtract cumulative values; alternatively, in an
+isolated test database, call `SELECT pg_stat_statements_reset();` immediately before each run.
+Compare calls, total/mean execution time, rows-per-call, shared-block hit/read ratios, temporary
+blocks, block/temp-I/O time, pool wait deltas, rows scanned, completed windows, and retries.
+Do not reset shared production statistics merely to simplify a comparison. Use `EXPLAIN
+(ANALYZE, BUFFERS)` only for a safely reproduced representative normalized statement, not by
+automatically replaying text harvested from production.
+
+This instrumentation wraps existing calls and consumes their returned results. It adds no
+hot-path SQL and performs no PostgreSQL query merely to generate a metric.
 
 ## Storage portability and PostgreSQL partitioning
 

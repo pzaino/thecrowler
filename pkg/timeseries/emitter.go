@@ -68,22 +68,68 @@ type Emitter struct {
 	Now            func() time.Time
 }
 
+// EnabledMetricSnapshot is an immutable set of enabled definitions for one
+// bounded page or indexing operation. Private indexes prevent mutation after
+// construction.
+type EnabledMetricSnapshot struct {
+	bySource       map[cfg.TimeSeriesSourceKind][]cdb.TimeSeriesMetric
+	bySourceObject map[cfg.TimeSeriesSourceKind]map[string][]cdb.TimeSeriesMetric
+}
+
+// LoadEnabledMetricSnapshot reads and groups enabled definitions exactly once.
+// A caller must create and discard one snapshot per indexing unit.
+func (e *Emitter) LoadEnabledMetricSnapshot() (*EnabledMetricSnapshot, error) {
+	if e == nil || e.Repository == nil || e.Config == nil || !e.Config.Enabled {
+		return &EnabledMetricSnapshot{}, nil
+	}
+	enabled := true
+	metrics, err := e.Repository.ListMetrics(cdb.TimeSeriesMetricFilter{Enabled: &enabled, Pagination: cdb.TimeSeriesPagination{Limit: 10000}})
+	if err != nil {
+		recordEmitterOperation(metricOperationMetricLookup, "error")
+		if failure := e.handleFailure(e.Config.Defaults.FailurePolicy, "lookup enabled metrics", err); failure != nil {
+			return nil, failure
+		}
+		return &EnabledMetricSnapshot{}, nil
+	}
+	recordEmitterOperation(metricOperationMetricLookup, "success")
+	s := &EnabledMetricSnapshot{bySource: make(map[cfg.TimeSeriesSourceKind][]cdb.TimeSeriesMetric), bySourceObject: make(map[cfg.TimeSeriesSourceKind]map[string][]cdb.TimeSeriesMetric)}
+	for _, metric := range metrics {
+		if !metric.Enabled {
+			continue
+		}
+		s.bySource[metric.SourceKind] = append(s.bySource[metric.SourceKind], metric)
+		if s.bySourceObject[metric.SourceKind] == nil {
+			s.bySourceObject[metric.SourceKind] = make(map[string][]cdb.TimeSeriesMetric)
+		}
+		objectType := string(metric.ObjectType)
+		s.bySourceObject[metric.SourceKind][objectType] = append(s.bySourceObject[metric.SourceKind][objectType], metric)
+	}
+	return s, nil
+}
+
+func (s *EnabledMetricSnapshot) source(kind cfg.TimeSeriesSourceKind) []cdb.TimeSeriesMetric {
+	if s == nil {
+		return nil
+	}
+	return s.bySource[kind]
+}
+
+func (s *EnabledMetricSnapshot) sourceObject(kind cfg.TimeSeriesSourceKind, objectType string) []cdb.TimeSeriesMetric {
+	if s == nil {
+		return nil
+	}
+	return s.bySourceObject[kind][objectType]
+}
+
 // EmitObjectAttribute emits all matching enabled metrics. Per-metric safe failures are logged and skipped.
-func (e *Emitter) EmitObjectAttribute(input ObjectAttributeInput) error {
+func (e *Emitter) EmitObjectAttribute(snapshot *EnabledMetricSnapshot, input ObjectAttributeInput) error {
 	if e == nil || e.Repository == nil || e.Scopes == nil || e.Config == nil || !e.Config.Enabled {
 		return nil
 	}
-	enabled := true
-	metrics, err := e.Repository.ListMetrics(cdb.TimeSeriesMetricFilter{SourceKind: cfg.TimeSeriesSourceObjectAttribute, Enabled: &enabled, Pagination: cdb.TimeSeriesPagination{Limit: 10000}})
-	if err != nil {
-		return e.handleFailure(e.Config.Defaults.FailurePolicy, "lookup object-attribute metrics", err)
-	}
+	metrics := snapshot.sourceObject(cfg.TimeSeriesSourceObjectAttribute, input.ObjectType)
 	for i := range metrics {
 		metric := metrics[i]
-		if metric.SourceKind != cfg.TimeSeriesSourceObjectAttribute || !metric.Enabled {
-			continue
-		}
-		if err = e.emitMetric(metric, input); err != nil {
+		if err := e.emitMetric(metric, input); err != nil {
 			policy := metric.FailurePolicy
 			if policy == "" {
 				policy = e.Config.Defaults.FailurePolicy
@@ -115,8 +161,10 @@ func (e *Emitter) emitMetric(metric cdb.TimeSeriesMetric, input ObjectAttributeI
 
 	scopes, err := e.Scopes.ResolveScopes(input)
 	if err != nil {
+		recordEmitterOperation(metricOperationScopeResolution, "error")
 		return fmt.Errorf("resolve scopes: %w", err)
 	}
+	recordEmitterOperation(metricOperationScopeResolution, "success")
 	if len(scopes) == 0 {
 		id := input.ObjectID
 		scopes = []cdb.TimeSeriesScope{{ObjectType: input.ObjectType, ObjectID: &id}}
@@ -143,12 +191,15 @@ func (e *Emitter) emitMetric(metric cdb.TimeSeriesMetric, input ObjectAttributeI
 	basePolicy := e.preparationPolicy(metric)
 	cardinalityPolicy := e.cardinalityPolicy(metric)
 	for _, scope := range scopes {
+		recordEmitterOperation(metricOperationObservationAttempt, "attempted")
 		policy := basePolicy
 		if e.Cardinality != nil {
 			policy.CardinalityExceeded, err = e.Cardinality.Exceeded(metric, scope, dimensions, cardinalityPolicy)
 			if err != nil {
+				recordEmitterOperation(metricOperationCardinalityCheck, "error")
 				return fmt.Errorf("check cardinality: %w", err)
 			}
+			recordEmitterOperation(metricOperationCardinalityCheck, "success")
 		}
 		observation := cdb.TimeSeriesObservation{MetricID: metric.ID, ObservedAt: observedAt, EffectiveAt: effectiveAt, CollectedAt: e.now(), SourceUpdatedAt: sourceUpdatedAt, BucketStart: bucketStart, BucketEnd: bucketEnd, Scope: scope, Value: value, Dimensions: cloneMap(dimensions)}
 		prepared, prepareErr := cdb.PrepareTimeSeriesObservation(observation, metric.ValueType, policy)
@@ -158,7 +209,13 @@ func (e *Emitter) emitMetric(metric cdb.TimeSeriesMetric, input ObjectAttributeI
 		observation = prepared.Observation
 		previous, previousErr := e.Repository.PreviousObservation(cdb.TimeSeriesChangeLookup{MetricID: metric.ID, Scope: scope, Dimensions: observation.Dimensions, Before: observedAt, TimeBasis: metric.TimeBasis})
 		if previousErr != nil && !errors.Is(previousErr, cdb.ErrTimeSeriesObservationNotFound) {
+			recordEmitterOperation(metricOperationPreviousLookup, "error")
 			return fmt.Errorf("lookup previous observation: %w", previousErr)
+		}
+		if errors.Is(previousErr, cdb.ErrTimeSeriesObservationNotFound) {
+			recordEmitterOperation(metricOperationPreviousLookup, "not_found")
+		} else {
+			recordEmitterOperation(metricOperationPreviousLookup, "found")
 		}
 		applyChange(&observation, previous, previousErr, observedAt)
 		nonce := ""
@@ -201,8 +258,16 @@ func (e *Emitter) emitMetric(metric cdb.TimeSeriesMetric, input ObjectAttributeI
 		if err != nil {
 			return err
 		}
-		if _, err = e.Repository.InsertObservation(&observation); err != nil {
+		insertResult, insertErr := e.Repository.InsertObservation(&observation)
+		if insertErr != nil {
+			recordEmitterOperation(metricOperationInsert, "error")
+			err = insertErr
 			return err
+		}
+		if insertResult.Duplicate {
+			recordEmitterOperation(metricOperationInsert, "duplicate")
+		} else {
+			recordEmitterOperation(metricOperationInsert, "inserted")
 		}
 	}
 	return nil

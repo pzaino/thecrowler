@@ -54,9 +54,10 @@ type Database struct {
 
 // Crawler represents the crawler configuration
 type Crawler struct {
-	QueryTimer            int             `json:"query_timer" yaml:"query_timer"` // Time to wait before querying the next source (in seconds)
-	Workers               int             `json:"workers" yaml:"workers"`         // Number of crawler workers
-	Engine                []CustomEngine  `json:"engine" yaml:"engine"`           // Crawler engine to use (e.g., "chromium", "firefox", "selenium")
+	QueryTimer            int             `json:"query_timer" yaml:"query_timer"`                   // Time to wait before querying the next source (in seconds)
+	Workers               int             `json:"workers" yaml:"workers"`                           // Number of crawler workers
+	IndexingConcurrency   int             `json:"indexing_concurrency" yaml:"indexing_concurrency"` // Maximum number of pages performing synchronous database indexing
+	Engine                []CustomEngine  `json:"engine" yaml:"engine"`                             // Crawler engine to use (e.g., "chromium", "firefox", "selenium")
 	VDIName               string          // Name of the VDI to use (this is useful when using custom configurations per each source)
 	SetVDIGPUPatch        bool            `json:"set_vdi_gpu_patch" yaml:"set_vdi_gpu_patch"` // Whether to set the VDI GPU patch or not (this can be useful when using GPU-less VDIs)
 	ResolveVDIDNS         bool            `json:"resolve_vdi_dns" yaml:"resolve_vdi_dns"`     // Whether to pre-resolve VDI DNS name or not

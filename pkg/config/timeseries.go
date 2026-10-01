@@ -155,11 +155,12 @@ type TimeSeriesRetentionConfig struct {
 }
 
 type TimeSeriesAggregationConfig struct {
-	Enabled    bool   `json:"enabled" yaml:"enabled"`
-	Schedule   string `json:"schedule" yaml:"schedule"`
-	BatchSize  int    `json:"batch_size" yaml:"batch_size"`
-	MaxBatches int    `json:"max_batches" yaml:"max_batches"`
-	Overlap    string `json:"overlap" yaml:"overlap"`
+	Enabled     bool   `json:"enabled" yaml:"enabled"`
+	Schedule    string `json:"schedule" yaml:"schedule"`
+	BatchSize   int    `json:"batch_size" yaml:"batch_size"`
+	MaxBatches  int    `json:"max_batches" yaml:"max_batches"`
+	MaxDuration string `json:"max_duration" yaml:"max_duration"`
+	Overlap     string `json:"overlap" yaml:"overlap"`
 }
 
 type TimeSeriesStorageConfig struct {
@@ -219,7 +220,7 @@ func defaultTimeSeriesConfig() TimeSeriesConfig {
 	return TimeSeriesConfig{
 		Defaults:    TimeSeriesMetricDefaults{ValueType: TimeSeriesValueInteger, Aggregates: []TimeSeriesAggregate{TimeSeriesAggregateCount}, BucketInterval: TimeSeriesBucketOneHour, TimeBasis: TimeSeriesTimeObservedAt, DedupeScope: TimeSeriesDedupeNone, FailurePolicy: TimeSeriesFailureLogSkip},
 		Retention:   TimeSeriesRetentionConfig{Raw: "30d", Aggregated: "365d"},
-		Aggregation: TimeSeriesAggregationConfig{Schedule: "5m", BatchSize: 1000, MaxBatches: 10, Overlap: "15m"},
+		Aggregation: TimeSeriesAggregationConfig{Schedule: "5m", BatchSize: 1000, MaxBatches: 10, MaxDuration: "1m", Overlap: "15m"},
 		Storage:     TimeSeriesStorageConfig{Backend: "postgres", TablePrefix: "timeseries", Partitioning: TimeSeriesPartitioningConfig{Interval: TimeSeriesBucketOneDay, Precreate: 7}},
 		Cardinality: TimeSeriesCardinalityConfig{MaxSeriesPerMetric: 100000, MaxDimensions: 10, MaxValuesPerDimension: 10000, Overflow: TimeSeriesCardinalityDrop},
 		Privacy:     TimeSeriesPrivacyConfig{StoreValueText: false, MaxValueLength: 2048, RedactPatterns: []string{}},
@@ -266,6 +267,9 @@ func applyTimeSeriesDefaults(c *TimeSeriesConfig, d TimeSeriesConfig) {
 	}
 	if c.Aggregation.MaxBatches == 0 {
 		c.Aggregation.MaxBatches = d.Aggregation.MaxBatches
+	}
+	if c.Aggregation.MaxDuration == "" {
+		c.Aggregation.MaxDuration = d.Aggregation.MaxDuration
 	}
 	if c.Aggregation.Overlap == "" {
 		c.Aggregation.Overlap = d.Aggregation.Overlap
@@ -361,6 +365,7 @@ func (c TimeSeriesConfig) Validate() error {
 	validateDuration("retention.raw", c.Retention.Raw, &errs)
 	validateDuration("retention.aggregated", c.Retention.Aggregated, &errs)
 	validateDuration("aggregation.schedule", c.Aggregation.Schedule, &errs)
+	validateDuration("aggregation.max_duration", c.Aggregation.MaxDuration, &errs)
 	validateDuration("aggregation.overlap", c.Aggregation.Overlap, &errs)
 	if c.Aggregation.BatchSize < 1 || c.Aggregation.BatchSize > 100000 {
 		errs = append(errs, "timeseries.aggregation.batch_size: must be between 1 and 100000")

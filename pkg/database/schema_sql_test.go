@@ -90,6 +90,102 @@ func TestTimeSeriesRelease113MigrationsReplaceSourceOwnership(t *testing.T) {
 	}
 }
 
+func TestTimeSeriesRelease114CardinalityState(t *testing.T) {
+	t.Parallel()
+	files := []string{"postgresql-setup.pgsql", "mysql-setup.mysql", "sqlite-setup.sqlite3", "db_migrations/postgresql-migration-v1.14.pgsql", "db_migrations/mysql-migration-v1.14.mysql", "db_migrations/sqlite-migration-v1.14.sqlite3"}
+	for _, file := range files {
+		content, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read %s: %v", file, err)
+		}
+		upper := strings.ToUpper(string(content))
+		for _, fragment := range []string{"TIMESERIESACTIVESERIES", "TIMESERIESACTIVEDIMENSIONVALUES", "REFERENCE_COUNT", "PRIMARY KEY"} {
+			if !strings.Contains(upper, fragment) {
+				t.Errorf("%s missing exact cardinality state fragment %q", file, fragment)
+			}
+		}
+	}
+}
+
+func TestPostgresTimeSeriesRelease114Indexes(t *testing.T) {
+	t.Parallel()
+
+	files := []string{"postgresql-setup.pgsql", "db_migrations/postgresql-migration-v1.14.pgsql"}
+	wanted := []string{
+		"idx_timeseriesobservations_active_metric_observed",
+		"ON TimeSeriesObservations(metric_id, observed_at, observation_id)",
+		"idx_timeseriesobservations_active_metric_effective",
+		"ON TimeSeriesObservations(metric_id, effective_at, observation_id)",
+		"idx_timeseriesobservations_active_metric_source_updated",
+		"ON TimeSeriesObservations(metric_id, source_updated_at, observation_id)",
+		"idx_timeseriesaggregates_active_metric_bucket",
+		"ON TimeSeriesAggregates(metric_id, bucket_start, aggregate_id)",
+		"WHERE deleted_at IS NULL",
+	}
+	for _, file := range files {
+		content, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read %s: %v", file, err)
+		}
+		for _, fragment := range wanted {
+			if !strings.Contains(strings.ToUpper(string(content)), strings.ToUpper(fragment)) {
+				t.Errorf("%s missing index fragment %q", file, fragment)
+			}
+		}
+	}
+
+	migration, err := os.ReadFile("db_migrations/postgresql-migration-v1.14.pgsql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	upper := strings.ToUpper(string(migration))
+	if !strings.Contains(upper, "DROP INDEX IF EXISTS IDX_TIMESERIESAGGREGATES_METRIC_BUCKET") {
+		t.Error("migration must replace the aggregate index whose prefix is equivalent")
+	}
+	if strings.Contains(upper, "CREATE INDEX CONCURRENTLY") {
+		t.Error("transactional migration must not contain CREATE INDEX CONCURRENTLY")
+	}
+}
+
+func TestPostgresTimeSeriesRelease114SeriesHashRollout(t *testing.T) {
+	t.Parallel()
+	setup, err := os.ReadFile("postgresql-setup.pgsql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.ToUpper(string(setup)), "SERIES_HASH VARCHAR(64) NOT NULL") {
+		t.Fatal("fresh schema does not enforce the derived series hash")
+	}
+	migration, err := os.ReadFile("db_migrations/postgresql-migration-v1.14.pgsql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	upper := strings.ToUpper(string(migration))
+	ordered := []string{
+		"ADD COLUMN IF NOT EXISTS SERIES_HASH VARCHAR(64)",
+		"UPDATE TIMESERIESOBSERVATIONS O SET SERIES_HASH",
+		"CHECK (SERIES_HASH IS NOT NULL) NOT VALID",
+		"VALIDATE CONSTRAINT TIMESERIESOBSERVATIONS_SERIES_HASH_PRESENT",
+		"ALTER COLUMN SERIES_HASH SET NOT NULL",
+		"IDX_TIMESERIESOBSERVATIONS_SERIES_HISTORY",
+		"ON TIMESERIESOBSERVATIONS(SERIES_HASH, OBSERVED_AT, OBSERVATION_ID)",
+	}
+	position := -1
+	for _, fragment := range ordered {
+		next := strings.Index(upper, fragment)
+		if next < 0 {
+			t.Fatalf("migration missing rollout fragment %q", fragment)
+		}
+		if next <= position {
+			t.Fatalf("migration rollout fragment %q is out of order", fragment)
+		}
+		position = next
+	}
+	if strings.Contains(upper, "UNIQUE INDEX") || strings.Contains(upper, "UNIQUE (SERIES_HASH") {
+		t.Fatal("series_hash must not redefine grouping or uniqueness")
+	}
+}
+
 func TestSourceSubPriorityFreshInstallAndUpgradeCoverage(t *testing.T) {
 	t.Parallel()
 	files := []string{
@@ -202,7 +298,6 @@ func TestTimeSeriesSchemaSQLContainsFreshInstallAndUpgradeCoverage(t *testing.T)
 		"idx_timeseriesobservations_seed_candidate",
 		"idx_timeseriesobservations_subject",
 		"idx_timeseriesobservations_correlation_rule",
-		"idx_timeseriesaggregates_metric_bucket",
 		"idx_timeseriesaggregates_aggregate_hash",
 		"ON DELETE SET NULL",
 	}

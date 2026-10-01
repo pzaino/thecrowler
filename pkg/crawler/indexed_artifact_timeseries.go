@@ -109,9 +109,13 @@ func emitIndexedArtifactsStandalone(
 	}()
 
 	emitter := newCrawlerIndexedArtifactEmitter(tx, currCfg)
+	snapshot, err := emitter.LoadEnabledMetricSnapshot()
+	if err != nil {
+		return err
+	}
 
 	for _, input := range inputs {
-		if err := emitter.EmitIndexedArtifact(input); err != nil {
+		if err := emitter.EmitIndexedArtifact(snapshot, input); err != nil {
 			return err
 		}
 	}
@@ -138,7 +142,7 @@ func decodeArtifactDetails(raw []byte) map[string]interface{} {
 	return details
 }
 
-func emitPersistedArtifact(tx *sql.Tx, currCfg *cfg.Config, input tse.IndexedArtifactInput) error {
+func emitPersistedArtifact(tx *sql.Tx, currCfg *cfg.Config, snapshot *tse.EnabledMetricSnapshot, input tse.IndexedArtifactInput) error {
 	if tx == nil || currCfg == nil || !currCfg.TimeSeries.Enabled {
 		return nil
 	}
@@ -150,7 +154,7 @@ func emitPersistedArtifact(tx *sql.Tx, currCfg *cfg.Config, input tse.IndexedArt
 		input.NormalizedAttributes = attributes
 		input.AttributePaths = configuredAttributePaths(currCfg, input.ObjectType)
 	}
-	return newCrawlerIndexedArtifactEmitter(tx, currCfg).EmitIndexedArtifact(input)
+	return newCrawlerIndexedArtifactEmitter(tx, currCfg).EmitIndexedArtifact(snapshot, input)
 }
 
 func configuredAttributePaths(currCfg *cfg.Config, objectType string) map[string]string {

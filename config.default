@@ -65,6 +65,8 @@ crawler:
   query_timer: 30
   # Concurrent workers; use ≥3 when network discovery is enabled
   workers: 3
+  # Concurrent synchronous page-indexing transactions. Independent of workers and database.max_conns.
+  indexing_concurrency: 1
   # Per-engine overrides (optional)
   engine: []
   # Apply GPU-less VDI patch when needed
@@ -286,6 +288,7 @@ timeseries:
     schedule: 5m
     batch_size: 1000
     max_batches: 10
+    max_duration: 1m
     overlap: 15m
   storage:
     backend: postgres

@@ -17,7 +17,7 @@ func TestFleetDBMetricsRegisterAndUpdate(t *testing.T) {
 			t.Fatalf("register collector: %v", err)
 		}
 	}
-	m.UpdatePool(sql.DBStats{OpenConnections: 7, InUse: 3, Idle: 4})
+	m.UpdatePool(sql.DBStats{OpenConnections: 7, InUse: 3, Idle: 4, WaitCount: 11, WaitDuration: 1500 * time.Millisecond})
 	if got := testutil.ToFloat64(m.PoolOpen); got != 7 {
 		t.Fatalf("open = %v, want 7", got)
 	}
@@ -26,6 +26,12 @@ func TestFleetDBMetricsRegisterAndUpdate(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(m.PoolIdle); got != 4 {
 		t.Fatalf("idle = %v, want 4", got)
+	}
+	if got := testutil.ToFloat64(m.PoolWaitCount); got != 11 {
+		t.Fatalf("wait count = %v, want 11", got)
+	}
+	if got := testutil.ToFloat64(m.PoolWaitDuration); got != 1.5 {
+		t.Fatalf("wait duration = %v, want 1.5", got)
 	}
 
 	m.ApplyReport(5, FleetDBHeartbeatReport{GeneratedAt: time.Now(), MemberCount: 3, UsableConnections: 15})

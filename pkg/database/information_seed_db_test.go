@@ -680,6 +680,16 @@ func TestTimeSeriesInformationSeedLifecycleObservationsSQLite(t *testing.T) {
 	if _, err = db.Exec(string(migration)); err != nil {
 		t.Fatalf("create time-series schema: %v", err)
 	}
+	if _, err = db.Exec(`ALTER TABLE TimeSeriesObservations ADD COLUMN series_hash VARCHAR(64)`); err != nil {
+		t.Fatalf("add series hash acceleration field: %v", err)
+	}
+	cardinalityMigration, err := os.ReadFile("db_migrations/sqlite-migration-v1.14.sqlite3")
+	if err != nil {
+		t.Fatalf("read cardinality migration: %v", err)
+	}
+	if _, err = db.Exec(string(cardinalityMigration)); err != nil {
+		t.Fatalf("create cardinality state: %v", err)
+	}
 	handler := Handler(&SQLiteHandler{db: db, dbms: DBSQLiteStr})
 	metric := func(key string, kind cfg.TimeSeriesSourceKind, valueType cfg.TimeSeriesValueType, selector, dimensions string) uint64 {
 		t.Helper()

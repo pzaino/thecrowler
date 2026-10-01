@@ -127,10 +127,10 @@ CREATE TABLE IF NOT EXISTS DBSchemaVersion (
 DO $$
 BEGIN
     IF NOT EXISTS (
-        SELECT 1 FROM DBSchemaVersion WHERE version = '1.13'
+        SELECT 1 FROM DBSchemaVersion WHERE version = '1.14'
     ) THEN
         INSERT INTO DBSchemaVersion (version, description)
-        VALUES ('1.13', 'CROWler DB schema version 1.13');
+        VALUES ('1.14', 'CROWler DB schema version 1.14');
     END IF;
 END
 $$;
@@ -2218,6 +2218,7 @@ CREATE TABLE IF NOT EXISTS TimeSeriesObservations (
     value_json JSONB,
     value_timestamp TIMESTAMPTZ,
     value_hash VARCHAR(64) NOT NULL,
+    series_hash VARCHAR(64) NOT NULL,
     previous_observation_id BIGINT REFERENCES TimeSeriesObservations(observation_id) ON DELETE SET NULL,
     previous_value_hash VARCHAR(64),
     is_changed BOOLEAN NOT NULL DEFAULT FALSE,
@@ -2231,6 +2232,22 @@ CREATE TABLE IF NOT EXISTS TimeSeriesObservations (
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     deleted_at TIMESTAMPTZ,
     last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS TimeSeriesActiveSeries (
+    metric_id BIGINT NOT NULL REFERENCES TimeSeriesMetrics(metric_id) ON DELETE RESTRICT,
+    series_hash VARCHAR(64) NOT NULL,
+    series_identity TEXT NOT NULL,
+    reference_count BIGINT NOT NULL CHECK (reference_count > 0),
+    PRIMARY KEY (metric_id, series_hash)
+);
+CREATE TABLE IF NOT EXISTS TimeSeriesActiveDimensionValues (
+    metric_id BIGINT NOT NULL REFERENCES TimeSeriesMetrics(metric_id) ON DELETE RESTRICT,
+    dimension_key TEXT NOT NULL,
+    value_hash VARCHAR(64) NOT NULL,
+    canonical_value TEXT NOT NULL,
+    reference_count BIGINT NOT NULL CHECK (reference_count > 0),
+    PRIMARY KEY (metric_id, dimension_key, value_hash)
 );
 
 CREATE TABLE IF NOT EXISTS TimeSeriesAggregates (
@@ -2322,7 +2339,11 @@ CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_object ON TimeSeriesObserv
 CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_correlation_rule ON TimeSeriesObservations(correlation_rule_id, observed_at);
 CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_dedupe_key ON TimeSeriesObservations(dedupe_key);
 CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_dimensions_gin ON TimeSeriesObservations USING GIN(dimensions);
-CREATE INDEX IF NOT EXISTS idx_timeseriesaggregates_metric_bucket ON TimeSeriesAggregates(metric_id, bucket_start);
+CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_series_history ON TimeSeriesObservations(series_hash, observed_at, observation_id);
+CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_active_metric_observed ON TimeSeriesObservations(metric_id, observed_at, observation_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_active_metric_effective ON TimeSeriesObservations(metric_id, effective_at, observation_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_timeseriesobservations_active_metric_source_updated ON TimeSeriesObservations(metric_id, source_updated_at, observation_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_timeseriesaggregates_active_metric_bucket ON TimeSeriesAggregates(metric_id, bucket_start, aggregate_id) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_timeseriesaggregates_seed ON TimeSeriesAggregates(information_seed_id, bucket_start);
 CREATE INDEX IF NOT EXISTS idx_timeseriesaggregates_seed_candidate ON TimeSeriesAggregates(information_seed_candidate_id, bucket_start);
 CREATE INDEX IF NOT EXISTS idx_timeseriesaggregates_source ON TimeSeriesAggregates(source_id, bucket_start);
@@ -3708,6 +3729,12 @@ ALTER TABLE timeseriesaggregates OWNER TO :CROWLER_DB_USER;
 ALTER TABLE entityobservationbackfillcheckpoints OWNER TO :CROWLER_DB_USER;
 ALTER TABLE emailmailboxstate OWNER TO :CROWLER_DB_USER;
 ALTER TABLE emailmessagestate OWNER TO :CROWLER_DB_USER;
+ALTER TABLE TimeSeriesMetrics OWNER TO :CROWLER_DB_USER;
+ALTER TABLE TimeSeriesObservations OWNER TO :CROWLER_DB_USER;
+ALTER TABLE TimeSeriesActiveSeries OWNER TO :CROWLER_DB_USER;
+ALTER TABLE TimeSeriesActiveDimensionValues OWNER TO :CROWLER_DB_USER;
+ALTER TABLE TimeSeriesArchivedSeries OWNER TO :CROWLER_DB_USER;
+ALTER TABLE TimeSeriesArchivedDimensionValues OWNER TO :CROWLER_DB_USER;
 
 -- Grants permissions to the user on the :"POSTGRES_DB" database
 SELECT grant_sequence_permissions('public', :'CROWLER_DB_USER');
@@ -3731,5 +3758,6 @@ ALTER SYSTEM SET maintenance_work_mem = :'DB_MAINTENANCE_WORK_MEM';
 ALTER SYSTEM SET effective_cache_size = :'DB_EFFECTIVE_CACHE_SIZE';
 ALTER SYSTEM SET autovacuum_work_mem = :'DB_AUTOVACUUM_WORK_MEM';
 ALTER SYSTEM SET max_wal_size = :'DB_MAX_WAL_SIZE';
+ALTER SYSTEM SET max_connections = :'DB_MAX_CONNECTIONS';
 
 SELECT pg_reload_conf();

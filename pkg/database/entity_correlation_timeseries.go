@@ -443,6 +443,13 @@ func backfillObservationEntityBatch(db *Handler, dbms string, after uint64, limi
 	}
 	result := EntityObservationBackfillResult{NextObservationID: after, Scanned: len(items), Done: len(items) < limit}
 	for _, item := range items {
+		pObservation := newInformationSeedPlaceholders(dbms)
+		original, observationErr := scanTimeSeriesObservation(func(dest ...interface{}) error {
+			return tx.QueryRow(`SELECT `+timeSeriesObservationColumns+` FROM TimeSeriesObservations WHERE observation_id=`+pObservation.Next(), item.id).Scan(dest...)
+		})
+		if observationErr != nil {
+			return result, observationErr
+		}
 		result.NextObservationID = item.id
 		dimensions := decodeJSONObject(item.dimensions.String)
 		if _, exists := dimensions["confidence"]; !exists && item.confidence.Valid {
@@ -478,24 +485,38 @@ func backfillObservationEntityBatch(db *Handler, dbms string, after uint64, limi
 		if hashErr != nil {
 			return result, hashErr
 		}
+		updated := *original
+		updated.Scope.EntityID = &item.entity
+		updated.Dimensions = dimensions
+		updated.SeriesHash, hashErr = TimeSeriesSeriesHash(updated.MetricID, updated.Scope, updated.Dimensions)
+		if hashErr != nil {
+			return result, hashErr
+		}
 		p2 := newInformationSeedPlaceholders(dbms)
 		dimArg, provArg := string(dimensionJSON), string(provenanceJSON)
 		entityPlaceholder := p2.Next()
 		dimPlaceholder := p2.Next()
 		provPlaceholder := p2.Next()
 		hashPlaceholder := p2.Next()
+		seriesPlaceholder := p2.Next()
 		idPlaceholder := p2.Next()
 		if dbms == DBPostgresStr {
 			dimPlaceholder += "::jsonb"
 			provPlaceholder += "::jsonb"
 		}
-		update := `UPDATE TimeSeriesObservations SET entity_id=` + entityPlaceholder + `, dimensions=` + dimPlaceholder + `, provenance=` + provPlaceholder + `, provenance_hash=` + hashPlaceholder + `, last_updated_at=CURRENT_TIMESTAMP WHERE observation_id=` + idPlaceholder + ` AND entity_id IS NULL`
-		updateResult, updateErr := tx.Exec(update, item.entity, dimArg, provArg, provenanceHash, item.id)
+		update := `UPDATE TimeSeriesObservations SET entity_id=` + entityPlaceholder + `, dimensions=` + dimPlaceholder + `, provenance=` + provPlaceholder + `, provenance_hash=` + hashPlaceholder + `, series_hash=` + seriesPlaceholder + `, last_updated_at=CURRENT_TIMESTAMP WHERE observation_id=` + idPlaceholder + ` AND entity_id IS NULL`
+		updateResult, updateErr := tx.Exec(update, item.entity, dimArg, provArg, provenanceHash, updated.SeriesHash, item.id)
 		if updateErr != nil {
 			return result, fmt.Errorf("update entity observation %d: %w", item.id, updateErr)
 		}
 		affected, _ := updateResult.RowsAffected()
 		if affected == 1 {
+			if err = decrementTimeSeriesCardinality(context.Background(), tx, dbms, original); err != nil {
+				return result, err
+			}
+			if err = incrementTimeSeriesCardinality(context.Background(), tx, dbms, &updated); err != nil {
+				return result, err
+			}
 			result.Updated++
 			observed := item.observed.UTC()
 			mergeAffectedRange(&result, &observed, &observed)

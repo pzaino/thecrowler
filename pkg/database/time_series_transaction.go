@@ -86,30 +86,20 @@ func (r TransactionTimeSeriesRepository) PreviousObservationContext(ctx context.
 	if lookup.MetricID == 0 {
 		return nil, fmt.Errorf("time-series change lookup metric ID is required")
 	}
-	filter := TimeSeriesQueryFilter{MetricID: &lookup.MetricID, InformationSeedID: lookup.Scope.InformationSeedID, InformationSeedCandidateID: lookup.Scope.InformationSeedCandidateID, SourceID: lookup.Scope.SourceID, SourceInformationSeedID: lookup.Scope.SourceInformationSeedID, IndexID: lookup.Scope.IndexID, EntityID: lookup.Scope.EntityID, SubjectType: lookup.Scope.SubjectType, SubjectID: lookup.Scope.SubjectID, ObjectType: lookup.Scope.ObjectType, ObjectID: lookup.Scope.ObjectID, CorrelationRuleID: lookup.Scope.CorrelationRuleID, CorrelationObjectType1: lookup.Scope.CorrelationObjectType1, CorrelationObjectID1: lookup.Scope.CorrelationObjectID1, CorrelationObjectType2: lookup.Scope.CorrelationObjectType2, CorrelationObjectID2: lookup.Scope.CorrelationObjectID2, Dimensions: lookup.Dimensions, End: &lookup.Before, TimeBasis: lookup.TimeBasis, IncludeDeleted: true, Descending: true}
-	conditions, args, _, err := buildTimeSeriesQueryConditions(r.DBMS, filter, "o")
+	query, args, err := previousTimeSeriesObservationQuery(r.DBMS, lookup)
 	if err != nil {
 		return nil, err
 	}
-	query := `SELECT ` + prefixColumns(timeSeriesObservationColumns, "o") + ` FROM TimeSeriesObservations o WHERE ` + strings.Join(conditions, " AND ") + ` ORDER BY o.observed_at DESC, o.observation_id DESC`
-	rows, err := r.Tx.QueryContext(ctx, query, args...)
+	observation, err := scanTimeSeriesObservation(func(dest ...interface{}) error {
+		return r.Tx.QueryRowContext(ctx, query, args...).Scan(dest...)
+	})
+	if err == sql.ErrNoRows {
+		return nil, ErrTimeSeriesObservationNotFound
+	}
 	if err != nil {
 		return nil, fmt.Errorf("lookup previous transaction observation: %w", err)
 	}
-	defer rows.Close()
-	for rows.Next() {
-		observation, scanErr := scanTimeSeriesObservation(rows.Scan)
-		if scanErr != nil {
-			return nil, scanErr
-		}
-		if dimensionsContain(observation.Dimensions, lookup.Dimensions) {
-			return observation, nil
-		}
-	}
-	if err = rows.Err(); err != nil {
-		return nil, err
-	}
-	return nil, ErrTimeSeriesObservationNotFound
+	return observation, nil
 }
 
 // InsertObservation applies the idempotent Task 3 insert helper in the transaction.
