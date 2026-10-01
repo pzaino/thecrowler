@@ -179,7 +179,7 @@ Defaults keep repetitive metric entries short. A metric-specific field always wi
     overlap: 15m
 ```
 
-Aggregation reads raw observations and materializes query-friendly buckets. The events service runs it only when both `timeseries.enabled` and `timeseries.aggregation.enabled` are true. `schedule` is how often the service wakes up. `batch_size * max_batches` is the maximum work per run, so the example processes at most 10,000 observations before yielding. `overlap` rewinds the checkpoint by 15 minutes so late observations can repair recently completed buckets.
+Aggregation reads raw observations and materializes query-friendly buckets. The events service runs it only when both `timeseries.enabled` and `timeseries.aggregation.enabled` are true. `schedule` is how often the service wakes up. `max_batches` bounds observation scan pages and `max_duration` bounds wall-clock work per run. Budgets are checked between atomic windows, so a window can safely exceed a soft budget but is never partially published. `overlap` rewinds the checkpoint by 15 minutes so late observations can repair recently completed buckets.
 
 Use a short schedule for dashboards, a larger batch window for backfills, and enough overlap to cover normal crawl/indexing delay. If aggregation is disabled, raw observations can still exist, but aggregate-first chart routes have no new materialized buckets until you run aggregation manually.
 
@@ -446,7 +446,8 @@ The top-level `timeseries` object is optional and defaults to disabled. Duration
 | `retention.aggregated` | Administrative aggregate retention horizon. Not scheduled automatically in v1. | `365d` |
 | `aggregation.enabled` | Lets the events service run incremental aggregation when the top-level feature is also enabled. | `false` |
 | `aggregation.schedule` | Events-service aggregation interval. | `5m` |
-| `aggregation.batch_size` / `max_batches` | Upper bound on observations processed per run. | `1000` / `10` |
+| `aggregation.batch_size` / `max_batches` | Observation page size and soft page budget, checked between complete windows. | `1000` / `10` |
+| `aggregation.max_duration` | Soft wall-clock work budget, checked only after a complete atomic window. | `1m` |
 | `aggregation.overlap` | Rewind applied to the checkpoint so late observations can repair complete buckets. | `15m` |
 | `storage.backend` | Declarative storage/partitioning backend. Currently only `postgres`. | `postgres` |
 | `storage.table_prefix` | Validated prefix for deployment policy; shipped table names are fixed. | `timeseries` |
@@ -475,7 +476,7 @@ Entity assignment is **immediate** when the resolver can see an `EntityMembershi
 
 ## Aggregation, late data, reaggregation, and retention
 
-The events service starts incremental aggregation only when both `timeseries.enabled` and `timeseries.aggregation.enabled` are true. `schedule` is a Go duration. Each run is bounded by `batch_size * max_batches` and stores a checkpoint. The next run starts at `checkpoint - overlap`, allowing late observations to replace already materialized complete buckets. Aggregation failure is logged and does not fail indexing/event work.
+The events service starts incremental aggregation only when both `timeseries.enabled` and `timeseries.aggregation.enabled` are true. `schedule` is a Go duration. Each run uses observation-page and wall-clock budgets and stores a checkpoint after every complete atomic window. Budgets are checked only between windows, so oversized windows finish before the run yields. The next run starts at `checkpoint - overlap`, allowing late observations to replace already materialized complete buckets. Aggregation failure is logged and does not fail indexing/event work.
 
 Aggregation uses four distinct mechanisms
 

@@ -21,8 +21,15 @@ func runTimeSeriesAggregation(ctx context.Context, db *cdb.Handler, config cfg.T
 	if err != nil {
 		return cdb.TimeSeriesAggregationResult{}, err
 	}
+	var maxDuration time.Duration
+	if config.Aggregation.MaxDuration != "" {
+		maxDuration, err = time.ParseDuration(config.Aggregation.MaxDuration)
+		if err != nil {
+			return cdb.TimeSeriesAggregationResult{}, err
+		}
+	}
 	return cdb.RunTimeSeriesAggregation(ctx, db, cdb.TimeSeriesAggregationOptions{
-		Overlap: overlap, BatchSize: config.Aggregation.BatchSize, MaxBatches: config.Aggregation.MaxBatches, Now: now,
+		Overlap: overlap, BatchSize: config.Aggregation.BatchSize, MaxBatches: config.Aggregation.MaxBatches, MaxDuration: maxDuration, Now: now,
 	})
 }
 

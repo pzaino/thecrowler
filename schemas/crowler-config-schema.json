@@ -3414,6 +3414,11 @@
               "maximum": 1000,
               "default": 10
             },
+            "max_duration": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*(ns|us|µs|ms|s|m|h|d|w)$",
+              "default": "1m"
+            },
             "overlap": {
               "type": "string",
               "pattern": "^[1-9][0-9]*(ns|us|\u00b5s|ms|s|m|h|d|w)$",

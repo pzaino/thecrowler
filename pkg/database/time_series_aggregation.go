@@ -58,12 +58,13 @@ type TimeSeriesRange struct {
 
 // TimeSeriesAggregationOptions bounds one incremental or explicit range run.
 type TimeSeriesAggregationOptions struct {
-	Range      *TimeSeriesRange
-	Overlap    time.Duration
-	BatchSize  int
-	MaxBatches int
-	Now        time.Time
-	RunKey     string
+	Range       *TimeSeriesRange
+	Overlap     time.Duration
+	BatchSize   int
+	MaxBatches  int
+	MaxDuration time.Duration
+	Now         time.Time
+	RunKey      string
 }
 
 // TimeSeriesAggregationResult reports deterministic work performed by a run.
@@ -74,6 +75,7 @@ type TimeSeriesAggregationResult struct {
 	BatchesProcessed      int
 	WindowsProcessed      int
 	Checkpoint            time.Time
+	BudgetExhausted       bool
 }
 
 // TimeSeriesRetentionOptions configures bounded raw and aggregate pruning.
@@ -317,6 +319,7 @@ func RunTimeSeriesAggregation(
 	if options.RunKey == "" {
 		options.RunKey = "timeseries-aggregation"
 	}
+	runStarted := time.Now()
 
 	timeSeriesAggregationMutex.Lock()
 	lease, err := acquireTimeSeriesAggregationLease(ctx, db, dbms)
@@ -429,7 +432,7 @@ func RunTimeSeriesAggregation(
 	}
 	result.Checkpoint = checkpoint
 
-	for window := 0; window < options.MaxBatches && checkpoint.Before(options.Now); window++ {
+	for window := 0; checkpoint.Before(options.Now); window++ {
 
 		windowEnd, boundaryErr := nextTimeSeriesAggregationWindowEnd(
 			checkpoint,
@@ -496,6 +499,22 @@ func RunTimeSeriesAggregation(
 		checkpoint = windowEnd
 		result.Checkpoint = checkpoint
 		result.Range.End = checkpoint
+
+		// Budgets are observed only after replaceTimeSeriesAggregates has atomically
+		// published the entire affected window and its durable checkpoint. A large
+		// window may therefore exceed either soft budget, but is never partially
+		// materialized and the next invocation resumes at this checkpoint.
+		batchBudgetReached := result.BatchesProcessed >= options.MaxBatches
+		durationBudgetReached := options.MaxDuration > 0 && time.Since(runStarted) >= options.MaxDuration
+		if checkpoint.Before(options.Now) && (batchBudgetReached || durationBudgetReached) {
+			result.BudgetExhausted = true
+			reason := "batches"
+			if durationBudgetReached {
+				reason = "duration"
+			}
+			timeSeriesAggregationBudgetStops.WithLabelValues(reason).Inc()
+			break
+		}
 	}
 
 	return result, nil

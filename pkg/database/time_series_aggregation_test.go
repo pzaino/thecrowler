@@ -901,3 +901,74 @@ func TestEarliestTimeSeriesObservationSQLite(t *testing.T) {
 		)
 	}
 }
+
+func TestTimeSeriesAggregationBudgetStopsOnlyAfterCheckpointedWindowAndResumes(t *testing.T) {
+	db, closeDB := openEntityTimeSeriesTestDB(t)
+	defer closeDB()
+
+	metric, err := UpsertTimeSeriesMetric(db, &TimeSeriesMetric{
+		Key: "budget-resume", DisplayName: "budget-resume",
+		SourceKind: cfg.TimeSeriesSourceCustom, ValueType: cfg.TimeSeriesValueInteger,
+		Aggregate: cfg.TimeSeriesAggregateCount, Bucket: cfg.TimeSeriesBucketOneHour,
+		TimeBasis: cfg.TimeSeriesTimeObservedAt, DedupeScope: cfg.TimeSeriesDedupeGlobal,
+		ObjectType: cfg.TimeSeriesObjectWebObject, FailurePolicy: cfg.TimeSeriesFailureLogSkip,
+		Selector: []byte(`{}`), Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	for i, offset := range []time.Duration{10 * time.Minute, 70 * time.Minute, 130 * time.Minute} {
+		value := int64(i + 1)
+		observed := start.Add(offset)
+		if _, err = InsertTimeSeriesObservation(db, &TimeSeriesObservation{
+			MetricID: metric.ID, ObservedAt: observed, CollectedAt: observed,
+			BucketStart: observed.Truncate(time.Hour), BucketEnd: observed.Truncate(time.Hour).Add(time.Hour),
+			Value: TimeSeriesValue{Integer: &value}, ValueHash: fmt.Sprintf("budget-value-%d", i),
+			DedupeKey: fmt.Sprintf("budget-observation-%d", i),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	const runKey = "test-budget-resume"
+	first, err := RunTimeSeriesAggregation(context.Background(), db, TimeSeriesAggregationOptions{
+		BatchSize: 1, MaxBatches: 100, MaxDuration: time.Nanosecond,
+		Now: start.Add(3 * time.Hour), RunKey: runKey,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.BudgetExhausted || first.WindowsProcessed != 1 || !first.Checkpoint.Equal(start.Add(time.Hour)) {
+		t.Fatalf("first run = %#v, want one complete budget-stopped window at 01:00", first)
+	}
+	aggregates, err := QueryTimeSeriesAggregates(db, TimeSeriesQueryFilter{MetricID: &metric.ID, Pagination: TimeSeriesPagination{Limit: 100}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if aggregates.Count != 1 || !aggregates.Aggregates[0].BucketEnd.Equal(start.Add(time.Hour)) {
+		t.Fatalf("aggregates after budget stop = %#v, want only complete first bucket", aggregates.Aggregates)
+	}
+
+	second, err := RunTimeSeriesAggregation(context.Background(), db, TimeSeriesAggregationOptions{
+		BatchSize: 1, MaxBatches: 100, Now: start.Add(3 * time.Hour), RunKey: runKey,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.BudgetExhausted || !second.Checkpoint.Equal(start.Add(3*time.Hour)) {
+		t.Fatalf("resumed run = %#v, want catch-up through 03:00", second)
+	}
+	aggregates, err = QueryTimeSeriesAggregates(db, TimeSeriesQueryFilter{MetricID: &metric.ID, Pagination: TimeSeriesPagination{Limit: 100}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if aggregates.Count != 3 {
+		t.Fatalf("aggregate count after resume = %d, want 3", aggregates.Count)
+	}
+	stored, err := timeSeriesAggregationCheckpoint(db, runKey)
+	if err != nil || !stored.Equal(second.Checkpoint) {
+		t.Fatalf("stored checkpoint = %s, %v; want %s", stored, err, second.Checkpoint)
+	}
+}
