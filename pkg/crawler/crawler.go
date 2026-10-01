@@ -1856,22 +1856,33 @@ func persistPostgresMetaTagBatch(tx *sql.Tx, indexID uint64, batch []persistedMe
 		ON CONFLICT (name, content) DO NOTHING`, pq.Array(names), pq.Array(contents)); err != nil {
 		return nil, err
 	}
+	// Link insertion and identity lookup are separate statements on purpose. A
+	// conflicting INSERT waits for its concurrent owner, and the following
+	// READ COMMITTED snapshot can then see that owner's committed row. Avoiding
+	// a dummy UPDATE preserves the relationship timestamps and skips its WAL.
+	if _, err := tx.Exec(`
+		WITH input AS (
+			SELECT name, content
+			FROM unnest($1::text[], $2::text[]) AS i(name, content)
+		), resolved AS (
+			SELECT m.metatag_id
+			FROM input i JOIN MetaTags m ON m.name = i.name AND m.content = i.content
+		)
+		INSERT INTO MetaTagsIndex (index_id, metatag_id)
+		SELECT $3, metatag_id FROM resolved
+		ON CONFLICT (index_id, metatag_id) DO NOTHING`, pq.Array(names), pq.Array(contents), indexID); err != nil {
+		return nil, err
+	}
 	rows, err := tx.Query(`
 		WITH input AS (
 			SELECT name, content, ordinality
 			FROM unnest($1::text[], $2::text[]) WITH ORDINALITY AS i(name, content, ordinality)
-		), resolved AS (
-			SELECT i.name, i.content, i.ordinality, m.metatag_id
-			FROM input i JOIN MetaTags m ON m.name = i.name AND m.content = i.content
-		), linked AS (
-			INSERT INTO MetaTagsIndex (index_id, metatag_id)
-			SELECT $3, metatag_id FROM resolved
-			ON CONFLICT (index_id, metatag_id) DO UPDATE SET metatag_id = EXCLUDED.metatag_id
-			RETURNING sim_id, metatag_id
 		)
-		SELECT r.name, r.content, r.metatag_id, l.sim_id
-		FROM resolved r JOIN linked l USING (metatag_id)
-		ORDER BY r.ordinality`, pq.Array(names), pq.Array(contents), indexID)
+		SELECT i.name, i.content, m.metatag_id, mi.sim_id
+		FROM input i
+		JOIN MetaTags m ON m.name = i.name AND m.content = i.content
+		JOIN MetaTagsIndex mi ON mi.metatag_id = m.metatag_id AND mi.index_id = $3
+		ORDER BY i.ordinality`, pq.Array(names), pq.Array(contents), indexID)
 	if err != nil {
 		return nil, err
 	}
