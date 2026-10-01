@@ -3729,6 +3729,12 @@ ALTER TABLE timeseriesaggregates OWNER TO :CROWLER_DB_USER;
 ALTER TABLE entityobservationbackfillcheckpoints OWNER TO :CROWLER_DB_USER;
 ALTER TABLE emailmailboxstate OWNER TO :CROWLER_DB_USER;
 ALTER TABLE emailmessagestate OWNER TO :CROWLER_DB_USER;
+ALTER TABLE TimeSeriesMetrics OWNER TO :CROWLER_DB_USER;
+ALTER TABLE TimeSeriesObservations OWNER TO :CROWLER_DB_USER;
+ALTER TABLE TimeSeriesActiveSeries OWNER TO :CROWLER_DB_USER;
+ALTER TABLE TimeSeriesActiveDimensionValues OWNER TO :CROWLER_DB_USER;
+ALTER TABLE TimeSeriesArchivedSeries OWNER TO :CROWLER_DB_USER;
+ALTER TABLE TimeSeriesArchivedDimensionValues OWNER TO :CROWLER_DB_USER;
 
 -- Grants permissions to the user on the :"POSTGRES_DB" database
 SELECT grant_sequence_permissions('public', :'CROWLER_DB_USER');

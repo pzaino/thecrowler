@@ -1,3 +1,13 @@
+-- Note: Due to me forgetting to add this on installation of 1.13, you
+--       now need to run it manually before running this migration script:
+-- ALTER TABLE TimeSeriesMetrics OWNER TO :CROWLER_DB_USER;
+-- ALTER TABLE TimeSeriesObservations OWNER TO :CROWLER_DB_USER;
+-- ALTER TABLE TimeSeriesActiveSeries OWNER TO :CROWLER_DB_USER;
+-- ALTER TABLE TimeSeriesActiveDimensionValues OWNER TO :CROWLER_DB_USER;
+-- ALTER TABLE TimeSeriesArchivedSeries OWNER TO :CROWLER_DB_USER;
+-- ALTER TABLE TimeSeriesArchivedDimensionValues OWNER TO :CROWLER_DB_USER;
+-- where :CROWLER_DB_USER is the database user you've defined for the CROWler.
+
 -- series_hash is derived acceleration data. The metric, scope, and dimensions
 -- columns remain authoritative. Add it nullable first so old writers continue
 -- to work while this release is rolled out.
