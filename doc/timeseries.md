@@ -401,6 +401,12 @@ Information Seed/correlation lifecycle emitters produce `new`, `unchanged`, and 
 
 ### Cardinality overflow
 
+The exact series and per-dimension-value identities, reference-count lifecycle,
+transaction boundaries, Source/retention/metric cleanup rules, and the future
+administrative rebuild procedure are specified in the
+[cardinality identity and lifecycle contract](timeseries-cardinality-accounting.md).
+That document is a design contract; production enforcement remains unchanged.
+
 `drop`, `hash`, `overflow_bucket`. Limits are `max_series_per_metric`, `max_dimensions`, and `max_values_per_dimension`. Metric-level settings may override global settings. `drop` is the safest default. When the crawler cardinality guard reports an overflow, `hash` switches the observation value to hash-only storage while retaining its dimensions; `overflow_bucket` replaces the dimension set with `{"overflow":"__overflow__"}`. These behaviors prevent direct value retention or unbounded new groups, but operators should still choose conservative limits.
 
 ## Selectors and examples
