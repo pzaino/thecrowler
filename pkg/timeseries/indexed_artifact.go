@@ -178,6 +178,7 @@ func (e *Emitter) emitIndexedArtifactMetric(snapshot *EnabledMetricSnapshot, met
 	if err != nil {
 		return err
 	}
+	e.debugf("indexed_artifact source=%s metric=%q row_id=%d scopes=%d", input.SourceKind, metric.Key, input.RowID, len(resolvedScopes.scopes))
 	basePolicy := e.preparationPolicy(metric)
 	cardinalityPolicy := e.cardinalityPolicy(metric)
 	for i := range resolvedScopes.scopes {
@@ -197,6 +198,10 @@ func (e *Emitter) emitIndexedArtifactMetric(snapshot *EnabledMetricSnapshot, met
 		observation := cdb.TimeSeriesObservation{MetricID: metric.ID, ObservedAt: observedAt, EffectiveAt: effectiveAt, CollectedAt: e.now(), SourceUpdatedAt: sourceUpdatedAt, BucketStart: bucketStart, BucketEnd: bucketEnd, Scope: scope, Value: value, Dimensions: cloneMap(dimensions)}
 		prepared, prepareErr := cdb.PrepareTimeSeriesObservation(observation, metric.ValueType, policy)
 		if prepareErr != nil {
+			if policy.CardinalityExceeded && errors.Is(prepareErr, cdb.ErrTimeSeriesValueRejected) {
+				e.debugf("observation metric=%q result=cardinality_rejected", metric.Key)
+				continue
+			}
 			return prepareErr
 		}
 		observation = prepared.Observation
@@ -282,8 +287,10 @@ func (e *Emitter) emitIndexedArtifactMetric(snapshot *EnabledMetricSnapshot, met
 		}
 		if insertResult.Duplicate {
 			recordEmitterOperation(metricOperationInsert, "duplicate")
+			e.debugf("observation metric=%q result=duplicate observation_id=%d", metric.Key, insertResult.ObservationID)
 		} else {
 			recordEmitterOperation(metricOperationInsert, "inserted")
+			e.debugf("observation metric=%q result=inserted observation_id=%d", metric.Key, insertResult.ObservationID)
 		}
 	}
 	return nil

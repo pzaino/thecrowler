@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
@@ -68,39 +69,63 @@ func TimeSeriesCardinalityExceededTx(ctx context.Context, tx *sql.Tx, dbms strin
 	if tx == nil {
 		return false, fmt.Errorf("time-series cardinality transaction is nil")
 	}
-	if dbms == DBPostgresStr {
-		var locked uint64
-		if err := tx.QueryRowContext(ctx, `SELECT metric_id FROM TimeSeriesMetrics WHERE metric_id=$1 FOR UPDATE`, metricID).Scan(&locked); err != nil {
-			return false, err
-		}
-	}
 	seriesHash, err := TimeSeriesSeriesHash(metricID, scope, dimensions)
 	if err != nil {
 		return false, err
 	}
+	exceeded, missing, err := timeSeriesCardinalityDecision(ctx, tx, dbms, metricID, seriesHash, scope, dimensions, policy)
+	if err != nil || exceeded || dbms != DBPostgresStr || !missing {
+		return exceeded, err
+	}
+	// Only new identities need serialization. The transaction-scoped lock is
+	// independent of TimeSeriesMetrics, and therefore cannot conflict with the
+	// parent-row key locks taken while inserting aggregates. Rechecking after
+	// acquiring it makes the count-and-admit decision exact across processes.
+	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, timeSeriesCardinalityLockKey(metricID)); err != nil {
+		return false, fmt.Errorf("lock PostgreSQL time-series cardinality for metric %d: %w", metricID, err)
+	}
+	exceeded, _, err = timeSeriesCardinalityDecision(ctx, tx, dbms, metricID, seriesHash, scope, dimensions, policy)
+	return exceeded, err
+}
+
+// timeSeriesCardinalityLockKey reserves a stable 64-bit advisory-lock namespace
+// by hashing a versioned domain and the full metric ID. Collisions are possible
+// only at the SHA-256 truncation boundary and merely reduce concurrency; they
+// cannot weaken cardinality correctness.
+func timeSeriesCardinalityLockKey(metricID uint64) int64 {
+	digest := timeSeriesSHA256("thecrowler:timeseries-cardinality:v1", fmt.Sprintf("metric=%d", metricID))
+	// Keep 16 hex chars of entropy while forcing the top bit clear so the value
+	// always fits in int64 without unsigned-to-signed overflow.
+	signedHex := string([]byte{digest[0] & 0x37}) + digest[1:16]
+	key, _ := strconv.ParseInt(signedHex, 16, 64)
+	return key
+}
+
+func timeSeriesCardinalityDecision(ctx context.Context, tx *sql.Tx, dbms string, metricID uint64, seriesHash string, scope TimeSeriesScope, dimensions map[string]interface{}, policy cfg.TimeSeriesCardinalityConfig) (exceeded, missing bool, err error) {
 	if policy.MaxSeriesPerMetric > 0 {
 		probe := &TimeSeriesObservation{MetricID: metricID, Scope: scope, Dimensions: dimensions}
 		identity, identityErr := timeSeriesSeriesIdentityJSON(probe)
 		if identityErr != nil {
-			return false, identityErr
+			return false, missing, identityErr
 		}
 		p := newInformationSeedPlaceholders(dbms)
 		var stored string
 		err = tx.QueryRowContext(ctx, `SELECT series_identity FROM TimeSeriesActiveSeries WHERE metric_id=`+p.Next()+` AND series_hash=`+p.Next(), metricID, seriesHash).Scan(&stored)
 		if err != nil && err != sql.ErrNoRows {
-			return false, err
+			return false, missing, err
 		}
 		if err == nil && stored != identity {
-			return false, fmt.Errorf("time-series series hash collision for metric %d", metricID)
+			return false, missing, fmt.Errorf("time-series series hash collision for metric %d", metricID)
 		}
 		if err == sql.ErrNoRows {
+			missing = true
 			var count int
 			p = newInformationSeedPlaceholders(dbms)
 			if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM TimeSeriesActiveSeries WHERE metric_id=`+p.Next(), metricID).Scan(&count); err != nil {
-				return false, err
+				return false, missing, err
 			}
 			if count >= policy.MaxSeriesPerMetric {
-				return true, nil
+				return true, missing, nil
 			}
 		}
 	}
@@ -113,30 +138,31 @@ func TimeSeriesCardinalityExceededTx(ctx context.Context, tx *sql.Tx, dbms strin
 		for _, key := range keys {
 			hash, _, hashErr := timeSeriesDimensionValueHash(metricID, key, dimensions[key])
 			if hashErr != nil {
-				return false, hashErr
+				return false, missing, hashErr
 			}
 			p := newInformationSeedPlaceholders(dbms)
 			var storedValue string
 			if err = tx.QueryRowContext(ctx, `SELECT canonical_value FROM TimeSeriesActiveDimensionValues WHERE metric_id=`+p.Next()+` AND dimension_key=`+p.Next()+` AND value_hash=`+p.Next(), metricID, key, hash).Scan(&storedValue); err != nil && err != sql.ErrNoRows {
-				return false, err
+				return false, missing, err
 			}
 			_, canonical, _ := timeSeriesDimensionValueHash(metricID, key, dimensions[key])
 			if err == nil && storedValue != canonical {
-				return false, fmt.Errorf("time-series dimension value hash collision for metric %d dimension %q", metricID, key)
+				return false, missing, fmt.Errorf("time-series dimension value hash collision for metric %d dimension %q", metricID, key)
 			}
 			if err == sql.ErrNoRows {
+				missing = true
 				var count int
 				p = newInformationSeedPlaceholders(dbms)
 				if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM TimeSeriesActiveDimensionValues WHERE metric_id=`+p.Next()+` AND dimension_key=`+p.Next(), metricID, key).Scan(&count); err != nil {
-					return false, err
+					return false, missing, err
 				}
 				if count >= policy.MaxValuesPerDimension {
-					return true, nil
+					return true, missing, nil
 				}
 			}
 		}
 	}
-	return false, nil
+	return false, missing, nil
 }
 
 func timeSeriesDimensionValueHash(metricID uint64, key string, value interface{}) (string, string, error) {

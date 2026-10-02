@@ -65,6 +65,79 @@ func TestIndexingAdmissionCancellationAndNoPermitLeak(t *testing.T) {
 	release() // release is deliberately idempotent.
 }
 
+func TestIndexingAdmissionLimitOneUsesSinglePermit(t *testing.T) {
+	r := newIndexingAdmissionRegistry()
+	release, err := r.acquire(context.Background(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+
+	sem := r.limiters[1]
+	if sem == nil {
+		t.Fatal("limit 1 did not create a semaphore")
+	}
+	if got, want := cap(sem), 1; got != want {
+		t.Fatalf("semaphore capacity = %d, want %d", got, want)
+	}
+	if got, want := len(sem), 1; got != want {
+		t.Fatalf("admitted operations = %d, want %d", got, want)
+	}
+}
+
+func TestIndexingAdmissionUnlimited(t *testing.T) {
+	r := newIndexingAdmissionRegistry()
+	const callers = 32
+	type result struct {
+		release func()
+		err     error
+	}
+	results := make(chan result, callers)
+	start := make(chan struct{})
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	// Keep every acquisition outstanding. A bounded semaphore smaller than the
+	// caller count could not admit every goroutine and fill the results channel.
+	for range callers {
+		go func() {
+			<-start
+			release, err := r.acquire(ctx, 0)
+			results <- result{release: release, err: err}
+		}()
+	}
+	close(start)
+
+	releases := make([]func(), 0, callers)
+	for range callers {
+		got := <-results
+		if got.err != nil {
+			t.Fatalf("acquire unlimited admission: %v", got.err)
+		}
+		releases = append(releases, got.release)
+	}
+	if len(r.limiters) != 0 {
+		t.Fatalf("unlimited admission created %d limiters, want none", len(r.limiters))
+	}
+	for _, release := range releases {
+		release()
+		release() // The unlimited release is a naturally idempotent no-op.
+	}
+}
+
+func TestIndexingAdmissionUnlimitedHonorsCancelledContext(t *testing.T) {
+	r := newIndexingAdmissionRegistry()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := r.acquire(ctx, 0); !errors.Is(err, context.Canceled) {
+		t.Fatalf("unlimited acquire error = %v, want context.Canceled", err)
+	}
+	if len(r.limiters) != 0 {
+		t.Fatalf("cancelled unlimited admission created %d limiters, want none", len(r.limiters))
+	}
+}
+
 func TestIndexingAdmissionPreservesEachChangeChain(t *testing.T) {
 	r := newIndexingAdmissionRegistry()
 	want := map[int][]string{}

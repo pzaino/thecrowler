@@ -65,7 +65,7 @@ crawler:
   query_timer: 30
   # Concurrent workers; use ≥3 when network discovery is enabled
   workers: 3
-  # Concurrent synchronous page-indexing transactions. Independent of workers and database.max_conns.
+  # Concurrent synchronous page-indexing transactions (0 = unlimited). Independent of workers and database.max_conns.
   indexing_concurrency: 1
   # Per-engine overrides (optional)
   engine: []

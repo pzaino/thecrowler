@@ -18,7 +18,13 @@ func newIndexingAdmissionRegistry() *indexingAdmissionRegistry {
 }
 
 func (r *indexingAdmissionRegistry) acquire(ctx context.Context, limit int) (func(), error) {
-	if limit < 1 {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if limit == 0 {
+		return func() {}, nil
+	}
+	if limit < 0 {
 		limit = 1
 	}
 	r.mu.Lock()

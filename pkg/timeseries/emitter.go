@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -26,6 +27,13 @@ type Repository interface {
 	InsertObservation(observation *cdb.TimeSeriesObservation) (cdb.TimeSeriesInsertResult, error)
 }
 
+// transactionFatalErrorClassifier is implemented by repositories that use a
+// caller-owned transaction. Such errors must bypass per-metric skip policies so
+// the owner can roll the unusable transaction back immediately.
+type transactionFatalErrorClassifier interface {
+	IsTransactionFatalError(error) bool
+}
+
 // ScopeResolver keeps source-specific ownership discovery outside the emitter.
 type ScopeResolver interface {
 	ResolveScopes(input ObjectAttributeInput) ([]cdb.TimeSeriesScope, error)
@@ -38,7 +46,8 @@ type CardinalityGuard interface {
 
 // Logger is intentionally small so crawler logging and tests can supply adapters.
 type Logger interface {
-	Printf(format string, args ...interface{})
+	Debugf(format string, args ...interface{})
+	Errorf(format string, args ...interface{})
 }
 
 // ObjectAttributeInput is the agnostic event produced after an ObjectAttributes write.
@@ -92,11 +101,18 @@ func (e *Emitter) LoadEnabledMetricSnapshot() (*EnabledMetricSnapshot, error) {
 		return &EnabledMetricSnapshot{}, nil
 	}
 	recordEmitterOperation(metricOperationMetricLookup, "success")
+	// Transaction-scoped cardinality locks are keyed by metric. A stable
+	// ascending order prevents pages containing several metrics from acquiring
+	// those locks in opposite orders, even for repository implementations that
+	// do not guarantee query ordering.
+	sort.SliceStable(metrics, func(i, j int) bool { return metrics[i].ID < metrics[j].ID })
+	enabledCount := 0
 	s := &EnabledMetricSnapshot{bySource: make(map[cfg.TimeSeriesSourceKind][]cdb.TimeSeriesMetric), bySourceObject: make(map[cfg.TimeSeriesSourceKind]map[string][]cdb.TimeSeriesMetric)}
 	for _, metric := range metrics {
 		if !metric.Enabled {
 			continue
 		}
+		enabledCount++
 		s.bySource[metric.SourceKind] = append(s.bySource[metric.SourceKind], metric)
 		if s.bySourceObject[metric.SourceKind] == nil {
 			s.bySourceObject[metric.SourceKind] = make(map[string][]cdb.TimeSeriesMetric)
@@ -104,6 +120,7 @@ func (e *Emitter) LoadEnabledMetricSnapshot() (*EnabledMetricSnapshot, error) {
 		objectType := string(metric.ObjectType)
 		s.bySourceObject[metric.SourceKind][objectType] = append(s.bySourceObject[metric.SourceKind][objectType], metric)
 	}
+	e.debugf("loaded enabled metrics count=%d", enabledCount)
 	return s, nil
 }
 
@@ -188,6 +205,7 @@ func (e *Emitter) emitMetric(metric cdb.TimeSeriesMetric, input ObjectAttributeI
 	if err != nil {
 		return err
 	}
+	e.debugf("object_attribute metric=%q attribute=%q scopes=%d", metric.Key, input.AttributeKey, len(scopes))
 	basePolicy := e.preparationPolicy(metric)
 	cardinalityPolicy := e.cardinalityPolicy(metric)
 	for _, scope := range scopes {
@@ -204,6 +222,10 @@ func (e *Emitter) emitMetric(metric cdb.TimeSeriesMetric, input ObjectAttributeI
 		observation := cdb.TimeSeriesObservation{MetricID: metric.ID, ObservedAt: observedAt, EffectiveAt: effectiveAt, CollectedAt: e.now(), SourceUpdatedAt: sourceUpdatedAt, BucketStart: bucketStart, BucketEnd: bucketEnd, Scope: scope, Value: value, Dimensions: cloneMap(dimensions)}
 		prepared, prepareErr := cdb.PrepareTimeSeriesObservation(observation, metric.ValueType, policy)
 		if prepareErr != nil {
+			if policy.CardinalityExceeded && errors.Is(prepareErr, cdb.ErrTimeSeriesValueRejected) {
+				e.debugf("observation metric=%q result=cardinality_rejected", metric.Key)
+				continue
+			}
 			return prepareErr
 		}
 		observation = prepared.Observation
@@ -266,8 +288,10 @@ func (e *Emitter) emitMetric(metric cdb.TimeSeriesMetric, input ObjectAttributeI
 		}
 		if insertResult.Duplicate {
 			recordEmitterOperation(metricOperationInsert, "duplicate")
+			e.debugf("observation metric=%q result=duplicate observation_id=%d", metric.Key, insertResult.ObservationID)
 		} else {
 			recordEmitterOperation(metricOperationInsert, "inserted")
+			e.debugf("observation metric=%q result=inserted observation_id=%d", metric.Key, insertResult.ObservationID)
 		}
 	}
 	return nil
@@ -575,6 +599,9 @@ func (e *Emitter) handleFailure(policy cfg.TimeSeriesFailurePolicy, context stri
 	if err == nil {
 		return nil
 	}
+	if classifier, ok := e.Repository.(transactionFatalErrorClassifier); ok && classifier.IsTransactionFatalError(err) {
+		return fmt.Errorf("%s: shared transaction aborted: %w", context, err)
+	}
 	if policy == cfg.TimeSeriesFailureFailIndexing {
 		return fmt.Errorf("%s: %w", context, err)
 	}
@@ -582,10 +609,16 @@ func (e *Emitter) handleFailure(policy cfg.TimeSeriesFailurePolicy, context stri
 		return nil
 	}
 	if e.Logger != nil {
-		e.Logger.Printf("time-series %s: %v", context, err)
+		e.Logger.Errorf("%s: %v", context, err)
 	}
 	return nil
 }
+func (e *Emitter) debugf(format string, args ...interface{}) {
+	if e != nil && e.Logger != nil {
+		e.Logger.Debugf(format, args...)
+	}
+}
+
 func (e *Emitter) now() time.Time {
 	if e.Now != nil {
 		return e.Now().UTC()

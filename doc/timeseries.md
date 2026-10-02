@@ -405,7 +405,14 @@ The exact series and per-dimension-value identities, reference-count lifecycle,
 transaction boundaries, Source/retention/metric cleanup rules, and the future
 administrative rebuild procedure are specified in the
 [cardinality identity and lifecycle contract](timeseries-cardinality-accounting.md).
-That document is a design contract; production enforcement remains unchanged.
+That document is a design contract. On PostgreSQL, an optimistic lookup lets
+already-active series proceed without synchronization. Admission of a new
+identity takes a transaction-scoped advisory lock keyed by a versioned SHA-256
+digest of the metric ID, then repeats the count-and-admit decision. The lock is
+released automatically with the observation transaction, is independent for
+different metrics, and never locks the `TimeSeriesMetrics` definition row.
+Consequently exact limits remain atomic with observation accounting without
+conflicting with aggregate foreign-key parent-row protection.
 
 `drop`, `hash`, `overflow_bucket`. Limits are `max_series_per_metric`, `max_dimensions`, and `max_values_per_dimension`. Metric-level settings may override global settings. `drop` is the safest default. When the crawler cardinality guard reports an overflow, `hash` switches the observation value to hash-only storage while retaining its dimensions; `overflow_bucket` replaces the dimension set with `{"overflow":"__overflow__"}`. These behaviors prevent direct value retention or unbounded new groups, but operators should still choose conservative limits.
 

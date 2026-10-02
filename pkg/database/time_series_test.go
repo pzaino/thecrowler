@@ -1,6 +1,8 @@
 package database
 
 import (
+	"context"
+	"database/sql"
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
@@ -10,9 +12,51 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/lib/pq"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
+
+func TestPostgresCardinalityUsesAdvisoryLockAndRechecks(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	mock.ExpectBegin()
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Both the optimistic probe and the authoritative post-lock probe see a
+	// missing identity and an available slot.
+	for pass := 0; pass < 2; pass++ {
+		mock.ExpectQuery(`SELECT series_identity FROM TimeSeriesActiveSeries`).WillReturnError(sql.ErrNoRows)
+		mock.ExpectQuery(`SELECT COUNT\(\*\) FROM TimeSeriesActiveSeries`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+		if pass == 0 {
+			mock.ExpectExec(`SELECT pg_advisory_xact_lock\(\$1\)`).WithArgs(timeSeriesCardinalityLockKey(17)).WillReturnResult(sqlmock.NewResult(0, 1))
+		}
+	}
+	exceeded, err := TimeSeriesCardinalityExceededTx(context.Background(), tx, DBPostgresStr, 17, TimeSeriesScope{}, nil, cfg.TimeSeriesCardinalityConfig{MaxSeriesPerMetric: 1})
+	if err != nil || exceeded {
+		t.Fatalf("decision = exceeded %t, err %v", exceeded, err)
+	}
+	if err = mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTransactionRepositoryClassifiesPostgresTransactionErrors(t *testing.T) {
+	repo := TransactionTimeSeriesRepository{DBMS: DBPostgresStr}
+	for _, code := range []pq.ErrorCode{"40P01", "40001", "23505", "25P02"} {
+		if !repo.IsTransactionFatalError(fmt.Errorf("write observation: %w", &pq.Error{Code: code, Severity: "ERROR"})) {
+			t.Errorf("SQLSTATE %s was not classified as transaction-fatal", code)
+		}
+	}
+	if repo.IsTransactionFatalError(errors.New("invalid metric value")) {
+		t.Fatal("ordinary metric errors must remain subject to failure_policy")
+	}
+}
 
 type timeSeriesArgumentMatcher func(driver.Value) bool
 

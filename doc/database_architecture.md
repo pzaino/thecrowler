@@ -390,6 +390,15 @@ The backfill deliberately does **not** update `TimeSeriesAggregates`. Its result
 
 `TimeSeriesMetrics`, `TimeSeriesObservations`, `TimeSeriesAggregates`, `TimeSeriesAggregationRuns`, and `EntityObservationBackfillCheckpoints` implement the v1 analytical projection on PostgreSQL, MySQL, and SQLite. Search and discovery tables remain authoritative; aggregate rows can be rebuilt from retained observations, and entity backfill updates raw scope before explicit reaggregation.
 
+PostgreSQL cardinality admission does not lock `TimeSeriesMetrics`. Existing
+series use lock-free active-accounting lookups; a potentially new series or
+dimension value takes a transaction-scoped advisory lock derived from a
+versioned SHA-256 digest of its metric ID and rechecks the exact active tables.
+The lock lasts only for the owning observation transaction, separates unrelated
+metrics, and cannot participate in the aggregate foreign-key parent-row lock
+cycle. Observation insertion and active reference-count updates remain in that
+same transaction.
+
 ### Aggregation coordination and atomicity
 
 Time-series aggregation separates four concerns: a process-local mutex, a backend cluster-wide writer lease, short atomic replacement transactions, and durable checkpoints identified by `RunKey`. These are not interchangeable. In particular, `RunKey` names checkpoint/run state and is **not** the writer-lock identity; all run keys contend for the same backend writer lease.

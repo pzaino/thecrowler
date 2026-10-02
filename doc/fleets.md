@@ -65,7 +65,9 @@ the interval, and deltas for completed pages and pool waits. Keep crawler
 `workers` and `crawler.indexing_concurrency` fixed for a pool sweep; then sweep
 indexing admission separately at the chosen pool capacity. This preserves the
 three distinct controls: browser/crawler concurrency, persistence admission,
-and SQL-pool capacity.
+and SQL-pool capacity. An `indexing_concurrency` value of 0 disables the local
+indexing admission limit; positive values set the maximum number of concurrent
+indexing operations.
 
 Choose the smallest setting before the knee of the throughput curve: increasing
 the pool must produce a repeatable throughput or catch-up improvement without
