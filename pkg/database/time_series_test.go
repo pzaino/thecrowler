@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +20,11 @@ import (
 )
 
 func TestPostgresCardinalityUsesAdvisoryLockAndRechecks(t *testing.T) {
+	const metricID uint64 = 1
+	lockKey, err := timeSeriesCardinalityLockKey(metricID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
@@ -34,15 +41,69 @@ func TestPostgresCardinalityUsesAdvisoryLockAndRechecks(t *testing.T) {
 		mock.ExpectQuery(`SELECT series_identity FROM TimeSeriesActiveSeries`).WillReturnError(sql.ErrNoRows)
 		mock.ExpectQuery(`SELECT COUNT\(\*\) FROM TimeSeriesActiveSeries`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 		if pass == 0 {
-			mock.ExpectExec(`SELECT pg_advisory_xact_lock\(\$1\)`).WithArgs(timeSeriesCardinalityLockKey(17)).WillReturnResult(sqlmock.NewResult(0, 1))
+			mock.ExpectExec(`SELECT pg_advisory_xact_lock\(\$1\)`).WithArgs(lockKey).WillReturnResult(sqlmock.NewResult(0, 1))
 		}
 	}
-	exceeded, err := TimeSeriesCardinalityExceededTx(context.Background(), tx, DBPostgresStr, 17, TimeSeriesScope{}, nil, cfg.TimeSeriesCardinalityConfig{MaxSeriesPerMetric: 1})
+	exceeded, err := TimeSeriesCardinalityExceededTx(context.Background(), tx, DBPostgresStr, metricID, TimeSeriesScope{}, nil, cfg.TimeSeriesCardinalityConfig{MaxSeriesPerMetric: 1})
 	if err != nil || exceeded {
 		t.Fatalf("decision = exceeded %t, err %v", exceeded, err)
 	}
 	if err = mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestTimeSeriesCardinalityLockKey(t *testing.T) {
+	regressionIDs := []uint64{1, 2, 3, 4, 5, 6, 7, 8, 17}
+	for _, metricID := range regressionIDs {
+		digest := timeSeriesSHA256("thecrowler:timeseries-cardinality:v1", fmt.Sprintf("metric=%d", metricID))
+		raw, err := strconv.ParseUint(digest[:16], 16, 64)
+		if err != nil {
+			t.Fatalf("parse independent expected key for metric %d: %v", metricID, err)
+		}
+		want := int64(raw & uint64(math.MaxInt64))
+		got, err := timeSeriesCardinalityLockKey(metricID)
+		if err != nil {
+			t.Fatalf("key for metric %d: %v", metricID, err)
+		}
+		if got != want {
+			t.Errorf("key for metric %d = %d, want %d", metricID, got, want)
+		}
+	}
+
+	knownBrokenIDs := []uint64{1, 2, 3, 4, 5, 6, 8}
+	keys := make(map[int64]uint64, len(knownBrokenIDs))
+	for _, metricID := range knownBrokenIDs {
+		key, err := timeSeriesCardinalityLockKey(metricID)
+		if err != nil {
+			t.Fatalf("key for metric %d: %v", metricID, err)
+		}
+		if previous, exists := keys[key]; exists {
+			t.Errorf("metrics %d and %d unexpectedly share lock key %d", previous, metricID, key)
+		}
+		keys[key] = metricID
+	}
+
+	first, err := timeSeriesCardinalityLockKey(42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := timeSeriesCardinalityLockKey(42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second {
+		t.Errorf("key is not deterministic: first %d, second %d", first, second)
+	}
+
+	for metricID := uint64(1); metricID <= 1000; metricID++ {
+		key, err := timeSeriesCardinalityLockKey(metricID)
+		if err != nil {
+			t.Fatalf("key for metric %d: %v", metricID, err)
+		}
+		if key < 0 || key > math.MaxInt64 {
+			t.Errorf("key for metric %d is outside signed range: %d", metricID, key)
+		}
 	}
 }
 

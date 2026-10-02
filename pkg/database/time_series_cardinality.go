@@ -81,24 +81,29 @@ func TimeSeriesCardinalityExceededTx(ctx context.Context, tx *sql.Tx, dbms strin
 	// independent of TimeSeriesMetrics, and therefore cannot conflict with the
 	// parent-row key locks taken while inserting aggregates. Rechecking after
 	// acquiring it makes the count-and-admit decision exact across processes.
-	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, timeSeriesCardinalityLockKey(metricID)); err != nil {
+	lockKey, err := timeSeriesCardinalityLockKey(metricID)
+	if err != nil {
+		return false, fmt.Errorf("build PostgreSQL time-series cardinality lock key for metric %d: %w", metricID, err)
+	}
+	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, lockKey); err != nil {
 		return false, fmt.Errorf("lock PostgreSQL time-series cardinality for metric %d: %w", metricID, err)
 	}
 	exceeded, _, err = timeSeriesCardinalityDecision(ctx, tx, dbms, metricID, seriesHash, scope, dimensions, policy)
 	return exceeded, err
 }
 
-// timeSeriesCardinalityLockKey reserves a stable 64-bit advisory-lock namespace
-// by hashing a versioned domain and the full metric ID. Collisions are possible
-// only at the SHA-256 truncation boundary and merely reduce concurrency; they
-// cannot weaken cardinality correctness.
-func timeSeriesCardinalityLockKey(metricID uint64) int64 {
+// timeSeriesCardinalityLockKey uses SHA-256 to provide a stable, versioned lock
+// namespace. It parses the first 64 bits from the hexadecimal digest and clears
+// the high bit to fit PostgreSQL's signed bigint advisory-lock API. Collisions
+// are possible only at the resulting 63-bit truncation boundary; they reduce
+// concurrency but cannot weaken cardinality correctness.
+func timeSeriesCardinalityLockKey(metricID uint64) (int64, error) {
 	digest := timeSeriesSHA256("thecrowler:timeseries-cardinality:v1", fmt.Sprintf("metric=%d", metricID))
-	// Keep 16 hex chars of entropy while forcing the top bit clear so the value
-	// always fits in int64 without unsigned-to-signed overflow.
-	signedHex := string([]byte{digest[0] & 0x37}) + digest[1:16]
-	key, _ := strconv.ParseInt(signedHex, 16, 64)
-	return key
+	raw, err := strconv.ParseUint(digest[:16], 16, 64)
+	if err != nil {
+		return 0, fmt.Errorf("parse time-series cardinality lock digest: %w", err)
+	}
+	return int64(raw & 0x7fffffffffffffff), nil
 }
 
 func timeSeriesCardinalityDecision(ctx context.Context, tx *sql.Tx, dbms string, metricID uint64, seriesHash string, scope TimeSeriesScope, dimensions map[string]interface{}, policy cfg.TimeSeriesCardinalityConfig) (exceeded, missing bool, err error) {
