@@ -75,7 +75,7 @@
             fi
 
         - name: Set up QEMU for cross-platform
-          uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a
+          uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1
 
         - name: Set up Docker Buildx with cache
           uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd
