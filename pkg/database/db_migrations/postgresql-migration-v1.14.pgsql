@@ -1,13 +1,3 @@
--- Note: Due to me forgetting to add this on installation of 1.13, you
---       now need to run it manually before running this migration script:
--- ALTER TABLE TimeSeriesMetrics OWNER TO :CROWLER_DB_USER;
--- ALTER TABLE TimeSeriesObservations OWNER TO :CROWLER_DB_USER;
--- ALTER TABLE TimeSeriesActiveSeries OWNER TO :CROWLER_DB_USER;
--- ALTER TABLE TimeSeriesActiveDimensionValues OWNER TO :CROWLER_DB_USER;
--- ALTER TABLE TimeSeriesArchivedSeries OWNER TO :CROWLER_DB_USER;
--- ALTER TABLE TimeSeriesArchivedDimensionValues OWNER TO :CROWLER_DB_USER;
--- where :CROWLER_DB_USER is the database user you've defined for the CROWler.
-
 -- series_hash is derived acceleration data. The metric, scope, and dimensions
 -- columns remain authoritative. Add it nullable first so old writers continue
 -- to work while this release is rolled out.
@@ -102,3 +92,11 @@ CREATE TABLE IF NOT EXISTS TimeSeriesActiveDimensionValues (
  metric_id BIGINT NOT NULL REFERENCES TimeSeriesMetrics(metric_id) ON DELETE RESTRICT,
  dimension_key TEXT NOT NULL, value_hash VARCHAR(64) NOT NULL, canonical_value TEXT NOT NULL,
  reference_count BIGINT NOT NULL CHECK (reference_count > 0), PRIMARY KEY(metric_id, dimension_key, value_hash));
+
+-- Note: Due to me forgetting to add this on installation of 1.13, you
+--       now need to run it manually before running this migration script:
+-- ALTER TABLE TimeSeriesMetrics OWNER TO :CROWLER_DB_USER;
+-- ALTER TABLE TimeSeriesObservations OWNER TO :CROWLER_DB_USER;
+-- ALTER TABLE TimeSeriesActiveSeries OWNER TO :CROWLER_DB_USER;
+-- ALTER TABLE TimeSeriesActiveDimensionValues OWNER TO :CROWLER_DB_USER;
+-- where :CROWLER_DB_USER is the database user you've defined for the CROWler.
