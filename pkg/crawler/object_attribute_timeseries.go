@@ -18,8 +18,12 @@ import (
 
 type crawlerTimeSeriesLogger struct{}
 
-func (crawlerTimeSeriesLogger) Printf(format string, args ...interface{}) {
-	cmn.DebugMsg(cmn.DbgLvlError, format, args...)
+func (crawlerTimeSeriesLogger) Debugf(format string, args ...interface{}) {
+	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] TimeSeries "+format, args...)
+}
+
+func (crawlerTimeSeriesLogger) Errorf(format string, args ...interface{}) {
+	cmn.DebugMsg(cmn.DbgLvlError, "time-series "+format, args...)
 }
 
 type crawlerObjectAttributeScopeResolver struct{ tx *sql.Tx }

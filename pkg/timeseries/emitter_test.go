@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -128,9 +129,22 @@ func (f fakeScopes) ResolveScopes(ObjectAttributeInput) ([]cdb.TimeSeriesScope, 
 	return f.scopes, f.err
 }
 
-type fakeLogger struct{ calls int }
+type fakeLogger struct {
+	debugCalls int
+	errorCalls int
+	debugLogs  []string
+	errorLogs  []string
+}
 
-func (f *fakeLogger) Printf(string, ...interface{}) { f.calls++ }
+func (f *fakeLogger) Debugf(format string, args ...interface{}) {
+	f.debugCalls++
+	f.debugLogs = append(f.debugLogs, fmt.Sprintf(format, args...))
+}
+
+func (f *fakeLogger) Errorf(format string, args ...interface{}) {
+	f.errorCalls++
+	f.errorLogs = append(f.errorLogs, fmt.Sprintf(format, args...))
+}
 
 func TestObjectAttributeValueTypes(t *testing.T) {
 	tests := []struct {
@@ -231,7 +245,7 @@ func TestObjectAttributeTimeSeriesDirectSourceDedupeAndPolicies(t *testing.T) {
 	if err := emitter.EmitObjectAttribute(mustSnapshot(t, &emitter), ObjectAttributeInput{ObjectType: "webobject", ObjectID: object, AttributeKey: "name", RawValue: "Bob", NormalizedValue: "Bob", ObservedAt: now.Add(time.Hour)}); err != nil {
 		t.Fatalf("default policy interrupted indexing: %v", err)
 	}
-	if logger.calls == 0 {
+	if logger.errorCalls == 0 {
 		t.Fatal("expected safe failure to be logged")
 	}
 	repo.metrics[0].FailurePolicy = cfg.TimeSeriesFailureFailIndexing
@@ -456,8 +470,8 @@ func TestMetaTagInvalidTimestampFollowsFailurePolicy(t *testing.T) {
 	if err := emitter.EmitIndexedArtifact(mustSnapshot(t, &emitter), input); err != nil {
 		t.Fatalf("log_skip should not fail indexing: %v", err)
 	}
-	if len(repo.observations) != 0 || logger.calls != 1 {
-		t.Fatalf("invalid timestamp was not skipped/logged: observations=%d logs=%d", len(repo.observations), logger.calls)
+	if len(repo.observations) != 0 || logger.errorCalls != 1 {
+		t.Fatalf("invalid timestamp was not skipped/logged: observations=%d logs=%d", len(repo.observations), logger.errorCalls)
 	}
 	metric.FailurePolicy = cfg.TimeSeriesFailureFailIndexing
 	repo.metrics[0] = metric
@@ -568,5 +582,104 @@ func TestScreenshotAndFileMetadataSelectors(t *testing.T) {
 	}
 	if len(repo.observations) != 2 || repo.observations[0].Value.Integer == nil || *repo.observations[0].Value.Integer != 4096 || repo.observations[1].Value.Text == nil || *repo.observations[1].Value.Text != "stable-location" {
 		t.Fatalf("unexpected screenshot/file metadata observations: %#v", repo.observations)
+	}
+}
+
+type fixedCardinalityGuard struct {
+	exceeded bool
+	err      error
+}
+
+func (g fixedCardinalityGuard) Exceeded(cdb.TimeSeriesMetric, cdb.TimeSeriesScope, map[string]interface{}, cfg.TimeSeriesCardinalityConfig) (bool, error) {
+	return g.exceeded, g.err
+}
+
+func logsContain(logs []string, fragment string) bool {
+	for _, log := range logs {
+		if strings.Contains(log, fragment) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestEmitterSuccessfulDebugLogging(t *testing.T) {
+	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	metric := cdb.TimeSeriesMetric{ID: 1, Key: "requests", SourceKind: cfg.TimeSeriesSourceObjectAttribute, ObjectType: cfg.TimeSeriesObjectWebObject, ValueType: cfg.TimeSeriesValueInteger, Bucket: cfg.TimeSeriesBucketNone, TimeBasis: cfg.TimeSeriesTimeObservedAt, DedupeScope: cfg.TimeSeriesDedupeObject, Selector: json.RawMessage(`{"attribute_key":"request_count"}`), Enabled: true}
+	repo := &fakeRepository{metrics: []cdb.TimeSeriesMetric{metric}}
+	logger := &fakeLogger{}
+	configuration := &cfg.TimeSeriesConfig{Enabled: true, Cardinality: cfg.TimeSeriesCardinalityConfig{Overflow: cfg.TimeSeriesCardinalityDrop}}
+	emitter := Emitter{Repository: repo, Scopes: fakeScopes{}, Config: configuration, Logger: logger, Now: func() time.Time { return now }}
+	snapshot := mustSnapshot(t, &emitter)
+	input := ObjectAttributeInput{ObjectType: "webobject", ObjectID: 7, AttributeKey: "request_count", NormalizedValue: "3", ObservedAt: now}
+	if err := emitter.EmitObjectAttribute(snapshot, input); err != nil {
+		t.Fatal(err)
+	}
+	if err := emitter.EmitObjectAttribute(snapshot, input); err != nil {
+		t.Fatal(err)
+	}
+	for _, fragment := range []string{"loaded enabled metrics count=1", `object_attribute metric="requests" attribute="request_count" scopes=1`, `observation metric="requests" result=inserted observation_id=1`, `observation metric="requests" result=duplicate observation_id=1`} {
+		if !logsContain(logger.debugLogs, fragment) {
+			t.Errorf("missing debug log %q in %#v", fragment, logger.debugLogs)
+		}
+	}
+	if logger.errorCalls != 0 {
+		t.Fatalf("successful operations logged %d errors: %#v", logger.errorCalls, logger.errorLogs)
+	}
+}
+
+func TestIndexedArtifactAndCardinalityDebugLogging(t *testing.T) {
+	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	metric := cdb.TimeSeriesMetric{ID: 2, Key: "keyword_count", SourceKind: cfg.TimeSeriesSourceKeyword, ValueType: cfg.TimeSeriesValueCount, Bucket: cfg.TimeSeriesBucketNone, TimeBasis: cfg.TimeSeriesTimeObservedAt, DedupeScope: cfg.TimeSeriesDedupeObject, Selector: json.RawMessage(`{"keyword":"go"}`), Enabled: true}
+	repo := &fakeRepository{metrics: []cdb.TimeSeriesMetric{metric}}
+	logger := &fakeLogger{}
+	configuration := &cfg.TimeSeriesConfig{Enabled: true, Cardinality: cfg.TimeSeriesCardinalityConfig{Overflow: cfg.TimeSeriesCardinalityDrop}}
+	emitter := Emitter{Repository: repo, ArtifactScopes: fakeArtifactScopes{}, Config: configuration, Logger: logger, Now: func() time.Time { return now }}
+	input := IndexedArtifactInput{SourceKind: cfg.TimeSeriesSourceKeyword, IndexID: 3, RowID: 4, LinkID: 5, SubjectKey: "go", Value: int64(2), ObservedAt: now}
+	if err := emitter.EmitIndexedArtifact(mustSnapshot(t, &emitter), input); err != nil {
+		t.Fatal(err)
+	}
+	if !logsContain(logger.debugLogs, `indexed_artifact source=keyword metric="keyword_count" row_id=4 scopes=1`) || !logsContain(logger.debugLogs, `result=inserted observation_id=1`) {
+		t.Fatalf("missing indexed artifact logs: %#v", logger.debugLogs)
+	}
+
+	repo.observations = nil
+	logger.debugLogs = nil
+	emitter.Cardinality = fixedCardinalityGuard{exceeded: true}
+	if err := emitter.EmitIndexedArtifact(mustSnapshot(t, &emitter), input); err != nil {
+		t.Fatal(err)
+	}
+	if len(repo.observations) != 0 || !logsContain(logger.debugLogs, `result=cardinality_rejected`) {
+		t.Fatalf("cardinality rejection not debug logged: observations=%d logs=%#v", len(repo.observations), logger.debugLogs)
+	}
+	if logger.errorCalls != 0 {
+		t.Fatalf("cardinality rejection logged as error: %#v", logger.errorLogs)
+	}
+}
+
+func TestFailureLoggingSeverityAndPolicies(t *testing.T) {
+	logger := &fakeLogger{}
+	repo := &fakeRepository{}
+	emitter := Emitter{Repository: repo, Logger: logger}
+	failure := errors.New("ordinary failure")
+	if err := emitter.handleFailure(cfg.TimeSeriesFailureLogSkip, "write observation", failure); err != nil {
+		t.Fatal(err)
+	}
+	if logger.errorCalls != 1 || logger.debugCalls != 0 || !logsContain(logger.errorLogs, "write observation") {
+		t.Fatalf("ordinary failure severity is wrong: debug=%#v error=%#v", logger.debugLogs, logger.errorLogs)
+	}
+	if err := emitter.handleFailure(cfg.TimeSeriesFailureSkip, "skip observation", failure); err != nil {
+		t.Fatal(err)
+	}
+	if logger.errorCalls != 1 || logger.debugCalls != 0 {
+		t.Fatalf("skip policy emitted a log: debug=%d error=%d", logger.debugCalls, logger.errorCalls)
+	}
+	if err := emitter.handleFailure(cfg.TimeSeriesFailureFailIndexing, "fail observation", failure); !errors.Is(err, failure) {
+		t.Fatalf("fail_indexing returned %v", err)
+	}
+
+	nilLoggerEmitter := Emitter{Repository: repo}
+	if err := nilLoggerEmitter.handleFailure(cfg.TimeSeriesFailureLogSkip, "nil logger", failure); err != nil {
+		t.Fatalf("nil logger returned %v", err)
 	}
 }

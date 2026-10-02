@@ -1230,7 +1230,7 @@ func indexObjectAttributes(
 						return siblingErr
 					}
 					if currCfg.TimeSeries.Defaults.FailurePolicy != cfg.TimeSeriesFailureSkip {
-						crawlerTimeSeriesLogger{}.Printf("time-series load sibling attributes: %v", siblingErr)
+						crawlerTimeSeriesLogger{}.Errorf("load sibling attributes: %v", siblingErr)
 					}
 					continue
 				}

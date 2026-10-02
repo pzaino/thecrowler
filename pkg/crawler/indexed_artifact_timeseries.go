@@ -89,10 +89,12 @@ func emitIndexedArtifactsStandalone(
 		return nil
 	}
 
+	logger := crawlerTimeSeriesLogger{}
 	tx, err := db.Begin()
 	if err != nil {
 		return fmt.Errorf("starting indexed-artifact time-series transaction: %w", err)
 	}
+	logger.Debugf("standalone emission started artifacts=%d", len(inputs))
 
 	committed := false
 	defer func() {
@@ -128,6 +130,7 @@ func emitIndexedArtifactsStandalone(
 	}
 
 	committed = true
+	logger.Debugf("standalone emission committed artifacts=%d", len(inputs))
 	return nil
 }
 
