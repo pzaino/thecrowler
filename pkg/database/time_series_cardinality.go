@@ -94,8 +94,11 @@ func TimeSeriesCardinalityExceededTx(ctx context.Context, tx *sql.Tx, dbms strin
 // cannot weaken cardinality correctness.
 func timeSeriesCardinalityLockKey(metricID uint64) int64 {
 	digest := timeSeriesSHA256("thecrowler:timeseries-cardinality:v1", fmt.Sprintf("metric=%d", metricID))
-	key, _ := strconv.ParseUint(digest[:16], 16, 64)
-	return int64(key)
+	// Keep 16 hex chars of entropy while forcing the top bit clear so the value
+	// always fits in int64 without unsigned-to-signed overflow.
+	signedHex := string([]byte{digest[0] & 0x37}) + digest[1:16]
+	key, _ := strconv.ParseInt(signedHex, 16, 64)
+	return key
 }
 
 func timeSeriesCardinalityDecision(ctx context.Context, tx *sql.Tx, dbms string, metricID uint64, seriesHash string, scope TimeSeriesScope, dimensions map[string]interface{}, policy cfg.TimeSeriesCardinalityConfig) (exceeded, missing bool, err error) {
