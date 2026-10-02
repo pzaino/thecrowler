@@ -12,6 +12,7 @@ import (
 	"os"
 	"reflect"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,6 +23,88 @@ import (
 
 const widgetHistoryDocument = `{"kind":"Widget","name":"backlog-widget","operational":{"count":7,"price":12.5},"region":"eu"}`
 const widgetReplacementDocument = `{"kind":"Widget","name":"backlog-widget","operational":{"count":9,"price":15.75},"region":"eu"}`
+
+func TestPostgresTimeSeriesCardinalityConcurrentAdmission(t *testing.T) {
+	db, sqlDB := openPostgresIntegrationTestDB(t)
+	suffix := fmt.Sprint(time.Now().UnixNano())
+	metric, err := UpsertTimeSeriesMetric(db, &TimeSeriesMetric{Key: "cardinality-concurrency-" + suffix, DisplayName: "cardinality concurrency", SourceKind: cfg.TimeSeriesSourceCustom, ValueType: cfg.TimeSeriesValueInteger, Aggregate: cfg.TimeSeriesAggregateCount, Bucket: cfg.TimeSeriesBucketOneHour, TimeBasis: cfg.TimeSeriesTimeObservedAt, DedupeScope: cfg.TimeSeriesDedupeNone, ObjectType: cfg.TimeSeriesObjectWebObject, FailurePolicy: cfg.TimeSeriesFailureLogSkip, Selector: json.RawMessage(`{}`), Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = sqlDB.Exec(`DELETE FROM TimeSeriesObservations WHERE metric_id=$1`, metric.ID)
+		_, _ = sqlDB.Exec(`DELETE FROM TimeSeriesActiveDimensionValues WHERE metric_id=$1`, metric.ID)
+		_, _ = sqlDB.Exec(`DELETE FROM TimeSeriesActiveSeries WHERE metric_id=$1`, metric.ID)
+		_, _ = sqlDB.Exec(`DELETE FROM TimeSeriesMetrics WHERE metric_id=$1`, metric.ID)
+	})
+
+	start := make(chan struct{})
+	results := make(chan bool, 2)
+	errors := make(chan error, 2)
+	var ready sync.WaitGroup
+	ready.Add(2)
+	for writer := 0; writer < 2; writer++ {
+		writer := writer
+		go func() {
+			ready.Done()
+			<-start
+			tx, beginErr := sqlDB.BeginTx(context.Background(), nil)
+			if beginErr != nil {
+				errors <- beginErr
+				return
+			}
+			defer tx.Rollback()
+			scopeID := uint64(writer + 1)
+			dimensions := map[string]interface{}{"region": fmt.Sprintf("region-%d", writer)}
+			exceeded, guardErr := TimeSeriesCardinalityExceededTx(context.Background(), tx, DBPostgresStr, metric.ID, TimeSeriesScope{ObjectType: "webobject", ObjectID: &scopeID}, dimensions, cfg.TimeSeriesCardinalityConfig{MaxSeriesPerMetric: 1, MaxValuesPerDimension: 1})
+			if guardErr != nil {
+				errors <- guardErr
+				return
+			}
+			if exceeded {
+				results <- false
+				return
+			}
+			at := time.Now().UTC()
+			value := int64(writer + 1)
+			o := TimeSeriesObservation{MetricID: metric.ID, ObservedAt: at, CollectedAt: at, BucketStart: at.Truncate(time.Hour), BucketEnd: at.Truncate(time.Hour).Add(time.Hour), Scope: TimeSeriesScope{ObjectType: "webobject", ObjectID: &scopeID}, Value: TimeSeriesValue{Integer: &value}, ValueHash: fmt.Sprintf("value-%d-%s", writer, suffix), DedupeKey: fmt.Sprintf("dedupe-%d-%s", writer, suffix), Dimensions: dimensions}
+			if _, insertErr := (TransactionTimeSeriesRepository{Tx: tx, DBMS: DBPostgresStr}).InsertObservation(&o); insertErr != nil {
+				errors <- insertErr
+				return
+			}
+			if commitErr := tx.Commit(); commitErr != nil {
+				errors <- commitErr
+				return
+			}
+			results <- true
+		}()
+	}
+	ready.Wait()
+	close(start)
+	admitted := 0
+	for i := 0; i < 2; i++ {
+		select {
+		case err = <-errors:
+			t.Fatalf("concurrent cardinality writer: %v", err)
+		case ok := <-results:
+			if ok {
+				admitted++
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("concurrent cardinality writers timed out")
+		}
+	}
+	var series, values int
+	if err = sqlDB.QueryRow(`SELECT COUNT(*) FROM TimeSeriesActiveSeries WHERE metric_id=$1`, metric.ID).Scan(&series); err != nil {
+		t.Fatal(err)
+	}
+	if err = sqlDB.QueryRow(`SELECT COUNT(*) FROM TimeSeriesActiveDimensionValues WHERE metric_id=$1`, metric.ID).Scan(&values); err != nil {
+		t.Fatal(err)
+	}
+	if admitted != 1 || series != 1 || values != 1 {
+		t.Fatalf("admitted=%d active series=%d dimension values=%d, want 1/1/1", admitted, series, values)
+	}
+}
 
 func openPostgresIntegrationTestDB(t *testing.T) (*Handler, *sql.DB) {
 	t.Helper()

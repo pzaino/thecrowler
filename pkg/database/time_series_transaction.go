@@ -8,8 +8,11 @@ package database
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/lib/pq"
 )
 
 // TransactionTimeSeriesRepository exposes the emitter-facing Task 3 helpers on
@@ -17,6 +20,19 @@ import (
 type TransactionTimeSeriesRepository struct {
 	Tx   *sql.Tx
 	DBMS string
+}
+
+// IsTransactionFatalError reports whether err came from PostgreSQL and has
+// invalidated this caller-owned transaction. PostgreSQL aborts the transaction
+// after every server ERROR (including 40P01 and 40001), not just errors that are
+// conventionally retryable. Keeping this knowledge on the transaction-backed
+// repository lets emitters distinguish SQL failures from validation failures.
+func (r TransactionTimeSeriesRepository) IsTransactionFatalError(err error) bool {
+	if r.DBMS != DBPostgresStr || err == nil {
+		return false
+	}
+	var postgresErr *pq.Error
+	return errors.As(err, &postgresErr) && (postgresErr.Severity == "" || postgresErr.Severity == "ERROR" || postgresErr.Severity == "FATAL" || postgresErr.Severity == "PANIC")
 }
 
 // ListMetrics lists metric definitions without leaving the caller's transaction.

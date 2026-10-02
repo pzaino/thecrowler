@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lib/pq"
+
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 )
@@ -18,6 +20,25 @@ type fakeRepository struct {
 	observations []cdb.TimeSeriesObservation
 	insertErr    error
 	listErr      error
+}
+
+type transactionFakeRepository struct{ *fakeRepository }
+
+func (transactionFakeRepository) IsTransactionFatalError(err error) bool {
+	var pgErr *pq.Error
+	return errors.As(err, &pgErr)
+}
+
+func TestHandleFailureDoesNotSwallowSharedTransactionAbort(t *testing.T) {
+	repo := transactionFakeRepository{&fakeRepository{}}
+	emitter := Emitter{Repository: repo}
+	deadlock := fmt.Errorf("insert: %w", &pq.Error{Code: "40P01", Severity: "ERROR"})
+	if err := emitter.handleFailure(cfg.TimeSeriesFailureLogSkip, "emit metric", deadlock); !errors.Is(err, deadlock) {
+		t.Fatalf("log_skip returned %v, want wrapped transaction error", err)
+	}
+	if err := emitter.handleFailure(cfg.TimeSeriesFailureLogSkip, "emit metric", errors.New("bad metric data")); err != nil {
+		t.Fatalf("ordinary metric error should be skipped: %v", err)
+	}
 }
 
 func (f *fakeRepository) ListMetrics(cdb.TimeSeriesMetricFilter) ([]cdb.TimeSeriesMetric, error) {

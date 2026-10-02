@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +25,13 @@ type Repository interface {
 	ListMetrics(filter cdb.TimeSeriesMetricFilter) ([]cdb.TimeSeriesMetric, error)
 	PreviousObservation(lookup cdb.TimeSeriesChangeLookup) (*cdb.TimeSeriesObservation, error)
 	InsertObservation(observation *cdb.TimeSeriesObservation) (cdb.TimeSeriesInsertResult, error)
+}
+
+// transactionFatalErrorClassifier is implemented by repositories that use a
+// caller-owned transaction. Such errors must bypass per-metric skip policies so
+// the owner can roll the unusable transaction back immediately.
+type transactionFatalErrorClassifier interface {
+	IsTransactionFatalError(error) bool
 }
 
 // ScopeResolver keeps source-specific ownership discovery outside the emitter.
@@ -92,6 +100,11 @@ func (e *Emitter) LoadEnabledMetricSnapshot() (*EnabledMetricSnapshot, error) {
 		return &EnabledMetricSnapshot{}, nil
 	}
 	recordEmitterOperation(metricOperationMetricLookup, "success")
+	// Transaction-scoped cardinality locks are keyed by metric. A stable
+	// ascending order prevents pages containing several metrics from acquiring
+	// those locks in opposite orders, even for repository implementations that
+	// do not guarantee query ordering.
+	sort.SliceStable(metrics, func(i, j int) bool { return metrics[i].ID < metrics[j].ID })
 	s := &EnabledMetricSnapshot{bySource: make(map[cfg.TimeSeriesSourceKind][]cdb.TimeSeriesMetric), bySourceObject: make(map[cfg.TimeSeriesSourceKind]map[string][]cdb.TimeSeriesMetric)}
 	for _, metric := range metrics {
 		if !metric.Enabled {
@@ -574,6 +587,9 @@ func applyChange(observation *cdb.TimeSeriesObservation, previous *cdb.TimeSerie
 func (e *Emitter) handleFailure(policy cfg.TimeSeriesFailurePolicy, context string, err error) error {
 	if err == nil {
 		return nil
+	}
+	if classifier, ok := e.Repository.(transactionFatalErrorClassifier); ok && classifier.IsTransactionFatalError(err) {
+		return fmt.Errorf("%s: shared transaction aborted: %w", context, err)
 	}
 	if policy == cfg.TimeSeriesFailureFailIndexing {
 		return fmt.Errorf("%s: %w", context, err)
