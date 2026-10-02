@@ -16,12 +16,16 @@ package config
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"reflect"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/qri-io/jsonschema"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 )
@@ -586,6 +590,78 @@ func TestValidateCrawler(t *testing.T) {
 	// Check if the Maintenance field is set to 60
 	if config.Crawler.Maintenance != 60 {
 		t.Errorf("Expected Maintenance to be 60, got %v", config.Crawler.Maintenance)
+	}
+}
+
+func TestIndexingConcurrencyConfiguration(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+		want int
+	}{
+		{name: "omitted", yaml: "crawler:\n  workers: 1\n", want: 1},
+		{name: "unlimited", yaml: "crawler:\n  indexing_concurrency: 0\n", want: 0},
+		{name: "positive", yaml: "crawler:\n  indexing_concurrency: 4\n", want: 4},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := ParseConfig([]byte(tt.yaml))
+			if err != nil {
+				t.Fatalf("ParseConfig() error = %v", err)
+			}
+			if got := cfg.Crawler.IndexingConcurrency; got != tt.want {
+				t.Fatalf("IndexingConcurrency = %d, want %d", got, tt.want)
+			}
+		})
+	}
+
+	cfg := NewConfig()
+	if got := cfg.Crawler.IndexingConcurrency; got != 1 {
+		t.Fatalf("NewConfig IndexingConcurrency = %d, want 1", got)
+	}
+}
+
+func TestIndexingConcurrencySchema(t *testing.T) {
+	schemaData, err := os.ReadFile("../../schemas/crowler-config-schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schemaDocument struct {
+		Properties map[string]struct {
+			Properties map[string]json.RawMessage `json:"properties"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(schemaData, &schemaDocument); err != nil {
+		t.Fatal(err)
+	}
+	indexingSchema := schemaDocument.Properties["crawler"].Properties["indexing_concurrency"]
+	if len(indexingSchema) == 0 {
+		t.Fatal("indexing_concurrency schema not found")
+	}
+	schema := &jsonschema.Schema{}
+	if err := schema.UnmarshalJSON(indexingSchema); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, test := range []struct {
+		name       string
+		value      int
+		wantIssues bool
+	}{
+		{name: "zero", value: 0},
+		{name: "positive", value: 2},
+		{name: "negative", value: -1, wantIssues: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			document := []byte(fmt.Sprintf(`%d`, test.value))
+			issues, err := schema.ValidateBytes(context.Background(), document)
+			if err != nil {
+				t.Fatalf("schema validation error: %v", err)
+			}
+			if gotIssues := len(issues) != 0; gotIssues != test.wantIssues {
+				t.Fatalf("schema returned issues = %v, want issues = %v: %v", gotIssues, test.wantIssues, issues)
+			}
+		})
 	}
 }
 

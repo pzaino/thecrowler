@@ -612,7 +612,10 @@ func LoadRemoteConfig(cfg Config, fetcher RemoteFetcher) (Config, error) {
 
 // ParseConfig parses the configuration file and returns a Config struct.
 func ParseConfig(data []byte) (*Config, error) {
-	var cfg Config
+	// Seed values whose zero value has an explicit meaning before unmarshalling.
+	// This preserves the default when the option is omitted while still allowing
+	// an explicitly configured zero.
+	cfg := Config{Crawler: Crawler{IndexingConcurrency: 1}}
 	err := yaml.Unmarshal(data, &cfg)
 	if err != nil {
 		return nil, err
@@ -773,7 +776,7 @@ func (c *Config) validateCrawler() {
 }
 
 func (c *Config) setDefaultIndexingConcurrency() {
-	if c.Crawler.IndexingConcurrency < 1 {
+	if c.Crawler.IndexingConcurrency < 0 {
 		c.Crawler.IndexingConcurrency = 1
 	}
 }
