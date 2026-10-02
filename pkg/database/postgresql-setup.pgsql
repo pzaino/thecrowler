@@ -3733,7 +3733,6 @@ ALTER TABLE TimeSeriesMetrics OWNER TO :CROWLER_DB_USER;
 ALTER TABLE TimeSeriesObservations OWNER TO :CROWLER_DB_USER;
 ALTER TABLE TimeSeriesActiveSeries OWNER TO :CROWLER_DB_USER;
 ALTER TABLE TimeSeriesActiveDimensionValues OWNER TO :CROWLER_DB_USER;
-ALTER TABLE TimeSeriesArchivedDimensionValues OWNER TO :CROWLER_DB_USER;
 
 -- Grants permissions to the user on the :"POSTGRES_DB" database
 SELECT grant_sequence_permissions('public', :'CROWLER_DB_USER');
