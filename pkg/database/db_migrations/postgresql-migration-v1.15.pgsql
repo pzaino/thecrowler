@@ -27,6 +27,14 @@ END $$;
 CREATE TABLE IF NOT EXISTS TimeSeriesCardinalityTokens (
   token_number BIGINT PRIMARY KEY CHECK(token_number >= 0)
 );
+-- Stop-the-world writer fence.  Deployments must stop every pre-1.15 writer
+-- before this migration; generation-aware writers refuse a different marker.
+CREATE TABLE IF NOT EXISTS DatabaseWriterCompatibility (
+  lock_id INTEGER PRIMARY KEY CHECK(lock_id = 1), writer_generation TEXT NOT NULL
+);
+INSERT INTO DatabaseWriterCompatibility(lock_id,writer_generation)
+VALUES (1,'reservation-v1.15')
+ON CONFLICT (lock_id) DO UPDATE SET writer_generation=EXCLUDED.writer_generation;
 INSERT INTO TimeSeriesCardinalityTokens(token_number)
 SELECT generate_series(0,99999) ON CONFLICT DO NOTHING;
 
@@ -116,7 +124,7 @@ ALTER TABLE TimeSeriesActiveDimensionValues ALTER COLUMN reference_count SET DEF
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
   TimeSeriesCardinalityTokens, TimeSeriesSeriesSlots, TimeSeriesDimensionSlots,
-  TimeSeriesObservationSeries, TimeSeriesObservationDimensions
+  TimeSeriesObservationSeries, TimeSeriesObservationDimensions, DatabaseWriterCompatibility
 TO :CROWLER_DB_USER;
 
 UPDATE DBSchemaVersion SET is_current=FALSE;

@@ -864,6 +864,11 @@ CREATE TABLE IF NOT EXISTS TimeSeriesCardinalityMaintenanceLock (
     lock_id INTEGER NOT NULL PRIMARY KEY
 ) ENGINE=InnoDB;
 INSERT IGNORE INTO TimeSeriesCardinalityMaintenanceLock(lock_id) VALUES (1);
+CREATE TABLE IF NOT EXISTS DatabaseWriterCompatibility (
+    lock_id INTEGER NOT NULL PRIMARY KEY, writer_generation VARCHAR(64) NOT NULL, CHECK(lock_id = 1)
+) ENGINE=InnoDB;
+INSERT INTO DatabaseWriterCompatibility(lock_id,writer_generation) VALUES(1,'reservation-v1.15')
+ON DUPLICATE KEY UPDATE writer_generation=VALUES(writer_generation);
 
 CREATE TABLE IF NOT EXISTS TimeSeriesAggregates (
     aggregate_id BIGINT AUTO_INCREMENT PRIMARY KEY,

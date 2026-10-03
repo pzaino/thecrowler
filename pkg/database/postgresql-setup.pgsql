@@ -2277,6 +2277,11 @@ CREATE TABLE IF NOT EXISTS TimeSeriesDimensionSlots (
     dimension_key TEXT NOT NULL, slot_number BIGINT NOT NULL, value_hash VARCHAR(64) NOT NULL, identity_value TEXT NOT NULL,
     PRIMARY KEY (metric_id, dimension_key, slot_number), UNIQUE (metric_id, dimension_key, value_hash)
 );
+CREATE TABLE IF NOT EXISTS DatabaseWriterCompatibility (
+    lock_id INTEGER PRIMARY KEY CHECK(lock_id = 1), writer_generation TEXT NOT NULL
+);
+INSERT INTO DatabaseWriterCompatibility(lock_id,writer_generation) VALUES (1,'reservation-v1.15')
+ON CONFLICT (lock_id) DO UPDATE SET writer_generation=EXCLUDED.writer_generation;
 
 CREATE TABLE IF NOT EXISTS TimeSeriesAggregates (
     aggregate_id BIGSERIAL PRIMARY KEY,

@@ -930,6 +930,11 @@ CREATE TABLE IF NOT EXISTS TimeSeriesCardinalityMaintenanceLock (
     lock_id INTEGER NOT NULL PRIMARY KEY
 );
 INSERT OR IGNORE INTO TimeSeriesCardinalityMaintenanceLock(lock_id) VALUES (1);
+CREATE TABLE IF NOT EXISTS DatabaseWriterCompatibility (
+    lock_id INTEGER NOT NULL PRIMARY KEY CHECK(lock_id = 1), writer_generation TEXT NOT NULL
+);
+INSERT INTO DatabaseWriterCompatibility(lock_id,writer_generation) VALUES(1,'reservation-v1.15')
+ON CONFLICT(lock_id) DO UPDATE SET writer_generation=excluded.writer_generation;
 
 CREATE TABLE IF NOT EXISTS TimeSeriesAggregates (
     aggregate_id INTEGER PRIMARY KEY AUTOINCREMENT,
