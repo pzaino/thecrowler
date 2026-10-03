@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS DBSchemaVersion (
 
     is_current INTEGER NOT NULL DEFAULT 1
 );
+CREATE UNIQUE INDEX IF NOT EXISTS uq_dbschemaversion_one_current
+    ON DBSchemaVersion(is_current) WHERE is_current = 1;
 
 CREATE TABLE IF NOT EXISTS Status (
     status_sha256 CHAR(64) PRIMARY KEY,     -- SHA256 identifier of this status entry
@@ -647,8 +649,10 @@ CREATE TABLE IF NOT EXISTS HTTPInfoIndex (
 --------------------------------------------------------------------------------
 -- Schema version seed
 
-INSERT OR IGNORE INTO DBSchemaVersion (version, description, is_current)
-VALUES ('1.8', 'CROWler DB schema version 1.8', 1);
+UPDATE DBSchemaVersion SET is_current = 0;
+INSERT INTO DBSchemaVersion (version, description, is_current)
+VALUES ('1.15', 'CROWler DB schema version 1.15', 1)
+ON CONFLICT(version) DO UPDATE SET description=excluded.description,is_current=1;
 
 --------------------------------------------------------------------------------
 -- Indexes (PostgreSQL GIN/trigram/JSON indexes use SQLite-compatible fallbacks)

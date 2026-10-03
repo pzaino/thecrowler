@@ -134,6 +134,9 @@ BEGIN
     END IF;
 END
 $$;
+UPDATE DBSchemaVersion SET is_current = (version = '1.15');
+CREATE UNIQUE INDEX IF NOT EXISTS uq_dbschemaversion_one_current
+    ON DBSchemaVersion (is_current) WHERE is_current = TRUE;
 ----------------------------------------------------------------
 
 
@@ -3761,6 +3764,8 @@ ALTER TABLE TimeSeriesActiveDimensionValues OWNER TO :CROWLER_DB_USER;
 ALTER TABLE TimeSeriesSeriesSlots OWNER TO :CROWLER_DB_USER;
 ALTER TABLE TimeSeriesDimensionSlots OWNER TO :CROWLER_DB_USER;
 ALTER TABLE TimeSeriesCardinalityTokens OWNER TO :CROWLER_DB_USER;
+ALTER TABLE TimeSeriesObservationSeries OWNER TO :CROWLER_DB_USER;
+ALTER TABLE TimeSeriesObservationDimensions OWNER TO :CROWLER_DB_USER;
 
 -- Grants permissions to the user on the :"POSTGRES_DB" database
 SELECT grant_sequence_permissions('public', :'CROWLER_DB_USER');

@@ -40,6 +40,8 @@ alt="OpenSSF Security Best Practices badge"></a> //-->
 
 It achieves this through an event-driven Content Discovery and Intelligence platform for web, email, APIs, filesystems, networks, and other data sources, combining crawling, scraping, detection, analysis, and automation with real browsers, declarative rulesets, extensible plugins, events, and agents. The CROWler provides the foundation for building advanced data discovery, intelligence, research, automation, and cybersecurity solutions.
 
+Another important aspect of The CROWler is that it distributes semantic workflows over heterogeneous external information and its derived data.
+
 Vertical solutions encode domain expertise through rules, plugins, agents, and data models rather than modifying the core platform.
 
 **Project status:** Still under active development (WIP). Most components are usable.

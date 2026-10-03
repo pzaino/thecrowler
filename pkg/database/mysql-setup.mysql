@@ -4,6 +4,19 @@
 --------------------------------------------------------------------------------
 -- Database Tables setup
 
+CREATE TABLE IF NOT EXISTS DBSchemaVersion (
+    schema_version_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    version VARCHAR(32) NOT NULL UNIQUE,
+    description TEXT,
+    is_current BOOLEAN NOT NULL DEFAULT TRUE
+) ENGINE=InnoDB;
+UPDATE DBSchemaVersion SET is_current = FALSE;
+INSERT INTO DBSchemaVersion(version,description,is_current)
+VALUES ('1.15','CROWler DB schema version 1.15',TRUE)
+ON DUPLICATE KEY UPDATE description=VALUES(description),is_current=TRUE;
+
 -- InformationSeeds table stores the seed information for the crawler
 CREATE TABLE IF NOT EXISTS InformationSeed (
     information_seed_id BIGINT AUTO_INCREMENT PRIMARY KEY,

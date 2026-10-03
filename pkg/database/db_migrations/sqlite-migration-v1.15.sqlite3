@@ -6,5 +6,5 @@ CREATE TABLE IF NOT EXISTS TimeSeriesObservationDimensions (observation_id INTEG
 CREATE INDEX IF NOT EXISTS idx_ts_observation_dimensions_identity ON TimeSeriesObservationDimensions(metric_id,dimension_key,value_hash);
 INSERT OR IGNORE INTO TimeSeriesObservationSeries SELECT observation_id,metric_id,series_hash FROM TimeSeriesObservations WHERE deleted_at IS NULL;
 INSERT OR IGNORE INTO TimeSeriesObservationDimensions SELECT o.observation_id,o.metric_id,a.dimension_key,a.value_hash FROM TimeSeriesObservations o JOIN TimeSeriesActiveDimensionValues a ON a.metric_id=o.metric_id JOIN json_each(o.dimensions) j ON j.key=a.dimension_key AND CASE WHEN j.type='text' THEN json_quote(j.value) ELSE json(j.value) END=json(a.canonical_value) WHERE o.deleted_at IS NULL;
-INSERT OR IGNORE INTO DBSchemaVersion(version,description,is_current) VALUES('1.15','Fine-grained cardinality slots and normalized observation memberships',1);
-UPDATE DBSchemaVersion SET is_current=(version='1.15') WHERE version IN ('1.14','1.15');
+UPDATE DBSchemaVersion SET is_current=0;
+INSERT INTO DBSchemaVersion(version,description,is_current) VALUES('1.15','Fine-grained cardinality slots and normalized observation memberships',1) ON CONFLICT(version) DO UPDATE SET description=excluded.description,is_current=1;
