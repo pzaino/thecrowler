@@ -424,16 +424,48 @@ func TestPostgresWebObjectHistorySurvivesReplacementAndFollowsSourceOwnership(t 
 		if _, err := sqlDB.Exec(`INSERT INTO SourceSearchIndex(source_id,index_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, source, indexID); err != nil {
 			t.Fatal(err)
 		}
-		// This is the crawler's refresh/replacement sequence: delete the linked
-		// WebObject and then persist/link the newly hashed operational document.
-		if _, err := sqlDB.Exec(`DELETE FROM WebObjects WHERE object_id IN (SELECT object_id FROM WebObjectsIndex WHERE index_id=$1)`, indexID); err != nil {
+		// Remove this page's links before replacing its object, but retain any
+		// object which is shared with another page.
+		rows, err := sqlDB.Query(`SELECT object_id FROM WebObjectsIndex WHERE index_id=$1`, indexID)
+		if err != nil {
 			t.Fatal(err)
+		}
+		var previousObjectIDs []uint64
+		for rows.Next() {
+			var previousObjectID uint64
+			if err = rows.Scan(&previousObjectID); err != nil {
+				rows.Close()
+				t.Fatal(err)
+			}
+			previousObjectIDs = append(previousObjectIDs, previousObjectID)
+		}
+		if err = rows.Err(); err != nil {
+			rows.Close()
+			t.Fatal(err)
+		}
+		if err = rows.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = sqlDB.Exec(`DELETE FROM WebObjectsIndex WHERE index_id=$1`, indexID); err != nil {
+			t.Fatal(err)
+		}
+		for _, previousObjectID := range previousObjectIDs {
+			if _, err = sqlDB.Exec(`DELETE FROM WebObjects wo
+				WHERE wo.object_id=$1
+				  AND NOT EXISTS (SELECT 1 FROM WebObjectsIndex woi WHERE woi.object_id=wo.object_id)`, previousObjectID); err != nil {
+				t.Fatal(err)
+			}
 		}
 		objectHash := fmt.Sprintf("%x", sha256.Sum256([]byte(document)))
-		if err := sqlDB.QueryRow(`INSERT INTO WebObjects(object_hash,object_content,details) VALUES($1,$2,$3::jsonb) RETURNING object_id`, objectHash, document, document).Scan(&objectID); err != nil {
+		if err := sqlDB.QueryRow(`INSERT INTO WebObjects(object_hash,object_content,details)
+			VALUES($1,$2,$3::jsonb)
+			ON CONFLICT (object_hash) DO UPDATE SET
+				object_content=COALESCE(NULLIF(BTRIM(EXCLUDED.object_content), ''), WebObjects.object_content),
+				details=COALESCE(NULLIF(EXCLUDED.details, '{}'::jsonb), WebObjects.details)
+			RETURNING object_id`, objectHash, document, document).Scan(&objectID); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := sqlDB.Exec(`INSERT INTO WebObjectsIndex(index_id,object_id) VALUES($1,$2)`, indexID, objectID); err != nil {
+		if _, err := sqlDB.Exec(`INSERT INTO WebObjectsIndex(index_id,object_id) VALUES($1,$2) ON CONFLICT (index_id,object_id) DO NOTHING`, indexID, objectID); err != nil {
 			t.Fatal(err)
 		}
 		var decoded struct {
@@ -447,7 +479,8 @@ func TestPostgresWebObjectHistorySurvivesReplacementAndFollowsSourceOwnership(t 
 		attributeValue := strconv.Itoa(decoded.Operational.Count)
 		attributeHash := fmt.Sprintf("%x", sha256.Sum256([]byte(attributeValue)))
 		if _, err := sqlDB.Exec(`INSERT INTO ObjectAttributes(object_id,object_type,attribute_key,attribute_value,normalized_value,value_hash,attribute_type,source_path,context_ref)
-			VALUES($1,'webobject','operational_count',$2,$2,$3,'integer','operational.count',$4)`, objectID, attributeValue, attributeHash, suffix); err != nil {
+			VALUES($1,'webobject','operational_count',$2,$2,$3,'integer','operational.count',$4)
+			ON CONFLICT DO NOTHING`, objectID, attributeValue, attributeHash, suffix); err != nil {
 			t.Fatal(err)
 		}
 		return indexID, objectID
@@ -491,6 +524,9 @@ func TestPostgresWebObjectHistorySurvivesReplacementAndFollowsSourceOwnership(t 
 	indexID, oldObjectID := insertObject(primary, widgetHistoryDocument, base)
 	old := insertObservation(primary, indexID, oldObjectID, widgetHistoryDocument, base, nil)
 	controlIndex, controlObject := insertObject(control, widgetHistoryDocument, base)
+	if controlObject != oldObjectID {
+		t.Fatalf("identical WebObjects were not deduplicated: primary=%d control=%d", oldObjectID, controlObject)
+	}
 	_ = insertObservation(control, controlIndex, controlObject, widgetHistoryDocument, base, nil)
 	before, err := QueryTimeSeriesObservations(db, TimeSeriesQueryFilter{SourceID: &primary, Pagination: TimeSeriesPagination{Limit: 10}})
 	if err != nil {
@@ -502,6 +538,13 @@ func TestPostgresWebObjectHistorySurvivesReplacementAndFollowsSourceOwnership(t 
 	snapshot := before.Observations[0]
 
 	_, newObjectID := insertObject(primary, widgetReplacementDocument, base.Add(10*time.Minute))
+	var controlLinks int
+	if err = sqlDB.QueryRow(`SELECT COUNT(*) FROM WebObjectsIndex WHERE index_id=$1 AND object_id=$2`, controlIndex, controlObject).Scan(&controlLinks); err != nil {
+		t.Fatal(err)
+	}
+	if controlLinks != 1 {
+		t.Fatalf("primary replacement removed shared control WebObject link: links=%d, want 1", controlLinks)
+	}
 	newObservation := insertObservation(primary, indexID, newObjectID, widgetReplacementDocument, base.Add(10*time.Minute), &old)
 	after, err := QueryTimeSeriesObservations(db, TimeSeriesQueryFilter{SourceID: &primary, Pagination: TimeSeriesPagination{Limit: 10}})
 	if err != nil {
