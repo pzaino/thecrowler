@@ -212,6 +212,12 @@ func (m timeSeriesCardinalityMutation) admit(metricID uint64, scope TimeSeriesSc
 // all owners and are not derived from the current policy. Locking one available
 // token lets other transactions skip it and claim another one.
 func claimPostgresCardinalitySlot(ctx context.Context, tx *sql.Tx, table string, metricID uint64, dimensionKey, identityHash, identity string, limit int) (bool, error) {
+	done := observePostgresPersistence(postgresOperationReservation)
+	defer done()
+	resource := cardinalityResourceSeries
+	if dimensionKey != "" {
+		resource = cardinalityResourceDimensionValue
+	}
 	keyPredicate, keyArgs := "metric_id=$1", []interface{}{metricID}
 	identityColumn := "series_hash"
 	if dimensionKey != "" {
@@ -224,8 +230,10 @@ func claimPostgresCardinalitySlot(ctx context.Context, tx *sql.Tx, table string,
 	identityPlaceholder := fmt.Sprintf("$%d", len(args))
 	if err := tx.QueryRowContext(ctx, `SELECT identity_value FROM `+table+` WHERE `+keyPredicate+` AND `+identityColumn+`=`+identityPlaceholder, args...).Scan(&stored); err == nil {
 		if stored != identity {
+			timeSeriesCardinalityIntegrityErrors.WithLabelValues(resource).Inc()
 			return false, fmt.Errorf("time-series cardinality hash collision for metric %d", metricID)
 		}
+		timeSeriesCardinalityDecisions.WithLabelValues(resource, cardinalityOutcomeExisting).Inc()
 		return true, nil
 	} else if err != sql.ErrNoRows {
 		return false, err
@@ -241,6 +249,7 @@ func claimPostgresCardinalitySlot(ctx context.Context, tx *sql.Tx, table string,
 		return false, err
 	}
 	if active >= limit { // In particular, policy reductions admit nothing new.
+		timeSeriesCardinalityDecisions.WithLabelValues(resource, cardinalityOutcomeRejected).Inc()
 		return false, nil
 	}
 	var slot int64
@@ -251,6 +260,8 @@ func claimPostgresCardinalitySlot(ctx context.Context, tx *sql.Tx, table string,
 		claimArgs = append(claimArgs, dimensionKey)
 	}
 	if err := tx.QueryRowContext(ctx, claimQuery, claimArgs...).Scan(&slot); err == sql.ErrNoRows {
+		timeSeriesCardinalityReservationWaits.Inc()
+		timeSeriesCardinalityDecisions.WithLabelValues(resource, cardinalityOutcomeRejected).Inc()
 		return false, nil
 	} else if err != nil {
 		return false, err
@@ -265,16 +276,20 @@ func claimPostgresCardinalitySlot(ctx context.Context, tx *sql.Tx, table string,
 		insertArgs = []interface{}{metricID, dimensionKey, slot, identityHash, identity}
 	}
 	if err := tx.QueryRowContext(ctx, query, insertArgs...).Scan(&slot); err == nil {
+		timeSeriesCardinalityDecisions.WithLabelValues(resource, cardinalityOutcomeAdmitted).Inc()
 		return true, nil
 	} else if err != sql.ErrNoRows {
 		return false, err
 	}
+	timeSeriesCardinalityReservationRetries.Inc()
 	if err := tx.QueryRowContext(ctx, `SELECT identity_value FROM `+table+` WHERE `+keyPredicate+` AND `+identityColumn+`=`+identityPlaceholder, args...).Scan(&stored); err != nil {
 		return false, err
 	}
 	if stored != identity {
+		timeSeriesCardinalityIntegrityErrors.WithLabelValues(resource).Inc()
 		return false, fmt.Errorf("time-series cardinality hash collision for metric %d", metricID)
 	}
+	timeSeriesCardinalityDecisions.WithLabelValues(resource, cardinalityOutcomeExisting).Inc()
 	return true, nil
 }
 
@@ -292,6 +307,7 @@ func timeSeriesCardinalityDecision(ctx context.Context, tx *sql.Tx, dbms string,
 			return false, missing, err
 		}
 		if err == nil && stored != identity {
+			timeSeriesCardinalityIntegrityErrors.WithLabelValues(cardinalityResourceSeries).Inc()
 			return false, missing, fmt.Errorf("time-series series hash collision for metric %d", metricID)
 		}
 		if err == sql.ErrNoRows {
@@ -302,8 +318,12 @@ func timeSeriesCardinalityDecision(ctx context.Context, tx *sql.Tx, dbms string,
 				return false, missing, err
 			}
 			if count >= policy.MaxSeriesPerMetric {
+				timeSeriesCardinalityDecisions.WithLabelValues(cardinalityResourceSeries, cardinalityOutcomeRejected).Inc()
 				return true, missing, nil
 			}
+			timeSeriesCardinalityDecisions.WithLabelValues(cardinalityResourceSeries, cardinalityOutcomeAdmitted).Inc()
+		} else {
+			timeSeriesCardinalityDecisions.WithLabelValues(cardinalityResourceSeries, cardinalityOutcomeExisting).Inc()
 		}
 	}
 	if policy.MaxValuesPerDimension > 0 {
@@ -324,6 +344,7 @@ func timeSeriesCardinalityDecision(ctx context.Context, tx *sql.Tx, dbms string,
 			}
 			_, canonical, _ := timeSeriesDimensionValueHash(metricID, key, dimensions[key])
 			if err == nil && storedValue != canonical {
+				timeSeriesCardinalityIntegrityErrors.WithLabelValues(cardinalityResourceDimensionValue).Inc()
 				return false, missing, fmt.Errorf("time-series dimension value hash collision for metric %d dimension %q", metricID, key)
 			}
 			if err == sql.ErrNoRows {
@@ -334,8 +355,12 @@ func timeSeriesCardinalityDecision(ctx context.Context, tx *sql.Tx, dbms string,
 					return false, missing, err
 				}
 				if count >= policy.MaxValuesPerDimension {
+					timeSeriesCardinalityDecisions.WithLabelValues(cardinalityResourceDimensionValue, cardinalityOutcomeRejected).Inc()
 					return true, missing, nil
 				}
+				timeSeriesCardinalityDecisions.WithLabelValues(cardinalityResourceDimensionValue, cardinalityOutcomeAdmitted).Inc()
+			} else {
+				timeSeriesCardinalityDecisions.WithLabelValues(cardinalityResourceDimensionValue, cardinalityOutcomeExisting).Inc()
 			}
 		}
 	}
@@ -352,6 +377,10 @@ func timeSeriesDimensionValueHash(metricID uint64, key string, value interface{}
 }
 
 func (m timeSeriesCardinalityMutation) add(o *TimeSeriesObservation) error {
+	if m.dbms == DBPostgresStr {
+		done := observePostgresPersistence(postgresOperationMembership)
+		defer done()
+	}
 	ctx, tx, dbms := m.ctx, m.tx, m.dbms
 	if err := lockTimeSeriesCardinalityMutation(ctx, tx, dbms, false); err != nil {
 		return fmt.Errorf("acquire time-series cardinality mutation fence: %w", err)
@@ -370,6 +399,7 @@ func (m timeSeriesCardinalityMutation) add(o *TimeSeriesObservation) error {
 		return lookupErr
 	}
 	if lookupErr == nil && storedIdentity != seriesIdentity {
+		timeSeriesCardinalityIntegrityErrors.WithLabelValues(cardinalityResourceSeries).Inc()
 		return fmt.Errorf("time-series series hash collision for metric %d", o.MetricID)
 	}
 	// reference_count is supplied only for compatibility with databases upgraded
@@ -410,6 +440,7 @@ func (m timeSeriesCardinalityMutation) add(o *TimeSeriesObservation) error {
 			return lookupErr
 		}
 		if lookupErr == nil && storedValue != canonical {
+			timeSeriesCardinalityIntegrityErrors.WithLabelValues(cardinalityResourceDimensionValue).Inc()
 			return fmt.Errorf("time-series dimension value hash collision for metric %d dimension %q", o.MetricID, key)
 		}
 		query := `INSERT INTO TimeSeriesActiveDimensionValues (metric_id, dimension_key, value_hash, canonical_value, reference_count) VALUES (` + placeholders(dbms, 5) + `)`
@@ -435,6 +466,10 @@ func (m timeSeriesCardinalityMutation) add(o *TimeSeriesObservation) error {
 }
 
 func (m timeSeriesCardinalityMutation) release(o *TimeSeriesObservation) error {
+	if m.dbms == DBPostgresStr {
+		done := observePostgresPersistence(postgresOperationMembership)
+		defer done()
+	}
 	ctx, tx, dbms := m.ctx, m.tx, m.dbms
 	if err := lockTimeSeriesCardinalityMutation(ctx, tx, dbms, false); err != nil {
 		return fmt.Errorf("acquire time-series cardinality mutation fence: %w", err)
@@ -446,6 +481,7 @@ func (m timeSeriesCardinalityMutation) release(o *TimeSeriesObservation) error {
 	}
 	removedCount, _ := removed.RowsAffected()
 	if removedCount != 1 {
+		timeSeriesCardinalityIntegrityErrors.WithLabelValues(cardinalityResourceSeries).Inc()
 		return fmt.Errorf("missing exact series membership for observation %d", o.ID)
 	}
 	p = newInformationSeedPlaceholders(dbms)
@@ -476,6 +512,7 @@ func (m timeSeriesCardinalityMutation) release(o *TimeSeriesObservation) error {
 		}
 		removedCount, _ = removed.RowsAffected()
 		if removedCount != 1 {
+			timeSeriesCardinalityIntegrityErrors.WithLabelValues(cardinalityResourceDimensionValue).Inc()
 			return fmt.Errorf("missing exact dimension membership for observation %d dimension %q", o.ID, key)
 		}
 		p = newInformationSeedPlaceholders(dbms)
@@ -499,16 +536,24 @@ func (m timeSeriesCardinalityMutation) releaseUnreferencedReservations(o *TimeSe
 	if m.dbms != DBPostgresStr {
 		return nil
 	}
-	if _, err := m.tx.ExecContext(m.ctx, `DELETE FROM TimeSeriesSeriesSlots s WHERE metric_id=$1 AND series_hash=$2 AND NOT EXISTS (SELECT 1 FROM TimeSeriesActiveSeries a WHERE a.metric_id=s.metric_id AND a.series_hash=s.series_hash)`, o.MetricID, o.SeriesHash); err != nil {
+	result, err := m.tx.ExecContext(m.ctx, `DELETE FROM TimeSeriesSeriesSlots s WHERE metric_id=$1 AND series_hash=$2 AND NOT EXISTS (SELECT 1 FROM TimeSeriesActiveSeries a WHERE a.metric_id=s.metric_id AND a.series_hash=s.series_hash)`, o.MetricID, o.SeriesHash)
+	if err != nil {
 		return err
+	}
+	if count, countErr := result.RowsAffected(); countErr == nil && count > 0 {
+		timeSeriesCardinalityReservationCleanup.WithLabelValues(cardinalityResourceSeries).Add(float64(count))
 	}
 	for key, value := range o.Dimensions {
 		hash, _, err := timeSeriesDimensionValueHash(o.MetricID, key, value)
 		if err != nil {
 			return err
 		}
-		if _, err = m.tx.ExecContext(m.ctx, `DELETE FROM TimeSeriesDimensionSlots s WHERE metric_id=$1 AND dimension_key=$2 AND value_hash=$3 AND NOT EXISTS (SELECT 1 FROM TimeSeriesActiveDimensionValues a WHERE a.metric_id=s.metric_id AND a.dimension_key=s.dimension_key AND a.value_hash=s.value_hash)`, o.MetricID, key, hash); err != nil {
+		result, err = m.tx.ExecContext(m.ctx, `DELETE FROM TimeSeriesDimensionSlots s WHERE metric_id=$1 AND dimension_key=$2 AND value_hash=$3 AND NOT EXISTS (SELECT 1 FROM TimeSeriesActiveDimensionValues a WHERE a.metric_id=s.metric_id AND a.dimension_key=s.dimension_key AND a.value_hash=s.value_hash)`, o.MetricID, key, hash)
+		if err != nil {
 			return err
+		}
+		if count, countErr := result.RowsAffected(); countErr == nil && count > 0 {
+			timeSeriesCardinalityReservationCleanup.WithLabelValues(cardinalityResourceDimensionValue).Add(float64(count))
 		}
 	}
 	return nil

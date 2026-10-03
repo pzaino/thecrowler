@@ -333,7 +333,9 @@ func insertPostgresTimeSeriesObservationsTx(ctx context.Context, tx *sql.Tx, obs
 
 		query := timeSeriesObservationInsertPrefix + ` VALUES ` + strings.Join(rowsSQL, ",") +
 			` ON CONFLICT (dedupe_key) DO NOTHING RETURNING observation_id, dedupe_key`
+		done := observePostgresPersistence(postgresOperationObservation)
 		rows, err := tx.QueryContext(ctx, query, args...)
+		done()
 		if err != nil {
 			return nil, fmt.Errorf("insert time-series observation batch chunk starting at item %d: %w", start, err)
 		}
@@ -436,6 +438,8 @@ func insertPostgresTimeSeriesObservationsTx(ctx context.Context, tx *sql.Tx, obs
 // needs no follow-up query. Only the conflict/no-row case performs the dedupe
 // lookup needed to return the existing observation's identity.
 func insertPostgresTimeSeriesObservation(ctx context.Context, tx *sql.Tx, query string, args []interface{}, o *TimeSeriesObservation) (TimeSeriesInsertResult, error) {
+	done := observePostgresPersistence(postgresOperationObservation)
+	defer done()
 	var id uint64
 	err := tx.QueryRowContext(ctx, query, args...).Scan(&id)
 	if err == nil {
