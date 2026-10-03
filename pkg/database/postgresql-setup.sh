@@ -48,7 +48,11 @@ if [ -n "${CROWLER_DB_EXTRA_ARGS:-}" ]; then
     read -r -a PSQL_EXTRA_ARGS <<< "$CROWLER_DB_EXTRA_ARGS"
 fi
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
 psql \
     "${PSQL_BASE_ARGS[@]}" \
     "${PSQL_EXTRA_ARGS[@]}" \
-    -f /docker-entrypoint-initdb.d/postgresql-setup.pgsql
+    -f "${SCRIPT_DIR}/postgresql-setup.pgsql"
+
+exit $?

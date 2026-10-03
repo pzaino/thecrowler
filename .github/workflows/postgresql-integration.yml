@@ -18,6 +18,7 @@ jobs:
     name: postgres-integration
     runs-on: ubuntu-latest
     timeout-minutes: 30
+
     services:
       postgres:
         image: postgres:17
@@ -32,19 +33,59 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 12
+
     env:
-      PGPASSWORD: postgres
+      # PostgreSQL administrative connection.
+      #
+      # These deliberately duplicate the service-container values above.
+      # Environment variables under services.postgres.env belong to the
+      # PostgreSQL service container and are not automatically exported to
+      # commands running on the GitHub Actions runner.
+      POSTGRES_DB: SitesIndex
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+
+      # Runtime CROWler database role.
+      #
+      # postgresql-setup.sh creates/configures this role and grants it the
+      # permissions required by the application.
+      CROWLER_DB_USER: crowler
+      CROWLER_DB_PASSWORD: crowler
+
+      # postgresql-setup.sh normally executes inside the PostgreSQL container
+      # and therefore connects through the local PostgreSQL socket. In this
+      # workflow it executes on the GitHub runner, so explicitly direct psql
+      # to the PostgreSQL service container.
+      CROWLER_DB_EXTRA_ARGS: "--host 127.0.0.1 --port 5432"
+
+      # Database tuning values consumed by postgresql-setup.sh.
+      CROWLER_DB_SHARED_BUFFERS: 128MB
+      CROWLER_DB_WORK_MEM: 4MB
+      CROWLER_DB_MAINTENANCE_WORK_MEM: 64MB
+      CROWLER_DB_EFFECTIVE_CACHE_SIZE: 1GB
+      CROWLER_DB_AUTOVACUUM_WORK_MEM: -1
+      CROWLER_DB_MAX_WAL_SIZE: 1GB
+      CROWLER_DB_MAX_CONNECTIONS: 100
+
+      # Connection used by the Go PostgreSQL integration tests.
+      #
+      # Deliberately use the CROWler runtime role instead of postgres. This
+      # ensures permission tests actually verify the permissions granted to
+      # the application user rather than trivially succeeding as superuser.
       DOCKER_POSTGRES_DB_HOST: 127.0.0.1
       DOCKER_POSTGRES_DB_PORT: 5432
       DOCKER_POSTGRES_DB_NAME: SitesIndex
-      DOCKER_POSTGRES_DB_USER: postgres
-      DOCKER_POSTGRES_PASSWORD: postgres
+      DOCKER_POSTGRES_DB_USER: crowler
+      DOCKER_POSTGRES_PASSWORD: crowler
       DOCKER_POSTGRES_SSL_MODE: disable
-      # Keep the command below stable while still placing a hard ceiling on a
-      # wedged package and preventing cached integration results.
+
+      # Prevent cached integration results and put a hard ceiling on a wedged
+      # package.
       GOFLAGS: -count=1 -timeout=20m
+
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -59,28 +100,52 @@ jobs:
 
       - name: Create current schema
         run: |
-          psql -v ON_ERROR_STOP=1 \
-            -v CROWLER_DB_USER=postgres \
-            -v CROWLER_DB_PASSWORD=postgres \
-            -v DB_SHARED_BUFFERS=128MB \
-            -v DB_WORK_MEM=4MB \
-            -v DB_MAINTENANCE_WORK_MEM=64MB \
-            -v DB_EFFECTIVE_CACHE_SIZE=1GB \
-            -v DB_AUTOVACUUM_WORK_MEM=-1 \
-            -v DB_MAX_WAL_SIZE=1GB \
-            -v DB_MAX_CONNECTIONS=100 \
-            --host 127.0.0.1 --username postgres --dbname SitesIndex \
-            --file pkg/database/postgresql-setup.pgsql
+          bash ./pkg/database/postgresql-setup.sh
+
+      - name: Verify CROWler runtime database role
+        run: |
+          runtime_user="$(
+            PGPASSWORD="$CROWLER_DB_PASSWORD" \
+            psql \
+              -v ON_ERROR_STOP=1 \
+              -At \
+              --host "$DOCKER_POSTGRES_DB_HOST" \
+              --port "$DOCKER_POSTGRES_DB_PORT" \
+              --username "$CROWLER_DB_USER" \
+              --dbname "$POSTGRES_DB" \
+              --command "SELECT current_user"
+          )"
+
+          test "$runtime_user" = "$CROWLER_DB_USER"
 
       - name: Verify repeatable current migration
         run: |
-          psql -v ON_ERROR_STOP=1 -v CROWLER_DB_USER=postgres \
-            --host 127.0.0.1 --username postgres --dbname SitesIndex \
+          PGPASSWORD="$POSTGRES_PASSWORD" \
+          psql \
+            -v ON_ERROR_STOP=1 \
+            -v CROWLER_DB_USER="$CROWLER_DB_USER" \
+            --host 127.0.0.1 \
+            --port 5432 \
+            --username "$POSTGRES_USER" \
+            --dbname "$POSTGRES_DB" \
             --file pkg/database/db_migrations/postgresql-migration-v1.15.pgsql
-          test "$(psql -v ON_ERROR_STOP=1 -At --host 127.0.0.1 --username postgres \
-            --dbname SitesIndex --command "SELECT version FROM DBSchemaVersion WHERE is_current")" = "1.15"
+
+          current_version="$(
+            PGPASSWORD="$POSTGRES_PASSWORD" \
+            psql \
+              -v ON_ERROR_STOP=1 \
+              -At \
+              --host 127.0.0.1 \
+              --port 5432 \
+              --username "$POSTGRES_USER" \
+              --dbname "$POSTGRES_DB" \
+              --command "SELECT version FROM DBSchemaVersion WHERE is_current"
+          )"
+
+          test "$current_version" = "1.15"
 
       - name: Run PostgreSQL integration suite
         env:
           THECROWLER_POSTGRES_INTEGRATION: "1"
-        run: THECROWLER_POSTGRES_INTEGRATION=1 go test -tags=integration ./pkg/database/...
+        run: |
+          go test -tags=integration ./pkg/database/...
