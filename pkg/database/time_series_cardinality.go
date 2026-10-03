@@ -256,45 +256,83 @@ func claimPostgresCardinalitySlot(ctx context.Context, tx *sql.Tx, table string,
 		timeSeriesCardinalityDecisions.WithLabelValues(resource, cardinalityOutcomeRejected).Inc()
 		return false, nil
 	}
-	var slot int64
 	claimQuery := `SELECT t.token_number FROM TimeSeriesCardinalityTokens t WHERE t.token_number < $1 AND NOT EXISTS (SELECT 1 FROM ` + table + ` s WHERE s.slot_number=t.token_number AND s.metric_id=$2) ORDER BY t.token_number FOR UPDATE OF t SKIP LOCKED LIMIT 1`
 	claimArgs := []interface{}{limit, metricID}
 	if dimensionKey != "" {
 		claimQuery = `SELECT t.token_number FROM TimeSeriesCardinalityTokens t WHERE t.token_number < $1 AND NOT EXISTS (SELECT 1 FROM ` + table + ` s WHERE s.slot_number=t.token_number AND s.metric_id=$2 AND s.dimension_key=$3) ORDER BY t.token_number FOR UPDATE OF t SKIP LOCKED LIMIT 1`
 		claimArgs = append(claimArgs, dimensionKey)
 	}
-	if err := tx.QueryRowContext(ctx, claimQuery, claimArgs...).Scan(&slot); err == sql.ErrNoRows {
-		timeSeriesCardinalityReservationWaits.Inc()
-		timeSeriesCardinalityDecisions.WithLabelValues(resource, cardinalityOutcomeRejected).Inc()
-		return false, nil
-	} else if err != nil {
-		return false, err
+	for attempt := 1; attempt <= limit; attempt++ {
+		if _, err := tx.ExecContext(ctx, `SAVEPOINT timeseries_cardinality_slot_attempt`); err != nil {
+			return false, err
+		}
+		finishAttempt := func(rollback bool) error {
+			if rollback {
+				if _, err := tx.ExecContext(ctx, `ROLLBACK TO SAVEPOINT timeseries_cardinality_slot_attempt`); err != nil {
+					return err
+				}
+			}
+			_, err := tx.ExecContext(ctx, `RELEASE SAVEPOINT timeseries_cardinality_slot_attempt`)
+			return err
+		}
+
+		var slot int64
+		if err := tx.QueryRowContext(ctx, claimQuery, claimArgs...).Scan(&slot); err == sql.ErrNoRows {
+			if releaseErr := finishAttempt(false); releaseErr != nil {
+				return false, releaseErr
+			}
+			timeSeriesCardinalityReservationWaits.Inc()
+			timeSeriesCardinalityDecisions.WithLabelValues(resource, cardinalityOutcomeRejected).Inc()
+			return false, nil
+		} else if err != nil {
+			_ = finishAttempt(true)
+			return false, err
+		}
+		var query string
+		var insertArgs []interface{}
+		if dimensionKey == "" {
+			query = `INSERT INTO ` + table + ` (metric_id,slot_number,series_hash,identity_value) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING slot_number`
+			insertArgs = []interface{}{metricID, slot, identityHash, identity}
+		} else {
+			query = `INSERT INTO ` + table + ` (metric_id,dimension_key,slot_number,value_hash,identity_value) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING RETURNING slot_number`
+			insertArgs = []interface{}{metricID, dimensionKey, slot, identityHash, identity}
+		}
+		if err := tx.QueryRowContext(ctx, query, insertArgs...).Scan(&slot); err == nil {
+			if releaseErr := finishAttempt(false); releaseErr != nil {
+				return false, releaseErr
+			}
+			timeSeriesCardinalityDecisions.WithLabelValues(resource, cardinalityOutcomeAdmitted).Inc()
+			return true, nil
+		} else if err != sql.ErrNoRows {
+			_ = finishAttempt(true)
+			return false, err
+		}
+
+		timeSeriesCardinalityReservationRetries.Inc()
+		lookupErr := tx.QueryRowContext(ctx, `SELECT identity_value FROM `+table+` WHERE `+keyPredicate+` AND `+identityColumn+`=`+identityPlaceholder, args...).Scan(&stored)
+		if lookupErr == nil {
+			if stored != identity {
+				_ = finishAttempt(true)
+				timeSeriesCardinalityIntegrityErrors.WithLabelValues(resource).Inc()
+				return false, fmt.Errorf("time-series cardinality hash collision for metric %d", metricID)
+			}
+			if releaseErr := finishAttempt(false); releaseErr != nil {
+				return false, releaseErr
+			}
+			timeSeriesCardinalityDecisions.WithLabelValues(resource, cardinalityOutcomeExisting).Inc()
+			return true, nil
+		}
+		if lookupErr != sql.ErrNoRows {
+			_ = finishAttempt(true)
+			return false, lookupErr
+		}
+		// The conflicting row used this physical slot for another identity.
+		// Roll back the attempt so its token lock does not survive the retry.
+		if rollbackErr := finishAttempt(true); rollbackErr != nil {
+			return false, rollbackErr
+		}
 	}
-	var query string
-	var insertArgs []interface{}
-	if dimensionKey == "" {
-		query = `INSERT INTO ` + table + ` (metric_id,slot_number,series_hash,identity_value) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING slot_number`
-		insertArgs = []interface{}{metricID, slot, identityHash, identity}
-	} else {
-		query = `INSERT INTO ` + table + ` (metric_id,dimension_key,slot_number,value_hash,identity_value) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING RETURNING slot_number`
-		insertArgs = []interface{}{metricID, dimensionKey, slot, identityHash, identity}
-	}
-	if err := tx.QueryRowContext(ctx, query, insertArgs...).Scan(&slot); err == nil {
-		timeSeriesCardinalityDecisions.WithLabelValues(resource, cardinalityOutcomeAdmitted).Inc()
-		return true, nil
-	} else if err != sql.ErrNoRows {
-		return false, err
-	}
-	timeSeriesCardinalityReservationRetries.Inc()
-	if err := tx.QueryRowContext(ctx, `SELECT identity_value FROM `+table+` WHERE `+keyPredicate+` AND `+identityColumn+`=`+identityPlaceholder, args...).Scan(&stored); err != nil {
-		return false, err
-	}
-	if stored != identity {
-		timeSeriesCardinalityIntegrityErrors.WithLabelValues(resource).Inc()
-		return false, fmt.Errorf("time-series cardinality hash collision for metric %d", metricID)
-	}
-	timeSeriesCardinalityDecisions.WithLabelValues(resource, cardinalityOutcomeExisting).Inc()
-	return true, nil
+	return false, fmt.Errorf("unable to reserve time-series cardinality slot for metric %d after %d attempts", metricID, limit)
 }
 
 // postgresCardinalityIdentityLockKey derives a stable advisory-lock key for one

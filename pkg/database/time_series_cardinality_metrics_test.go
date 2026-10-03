@@ -40,8 +40,10 @@ func TestCardinalityDecisionMetrics(t *testing.T) {
 					}
 					mock.ExpectQuery(`SELECT COUNT`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(active))
 					if outcome == cardinalityOutcomeAdmitted {
+						mock.ExpectExec(`SAVEPOINT timeseries_cardinality_slot_attempt`).WillReturnResult(sqlmock.NewResult(0, 0))
 						mock.ExpectQuery(`SELECT t.token_number`).WillReturnRows(sqlmock.NewRows([]string{"token_number"}).AddRow(0))
 						mock.ExpectQuery(`INSERT INTO`).WillReturnRows(sqlmock.NewRows([]string{"slot_number"}).AddRow(0))
+						mock.ExpectExec(`RELEASE SAVEPOINT timeseries_cardinality_slot_attempt`).WillReturnResult(sqlmock.NewResult(0, 0))
 					}
 				}
 				admitted, err := claimPostgresCardinalitySlot(context.Background(), tx, map[string]string{cardinalityResourceSeries: "TimeSeriesSeriesSlots", cardinalityResourceDimensionValue: "TimeSeriesDimensionSlots"}[resource], 1, dimensionKey, "hash", "identity", 1)

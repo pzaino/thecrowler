@@ -417,7 +417,7 @@ func TestPostgresWebObjectHistorySurvivesReplacementAndFollowsSourceOwnership(t 
 		t.Helper()
 		var indexID, objectID uint64
 		url := fmt.Sprintf("https://widget.invalid/%d/%s", source, suffix)
-		if err := sqlDB.QueryRow(`INSERT INTO SearchIndex(page_url,title,last_updated_at) VALUES($1,'Widget',$2)
+		if err := sqlDB.QueryRow(`INSERT INTO SearchIndex(page_url,title,summary,last_updated_at) VALUES($1,'Widget','Widget integration fixture',$2)
 			ON CONFLICT(page_url) DO UPDATE SET last_updated_at=EXCLUDED.last_updated_at RETURNING index_id`, url, at).Scan(&indexID); err != nil {
 			t.Fatal(err)
 		}

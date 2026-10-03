@@ -35,8 +35,10 @@ func TestPostgresCardinalityClaimsFineGrainedSlot(t *testing.T) {
 	mock.ExpectQuery(`SELECT identity_value FROM TimeSeriesSeriesSlots`).WillReturnError(sql.ErrNoRows)
 	mock.ExpectExec(`INSERT INTO TimeSeriesCardinalityTokens`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT COUNT`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectExec(`SAVEPOINT timeseries_cardinality_slot_attempt`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT t.token_number FROM TimeSeriesCardinalityTokens`).WillReturnRows(sqlmock.NewRows([]string{"token_number"}).AddRow(0))
 	mock.ExpectQuery(`INSERT INTO TimeSeriesSeriesSlots`).WillReturnRows(sqlmock.NewRows([]string{"slot_number"}).AddRow(0))
+	mock.ExpectExec(`RELEASE SAVEPOINT timeseries_cardinality_slot_attempt`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`RELEASE SAVEPOINT timeseries_cardinality_admission`).WillReturnResult(sqlmock.NewResult(0, 0))
 	exceeded, err := TimeSeriesCardinalityExceededTx(context.Background(), tx, DBPostgresStr, metricID, TimeSeriesScope{}, nil, cfg.TimeSeriesCardinalityConfig{MaxSeriesPerMetric: 1})
 	if err != nil || exceeded {
