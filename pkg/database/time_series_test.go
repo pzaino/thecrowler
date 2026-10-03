@@ -19,12 +19,8 @@ import (
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
 
-func TestPostgresCardinalityUsesAdvisoryLockAndRechecks(t *testing.T) {
+func TestPostgresCardinalityClaimsFineGrainedSlot(t *testing.T) {
 	const metricID uint64 = 1
-	lockKey, err := timeSeriesCardinalityLockKey(metricID)
-	if err != nil {
-		t.Fatal(err)
-	}
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
@@ -35,15 +31,10 @@ func TestPostgresCardinalityUsesAdvisoryLockAndRechecks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Both the optimistic probe and the authoritative post-lock probe see a
-	// missing identity and an available slot.
-	for pass := 0; pass < 2; pass++ {
-		mock.ExpectQuery(`SELECT series_identity FROM TimeSeriesActiveSeries`).WillReturnError(sql.ErrNoRows)
-		mock.ExpectQuery(`SELECT COUNT\(\*\) FROM TimeSeriesActiveSeries`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
-		if pass == 0 {
-			mock.ExpectExec(`SELECT pg_advisory_xact_lock\(\$1\)`).WithArgs(lockKey).WillReturnResult(sqlmock.NewResult(0, 1))
-		}
-	}
+	mock.ExpectExec(`SAVEPOINT timeseries_cardinality_admission`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT identity_value FROM TimeSeriesSeriesSlots`).WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(`INSERT INTO TimeSeriesSeriesSlots`).WillReturnRows(sqlmock.NewRows([]string{"slot_number"}).AddRow(0))
+	mock.ExpectExec(`RELEASE SAVEPOINT timeseries_cardinality_admission`).WillReturnResult(sqlmock.NewResult(0, 0))
 	exceeded, err := TimeSeriesCardinalityExceededTx(context.Background(), tx, DBPostgresStr, metricID, TimeSeriesScope{}, nil, cfg.TimeSeriesCardinalityConfig{MaxSeriesPerMetric: 1})
 	if err != nil || exceeded {
 		t.Fatalf("decision = exceeded %t, err %v", exceeded, err)
@@ -425,6 +416,9 @@ func TestPostgresTimeSeriesObservationDuplicateLooksUpExistingID(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"observation_id"}))
 	mock.ExpectQuery(`^SELECT observation_id FROM TimeSeriesObservations WHERE dedupe_key = \$1$`).
 		WithArgs("same-key").WillReturnRows(sqlmock.NewRows([]string{"observation_id"}).AddRow(uint64(37)))
+	mock.ExpectExec(`DELETE FROM TimeSeriesSeriesSlots`).
+		WithArgs(uint64(8), timeSeriesArgumentMatcher(func(value driver.Value) bool { return value != "" })).
+		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
 	result, err := InsertTimeSeriesObservation(&handler, &o)

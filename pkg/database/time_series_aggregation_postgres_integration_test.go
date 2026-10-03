@@ -33,17 +33,21 @@ func TestPostgresTimeSeriesCardinalityConcurrentAdmission(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		_, _ = sqlDB.Exec(`DELETE FROM TimeSeriesObservations WHERE metric_id=$1`, metric.ID)
+		_, _ = sqlDB.Exec(`DELETE FROM TimeSeriesDimensionSlots WHERE metric_id=$1`, metric.ID)
+		_, _ = sqlDB.Exec(`DELETE FROM TimeSeriesSeriesSlots WHERE metric_id=$1`, metric.ID)
 		_, _ = sqlDB.Exec(`DELETE FROM TimeSeriesActiveDimensionValues WHERE metric_id=$1`, metric.ID)
 		_, _ = sqlDB.Exec(`DELETE FROM TimeSeriesActiveSeries WHERE metric_id=$1`, metric.ID)
 		_, _ = sqlDB.Exec(`DELETE FROM TimeSeriesMetrics WHERE metric_id=$1`, metric.ID)
 	})
 
 	start := make(chan struct{})
-	results := make(chan bool, 2)
-	errors := make(chan error, 2)
+	const writers = 50
+	const limit = 10
+	results := make(chan bool, writers)
+	errors := make(chan error, writers)
 	var ready sync.WaitGroup
-	ready.Add(2)
-	for writer := 0; writer < 2; writer++ {
+	ready.Add(writers)
+	for writer := 0; writer < writers; writer++ {
 		writer := writer
 		go func() {
 			ready.Done()
@@ -56,7 +60,7 @@ func TestPostgresTimeSeriesCardinalityConcurrentAdmission(t *testing.T) {
 			defer tx.Rollback()
 			scopeID := uint64(writer + 1)
 			dimensions := map[string]interface{}{"region": fmt.Sprintf("region-%d", writer)}
-			exceeded, guardErr := TimeSeriesCardinalityExceededTx(context.Background(), tx, DBPostgresStr, metric.ID, TimeSeriesScope{ObjectType: "webobject", ObjectID: &scopeID}, dimensions, cfg.TimeSeriesCardinalityConfig{MaxSeriesPerMetric: 1, MaxValuesPerDimension: 1})
+			exceeded, guardErr := TimeSeriesCardinalityExceededTx(context.Background(), tx, DBPostgresStr, metric.ID, TimeSeriesScope{ObjectType: "webobject", ObjectID: &scopeID}, dimensions, cfg.TimeSeriesCardinalityConfig{MaxSeriesPerMetric: limit, MaxValuesPerDimension: limit})
 			if guardErr != nil {
 				errors <- guardErr
 				return
@@ -82,7 +86,7 @@ func TestPostgresTimeSeriesCardinalityConcurrentAdmission(t *testing.T) {
 	ready.Wait()
 	close(start)
 	admitted := 0
-	for i := 0; i < 2; i++ {
+	for i := 0; i < writers; i++ {
 		select {
 		case err = <-errors:
 			t.Fatalf("concurrent cardinality writer: %v", err)
@@ -101,8 +105,8 @@ func TestPostgresTimeSeriesCardinalityConcurrentAdmission(t *testing.T) {
 	if err = sqlDB.QueryRow(`SELECT COUNT(*) FROM TimeSeriesActiveDimensionValues WHERE metric_id=$1`, metric.ID).Scan(&values); err != nil {
 		t.Fatal(err)
 	}
-	if admitted != 1 || series != 1 || values != 1 {
-		t.Fatalf("admitted=%d active series=%d dimension values=%d, want 1/1/1", admitted, series, values)
+	if admitted != limit || series != limit || values != limit {
+		t.Fatalf("admitted=%d active series=%d dimension values=%d, want %d/%d/%d", admitted, series, values, limit, limit, limit)
 	}
 }
 
@@ -542,5 +546,58 @@ func TestPostgresDeterministicAggregateEquivalenceFixture(t *testing.T) {
 		if hashErr != nil || aggregate.AggregateHash != expected {
 			t.Fatalf("aggregate hash=%q expected=%q err=%v scope=%#v", aggregate.AggregateHash, expected, hashErr, aggregate.Scope)
 		}
+	}
+}
+
+func TestPostgresCardinalityOpenReservationDoesNotBlockIndependentSeries(t *testing.T) {
+	db, sqlDB := openPostgresIntegrationTestDB(t)
+	metric, err := UpsertTimeSeriesMetric(db, &TimeSeriesMetric{Key: fmt.Sprintf("cardinality-open-%d", time.Now().UnixNano()), DisplayName: "open reservation", SourceKind: cfg.TimeSeriesSourceCustom, ValueType: cfg.TimeSeriesValueInteger, Aggregate: cfg.TimeSeriesAggregateCount, Bucket: cfg.TimeSeriesBucketOneHour, TimeBasis: cfg.TimeSeriesTimeObservedAt, DedupeScope: cfg.TimeSeriesDedupeNone, ObjectType: cfg.TimeSeriesObjectWebObject, FailurePolicy: cfg.TimeSeriesFailureLogSkip, Selector: json.RawMessage(`{}`), Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = sqlDB.Exec(`DELETE FROM TimeSeriesDimensionSlots WHERE metric_id=$1`, metric.ID)
+		_, _ = sqlDB.Exec(`DELETE FROM TimeSeriesSeriesSlots WHERE metric_id=$1`, metric.ID)
+		_, _ = sqlDB.Exec(`DELETE FROM TimeSeriesMetrics WHERE metric_id=$1`, metric.ID)
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	tx1, err := sqlDB.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx1.Rollback()
+	firstID := uint64(101)
+	policy := cfg.TimeSeriesCardinalityConfig{MaxSeriesPerMetric: 100000, MaxValuesPerDimension: 100000}
+	if exceeded, guardErr := TimeSeriesCardinalityExceededTx(ctx, tx1, DBPostgresStr, metric.ID, TimeSeriesScope{ObjectType: "webobject", ObjectID: &firstID}, map[string]interface{}{"region": "held"}, policy); guardErr != nil || exceeded {
+		t.Fatalf("first reservation exceeded=%v err=%v", exceeded, guardErr)
+	}
+	finished := make(chan error, 1)
+	go func() {
+		tx2, beginErr := sqlDB.BeginTx(ctx, nil)
+		if beginErr != nil {
+			finished <- beginErr
+			return
+		}
+		defer tx2.Rollback()
+		secondID := uint64(202)
+		exceeded, guardErr := TimeSeriesCardinalityExceededTx(ctx, tx2, DBPostgresStr, metric.ID, TimeSeriesScope{ObjectType: "webobject", ObjectID: &secondID}, map[string]interface{}{"region": "independent"}, policy)
+		if guardErr != nil {
+			finished <- guardErr
+			return
+		}
+		if exceeded {
+			finished <- fmt.Errorf("independent series unexpectedly rejected")
+			return
+		}
+		finished <- tx2.Commit()
+	}()
+	select {
+	case err = <-finished:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatal("independent series blocked behind open reservation")
 	}
 }

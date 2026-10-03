@@ -73,23 +73,116 @@ func TimeSeriesCardinalityExceededTx(ctx context.Context, tx *sql.Tx, dbms strin
 	if err != nil {
 		return false, err
 	}
-	exceeded, missing, err := timeSeriesCardinalityDecision(ctx, tx, dbms, metricID, seriesHash, scope, dimensions, policy)
-	if err != nil || exceeded || dbms != DBPostgresStr || !missing {
-		return exceeded, err
+	if dbms != DBPostgresStr {
+		exceeded, _, decisionErr := timeSeriesCardinalityDecision(ctx, tx, dbms, metricID, seriesHash, scope, dimensions, policy)
+		return exceeded, decisionErr
 	}
-	// Only new identities need serialization. The transaction-scoped lock is
-	// independent of TimeSeriesMetrics, and therefore cannot conflict with the
-	// parent-row key locks taken while inserting aggregates. Rechecking after
-	// acquiring it makes the count-and-admit decision exact across processes.
-	lockKey, err := timeSeriesCardinalityLockKey(metricID)
+	// PostgreSQL reservations are bounded by unique (owner, slot_number) keys.
+	// A writer normally touches only the slot selected by its identity hash, so
+	// an open page transaction cannot fence all new series for a metric.
+	if _, err = tx.ExecContext(ctx, `SAVEPOINT timeseries_cardinality_admission`); err != nil {
+		return false, err
+	}
+	reject := func(cause error) (bool, error) {
+		_, rollbackErr := tx.ExecContext(ctx, `ROLLBACK TO SAVEPOINT timeseries_cardinality_admission`)
+		if rollbackErr == nil {
+			_, rollbackErr = tx.ExecContext(ctx, `RELEASE SAVEPOINT timeseries_cardinality_admission`)
+		}
+		if cause != nil {
+			return false, cause
+		}
+		return true, rollbackErr
+	}
+	identity, err := timeSeriesSeriesIdentityJSON(&TimeSeriesObservation{MetricID: metricID, Scope: scope, Dimensions: dimensions})
 	if err != nil {
-		return false, fmt.Errorf("build PostgreSQL time-series cardinality lock key for metric %d: %w", metricID, err)
+		return reject(err)
 	}
-	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, lockKey); err != nil {
-		return false, fmt.Errorf("lock PostgreSQL time-series cardinality for metric %d: %w", metricID, err)
+	if policy.MaxSeriesPerMetric > 0 {
+		admitted, claimErr := claimPostgresCardinalitySlot(ctx, tx, "TimeSeriesSeriesSlots", metricID, "", seriesHash, identity, policy.MaxSeriesPerMetric)
+		if claimErr != nil {
+			return reject(claimErr)
+		}
+		if !admitted {
+			return reject(nil)
+		}
 	}
-	exceeded, _, err = timeSeriesCardinalityDecision(ctx, tx, dbms, metricID, seriesHash, scope, dimensions, policy)
-	return exceeded, err
+	keys := make([]string, 0, len(dimensions))
+	for key := range dimensions {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	if policy.MaxValuesPerDimension > 0 {
+		for _, key := range keys {
+			hash, canonical, hashErr := timeSeriesDimensionValueHash(metricID, key, dimensions[key])
+			if hashErr != nil {
+				return reject(hashErr)
+			}
+			admitted, claimErr := claimPostgresCardinalitySlot(ctx, tx, "TimeSeriesDimensionSlots", metricID, key, hash, canonical, policy.MaxValuesPerDimension)
+			if claimErr != nil {
+				return reject(claimErr)
+			}
+			if !admitted {
+				return reject(nil)
+			}
+		}
+	}
+	_, err = tx.ExecContext(ctx, `RELEASE SAVEPOINT timeseries_cardinality_admission`)
+	return false, err
+}
+
+// claimPostgresCardinalitySlot returns true for both an existing identity and
+// a newly reserved slot. Unique constraints provide the cross-process bound;
+// hash-derived probing distributes independent identities over the quota.
+func claimPostgresCardinalitySlot(ctx context.Context, tx *sql.Tx, table string, metricID uint64, dimensionKey, identityHash, identity string, limit int) (bool, error) {
+	keyPredicate, keyArgs := "metric_id=$1", []interface{}{metricID}
+	identityColumn := "series_hash"
+	if dimensionKey != "" {
+		keyPredicate += " AND dimension_key=$2"
+		keyArgs = append(keyArgs, dimensionKey)
+		identityColumn = "value_hash"
+	}
+	var stored string
+	args := append(append([]interface{}{}, keyArgs...), identityHash)
+	if err := tx.QueryRowContext(ctx, `SELECT identity_value FROM `+table+` WHERE `+keyPredicate+` AND `+identityColumn+`=$`+strconv.Itoa(len(args)), args...).Scan(&stored); err == nil {
+		if stored != identity {
+			return false, fmt.Errorf("time-series cardinality hash collision for metric %d", metricID)
+		}
+		return true, nil
+	} else if err != sql.ErrNoRows {
+		return false, err
+	}
+	startRaw, err := strconv.ParseUint(identityHash[:16], 16, 64)
+	if err != nil {
+		return false, err
+	}
+	for probe := 0; probe < limit; probe++ {
+		slot := int((startRaw + uint64(probe)) % uint64(limit))
+		var query string
+		var insertArgs []interface{}
+		if dimensionKey == "" {
+			query = `INSERT INTO ` + table + ` (metric_id,slot_number,series_hash,identity_value) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING slot_number`
+			insertArgs = []interface{}{metricID, slot, identityHash, identity}
+		} else {
+			query = `INSERT INTO ` + table + ` (metric_id,dimension_key,slot_number,value_hash,identity_value) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING RETURNING slot_number`
+			insertArgs = []interface{}{metricID, dimensionKey, slot, identityHash, identity}
+		}
+		var claimed int
+		if scanErr := tx.QueryRowContext(ctx, query, insertArgs...).Scan(&claimed); scanErr == nil {
+			return true, nil
+		} else if scanErr != sql.ErrNoRows {
+			return false, scanErr
+		}
+		// An identical writer may have won a different unique constraint.
+		if scanErr := tx.QueryRowContext(ctx, `SELECT identity_value FROM `+table+` WHERE `+keyPredicate+` AND `+identityColumn+`=$`+strconv.Itoa(len(args)), args...).Scan(&stored); scanErr == nil {
+			if stored != identity {
+				return false, fmt.Errorf("time-series cardinality hash collision for metric %d", metricID)
+			}
+			return true, nil
+		} else if scanErr != sql.ErrNoRows {
+			return false, scanErr
+		}
+	}
+	return false, nil
 }
 
 // timeSeriesCardinalityLockKey uses SHA-256 to provide a stable, versioned lock
@@ -254,6 +347,11 @@ func decrementTimeSeriesCardinality(ctx context.Context, tx *sql.Tx, dbms string
 	if deletedCount+updatedCount != 1 {
 		return fmt.Errorf("missing exact series reference for observation %d", o.ID)
 	}
+	if deletedCount == 1 && dbms == DBPostgresStr {
+		if _, err = tx.ExecContext(ctx, `DELETE FROM TimeSeriesSeriesSlots WHERE metric_id=$1 AND series_hash=$2`, o.MetricID, o.SeriesHash); err != nil {
+			return err
+		}
+	}
 	keys := make([]string, 0, len(o.Dimensions))
 	for key := range o.Dimensions {
 		keys = append(keys, key)
@@ -278,6 +376,11 @@ func decrementTimeSeriesCardinality(ctx context.Context, tx *sql.Tx, dbms string
 		updatedCount, _ = updated.RowsAffected()
 		if deletedCount+updatedCount != 1 {
 			return fmt.Errorf("missing exact dimension reference for observation %d dimension %q", o.ID, key)
+		}
+		if deletedCount == 1 && dbms == DBPostgresStr {
+			if _, err = tx.ExecContext(ctx, `DELETE FROM TimeSeriesDimensionSlots WHERE metric_id=$1 AND dimension_key=$2 AND value_hash=$3`, o.MetricID, key, hash); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -327,6 +430,14 @@ func RebuildTimeSeriesCardinality(ctx context.Context, db *Handler) (TimeSeriesC
 	if _, err = tx.ExecContext(ctx, `DELETE FROM TimeSeriesActiveSeries`); err != nil {
 		return result, err
 	}
+	if dbms == DBPostgresStr {
+		if _, err = tx.ExecContext(ctx, `DELETE FROM TimeSeriesDimensionSlots`); err != nil {
+			return result, err
+		}
+		if _, err = tx.ExecContext(ctx, `DELETE FROM TimeSeriesSeriesSlots`); err != nil {
+			return result, err
+		}
+	}
 	rows, err := tx.QueryContext(ctx, `SELECT `+timeSeriesObservationColumns+` FROM TimeSeriesObservations WHERE deleted_at IS NULL ORDER BY observation_id`)
 	if err != nil {
 		return result, err
@@ -348,6 +459,14 @@ func RebuildTimeSeriesCardinality(ctx context.Context, db *Handler) (TimeSeriesC
 		return result, err
 	}
 	_ = rows.Close()
+	if dbms == DBPostgresStr {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO TimeSeriesSeriesSlots (metric_id,slot_number,series_hash,identity_value) SELECT metric_id,ROW_NUMBER() OVER (PARTITION BY metric_id ORDER BY series_hash)-1,series_hash,series_identity FROM TimeSeriesActiveSeries`); err != nil {
+			return result, err
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO TimeSeriesDimensionSlots (metric_id,dimension_key,slot_number,value_hash,identity_value) SELECT metric_id,dimension_key,ROW_NUMBER() OVER (PARTITION BY metric_id,dimension_key ORDER BY value_hash)-1,value_hash,canonical_value FROM TimeSeriesActiveDimensionValues`); err != nil {
+			return result, err
+		}
+	}
 	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM TimeSeriesActiveSeries`).Scan(&result.Series); err != nil {
 		return result, err
 	}

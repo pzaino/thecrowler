@@ -127,10 +127,10 @@ CREATE TABLE IF NOT EXISTS DBSchemaVersion (
 DO $$
 BEGIN
     IF NOT EXISTS (
-        SELECT 1 FROM DBSchemaVersion WHERE version = '1.14'
+        SELECT 1 FROM DBSchemaVersion WHERE version = '1.15'
     ) THEN
         INSERT INTO DBSchemaVersion (version, description)
-        VALUES ('1.14', 'CROWler DB schema version 1.14');
+        VALUES ('1.15', 'CROWler DB schema version 1.15');
     END IF;
 END
 $$;
@@ -2250,6 +2250,17 @@ CREATE TABLE IF NOT EXISTS TimeSeriesActiveDimensionValues (
     PRIMARY KEY (metric_id, dimension_key, value_hash)
 );
 
+CREATE TABLE IF NOT EXISTS TimeSeriesSeriesSlots (
+    metric_id BIGINT NOT NULL REFERENCES TimeSeriesMetrics(metric_id) ON DELETE RESTRICT,
+    slot_number BIGINT NOT NULL, series_hash VARCHAR(64) NOT NULL, identity_value TEXT NOT NULL,
+    PRIMARY KEY (metric_id, slot_number), UNIQUE (metric_id, series_hash)
+);
+CREATE TABLE IF NOT EXISTS TimeSeriesDimensionSlots (
+    metric_id BIGINT NOT NULL REFERENCES TimeSeriesMetrics(metric_id) ON DELETE RESTRICT,
+    dimension_key TEXT NOT NULL, slot_number BIGINT NOT NULL, value_hash VARCHAR(64) NOT NULL, identity_value TEXT NOT NULL,
+    PRIMARY KEY (metric_id, dimension_key, slot_number), UNIQUE (metric_id, dimension_key, value_hash)
+);
+
 CREATE TABLE IF NOT EXISTS TimeSeriesAggregates (
     aggregate_id BIGSERIAL PRIMARY KEY,
     metric_id BIGINT NOT NULL REFERENCES TimeSeriesMetrics(metric_id) ON DELETE RESTRICT,
@@ -3733,6 +3744,8 @@ ALTER TABLE TimeSeriesMetrics OWNER TO :CROWLER_DB_USER;
 ALTER TABLE TimeSeriesObservations OWNER TO :CROWLER_DB_USER;
 ALTER TABLE TimeSeriesActiveSeries OWNER TO :CROWLER_DB_USER;
 ALTER TABLE TimeSeriesActiveDimensionValues OWNER TO :CROWLER_DB_USER;
+ALTER TABLE TimeSeriesSeriesSlots OWNER TO :CROWLER_DB_USER;
+ALTER TABLE TimeSeriesDimensionSlots OWNER TO :CROWLER_DB_USER;
 
 -- Grants permissions to the user on the :"POSTGRES_DB" database
 SELECT grant_sequence_permissions('public', :'CROWLER_DB_USER');
