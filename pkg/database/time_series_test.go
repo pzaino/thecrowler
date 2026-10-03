@@ -25,6 +25,7 @@ func TestPostgresCardinalityClaimsFineGrainedSlot(t *testing.T) {
 	}
 	defer db.Close()
 	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT pg_advisory_xact_lock_shared`).WillReturnResult(sqlmock.NewResult(0, 1))
 	tx, err := db.Begin()
 	if err != nil {
 		t.Fatal(err)
@@ -62,6 +63,7 @@ type timeSeriesArgumentMatcher func(driver.Value) bool
 func (m timeSeriesArgumentMatcher) Match(value driver.Value) bool { return m(value) }
 
 func expectTimeSeriesAccounting(mock sqlmock.Sqlmock, dimensions int) {
+	mock.ExpectExec(`SELECT pg_advisory_xact_lock_shared`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(`SELECT series_identity FROM TimeSeriesActiveSeries`).WillReturnRows(sqlmock.NewRows([]string{"series_identity"}))
 	mock.ExpectExec(`INSERT INTO TimeSeriesActiveSeries`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`INSERT INTO TimeSeriesObservationSeries`).WillReturnResult(sqlmock.NewResult(0, 1))
@@ -264,7 +266,7 @@ func TestTimeSeriesObservationDuplicateAndBatchRollback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.Exec(`CREATE TABLE TimeSeriesActiveSeries (metric_id INTEGER NOT NULL, series_hash TEXT NOT NULL, series_identity TEXT NOT NULL, reference_count INTEGER NOT NULL CHECK(reference_count > 0), PRIMARY KEY(metric_id, series_hash)); CREATE TABLE TimeSeriesActiveDimensionValues (metric_id INTEGER NOT NULL, dimension_key TEXT NOT NULL, value_hash TEXT NOT NULL, canonical_value TEXT NOT NULL, reference_count INTEGER NOT NULL CHECK(reference_count > 0), PRIMARY KEY(metric_id, dimension_key, value_hash)); CREATE TABLE TimeSeriesObservationSeries(observation_id INTEGER NOT NULL,metric_id INTEGER NOT NULL,series_hash TEXT NOT NULL,PRIMARY KEY(observation_id,metric_id,series_hash)); CREATE TABLE TimeSeriesObservationDimensions(observation_id INTEGER NOT NULL,metric_id INTEGER NOT NULL,dimension_key TEXT NOT NULL,value_hash TEXT NOT NULL,PRIMARY KEY(observation_id,metric_id,dimension_key,value_hash))`); err != nil {
+	if _, err = db.Exec(`CREATE TABLE TimeSeriesCardinalityMaintenanceLock(lock_id INTEGER NOT NULL PRIMARY KEY); INSERT INTO TimeSeriesCardinalityMaintenanceLock(lock_id) VALUES(1); CREATE TABLE TimeSeriesActiveSeries (metric_id INTEGER NOT NULL, series_hash TEXT NOT NULL, series_identity TEXT NOT NULL, reference_count INTEGER NOT NULL CHECK(reference_count > 0), PRIMARY KEY(metric_id, series_hash)); CREATE TABLE TimeSeriesActiveDimensionValues (metric_id INTEGER NOT NULL, dimension_key TEXT NOT NULL, value_hash TEXT NOT NULL, canonical_value TEXT NOT NULL, reference_count INTEGER NOT NULL CHECK(reference_count > 0), PRIMARY KEY(metric_id, dimension_key, value_hash)); CREATE TABLE TimeSeriesObservationSeries(observation_id INTEGER NOT NULL,metric_id INTEGER NOT NULL,series_hash TEXT NOT NULL,PRIMARY KEY(observation_id,metric_id,series_hash)); CREATE TABLE TimeSeriesObservationDimensions(observation_id INTEGER NOT NULL,metric_id INTEGER NOT NULL,dimension_key TEXT NOT NULL,value_hash TEXT NOT NULL,PRIMARY KEY(observation_id,metric_id,dimension_key,value_hash))`); err != nil {
 		t.Fatal(err)
 	}
 	var handler Handler = &SQLiteHandler{db: db, dbms: "SQLite"}

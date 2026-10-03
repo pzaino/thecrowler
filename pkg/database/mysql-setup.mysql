@@ -847,16 +847,10 @@ CREATE TABLE IF NOT EXISTS TimeSeriesObservationDimensions (
     FOREIGN KEY (metric_id,dimension_key,value_hash) REFERENCES TimeSeriesActiveDimensionValues(metric_id,dimension_key,value_hash) ON DELETE RESTRICT
 ) ENGINE=InnoDB;
 
-CREATE TABLE IF NOT EXISTS TimeSeriesSeriesSlots (
-    metric_id BIGINT NOT NULL, slot_number BIGINT NOT NULL, series_hash VARCHAR(64) NOT NULL, identity_value TEXT NOT NULL,
-    PRIMARY KEY (metric_id, slot_number), UNIQUE (metric_id, series_hash),
-    FOREIGN KEY (metric_id) REFERENCES TimeSeriesMetrics(metric_id) ON DELETE RESTRICT
+CREATE TABLE IF NOT EXISTS TimeSeriesCardinalityMaintenanceLock (
+    lock_id INTEGER NOT NULL PRIMARY KEY
 ) ENGINE=InnoDB;
-CREATE TABLE IF NOT EXISTS TimeSeriesDimensionSlots (
-    metric_id BIGINT NOT NULL, dimension_key VARCHAR(255) NOT NULL, slot_number BIGINT NOT NULL, value_hash VARCHAR(64) NOT NULL, identity_value TEXT NOT NULL,
-    PRIMARY KEY (metric_id, dimension_key, slot_number), UNIQUE (metric_id, dimension_key, value_hash),
-    FOREIGN KEY (metric_id) REFERENCES TimeSeriesMetrics(metric_id) ON DELETE RESTRICT
-) ENGINE=InnoDB;
+INSERT IGNORE INTO TimeSeriesCardinalityMaintenanceLock(lock_id) VALUES (1);
 
 CREATE TABLE IF NOT EXISTS TimeSeriesAggregates (
     aggregate_id BIGINT AUTO_INCREMENT PRIMARY KEY,

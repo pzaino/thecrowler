@@ -33,6 +33,28 @@ type timeSeriesCardinalityMutation struct {
 	dbms string
 }
 
+// lockTimeSeriesCardinalityMutation participates in the database-wide
+// cardinality maintenance fence. PostgreSQL's shared advisory transaction lock
+// preserves writer concurrency, while MySQL and SQLite use the singleton row
+// installed by the schema. Rebuild takes the corresponding exclusive lock.
+func lockTimeSeriesCardinalityMutation(ctx context.Context, tx *sql.Tx, dbms string, exclusive bool) error {
+	switch dbms {
+	case DBPostgresStr:
+		fn := "pg_advisory_xact_lock_shared"
+		if exclusive {
+			fn = "pg_advisory_xact_lock"
+		}
+		_, err := tx.ExecContext(ctx, `SELECT `+fn+`(741953102846276103)`)
+		return err
+	case DBMySQLStr:
+		_, err := tx.ExecContext(ctx, `SELECT lock_id FROM TimeSeriesCardinalityMaintenanceLock WHERE lock_id=1 FOR UPDATE`)
+		return err
+	default: // SQLite: a write to the singleton obtains the database write lock.
+		_, err := tx.ExecContext(ctx, `UPDATE TimeSeriesCardinalityMaintenanceLock SET lock_id=lock_id WHERE lock_id=1`)
+		return err
+	}
+}
+
 func newTimeSeriesCardinalityMutation(ctx context.Context, tx *sql.Tx, dbms string) timeSeriesCardinalityMutation {
 	return timeSeriesCardinalityMutation{ctx: ctx, tx: tx, dbms: dbms}
 }
@@ -120,6 +142,9 @@ func (m timeSeriesCardinalityMutation) admit(metricID uint64, scope TimeSeriesSc
 	ctx, tx, dbms := m.ctx, m.tx, m.dbms
 	if tx == nil {
 		return false, fmt.Errorf("time-series cardinality transaction is nil")
+	}
+	if err := lockTimeSeriesCardinalityMutation(ctx, tx, dbms, false); err != nil {
+		return false, fmt.Errorf("acquire time-series cardinality mutation fence: %w", err)
 	}
 	seriesHash, err := TimeSeriesSeriesHash(metricID, scope, dimensions)
 	if err != nil {
@@ -328,6 +353,9 @@ func timeSeriesDimensionValueHash(metricID uint64, key string, value interface{}
 
 func (m timeSeriesCardinalityMutation) add(o *TimeSeriesObservation) error {
 	ctx, tx, dbms := m.ctx, m.tx, m.dbms
+	if err := lockTimeSeriesCardinalityMutation(ctx, tx, dbms, false); err != nil {
+		return fmt.Errorf("acquire time-series cardinality mutation fence: %w", err)
+	}
 	if o.SeriesHash == "" {
 		return fmt.Errorf("time-series cardinality series hash is required")
 	}
@@ -408,6 +436,9 @@ func (m timeSeriesCardinalityMutation) add(o *TimeSeriesObservation) error {
 
 func (m timeSeriesCardinalityMutation) release(o *TimeSeriesObservation) error {
 	ctx, tx, dbms := m.ctx, m.tx, m.dbms
+	if err := lockTimeSeriesCardinalityMutation(ctx, tx, dbms, false); err != nil {
+		return fmt.Errorf("acquire time-series cardinality mutation fence: %w", err)
+	}
 	p := newInformationSeedPlaceholders(dbms)
 	removed, err := tx.ExecContext(ctx, `DELETE FROM TimeSeriesObservationSeries WHERE observation_id=`+p.Next()+` AND metric_id=`+p.Next()+` AND series_hash=`+p.Next(), o.ID, o.MetricID, o.SeriesHash)
 	if err != nil {
@@ -507,15 +538,33 @@ func (m timeSeriesCardinalityMutation) reset() error {
 	return nil
 }
 
-func (m timeSeriesCardinalityMutation) rebuildReservations() error {
+func (m timeSeriesCardinalityMutation) reserveForRebuild(o *TimeSeriesObservation, capacity int) error {
 	if m.dbms != DBPostgresStr {
 		return nil
 	}
-	if _, err := m.tx.ExecContext(m.ctx, `INSERT INTO TimeSeriesSeriesSlots (metric_id,slot_number,series_hash,identity_value) SELECT metric_id,ROW_NUMBER() OVER (PARTITION BY metric_id ORDER BY series_hash)-1,series_hash,series_identity FROM TimeSeriesActiveSeries`); err != nil {
+	identity, err := timeSeriesSeriesIdentityJSON(o)
+	if err != nil {
 		return err
 	}
-	_, err := m.tx.ExecContext(m.ctx, `INSERT INTO TimeSeriesDimensionSlots (metric_id,dimension_key,slot_number,value_hash,identity_value) SELECT metric_id,dimension_key,ROW_NUMBER() OVER (PARTITION BY metric_id,dimension_key ORDER BY value_hash)-1,value_hash,canonical_value FROM TimeSeriesActiveDimensionValues`)
-	return err
+	if ok, err := claimPostgresCardinalitySlot(m.ctx, m.tx, "TimeSeriesSeriesSlots", o.MetricID, "", o.SeriesHash, identity, capacity); err != nil || !ok {
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("reserve rebuilt series identity for metric %d", o.MetricID)
+	}
+	for key, value := range o.Dimensions {
+		hash, canonical, err := timeSeriesDimensionValueHash(o.MetricID, key, value)
+		if err != nil {
+			return err
+		}
+		if ok, err := claimPostgresCardinalitySlot(m.ctx, m.tx, "TimeSeriesDimensionSlots", o.MetricID, key, hash, canonical, capacity); err != nil || !ok {
+			if err != nil {
+				return err
+			}
+			return fmt.Errorf("reserve rebuilt dimension identity for metric %d dimension %q", o.MetricID, key)
+		}
+	}
+	return nil
 }
 
 func placeholders(dbms string, count int) string {
@@ -544,7 +593,9 @@ func timeSeriesSeriesIdentityJSON(o *TimeSeriesObservation) (string, error) {
 }
 
 // RebuildTimeSeriesCardinality atomically replaces derived state from retained,
-// non-deleted observations. The transaction provides the mutation fence.
+// non-deleted observations. Every mutation entry point takes the shared side
+// of the same database lock; this administrative operation holds its exclusive
+// side until the fully validated replacement commits.
 func RebuildTimeSeriesCardinality(ctx context.Context, db *Handler) (TimeSeriesCardinalityReconciliation, error) {
 	var result TimeSeriesCardinalityReconciliation
 	dbms, err := validateTimeSeriesDB(db)
@@ -556,6 +607,9 @@ func RebuildTimeSeriesCardinality(ctx context.Context, db *Handler) (TimeSeriesC
 		return result, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err = lockTimeSeriesCardinalityMutation(ctx, tx, dbms, true); err != nil {
+		return result, fmt.Errorf("acquire time-series cardinality maintenance fence: %w", err)
+	}
 	mutation := newTimeSeriesCardinalityMutation(ctx, tx, dbms)
 	if err = mutation.reset(); err != nil {
 		return result, err
@@ -564,31 +618,77 @@ func RebuildTimeSeriesCardinality(ctx context.Context, db *Handler) (TimeSeriesC
 	if err != nil {
 		return result, err
 	}
+	observations := make([]*TimeSeriesObservation, 0)
 	for rows.Next() {
 		o, scanErr := scanTimeSeriesObservation(rows.Scan)
 		if scanErr != nil {
 			_ = rows.Close()
 			return result, scanErr
 		}
-		if err = mutation.add(o); err != nil {
-			_ = rows.Close()
-			return result, err
-		}
-		result.Observations++
+		observations = append(observations, o)
 	}
 	if err = rows.Err(); err != nil {
 		_ = rows.Close()
 		return result, err
 	}
 	_ = rows.Close()
-	if err = mutation.rebuildReservations(); err != nil {
-		return result, err
+	result.Observations = int64(len(observations))
+	capacity := len(observations)
+	if capacity == 0 {
+		capacity = 1
+	}
+	var expectedDimensions int64
+	expectedSeriesIdentities := make(map[string]struct{})
+	expectedDimensionIdentities := make(map[string]struct{})
+	for _, o := range observations {
+		if err = mutation.add(o); err != nil {
+			return result, err
+		}
+		expectedSeriesIdentities[fmt.Sprintf("%d\x00%s", o.MetricID, o.SeriesHash)] = struct{}{}
+		expectedDimensions += int64(len(o.Dimensions))
+		for key, value := range o.Dimensions {
+			hash, _, hashErr := timeSeriesDimensionValueHash(o.MetricID, key, value)
+			if hashErr != nil {
+				return result, hashErr
+			}
+			expectedDimensionIdentities[fmt.Sprintf("%d\x00%s\x00%s", o.MetricID, key, hash)] = struct{}{}
+		}
+	}
+	for _, o := range observations {
+		if err = mutation.reserveForRebuild(o, capacity); err != nil {
+			return result, err
+		}
 	}
 	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM TimeSeriesActiveSeries`).Scan(&result.Series); err != nil {
 		return result, err
 	}
 	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM TimeSeriesActiveDimensionValues`).Scan(&result.DimensionValues); err != nil {
 		return result, err
+	}
+	if result.Series != int64(len(expectedSeriesIdentities)) || result.DimensionValues != int64(len(expectedDimensionIdentities)) {
+		return result, fmt.Errorf("rebuilt identity validation failed: series=%d/%d dimensions=%d/%d", result.Series, len(expectedSeriesIdentities), result.DimensionValues, len(expectedDimensionIdentities))
+	}
+	var seriesMemberships, dimensionMemberships int64
+	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM TimeSeriesObservationSeries`).Scan(&seriesMemberships); err != nil {
+		return result, err
+	}
+	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM TimeSeriesObservationDimensions`).Scan(&dimensionMemberships); err != nil {
+		return result, err
+	}
+	if seriesMemberships != result.Observations || dimensionMemberships != expectedDimensions {
+		return result, fmt.Errorf("rebuilt membership validation failed: series=%d/%d dimensions=%d/%d", seriesMemberships, result.Observations, dimensionMemberships, expectedDimensions)
+	}
+	if dbms == DBPostgresStr {
+		var seriesReservations, dimensionReservations int64
+		if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM TimeSeriesSeriesSlots`).Scan(&seriesReservations); err != nil {
+			return result, err
+		}
+		if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM TimeSeriesDimensionSlots`).Scan(&dimensionReservations); err != nil {
+			return result, err
+		}
+		if seriesReservations != result.Series || dimensionReservations != result.DimensionValues {
+			return result, fmt.Errorf("rebuilt reservation validation failed: series=%d/%d dimensions=%d/%d", seriesReservations, result.Series, dimensionReservations, result.DimensionValues)
+		}
 	}
 	if err = tx.Commit(); err != nil {
 		return result, err

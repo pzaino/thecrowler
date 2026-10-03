@@ -8,10 +8,27 @@ CREATE TABLE IF NOT EXISTS TimeSeriesDimensionSlots (
  metric_id BIGINT NOT NULL REFERENCES TimeSeriesMetrics(metric_id) ON DELETE RESTRICT,
  dimension_key TEXT NOT NULL, slot_number BIGINT NOT NULL, value_hash VARCHAR(64) NOT NULL, identity_value TEXT NOT NULL,
  PRIMARY KEY(metric_id,dimension_key,slot_number), UNIQUE(metric_id,dimension_key,value_hash));
-INSERT INTO TimeSeriesSeriesSlots(metric_id,slot_number,series_hash,identity_value)
-SELECT metric_id,ROW_NUMBER() OVER(PARTITION BY metric_id ORDER BY series_hash)-1,series_hash,series_identity FROM TimeSeriesActiveSeries ON CONFLICT DO NOTHING;
-INSERT INTO TimeSeriesDimensionSlots(metric_id,dimension_key,slot_number,value_hash,identity_value)
-SELECT metric_id,dimension_key,ROW_NUMBER() OVER(PARTITION BY metric_id,dimension_key ORDER BY value_hash)-1,value_hash,canonical_value FROM TimeSeriesActiveDimensionValues ON CONFLICT DO NOTHING;
+-- Backfill through the same token reservation model used by production writes.
+-- The available token is selected and locked for each identity; slot numbers are
+-- not synthesized from the current row ordering.
+DO $$
+DECLARE r RECORD; chosen BIGINT;
+BEGIN
+ FOR r IN SELECT metric_id,series_hash,series_identity FROM TimeSeriesActiveSeries ORDER BY metric_id,series_hash LOOP
+  SELECT t.token_number INTO chosen FROM TimeSeriesCardinalityTokens t
+   WHERE NOT EXISTS (SELECT 1 FROM TimeSeriesSeriesSlots s WHERE s.metric_id=r.metric_id AND s.slot_number=t.token_number)
+   ORDER BY t.token_number FOR UPDATE OF t SKIP LOCKED LIMIT 1;
+  IF chosen IS NULL THEN RAISE EXCEPTION 'no cardinality token for metric %', r.metric_id; END IF;
+  INSERT INTO TimeSeriesSeriesSlots(metric_id,slot_number,series_hash,identity_value) VALUES(r.metric_id,chosen,r.series_hash,r.series_identity) ON CONFLICT DO NOTHING;
+ END LOOP;
+ FOR r IN SELECT metric_id,dimension_key,value_hash,canonical_value FROM TimeSeriesActiveDimensionValues ORDER BY metric_id,dimension_key,value_hash LOOP
+  SELECT t.token_number INTO chosen FROM TimeSeriesCardinalityTokens t
+   WHERE NOT EXISTS (SELECT 1 FROM TimeSeriesDimensionSlots s WHERE s.metric_id=r.metric_id AND s.dimension_key=r.dimension_key AND s.slot_number=t.token_number)
+   ORDER BY t.token_number FOR UPDATE OF t SKIP LOCKED LIMIT 1;
+  IF chosen IS NULL THEN RAISE EXCEPTION 'no cardinality token for metric % dimension %', r.metric_id,r.dimension_key; END IF;
+  INSERT INTO TimeSeriesDimensionSlots(metric_id,dimension_key,slot_number,value_hash,identity_value) VALUES(r.metric_id,r.dimension_key,chosen,r.value_hash,r.canonical_value) ON CONFLICT DO NOTHING;
+ END LOOP;
+END $$;
 CREATE TABLE IF NOT EXISTS TimeSeriesObservationSeries (
  observation_id BIGINT NOT NULL REFERENCES TimeSeriesObservations(observation_id) ON DELETE CASCADE,
  metric_id BIGINT NOT NULL, series_hash VARCHAR(64) NOT NULL,
