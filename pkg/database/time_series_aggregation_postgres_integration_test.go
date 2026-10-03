@@ -24,6 +24,76 @@ import (
 const widgetHistoryDocument = `{"kind":"Widget","name":"backlog-widget","operational":{"count":7,"price":12.5},"region":"eu"}`
 const widgetReplacementDocument = `{"kind":"Widget","name":"backlog-widget","operational":{"count":9,"price":15.75},"region":"eu"}`
 
+func TestPostgresNormalizedMembershipSharedDimensions64Writers(t *testing.T) {
+	for _, dimension := range []string{"username", "media_pk", "shortcode"} {
+		t.Run(dimension, func(t *testing.T) {
+			db, sqlDB := openPostgresIntegrationTestDB(t)
+			metric, err := UpsertTimeSeriesMetric(db, &TimeSeriesMetric{Key: fmt.Sprintf("membership-%s-%d", dimension, time.Now().UnixNano()), DisplayName: "membership concurrency", SourceKind: cfg.TimeSeriesSourceCustom, ValueType: cfg.TimeSeriesValueInteger, Aggregate: cfg.TimeSeriesAggregateCount, Bucket: cfg.TimeSeriesBucketOneHour, TimeBasis: cfg.TimeSeriesTimeObservedAt, DedupeScope: cfg.TimeSeriesDedupeNone, ObjectType: cfg.TimeSeriesObjectWebObject, FailurePolicy: cfg.TimeSeriesFailureLogSkip, Selector: json.RawMessage(`{}`), Enabled: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				_, _ = sqlDB.Exec(`DELETE FROM TimeSeriesObservations WHERE metric_id=$1`, metric.ID)
+				_, _ = sqlDB.Exec(`DELETE FROM TimeSeriesDimensionSlots WHERE metric_id=$1`, metric.ID)
+				_, _ = sqlDB.Exec(`DELETE FROM TimeSeriesSeriesSlots WHERE metric_id=$1`, metric.ID)
+				_, _ = sqlDB.Exec(`DELETE FROM TimeSeriesActiveDimensionValues WHERE metric_id=$1`, metric.ID)
+				_, _ = sqlDB.Exec(`DELETE FROM TimeSeriesActiveSeries WHERE metric_id=$1`, metric.ID)
+				_, _ = sqlDB.Exec(`DELETE FROM TimeSeriesMetrics WHERE metric_id=$1`, metric.ID)
+			})
+			jobs := make(chan int, 100)
+			errs := make(chan error, 100)
+			var wg sync.WaitGroup
+			for writer := 0; writer < 64; writer++ {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					for n := range jobs {
+						tx, e := sqlDB.BeginTx(context.Background(), nil)
+						if e != nil {
+							errs <- e
+							continue
+						}
+						id, value := uint64(n+1), int64(n)
+						now := time.Now().UTC()
+						o := TimeSeriesObservation{MetricID: metric.ID, ObservedAt: now, CollectedAt: now, BucketStart: now.Truncate(time.Hour), BucketEnd: now.Truncate(time.Hour).Add(time.Hour), Scope: TimeSeriesScope{ObjectType: "webobject", ObjectID: &id}, Value: TimeSeriesValue{Integer: &value}, ValueHash: fmt.Sprint(n), DedupeKey: fmt.Sprintf("%s-%d-%d", dimension, n, metric.ID), Dimensions: map[string]interface{}{dimension: "shared"}}
+						_, e = (TransactionTimeSeriesRepository{Tx: tx, DBMS: DBPostgresStr}).InsertObservationWithCardinalityContext(context.Background(), &o, cfg.TimeSeriesCardinalityConfig{MaxSeriesPerMetric: 100, MaxValuesPerDimension: 1}, cfg.TimeSeriesFailureFailIndexing)
+						if e == nil {
+							e = tx.Commit()
+						} else {
+							_ = tx.Rollback()
+						}
+						if e != nil {
+							errs <- e
+						}
+					}
+				}()
+			}
+			for n := 0; n < 100; n++ {
+				jobs <- n
+			}
+			close(jobs)
+			wg.Wait()
+			close(errs)
+			for e := range errs {
+				t.Fatal(e)
+			}
+			var series, memberships, values int
+			if err = sqlDB.QueryRow(`SELECT COUNT(*) FROM TimeSeriesActiveSeries WHERE metric_id=$1`, metric.ID).Scan(&series); err != nil {
+				t.Fatal(err)
+			}
+			if err = sqlDB.QueryRow(`SELECT COUNT(*) FROM TimeSeriesObservationSeries WHERE metric_id=$1`, metric.ID).Scan(&memberships); err != nil {
+				t.Fatal(err)
+			}
+			if err = sqlDB.QueryRow(`SELECT COUNT(*) FROM TimeSeriesActiveDimensionValues WHERE metric_id=$1`, metric.ID).Scan(&values); err != nil {
+				t.Fatal(err)
+			}
+			if series != 100 || memberships != 100 || values != 1 {
+				t.Fatalf("series=%d memberships=%d values=%d", series, memberships, values)
+			}
+		})
+	}
+}
+
 func TestPostgresTimeSeriesCardinalityConcurrentAdmission(t *testing.T) {
 	db, sqlDB := openPostgresIntegrationTestDB(t)
 	suffix := fmt.Sprint(time.Now().UnixNano())

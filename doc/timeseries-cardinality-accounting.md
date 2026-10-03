@@ -1,9 +1,6 @@
 # Time-series cardinality identity and lifecycle contract
 
-Status: design contract only. This card does **not** change production
-cardinality enforcement, schemas, or deletion code. The accounting tables and
-administrative operations named below are requirements for a later
-implementation.
+Status: implemented. Active identities are derived from normalized, transactional observation membership rows; PostgreSQL capacity is admitted through fine-grained reservation slots.
 
 ## Scope and current-state audit
 
@@ -84,42 +81,20 @@ output).
 
 ## Accounting model and transitions
 
-The later implementation should maintain two derived sets:
+`TimeSeriesObservationSeries` records one immutable `(observation_id, metric_id,
+series_hash)` membership. `TimeSeriesObservationDimensions` records one immutable
+`(observation_id, metric_id, dimension_key, value_hash)` membership for each
+dimension. Their observation-bearing primary keys make retries idempotent. Active
+identity rows exist exactly while at least one membership exists; deletion removes
+the identity and its PostgreSQL reservation only after deleting the final
+membership. The legacy `reference_count` columns remain fixed at one solely so
+upgrades from schema 1.14 remain compatible; they are never accounting counters.
 
-* a series row keyed by `(metric_id, series_identity_v1)` with
-  `live_observation_count`; and
-* a dimension-value row keyed by
-  `(metric_id, dimension_key, dimension_value_identity_v1)` with
-  `live_observation_count`.
-
-Only retained observations with `deleted_at IS NULL` are live references.
-Counts are observation reference counts, not event attempts. They must never be
-negative, and zero-count rows must be deleted in the transaction that produces
-zero. Thus the number of rows in each set is the enforced cardinality.
-
-| Event | Observation effect | Series transition | Dimension-value transitions |
-|---|---|---|---|
-| Successful new insert | one live row appears | create at 1, or increment | for every present key, create at 1, or increment |
-| Dedupe conflict | no row appears | none | none |
-| Physical retention delete of a live row | row disappears | decrement; delete at 0 | decrement each identity; delete at 0 |
-| Physical delete of an already logically deleted row | row disappears | none | none |
-| Logical delete (`NULL -> timestamp`) | row stops being live | same decrement/delete-at-zero rule | same decrement/delete-at-zero rule |
-| Repeated logical delete | no additional state change | none | none |
-| Undelete (`timestamp -> NULL`), if ever supported | row becomes live | same as successful insert | same as successful insert |
-| Identity-changing update | one logical live reference moves | decrement old, increment new | decrement old keys/values, increment new keys/values |
-| Source cascade | all source-owned live observations disappear | apply physical-live deletion once per row | apply physical-live deletion once per row |
-
-Identity-bearing columns and dimensions should otherwise be immutable. The
-existing entity backfill is an identity-changing update because `entity_id`
-and potentially dimensions change; it must move references atomically rather
-than incrementing the new identity alone. Updates to values, timestamps,
-provenance, or deletion-neutral metadata do not move a series reference.
-
-A series disappears exactly when its final live retained observation is
-deleted or moved, making its count zero. Its dimension values are independent:
-a dimension-value row disappears only when the final live observation for that
-metric/key/value is removed, even if that observation's series disappeared
-earlier or other series remain.
+Observation insertion, membership insertion, reservation admission, logical or
+physical deletion, identity replacement, and rebuild all execute in the caller's
+transaction. A dedupe conflict creates no membership. Identity replacement claims
+and adds the new membership before removing the old membership, so rollback cannot
+expose partial state.
 
 ## Transaction and concurrency requirements
 
@@ -130,14 +105,7 @@ be known before incrementing, or increments must be conditional on the insert's
 actual returned row. Batch insertion applies deltas only for rows actually
 inserted and rolls the entire batch back on any non-dedupe error.
 
-Prospective enforcement and insertion must serialize per metric. A portable
-implementation may lock a metric/accounting-control row, then read counts,
-upsert references, and insert the observation in a fixed order. Equivalent
-serializable transactions with retry are acceptable. Lock ordering is metric,
-series hash, then sorted `(dimension_key, dimension-value hash)` to avoid
-deadlocks. Retention, logical deletion, identity-changing backfill, source
-cleanup, and rebuild cutover use the same serialization boundary. Hash matches
-must compare authoritative identity before updating a count.
+PostgreSQL admission uses bounded slot rows and `SKIP LOCKED`, rather than a metric-wide or dimension-value counter lock. Inserts sharing a dimension value add independent membership rows and take only compatible foreign-key locks on the immutable active identity. Hash matches compare authoritative identity bytes before membership insertion.
 
 ## Lifecycle policies
 

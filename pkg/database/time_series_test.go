@@ -64,9 +64,11 @@ func (m timeSeriesArgumentMatcher) Match(value driver.Value) bool { return m(val
 func expectTimeSeriesAccounting(mock sqlmock.Sqlmock, dimensions int) {
 	mock.ExpectQuery(`SELECT series_identity FROM TimeSeriesActiveSeries`).WillReturnRows(sqlmock.NewRows([]string{"series_identity"}))
 	mock.ExpectExec(`INSERT INTO TimeSeriesActiveSeries`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO TimeSeriesObservationSeries`).WillReturnResult(sqlmock.NewResult(0, 1))
 	for i := 0; i < dimensions; i++ {
 		mock.ExpectQuery(`SELECT canonical_value FROM TimeSeriesActiveDimensionValues`).WillReturnRows(sqlmock.NewRows([]string{"canonical_value"}))
 		mock.ExpectExec(`INSERT INTO TimeSeriesActiveDimensionValues`).WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectExec(`INSERT INTO TimeSeriesObservationDimensions`).WillReturnResult(sqlmock.NewResult(0, 1))
 	}
 }
 
@@ -262,7 +264,7 @@ func TestTimeSeriesObservationDuplicateAndBatchRollback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.Exec(`CREATE TABLE TimeSeriesActiveSeries (metric_id INTEGER NOT NULL, series_hash TEXT NOT NULL, series_identity TEXT NOT NULL, reference_count INTEGER NOT NULL CHECK(reference_count > 0), PRIMARY KEY(metric_id, series_hash)); CREATE TABLE TimeSeriesActiveDimensionValues (metric_id INTEGER NOT NULL, dimension_key TEXT NOT NULL, value_hash TEXT NOT NULL, canonical_value TEXT NOT NULL, reference_count INTEGER NOT NULL CHECK(reference_count > 0), PRIMARY KEY(metric_id, dimension_key, value_hash))`); err != nil {
+	if _, err = db.Exec(`CREATE TABLE TimeSeriesActiveSeries (metric_id INTEGER NOT NULL, series_hash TEXT NOT NULL, series_identity TEXT NOT NULL, reference_count INTEGER NOT NULL CHECK(reference_count > 0), PRIMARY KEY(metric_id, series_hash)); CREATE TABLE TimeSeriesActiveDimensionValues (metric_id INTEGER NOT NULL, dimension_key TEXT NOT NULL, value_hash TEXT NOT NULL, canonical_value TEXT NOT NULL, reference_count INTEGER NOT NULL CHECK(reference_count > 0), PRIMARY KEY(metric_id, dimension_key, value_hash)); CREATE TABLE TimeSeriesObservationSeries(observation_id INTEGER NOT NULL,metric_id INTEGER NOT NULL,series_hash TEXT NOT NULL,PRIMARY KEY(observation_id,metric_id,series_hash)); CREATE TABLE TimeSeriesObservationDimensions(observation_id INTEGER NOT NULL,metric_id INTEGER NOT NULL,dimension_key TEXT NOT NULL,value_hash TEXT NOT NULL,PRIMARY KEY(observation_id,metric_id,dimension_key,value_hash))`); err != nil {
 		t.Fatal(err)
 	}
 	var handler Handler = &SQLiteHandler{db: db, dbms: "SQLite"}

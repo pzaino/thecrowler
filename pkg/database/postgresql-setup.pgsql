@@ -2236,19 +2236,28 @@ CREATE TABLE IF NOT EXISTS TimeSeriesObservations (
 
 CREATE TABLE IF NOT EXISTS TimeSeriesActiveSeries (
     metric_id BIGINT NOT NULL REFERENCES TimeSeriesMetrics(metric_id) ON DELETE RESTRICT,
-    series_hash VARCHAR(64) NOT NULL,
-    series_identity TEXT NOT NULL,
-    reference_count BIGINT NOT NULL CHECK (reference_count > 0),
+    series_hash VARCHAR(64) NOT NULL, series_identity TEXT NOT NULL, reference_count BIGINT NOT NULL DEFAULT 1 CHECK (reference_count > 0),
     PRIMARY KEY (metric_id, series_hash)
 );
 CREATE TABLE IF NOT EXISTS TimeSeriesActiveDimensionValues (
     metric_id BIGINT NOT NULL REFERENCES TimeSeriesMetrics(metric_id) ON DELETE RESTRICT,
-    dimension_key TEXT NOT NULL,
-    value_hash VARCHAR(64) NOT NULL,
-    canonical_value TEXT NOT NULL,
-    reference_count BIGINT NOT NULL CHECK (reference_count > 0),
+    dimension_key TEXT NOT NULL, value_hash VARCHAR(64) NOT NULL, canonical_value TEXT NOT NULL, reference_count BIGINT NOT NULL DEFAULT 1 CHECK(reference_count > 0),
     PRIMARY KEY (metric_id, dimension_key, value_hash)
 );
+CREATE TABLE IF NOT EXISTS TimeSeriesObservationSeries (
+    observation_id BIGINT NOT NULL REFERENCES TimeSeriesObservations(observation_id) ON DELETE CASCADE,
+    metric_id BIGINT NOT NULL, series_hash VARCHAR(64) NOT NULL,
+    PRIMARY KEY (observation_id, metric_id, series_hash),
+    FOREIGN KEY (metric_id, series_hash) REFERENCES TimeSeriesActiveSeries(metric_id, series_hash) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_ts_observation_series_identity ON TimeSeriesObservationSeries(metric_id, series_hash);
+CREATE TABLE IF NOT EXISTS TimeSeriesObservationDimensions (
+    observation_id BIGINT NOT NULL REFERENCES TimeSeriesObservations(observation_id) ON DELETE CASCADE,
+    metric_id BIGINT NOT NULL, dimension_key TEXT NOT NULL, value_hash VARCHAR(64) NOT NULL,
+    PRIMARY KEY (observation_id, metric_id, dimension_key, value_hash),
+    FOREIGN KEY (metric_id, dimension_key, value_hash) REFERENCES TimeSeriesActiveDimensionValues(metric_id, dimension_key, value_hash) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_ts_observation_dimensions_identity ON TimeSeriesObservationDimensions(metric_id, dimension_key, value_hash);
 
 CREATE TABLE IF NOT EXISTS TimeSeriesSeriesSlots (
     metric_id BIGINT NOT NULL REFERENCES TimeSeriesMetrics(metric_id) ON DELETE RESTRICT,

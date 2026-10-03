@@ -344,15 +344,26 @@ func (m timeSeriesCardinalityMutation) add(o *TimeSeriesObservation) error {
 	if lookupErr == nil && storedIdentity != seriesIdentity {
 		return fmt.Errorf("time-series series hash collision for metric %d", o.MetricID)
 	}
+	// reference_count is supplied only for compatibility with databases upgraded
+	// from 1.14. Membership rows, not this immutable value, are authoritative.
 	seriesQuery := `INSERT INTO TimeSeriesActiveSeries (metric_id, series_hash, series_identity, reference_count) VALUES (` +
 		placeholders(dbms, 4) + `)`
 	if dbms == DBMySQLStr {
-		seriesQuery += ` ON DUPLICATE KEY UPDATE reference_count=reference_count+1`
+		seriesQuery += ` ON DUPLICATE KEY UPDATE series_hash=VALUES(series_hash)`
 	} else {
-		seriesQuery += ` ON CONFLICT (metric_id, series_hash) DO UPDATE SET reference_count=TimeSeriesActiveSeries.reference_count+1`
+		seriesQuery += ` ON CONFLICT (metric_id, series_hash) DO NOTHING`
 	}
 	if _, err = tx.ExecContext(ctx, seriesQuery, o.MetricID, o.SeriesHash, seriesIdentity, 1); err != nil {
-		return fmt.Errorf("increment time-series active series: %w", err)
+		return fmt.Errorf("insert time-series active series: %w", err)
+	}
+	membershipQuery := `INSERT INTO TimeSeriesObservationSeries (observation_id,metric_id,series_hash) VALUES (` + placeholders(dbms, 3) + `)`
+	if dbms == DBMySQLStr {
+		membershipQuery += ` ON DUPLICATE KEY UPDATE observation_id=VALUES(observation_id)`
+	} else {
+		membershipQuery += ` ON CONFLICT (observation_id,metric_id,series_hash) DO NOTHING`
+	}
+	if _, err = tx.ExecContext(ctx, membershipQuery, o.ID, o.MetricID, o.SeriesHash); err != nil {
+		return fmt.Errorf("insert time-series observation-series membership: %w", err)
 	}
 	keys := make([]string, 0, len(o.Dimensions))
 	for key := range o.Dimensions {
@@ -375,12 +386,21 @@ func (m timeSeriesCardinalityMutation) add(o *TimeSeriesObservation) error {
 		}
 		query := `INSERT INTO TimeSeriesActiveDimensionValues (metric_id, dimension_key, value_hash, canonical_value, reference_count) VALUES (` + placeholders(dbms, 5) + `)`
 		if dbms == DBMySQLStr {
-			query += ` ON DUPLICATE KEY UPDATE reference_count=reference_count+1`
+			query += ` ON DUPLICATE KEY UPDATE value_hash=VALUES(value_hash)`
 		} else {
-			query += ` ON CONFLICT (metric_id, dimension_key, value_hash) DO UPDATE SET reference_count=TimeSeriesActiveDimensionValues.reference_count+1`
+			query += ` ON CONFLICT (metric_id, dimension_key, value_hash) DO NOTHING`
 		}
 		if _, err = tx.ExecContext(ctx, query, o.MetricID, key, hash, canonical, 1); err != nil {
-			return fmt.Errorf("increment time-series active dimension value %q: %w", key, err)
+			return fmt.Errorf("insert time-series active dimension value %q: %w", key, err)
+		}
+		membershipQuery = `INSERT INTO TimeSeriesObservationDimensions (observation_id,metric_id,dimension_key,value_hash) VALUES (` + placeholders(dbms, 4) + `)`
+		if dbms == DBMySQLStr {
+			membershipQuery += ` ON DUPLICATE KEY UPDATE observation_id=VALUES(observation_id)`
+		} else {
+			membershipQuery += ` ON CONFLICT (observation_id,metric_id,dimension_key,value_hash) DO NOTHING`
+		}
+		if _, err = tx.ExecContext(ctx, membershipQuery, o.ID, o.MetricID, key, hash); err != nil {
+			return fmt.Errorf("insert time-series observation-dimension membership %q: %w", key, err)
 		}
 	}
 	return nil
@@ -389,20 +409,20 @@ func (m timeSeriesCardinalityMutation) add(o *TimeSeriesObservation) error {
 func (m timeSeriesCardinalityMutation) release(o *TimeSeriesObservation) error {
 	ctx, tx, dbms := m.ctx, m.tx, m.dbms
 	p := newInformationSeedPlaceholders(dbms)
-	deleted, err := tx.ExecContext(ctx, `DELETE FROM TimeSeriesActiveSeries WHERE metric_id=`+p.Next()+` AND series_hash=`+p.Next()+` AND reference_count=1`, o.MetricID, o.SeriesHash)
+	removed, err := tx.ExecContext(ctx, `DELETE FROM TimeSeriesObservationSeries WHERE observation_id=`+p.Next()+` AND metric_id=`+p.Next()+` AND series_hash=`+p.Next(), o.ID, o.MetricID, o.SeriesHash)
 	if err != nil {
 		return err
 	}
+	removedCount, _ := removed.RowsAffected()
+	if removedCount != 1 {
+		return fmt.Errorf("missing exact series membership for observation %d", o.ID)
+	}
 	p = newInformationSeedPlaceholders(dbms)
-	updated, err := tx.ExecContext(ctx, `UPDATE TimeSeriesActiveSeries SET reference_count=reference_count-1 WHERE metric_id=`+p.Next()+` AND series_hash=`+p.Next()+` AND reference_count>1`, o.MetricID, o.SeriesHash)
+	deleted, err := tx.ExecContext(ctx, `DELETE FROM TimeSeriesActiveSeries WHERE metric_id=`+p.Next()+` AND series_hash=`+p.Next()+` AND NOT EXISTS (SELECT 1 FROM TimeSeriesObservationSeries m WHERE m.metric_id=TimeSeriesActiveSeries.metric_id AND m.series_hash=TimeSeriesActiveSeries.series_hash)`, o.MetricID, o.SeriesHash)
 	if err != nil {
 		return err
 	}
 	deletedCount, _ := deleted.RowsAffected()
-	updatedCount, _ := updated.RowsAffected()
-	if deletedCount+updatedCount != 1 {
-		return fmt.Errorf("missing exact series reference for observation %d", o.ID)
-	}
 	if deletedCount == 1 && dbms == DBPostgresStr {
 		if _, err = tx.ExecContext(ctx, `DELETE FROM TimeSeriesSeriesSlots WHERE metric_id=$1 AND series_hash=$2`, o.MetricID, o.SeriesHash); err != nil {
 			return err
@@ -419,20 +439,20 @@ func (m timeSeriesCardinalityMutation) release(o *TimeSeriesObservation) error {
 			return err
 		}
 		p = newInformationSeedPlaceholders(dbms)
-		deleted, err = tx.ExecContext(ctx, `DELETE FROM TimeSeriesActiveDimensionValues WHERE metric_id=`+p.Next()+` AND dimension_key=`+p.Next()+` AND value_hash=`+p.Next()+` AND reference_count=1`, o.MetricID, key, hash)
+		removed, err = tx.ExecContext(ctx, `DELETE FROM TimeSeriesObservationDimensions WHERE observation_id=`+p.Next()+` AND metric_id=`+p.Next()+` AND dimension_key=`+p.Next()+` AND value_hash=`+p.Next(), o.ID, o.MetricID, key, hash)
 		if err != nil {
 			return err
 		}
+		removedCount, _ = removed.RowsAffected()
+		if removedCount != 1 {
+			return fmt.Errorf("missing exact dimension membership for observation %d dimension %q", o.ID, key)
+		}
 		p = newInformationSeedPlaceholders(dbms)
-		updated, err = tx.ExecContext(ctx, `UPDATE TimeSeriesActiveDimensionValues SET reference_count=reference_count-1 WHERE metric_id=`+p.Next()+` AND dimension_key=`+p.Next()+` AND value_hash=`+p.Next()+` AND reference_count>1`, o.MetricID, key, hash)
+		deleted, err = tx.ExecContext(ctx, `DELETE FROM TimeSeriesActiveDimensionValues WHERE metric_id=`+p.Next()+` AND dimension_key=`+p.Next()+` AND value_hash=`+p.Next()+` AND NOT EXISTS (SELECT 1 FROM TimeSeriesObservationDimensions m WHERE m.metric_id=TimeSeriesActiveDimensionValues.metric_id AND m.dimension_key=TimeSeriesActiveDimensionValues.dimension_key AND m.value_hash=TimeSeriesActiveDimensionValues.value_hash)`, o.MetricID, key, hash)
 		if err != nil {
 			return err
 		}
 		deletedCount, _ = deleted.RowsAffected()
-		updatedCount, _ = updated.RowsAffected()
-		if deletedCount+updatedCount != 1 {
-			return fmt.Errorf("missing exact dimension reference for observation %d dimension %q", o.ID, key)
-		}
 		if deletedCount == 1 && dbms == DBPostgresStr {
 			if _, err = tx.ExecContext(ctx, `DELETE FROM TimeSeriesDimensionSlots WHERE metric_id=$1 AND dimension_key=$2 AND value_hash=$3`, o.MetricID, key, hash); err != nil {
 				return err
@@ -464,6 +484,12 @@ func (m timeSeriesCardinalityMutation) releaseUnreferencedReservations(o *TimeSe
 }
 
 func (m timeSeriesCardinalityMutation) reset() error {
+	if _, err := m.tx.ExecContext(m.ctx, `DELETE FROM TimeSeriesObservationDimensions`); err != nil {
+		return err
+	}
+	if _, err := m.tx.ExecContext(m.ctx, `DELETE FROM TimeSeriesObservationSeries`); err != nil {
+		return err
+	}
 	if _, err := m.tx.ExecContext(m.ctx, `DELETE FROM TimeSeriesActiveDimensionValues`); err != nil {
 		return err
 	}
