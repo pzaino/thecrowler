@@ -1,0 +1,86 @@
+name: PostgreSQL cardinality integration
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: postgresql-cardinality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  postgres-integration:
+    name: postgres-integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: SitesIndex
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d SitesIndex"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      PGPASSWORD: postgres
+      DOCKER_POSTGRES_DB_HOST: 127.0.0.1
+      DOCKER_POSTGRES_DB_PORT: 5432
+      DOCKER_POSTGRES_DB_NAME: SitesIndex
+      DOCKER_POSTGRES_DB_USER: postgres
+      DOCKER_POSTGRES_PASSWORD: postgres
+      DOCKER_POSTGRES_SSL_MODE: disable
+      # Keep the command below stable while still placing a hard ceiling on a
+      # wedged package and preventing cached integration results.
+      GOFLAGS: -count=1 -timeout=20m
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client
+
+      - name: Create current schema
+        run: |
+          psql -v ON_ERROR_STOP=1 \
+            -v CROWLER_DB_USER=postgres \
+            -v CROWLER_DB_PASSWORD=postgres \
+            -v DB_SHARED_BUFFERS=128MB \
+            -v DB_WORK_MEM=4MB \
+            -v DB_MAINTENANCE_WORK_MEM=64MB \
+            -v DB_EFFECTIVE_CACHE_SIZE=1GB \
+            -v DB_AUTOVACUUM_WORK_MEM=-1 \
+            -v DB_MAX_WAL_SIZE=1GB \
+            -v DB_MAX_CONNECTIONS=100 \
+            --host 127.0.0.1 --username postgres --dbname SitesIndex \
+            --file pkg/database/postgresql-setup.pgsql
+
+      - name: Verify repeatable current migration
+        run: |
+          psql -v ON_ERROR_STOP=1 -v CROWLER_DB_USER=postgres \
+            --host 127.0.0.1 --username postgres --dbname SitesIndex \
+            --file pkg/database/db_migrations/postgresql-migration-v1.15.pgsql
+          test "$(psql -v ON_ERROR_STOP=1 -At --host 127.0.0.1 --username postgres \
+            --dbname SitesIndex --command "SELECT version FROM DBSchemaVersion WHERE is_current")" = "1.15"
+
+      - name: Run PostgreSQL integration suite
+        env:
+          THECROWLER_POSTGRES_INTEGRATION: "1"
+        run: THECROWLER_POSTGRES_INTEGRATION=1 go test -tags=integration ./pkg/database/...

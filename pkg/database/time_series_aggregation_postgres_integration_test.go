@@ -25,6 +25,8 @@ const widgetHistoryDocument = `{"kind":"Widget","name":"backlog-widget","operati
 const widgetReplacementDocument = `{"kind":"Widget","name":"backlog-widget","operational":{"count":9,"price":15.75},"region":"eu"}`
 
 func TestPostgresNormalizedMembershipSharedDimensions64Writers(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
+	defer cancel()
 	for _, dimension := range []string{"username", "media_pk", "shortcode"} {
 		t.Run(dimension, func(t *testing.T) {
 			db, sqlDB := openPostgresIntegrationTestDB(t)
@@ -48,7 +50,7 @@ func TestPostgresNormalizedMembershipSharedDimensions64Writers(t *testing.T) {
 				go func() {
 					defer wg.Done()
 					for n := range jobs {
-						tx, e := sqlDB.BeginTx(context.Background(), nil)
+						tx, e := sqlDB.BeginTx(ctx, nil)
 						if e != nil {
 							errs <- e
 							continue
@@ -56,7 +58,7 @@ func TestPostgresNormalizedMembershipSharedDimensions64Writers(t *testing.T) {
 						id, value := uint64(n+1), int64(n)
 						now := time.Now().UTC()
 						o := TimeSeriesObservation{MetricID: metric.ID, ObservedAt: now, CollectedAt: now, BucketStart: now.Truncate(time.Hour), BucketEnd: now.Truncate(time.Hour).Add(time.Hour), Scope: TimeSeriesScope{ObjectType: "webobject", ObjectID: &id}, Value: TimeSeriesValue{Integer: &value}, ValueHash: fmt.Sprint(n), DedupeKey: fmt.Sprintf("%s-%d-%d", dimension, n, metric.ID), Dimensions: map[string]interface{}{dimension: "shared"}}
-						_, e = (TransactionTimeSeriesRepository{Tx: tx, DBMS: DBPostgresStr}).InsertObservationWithCardinalityContext(context.Background(), &o, cfg.TimeSeriesCardinalityConfig{MaxSeriesPerMetric: 100, MaxValuesPerDimension: 1}, cfg.TimeSeriesFailureFailIndexing)
+						_, e = (TransactionTimeSeriesRepository{Tx: tx, DBMS: DBPostgresStr}).InsertObservationWithCardinalityContext(ctx, &o, cfg.TimeSeriesCardinalityConfig{MaxSeriesPerMetric: 100, MaxValuesPerDimension: 1}, cfg.TimeSeriesFailureFailIndexing)
 						if e == nil {
 							e = tx.Commit()
 						} else {
@@ -95,6 +97,8 @@ func TestPostgresNormalizedMembershipSharedDimensions64Writers(t *testing.T) {
 }
 
 func TestPostgresTimeSeriesCardinalityConcurrentAdmission(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
 	db, sqlDB := openPostgresIntegrationTestDB(t)
 	suffix := fmt.Sprint(time.Now().UnixNano())
 	metric, err := UpsertTimeSeriesMetric(db, &TimeSeriesMetric{Key: "cardinality-concurrency-" + suffix, DisplayName: "cardinality concurrency", SourceKind: cfg.TimeSeriesSourceCustom, ValueType: cfg.TimeSeriesValueInteger, Aggregate: cfg.TimeSeriesAggregateCount, Bucket: cfg.TimeSeriesBucketOneHour, TimeBasis: cfg.TimeSeriesTimeObservedAt, DedupeScope: cfg.TimeSeriesDedupeNone, ObjectType: cfg.TimeSeriesObjectWebObject, FailurePolicy: cfg.TimeSeriesFailureLogSkip, Selector: json.RawMessage(`{}`), Enabled: true})
@@ -122,7 +126,7 @@ func TestPostgresTimeSeriesCardinalityConcurrentAdmission(t *testing.T) {
 		go func() {
 			ready.Done()
 			<-start
-			tx, beginErr := sqlDB.BeginTx(context.Background(), nil)
+			tx, beginErr := sqlDB.BeginTx(ctx, nil)
 			if beginErr != nil {
 				errors <- beginErr
 				return
@@ -130,7 +134,7 @@ func TestPostgresTimeSeriesCardinalityConcurrentAdmission(t *testing.T) {
 			defer tx.Rollback()
 			scopeID := uint64(writer + 1)
 			dimensions := map[string]interface{}{"region": fmt.Sprintf("region-%d", writer)}
-			exceeded, guardErr := TimeSeriesCardinalityExceededTx(context.Background(), tx, DBPostgresStr, metric.ID, TimeSeriesScope{ObjectType: "webobject", ObjectID: &scopeID}, dimensions, cfg.TimeSeriesCardinalityConfig{MaxSeriesPerMetric: limit, MaxValuesPerDimension: limit})
+			exceeded, guardErr := TimeSeriesCardinalityExceededTx(ctx, tx, DBPostgresStr, metric.ID, TimeSeriesScope{ObjectType: "webobject", ObjectID: &scopeID}, dimensions, cfg.TimeSeriesCardinalityConfig{MaxSeriesPerMetric: limit, MaxValuesPerDimension: limit})
 			if guardErr != nil {
 				errors <- guardErr
 				return
@@ -164,8 +168,8 @@ func TestPostgresTimeSeriesCardinalityConcurrentAdmission(t *testing.T) {
 			if ok {
 				admitted++
 			}
-		case <-time.After(10 * time.Second):
-			t.Fatal("concurrent cardinality writers timed out")
+		case <-ctx.Done():
+			t.Fatalf("concurrent cardinality writers timed out: %v", ctx.Err())
 		}
 	}
 	var series, values int
@@ -218,6 +222,35 @@ func openPostgresIntegrationTestDB(t *testing.T) (*Handler, *sql.DB) {
 	}
 	var handler Handler = &PostgresHandler{db: database, dbms: DBPostgresStr, connStr: dsn.String()}
 	return &handler, database
+}
+
+// This is deliberately an integration assertion rather than a textual schema
+// test: it catches a migration which advertises the right version but forgets
+// either the one-current-version invariant or runtime-role access.
+func TestPostgresCurrentVersionUniquenessAndCardinalityPermissions(t *testing.T) {
+	_, sqlDB := openPostgresIntegrationTestDB(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+
+	var current, duplicateCurrent int
+	if err := sqlDB.QueryRowContext(ctx, `SELECT COUNT(*), COUNT(*) - COUNT(DISTINCT version) FROM DBSchemaVersion WHERE is_current`).Scan(&current, &duplicateCurrent); err != nil {
+		t.Fatal(err)
+	}
+	if current != 1 || duplicateCurrent != 0 {
+		t.Fatalf("current schema versions=%d duplicate versions=%d, want 1/0", current, duplicateCurrent)
+	}
+	for _, table := range []string{
+		"timeseriescardinalitytokens", "timeseriesseriesslots", "timeseriesdimensionslots",
+		"timeseriesobservationseries", "timeseriesobservationdimensions", "databasewritercompatibility",
+	} {
+		var allowed bool
+		if err := sqlDB.QueryRowContext(ctx, `SELECT has_table_privilege(current_user, $1, 'SELECT,INSERT,UPDATE,DELETE')`, table).Scan(&allowed); err != nil {
+			t.Fatalf("check permissions for %s: %v", table, err)
+		}
+		if !allowed {
+			t.Errorf("integration role lacks cardinality DML permissions on %s", table)
+		}
+	}
 }
 
 func createPostgresAggregationFixture(t *testing.T, db *Handler, sqlDB *sql.DB, runKey string) (uint64, TimeSeriesRange, time.Time) {
