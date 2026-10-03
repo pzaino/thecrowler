@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
-	"strconv"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
@@ -131,8 +130,9 @@ func TimeSeriesCardinalityExceededTx(ctx context.Context, tx *sql.Tx, dbms strin
 }
 
 // claimPostgresCardinalitySlot returns true for both an existing identity and
-// a newly reserved slot. Unique constraints provide the cross-process bound;
-// hash-derived probing distributes independent identities over the quota.
+// a newly reserved slot. Capacity tokens are a physical namespace shared by
+// all owners and are not derived from the current policy. Locking one available
+// token lets other transactions skip it and claim another one.
 func claimPostgresCardinalitySlot(ctx context.Context, tx *sql.Tx, table string, metricID uint64, dimensionKey, identityHash, identity string, limit int) (bool, error) {
 	keyPredicate, keyArgs := "metric_id=$1", []interface{}{metricID}
 	identityColumn := "series_hash"
@@ -143,7 +143,8 @@ func claimPostgresCardinalitySlot(ctx context.Context, tx *sql.Tx, table string,
 	}
 	var stored string
 	args := append(append([]interface{}{}, keyArgs...), identityHash)
-	if err := tx.QueryRowContext(ctx, `SELECT identity_value FROM `+table+` WHERE `+keyPredicate+` AND `+identityColumn+`=$`+strconv.Itoa(len(args)), args...).Scan(&stored); err == nil {
+	identityPlaceholder := fmt.Sprintf("$%d", len(args))
+	if err := tx.QueryRowContext(ctx, `SELECT identity_value FROM `+table+` WHERE `+keyPredicate+` AND `+identityColumn+`=`+identityPlaceholder, args...).Scan(&stored); err == nil {
 		if stored != identity {
 			return false, fmt.Errorf("time-series cardinality hash collision for metric %d", metricID)
 		}
@@ -151,52 +152,52 @@ func claimPostgresCardinalitySlot(ctx context.Context, tx *sql.Tx, table string,
 	} else if err != sql.ErrNoRows {
 		return false, err
 	}
-	startRaw, err := strconv.ParseUint(identityHash[:16], 16, 64)
-	if err != nil {
+	// Extending the common token namespace is a single set operation. It is
+	// normally a no-op (the setup script seeds the default 100,000 tokens), and
+	// makes policy increases immediately usable without renumbering allocations.
+	if _, err := tx.ExecContext(ctx, `INSERT INTO TimeSeriesCardinalityTokens (token_number) SELECT generate_series(COALESCE((SELECT MAX(token_number)+1 FROM TimeSeriesCardinalityTokens),0),$1-1) ON CONFLICT DO NOTHING`, limit); err != nil {
 		return false, err
 	}
-	for probe := 0; probe < limit; probe++ {
-		slot := int((startRaw + uint64(probe)) % uint64(limit))
-		var query string
-		var insertArgs []interface{}
-		if dimensionKey == "" {
-			query = `INSERT INTO ` + table + ` (metric_id,slot_number,series_hash,identity_value) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING slot_number`
-			insertArgs = []interface{}{metricID, slot, identityHash, identity}
-		} else {
-			query = `INSERT INTO ` + table + ` (metric_id,dimension_key,slot_number,value_hash,identity_value) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING RETURNING slot_number`
-			insertArgs = []interface{}{metricID, dimensionKey, slot, identityHash, identity}
-		}
-		var claimed int
-		if scanErr := tx.QueryRowContext(ctx, query, insertArgs...).Scan(&claimed); scanErr == nil {
-			return true, nil
-		} else if scanErr != sql.ErrNoRows {
-			return false, scanErr
-		}
-		// An identical writer may have won a different unique constraint.
-		if scanErr := tx.QueryRowContext(ctx, `SELECT identity_value FROM `+table+` WHERE `+keyPredicate+` AND `+identityColumn+`=$`+strconv.Itoa(len(args)), args...).Scan(&stored); scanErr == nil {
-			if stored != identity {
-				return false, fmt.Errorf("time-series cardinality hash collision for metric %d", metricID)
-			}
-			return true, nil
-		} else if scanErr != sql.ErrNoRows {
-			return false, scanErr
-		}
+	var active int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+table+` WHERE `+keyPredicate, keyArgs...).Scan(&active); err != nil {
+		return false, err
 	}
-	return false, nil
-}
-
-// timeSeriesCardinalityLockKey uses SHA-256 to provide a stable, versioned lock
-// namespace. It parses the first 64 bits from the hexadecimal digest and clears
-// the high bit to fit PostgreSQL's signed bigint advisory-lock API. Collisions
-// are possible only at the resulting 63-bit truncation boundary; they reduce
-// concurrency but cannot weaken cardinality correctness.
-func timeSeriesCardinalityLockKey(metricID uint64) (int64, error) {
-	digest := timeSeriesSHA256("thecrowler:timeseries-cardinality:v1", fmt.Sprintf("metric=%d", metricID))
-	raw, err := strconv.ParseUint(digest[:16], 16, 64)
-	if err != nil {
-		return 0, fmt.Errorf("parse time-series cardinality lock digest: %w", err)
+	if active >= limit { // In particular, policy reductions admit nothing new.
+		return false, nil
 	}
-	return int64(raw & 0x7fffffffffffffff), nil
+	var slot int64
+	claimQuery := `SELECT t.token_number FROM TimeSeriesCardinalityTokens t WHERE t.token_number < $1 AND NOT EXISTS (SELECT 1 FROM ` + table + ` s WHERE s.slot_number=t.token_number AND s.metric_id=$2) ORDER BY t.token_number FOR UPDATE OF t SKIP LOCKED LIMIT 1`
+	claimArgs := []interface{}{limit, metricID}
+	if dimensionKey != "" {
+		claimQuery = `SELECT t.token_number FROM TimeSeriesCardinalityTokens t WHERE t.token_number < $1 AND NOT EXISTS (SELECT 1 FROM ` + table + ` s WHERE s.slot_number=t.token_number AND s.metric_id=$2 AND s.dimension_key=$3) ORDER BY t.token_number FOR UPDATE OF t SKIP LOCKED LIMIT 1`
+		claimArgs = append(claimArgs, dimensionKey)
+	}
+	if err := tx.QueryRowContext(ctx, claimQuery, claimArgs...).Scan(&slot); err == sql.ErrNoRows {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	var query string
+	var insertArgs []interface{}
+	if dimensionKey == "" {
+		query = `INSERT INTO ` + table + ` (metric_id,slot_number,series_hash,identity_value) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING slot_number`
+		insertArgs = []interface{}{metricID, slot, identityHash, identity}
+	} else {
+		query = `INSERT INTO ` + table + ` (metric_id,dimension_key,slot_number,value_hash,identity_value) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING RETURNING slot_number`
+		insertArgs = []interface{}{metricID, dimensionKey, slot, identityHash, identity}
+	}
+	if err := tx.QueryRowContext(ctx, query, insertArgs...).Scan(&slot); err == nil {
+		return true, nil
+	} else if err != sql.ErrNoRows {
+		return false, err
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT identity_value FROM `+table+` WHERE `+keyPredicate+` AND `+identityColumn+`=`+identityPlaceholder, args...).Scan(&stored); err != nil {
+		return false, err
+	}
+	if stored != identity {
+		return false, fmt.Errorf("time-series cardinality hash collision for metric %d", metricID)
+	}
+	return true, nil
 }
 
 func timeSeriesCardinalityDecision(ctx context.Context, tx *sql.Tx, dbms string, metricID uint64, seriesHash string, scope TimeSeriesScope, dimensions map[string]interface{}, policy cfg.TimeSeriesCardinalityConfig) (exceeded, missing bool, err error) {

@@ -2255,6 +2255,11 @@ CREATE TABLE IF NOT EXISTS TimeSeriesSeriesSlots (
     slot_number BIGINT NOT NULL, series_hash VARCHAR(64) NOT NULL, identity_value TEXT NOT NULL,
     PRIMARY KEY (metric_id, slot_number), UNIQUE (metric_id, series_hash)
 );
+CREATE TABLE IF NOT EXISTS TimeSeriesCardinalityTokens (
+    token_number BIGINT PRIMARY KEY CHECK (token_number >= 0)
+);
+INSERT INTO TimeSeriesCardinalityTokens(token_number)
+SELECT generate_series(0, 99999) ON CONFLICT DO NOTHING;
 CREATE TABLE IF NOT EXISTS TimeSeriesDimensionSlots (
     metric_id BIGINT NOT NULL REFERENCES TimeSeriesMetrics(metric_id) ON DELETE RESTRICT,
     dimension_key TEXT NOT NULL, slot_number BIGINT NOT NULL, value_hash VARCHAR(64) NOT NULL, identity_value TEXT NOT NULL,
@@ -3746,6 +3751,7 @@ ALTER TABLE TimeSeriesActiveSeries OWNER TO :CROWLER_DB_USER;
 ALTER TABLE TimeSeriesActiveDimensionValues OWNER TO :CROWLER_DB_USER;
 ALTER TABLE TimeSeriesSeriesSlots OWNER TO :CROWLER_DB_USER;
 ALTER TABLE TimeSeriesDimensionSlots OWNER TO :CROWLER_DB_USER;
+ALTER TABLE TimeSeriesCardinalityTokens OWNER TO :CROWLER_DB_USER;
 
 -- Grants permissions to the user on the :"POSTGRES_DB" database
 SELECT grant_sequence_permissions('public', :'CROWLER_DB_USER');

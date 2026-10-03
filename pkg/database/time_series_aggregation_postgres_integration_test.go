@@ -601,3 +601,43 @@ func TestPostgresCardinalityOpenReservationDoesNotBlockIndependentSeries(t *test
 		t.Fatal("independent series blocked behind open reservation")
 	}
 }
+
+func TestPostgresCardinalityLargePrefillsAndPolicyChanges(t *testing.T) {
+	db, sqlDB := openPostgresIntegrationTestDB(t)
+	for _, prefill := range []int{13500, 50000, 100000} {
+		t.Run(fmt.Sprintf("prefill-%d-of-100000", prefill), func(t *testing.T) {
+			metric, err := UpsertTimeSeriesMetric(db, &TimeSeriesMetric{Key: fmt.Sprintf("cardinality-prefill-%d-%d", prefill, time.Now().UnixNano()), DisplayName: "cardinality prefill", SourceKind: cfg.TimeSeriesSourceCustom, ValueType: cfg.TimeSeriesValueInteger, Aggregate: cfg.TimeSeriesAggregateCount, Bucket: cfg.TimeSeriesBucketOneHour, TimeBasis: cfg.TimeSeriesTimeObservedAt, DedupeScope: cfg.TimeSeriesDedupeNone, ObjectType: cfg.TimeSeriesObjectWebObject, FailurePolicy: cfg.TimeSeriesFailureLogSkip, Selector: json.RawMessage(`{}`), Enabled: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				_, _ = sqlDB.Exec(`DELETE FROM TimeSeriesSeriesSlots WHERE metric_id=$1`, metric.ID)
+				_, _ = sqlDB.Exec(`DELETE FROM TimeSeriesMetrics WHERE metric_id=$1`, metric.ID)
+			})
+			if _, err = sqlDB.Exec(`INSERT INTO TimeSeriesSeriesSlots(metric_id,slot_number,series_hash,identity_value) SELECT $1,n,encode(sha256(n::text::bytea),'hex'),n::text FROM generate_series(0,$2-1) n`, metric.ID, prefill); err != nil {
+				t.Fatal(err)
+			}
+			claim := func(limit int, id uint64) (bool, error) {
+				tx, beginErr := sqlDB.BeginTx(context.Background(), nil)
+				if beginErr != nil {
+					return false, beginErr
+				}
+				defer tx.Rollback()
+				exceeded, claimErr := TimeSeriesCardinalityExceededTx(context.Background(), tx, DBPostgresStr, metric.ID, TimeSeriesScope{ObjectType: "webobject", ObjectID: &id}, nil, cfg.TimeSeriesCardinalityConfig{MaxSeriesPerMetric: limit})
+				return exceeded, claimErr
+			}
+			exceeded, claimErr := claim(100000, uint64(prefill+1))
+			if claimErr != nil || exceeded != (prefill == 100000) {
+				t.Fatalf("large prefill claim exceeded=%v err=%v", exceeded, claimErr)
+			}
+			// A reduction is based on the active allocation, not slot numbering.
+			if exceeded, claimErr := claim(prefill, uint64(prefill+2)); claimErr != nil || !exceeded {
+				t.Fatalf("reduced policy exceeded=%v err=%v", exceeded, claimErr)
+			}
+			// Raising the policy exposes additional tokens without remapping rows.
+			if exceeded, claimErr := claim(prefill+1, uint64(prefill+3)); claimErr != nil || exceeded {
+				t.Fatalf("increased policy exceeded=%v err=%v", exceeded, claimErr)
+			}
+		})
+	}
+}

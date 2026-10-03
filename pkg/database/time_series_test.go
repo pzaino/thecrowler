@@ -7,8 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -33,6 +31,9 @@ func TestPostgresCardinalityClaimsFineGrainedSlot(t *testing.T) {
 	}
 	mock.ExpectExec(`SAVEPOINT timeseries_cardinality_admission`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT identity_value FROM TimeSeriesSeriesSlots`).WillReturnError(sql.ErrNoRows)
+	mock.ExpectExec(`INSERT INTO TimeSeriesCardinalityTokens`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT COUNT`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(`SELECT t.token_number FROM TimeSeriesCardinalityTokens`).WillReturnRows(sqlmock.NewRows([]string{"token_number"}).AddRow(0))
 	mock.ExpectQuery(`INSERT INTO TimeSeriesSeriesSlots`).WillReturnRows(sqlmock.NewRows([]string{"slot_number"}).AddRow(0))
 	mock.ExpectExec(`RELEASE SAVEPOINT timeseries_cardinality_admission`).WillReturnResult(sqlmock.NewResult(0, 0))
 	exceeded, err := TimeSeriesCardinalityExceededTx(context.Background(), tx, DBPostgresStr, metricID, TimeSeriesScope{}, nil, cfg.TimeSeriesCardinalityConfig{MaxSeriesPerMetric: 1})
@@ -41,60 +42,6 @@ func TestPostgresCardinalityClaimsFineGrainedSlot(t *testing.T) {
 	}
 	if err = mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestTimeSeriesCardinalityLockKey(t *testing.T) {
-	regressionIDs := []uint64{1, 2, 3, 4, 5, 6, 7, 8, 17}
-	for _, metricID := range regressionIDs {
-		digest := timeSeriesSHA256("thecrowler:timeseries-cardinality:v1", fmt.Sprintf("metric=%d", metricID))
-		raw, err := strconv.ParseUint(digest[:16], 16, 64)
-		if err != nil {
-			t.Fatalf("parse independent expected key for metric %d: %v", metricID, err)
-		}
-		want := int64(raw & uint64(math.MaxInt64))
-		got, err := timeSeriesCardinalityLockKey(metricID)
-		if err != nil {
-			t.Fatalf("key for metric %d: %v", metricID, err)
-		}
-		if got != want {
-			t.Errorf("key for metric %d = %d, want %d", metricID, got, want)
-		}
-	}
-
-	knownBrokenIDs := []uint64{1, 2, 3, 4, 5, 6, 8}
-	keys := make(map[int64]uint64, len(knownBrokenIDs))
-	for _, metricID := range knownBrokenIDs {
-		key, err := timeSeriesCardinalityLockKey(metricID)
-		if err != nil {
-			t.Fatalf("key for metric %d: %v", metricID, err)
-		}
-		if previous, exists := keys[key]; exists {
-			t.Errorf("metrics %d and %d unexpectedly share lock key %d", previous, metricID, key)
-		}
-		keys[key] = metricID
-	}
-
-	first, err := timeSeriesCardinalityLockKey(42)
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := timeSeriesCardinalityLockKey(42)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first != second {
-		t.Errorf("key is not deterministic: first %d, second %d", first, second)
-	}
-
-	for metricID := uint64(1); metricID <= 1000; metricID++ {
-		key, err := timeSeriesCardinalityLockKey(metricID)
-		if err != nil {
-			t.Fatalf("key for metric %d: %v", metricID, err)
-		}
-		if key < 0 || key > math.MaxInt64 {
-			t.Errorf("key for metric %d is outside signed range: %d", metricID, key)
-		}
 	}
 }
 

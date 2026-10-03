@@ -1,3 +1,5 @@
+CREATE TABLE IF NOT EXISTS TimeSeriesCardinalityTokens (token_number BIGINT PRIMARY KEY CHECK(token_number >= 0));
+INSERT INTO TimeSeriesCardinalityTokens(token_number) SELECT generate_series(0,99999) ON CONFLICT DO NOTHING;
 CREATE TABLE IF NOT EXISTS TimeSeriesSeriesSlots (
  metric_id BIGINT NOT NULL REFERENCES TimeSeriesMetrics(metric_id) ON DELETE RESTRICT,
  slot_number BIGINT NOT NULL, series_hash VARCHAR(64) NOT NULL, identity_value TEXT NOT NULL,
@@ -19,5 +21,6 @@ BEGIN
  IF crowler_owner IS NOT NULL THEN
   EXECUTE format('ALTER TABLE TimeSeriesSeriesSlots OWNER TO %I', crowler_owner);
   EXECUTE format('ALTER TABLE TimeSeriesDimensionSlots OWNER TO %I', crowler_owner);
+  EXECUTE format('ALTER TABLE TimeSeriesCardinalityTokens OWNER TO %I', crowler_owner);
  END IF;
 END $$;
