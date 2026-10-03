@@ -135,6 +135,8 @@ func emitInformationSeedMetricTxContext(ctx context.Context, repo TransactionTim
 	if err != nil {
 		return err
 	}
+	// Use the transaction repository rather than the raw insert helper: it owns
+	// admission and the shared active/reservation mutation boundary atomically.
 	_, err = repo.InsertObservationWithCardinalityContext(ctx, &observation, cardinality, metric.FailurePolicy)
 	return err
 }

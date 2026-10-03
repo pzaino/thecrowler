@@ -24,6 +24,54 @@ type TimeSeriesCardinalityReconciliation struct {
 	DimensionValues int64
 }
 
+// timeSeriesCardinalityMutation is the single internal write boundary for
+// active cardinality state and PostgreSQL capacity reservations. Code outside
+// this file must never write the active or slot tables directly.
+type timeSeriesCardinalityMutation struct {
+	ctx  context.Context
+	tx   *sql.Tx
+	dbms string
+}
+
+func newTimeSeriesCardinalityMutation(ctx context.Context, tx *sql.Tx, dbms string) timeSeriesCardinalityMutation {
+	return timeSeriesCardinalityMutation{ctx: ctx, tx: tx, dbms: dbms}
+}
+
+// replaceIdentity claims and references the complete replacement identity
+// before the observation is changed or its former identity is released. Any
+// failure is returned to the owning transaction, which must roll the unit back.
+func (m timeSeriesCardinalityMutation) replaceIdentity(old, replacement *TimeSeriesObservation, policy cfg.TimeSeriesCardinalityConfig, update func() error) error {
+	exceeded, err := m.admit(replacement.MetricID, replacement.Scope, replacement.Dimensions, policy)
+	if err != nil {
+		return fmt.Errorf("claim replacement time-series identity: %w", err)
+	}
+	if exceeded {
+		return fmt.Errorf("%w: replacement cardinality limit exceeded", ErrTimeSeriesValueRejected)
+	}
+	if err = m.add(replacement); err != nil {
+		return err
+	}
+	if err = update(); err != nil {
+		return err
+	}
+	return m.release(old)
+}
+
+func loadTimeSeriesCardinalityPolicyTx(ctx context.Context, tx *sql.Tx, dbms string, metricID uint64) (cfg.TimeSeriesCardinalityConfig, error) {
+	var policy cfg.TimeSeriesCardinalityConfig
+	p := newInformationSeedPlaceholders(dbms)
+	var raw sql.NullString
+	if err := tx.QueryRowContext(ctx, `SELECT cardinality_policy FROM TimeSeriesMetrics WHERE metric_id=`+p.Next(), metricID).Scan(&raw); err != nil {
+		return policy, err
+	}
+	if raw.Valid && raw.String != "" && raw.String != "null" {
+		if err := json.Unmarshal([]byte(raw.String), &policy); err != nil {
+			return policy, fmt.Errorf("decode time-series cardinality policy: %w", err)
+		}
+	}
+	return policy, nil
+}
+
 // LogicallyDeleteTimeSeriesObservation marks a live observation deleted and
 // removes its exact references in the same transaction. Repeated calls are
 // idempotent.
@@ -52,7 +100,7 @@ func LogicallyDeleteTimeSeriesObservation(ctx context.Context, db *Handler, obse
 	if o.DeletedAt != nil {
 		return tx.Commit()
 	}
-	if err = decrementTimeSeriesCardinality(ctx, tx, dbms, o); err != nil {
+	if err = newTimeSeriesCardinalityMutation(ctx, tx, dbms).release(o); err != nil {
 		return err
 	}
 	p = newInformationSeedPlaceholders(dbms)
@@ -65,6 +113,11 @@ func LogicallyDeleteTimeSeriesObservation(ctx context.Context, db *Handler, obse
 // TimeSeriesCardinalityExceededTx makes the admission decision from the exact
 // active sets. Callers keep this transaction through the eventual insert.
 func TimeSeriesCardinalityExceededTx(ctx context.Context, tx *sql.Tx, dbms string, metricID uint64, scope TimeSeriesScope, dimensions map[string]interface{}, policy cfg.TimeSeriesCardinalityConfig) (bool, error) {
+	return newTimeSeriesCardinalityMutation(ctx, tx, dbms).admit(metricID, scope, dimensions, policy)
+}
+
+func (m timeSeriesCardinalityMutation) admit(metricID uint64, scope TimeSeriesScope, dimensions map[string]interface{}, policy cfg.TimeSeriesCardinalityConfig) (bool, error) {
+	ctx, tx, dbms := m.ctx, m.tx, m.dbms
 	if tx == nil {
 		return false, fmt.Errorf("time-series cardinality transaction is nil")
 	}
@@ -273,7 +326,8 @@ func timeSeriesDimensionValueHash(metricID uint64, key string, value interface{}
 	return hash, string(raw), nil
 }
 
-func incrementTimeSeriesCardinality(ctx context.Context, tx *sql.Tx, dbms string, o *TimeSeriesObservation) error {
+func (m timeSeriesCardinalityMutation) add(o *TimeSeriesObservation) error {
+	ctx, tx, dbms := m.ctx, m.tx, m.dbms
 	if o.SeriesHash == "" {
 		return fmt.Errorf("time-series cardinality series hash is required")
 	}
@@ -332,7 +386,8 @@ func incrementTimeSeriesCardinality(ctx context.Context, tx *sql.Tx, dbms string
 	return nil
 }
 
-func decrementTimeSeriesCardinality(ctx context.Context, tx *sql.Tx, dbms string, o *TimeSeriesObservation) error {
+func (m timeSeriesCardinalityMutation) release(o *TimeSeriesObservation) error {
+	ctx, tx, dbms := m.ctx, m.tx, m.dbms
 	p := newInformationSeedPlaceholders(dbms)
 	deleted, err := tx.ExecContext(ctx, `DELETE FROM TimeSeriesActiveSeries WHERE metric_id=`+p.Next()+` AND series_hash=`+p.Next()+` AND reference_count=1`, o.MetricID, o.SeriesHash)
 	if err != nil {
@@ -387,6 +442,56 @@ func decrementTimeSeriesCardinality(ctx context.Context, tx *sql.Tx, dbms string
 	return nil
 }
 
+// releaseUnreferencedReservations removes claims made by an admission attempt
+// which subsequently resolved to a duplicate observation.
+func (m timeSeriesCardinalityMutation) releaseUnreferencedReservations(o *TimeSeriesObservation) error {
+	if m.dbms != DBPostgresStr {
+		return nil
+	}
+	if _, err := m.tx.ExecContext(m.ctx, `DELETE FROM TimeSeriesSeriesSlots s WHERE metric_id=$1 AND series_hash=$2 AND NOT EXISTS (SELECT 1 FROM TimeSeriesActiveSeries a WHERE a.metric_id=s.metric_id AND a.series_hash=s.series_hash)`, o.MetricID, o.SeriesHash); err != nil {
+		return err
+	}
+	for key, value := range o.Dimensions {
+		hash, _, err := timeSeriesDimensionValueHash(o.MetricID, key, value)
+		if err != nil {
+			return err
+		}
+		if _, err = m.tx.ExecContext(m.ctx, `DELETE FROM TimeSeriesDimensionSlots s WHERE metric_id=$1 AND dimension_key=$2 AND value_hash=$3 AND NOT EXISTS (SELECT 1 FROM TimeSeriesActiveDimensionValues a WHERE a.metric_id=s.metric_id AND a.dimension_key=s.dimension_key AND a.value_hash=s.value_hash)`, o.MetricID, key, hash); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m timeSeriesCardinalityMutation) reset() error {
+	if _, err := m.tx.ExecContext(m.ctx, `DELETE FROM TimeSeriesActiveDimensionValues`); err != nil {
+		return err
+	}
+	if _, err := m.tx.ExecContext(m.ctx, `DELETE FROM TimeSeriesActiveSeries`); err != nil {
+		return err
+	}
+	if m.dbms == DBPostgresStr {
+		if _, err := m.tx.ExecContext(m.ctx, `DELETE FROM TimeSeriesDimensionSlots`); err != nil {
+			return err
+		}
+		if _, err := m.tx.ExecContext(m.ctx, `DELETE FROM TimeSeriesSeriesSlots`); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m timeSeriesCardinalityMutation) rebuildReservations() error {
+	if m.dbms != DBPostgresStr {
+		return nil
+	}
+	if _, err := m.tx.ExecContext(m.ctx, `INSERT INTO TimeSeriesSeriesSlots (metric_id,slot_number,series_hash,identity_value) SELECT metric_id,ROW_NUMBER() OVER (PARTITION BY metric_id ORDER BY series_hash)-1,series_hash,series_identity FROM TimeSeriesActiveSeries`); err != nil {
+		return err
+	}
+	_, err := m.tx.ExecContext(m.ctx, `INSERT INTO TimeSeriesDimensionSlots (metric_id,dimension_key,slot_number,value_hash,identity_value) SELECT metric_id,dimension_key,ROW_NUMBER() OVER (PARTITION BY metric_id,dimension_key ORDER BY value_hash)-1,value_hash,canonical_value FROM TimeSeriesActiveDimensionValues`)
+	return err
+}
+
 func placeholders(dbms string, count int) string {
 	p := newInformationSeedPlaceholders(dbms)
 	out := ""
@@ -425,19 +530,9 @@ func RebuildTimeSeriesCardinality(ctx context.Context, db *Handler) (TimeSeriesC
 		return result, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err = tx.ExecContext(ctx, `DELETE FROM TimeSeriesActiveDimensionValues`); err != nil {
+	mutation := newTimeSeriesCardinalityMutation(ctx, tx, dbms)
+	if err = mutation.reset(); err != nil {
 		return result, err
-	}
-	if _, err = tx.ExecContext(ctx, `DELETE FROM TimeSeriesActiveSeries`); err != nil {
-		return result, err
-	}
-	if dbms == DBPostgresStr {
-		if _, err = tx.ExecContext(ctx, `DELETE FROM TimeSeriesDimensionSlots`); err != nil {
-			return result, err
-		}
-		if _, err = tx.ExecContext(ctx, `DELETE FROM TimeSeriesSeriesSlots`); err != nil {
-			return result, err
-		}
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT `+timeSeriesObservationColumns+` FROM TimeSeriesObservations WHERE deleted_at IS NULL ORDER BY observation_id`)
 	if err != nil {
@@ -449,7 +544,7 @@ func RebuildTimeSeriesCardinality(ctx context.Context, db *Handler) (TimeSeriesC
 			_ = rows.Close()
 			return result, scanErr
 		}
-		if err = incrementTimeSeriesCardinality(ctx, tx, dbms, o); err != nil {
+		if err = mutation.add(o); err != nil {
 			_ = rows.Close()
 			return result, err
 		}
@@ -460,13 +555,8 @@ func RebuildTimeSeriesCardinality(ctx context.Context, db *Handler) (TimeSeriesC
 		return result, err
 	}
 	_ = rows.Close()
-	if dbms == DBPostgresStr {
-		if _, err = tx.ExecContext(ctx, `INSERT INTO TimeSeriesSeriesSlots (metric_id,slot_number,series_hash,identity_value) SELECT metric_id,ROW_NUMBER() OVER (PARTITION BY metric_id ORDER BY series_hash)-1,series_hash,series_identity FROM TimeSeriesActiveSeries`); err != nil {
-			return result, err
-		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO TimeSeriesDimensionSlots (metric_id,dimension_key,slot_number,value_hash,identity_value) SELECT metric_id,dimension_key,ROW_NUMBER() OVER (PARTITION BY metric_id,dimension_key ORDER BY value_hash)-1,value_hash,canonical_value FROM TimeSeriesActiveDimensionValues`); err != nil {
-			return result, err
-		}
+	if err = mutation.rebuildReservations(); err != nil {
+		return result, err
 	}
 	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM TimeSeriesActiveSeries`).Scan(&result.Series); err != nil {
 		return result, err
@@ -505,7 +595,7 @@ func deleteTimeSeriesObservationsWithAccounting(ctx context.Context, tx *sql.Tx,
 	_ = rows.Close()
 	for _, o := range observations {
 		if o.DeletedAt == nil {
-			if err = decrementTimeSeriesCardinality(ctx, tx, dbms, o); err != nil {
+			if err = newTimeSeriesCardinalityMutation(ctx, tx, dbms).release(o); err != nil {
 				return 0, err
 			}
 		}

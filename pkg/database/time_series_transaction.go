@@ -137,7 +137,8 @@ func (r TransactionTimeSeriesRepository) InsertObservationContext(ctx context.Co
 // complete cardinality lifecycle. In particular, callers must not reserve a
 // series before calling this method: deduplication deliberately happens before
 // admission, and every reservation is in the same transaction as the insert
-// and active-reference accounting.
+// and active-reference accounting. The persistence helper delegates every
+// active-set and reservation write to timeSeriesCardinalityMutation.
 func (r TransactionTimeSeriesRepository) InsertObservationWithCardinality(observation *TimeSeriesObservation, cardinality cfg.TimeSeriesCardinalityConfig, failurePolicy cfg.TimeSeriesFailurePolicy) (TimeSeriesInsertResult, error) {
 	return r.InsertObservationWithCardinalityContext(context.Background(), observation, cardinality, failurePolicy)
 }

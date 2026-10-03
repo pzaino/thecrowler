@@ -96,7 +96,7 @@ func insertObservationWithCardinality(ctx context.Context, tx *sql.Tx, dbms stri
 		return rollback(fmt.Errorf("detect duplicate time-series observation: %w", err))
 	}
 
-	exceeded, err := TimeSeriesCardinalityExceededTx(ctx, tx, dbms, o.MetricID, o.Scope, o.Dimensions, cardinality)
+	exceeded, err := newTimeSeriesCardinalityMutation(ctx, tx, dbms).admit(o.MetricID, o.Scope, o.Dimensions, cardinality)
 	if err != nil {
 		return rollback(fmt.Errorf("admit time-series observation cardinality: %w", err))
 	}
@@ -215,9 +215,9 @@ func insertTimeSeriesObservationTxContext(ctx context.Context, tx *sql.Tx, dbms 
 	if dbms == DBPostgresStr {
 		result, insertErr := insertPostgresTimeSeriesObservation(ctx, tx, query+` ON CONFLICT (dedupe_key) DO NOTHING RETURNING observation_id`, args, o)
 		if insertErr == nil && result.Inserted {
-			insertErr = incrementTimeSeriesCardinality(ctx, tx, dbms, o)
+			insertErr = newTimeSeriesCardinalityMutation(ctx, tx, dbms).add(o)
 		} else if insertErr == nil && result.Duplicate {
-			insertErr = releaseUnusedPostgresCardinalityReservations(ctx, tx, o)
+			insertErr = newTimeSeriesCardinalityMutation(ctx, tx, dbms).releaseUnreferencedReservations(o)
 		}
 		return result, insertErr
 	}
@@ -237,29 +237,11 @@ func insertTimeSeriesObservationTxContext(ctx context.Context, tx *sql.Tx, dbms 
 	o.ID = id
 	insertResult := TimeSeriesInsertResult{ObservationID: id, Inserted: affected == 1, Duplicate: affected != 1}
 	if insertResult.Inserted {
-		if err = incrementTimeSeriesCardinality(ctx, tx, dbms, o); err != nil {
+		if err = newTimeSeriesCardinalityMutation(ctx, tx, dbms).add(o); err != nil {
 			return TimeSeriesInsertResult{}, err
 		}
 	}
 	return insertResult, nil
-}
-
-// releaseUnusedPostgresCardinalityReservations undoes guard reservations when
-// deduplication means that this transaction did not create an observation.
-func releaseUnusedPostgresCardinalityReservations(ctx context.Context, tx *sql.Tx, o *TimeSeriesObservation) error {
-	if _, err := tx.ExecContext(ctx, `DELETE FROM TimeSeriesSeriesSlots s WHERE metric_id=$1 AND series_hash=$2 AND NOT EXISTS (SELECT 1 FROM TimeSeriesActiveSeries a WHERE a.metric_id=s.metric_id AND a.series_hash=s.series_hash)`, o.MetricID, o.SeriesHash); err != nil {
-		return err
-	}
-	for key, value := range o.Dimensions {
-		hash, _, err := timeSeriesDimensionValueHash(o.MetricID, key, value)
-		if err != nil {
-			return err
-		}
-		if _, err = tx.ExecContext(ctx, `DELETE FROM TimeSeriesDimensionSlots s WHERE metric_id=$1 AND dimension_key=$2 AND value_hash=$3 AND NOT EXISTS (SELECT 1 FROM TimeSeriesActiveDimensionValues a WHERE a.metric_id=s.metric_id AND a.dimension_key=s.dimension_key AND a.value_hash=s.value_hash)`, o.MetricID, key, hash); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 const timeSeriesObservationInsertPrefix = `INSERT INTO TimeSeriesObservations (metric_id, observed_at, effective_at, collected_at, source_updated_at,
@@ -392,7 +374,7 @@ func insertPostgresTimeSeriesObservationsTx(ctx context.Context, tx *sql.Tx, obs
 		if len(unresolved) == 0 {
 			for i := start; i < end; i++ {
 				if results[i].Inserted {
-					if err = incrementTimeSeriesCardinality(ctx, tx, DBPostgresStr, &observations[i]); err != nil {
+					if err = newTimeSeriesCardinalityMutation(ctx, tx, DBPostgresStr).add(&observations[i]); err != nil {
 						return nil, err
 					}
 				}
@@ -441,7 +423,7 @@ func insertPostgresTimeSeriesObservationsTx(ctx context.Context, tx *sql.Tx, obs
 		}
 		for i := start; i < end; i++ {
 			if results[i].Inserted {
-				if err = incrementTimeSeriesCardinality(ctx, tx, DBPostgresStr, &observations[i]); err != nil {
+				if err = newTimeSeriesCardinalityMutation(ctx, tx, DBPostgresStr).add(&observations[i]); err != nil {
 					return nil, err
 				}
 			}
