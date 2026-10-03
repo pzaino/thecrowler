@@ -256,12 +256,14 @@ func claimPostgresCardinalitySlot(ctx context.Context, tx *sql.Tx, table string,
 		timeSeriesCardinalityDecisions.WithLabelValues(resource, cardinalityOutcomeRejected).Inc()
 		return false, nil
 	}
-	claimQuery := `SELECT t.token_number FROM TimeSeriesCardinalityTokens t WHERE t.token_number < $1 AND NOT EXISTS (SELECT 1 FROM ` + table + ` s WHERE s.slot_number=t.token_number AND s.metric_id=$2) ORDER BY t.token_number FOR UPDATE OF t SKIP LOCKED LIMIT 1`
+	claimQuery := `SELECT t.token_number FROM TimeSeriesCardinalityTokens t WHERE t.token_number < $1 AND NOT EXISTS (SELECT 1 FROM ` + table + ` s WHERE s.slot_number=t.token_number AND s.metric_id=$2) ORDER BY t.token_number`
 	claimArgs := []interface{}{limit, metricID}
 	if dimensionKey != "" {
-		claimQuery = `SELECT t.token_number FROM TimeSeriesCardinalityTokens t WHERE t.token_number < $1 AND NOT EXISTS (SELECT 1 FROM ` + table + ` s WHERE s.slot_number=t.token_number AND s.metric_id=$2 AND s.dimension_key=$3) ORDER BY t.token_number FOR UPDATE OF t SKIP LOCKED LIMIT 1`
+		claimQuery = `SELECT t.token_number FROM TimeSeriesCardinalityTokens t WHERE t.token_number < $1 AND NOT EXISTS (SELECT 1 FROM ` + table + ` s WHERE s.slot_number=t.token_number AND s.metric_id=$2 AND s.dimension_key=$3) ORDER BY t.token_number`
 		claimArgs = append(claimArgs, dimensionKey)
 	}
+	lockedClaimQuery := claimQuery + ` FOR UPDATE OF t SKIP LOCKED LIMIT 1`
+	optimisticClaimQuery := claimQuery + ` LIMIT 1`
 	for attempt := 1; attempt <= limit; attempt++ {
 		if _, err := tx.ExecContext(ctx, `SAVEPOINT timeseries_cardinality_slot_attempt`); err != nil {
 			return false, err
@@ -277,16 +279,33 @@ func claimPostgresCardinalitySlot(ctx context.Context, tx *sql.Tx, table string,
 		}
 
 		var slot int64
-		if err := tx.QueryRowContext(ctx, claimQuery, claimArgs...).Scan(&slot); err == sql.ErrNoRows {
-			if releaseErr := finishAttempt(false); releaseErr != nil {
-				return false, releaseErr
-			}
+		selectionErr := tx.QueryRowContext(ctx, lockedClaimQuery, claimArgs...).Scan(&slot)
+		if selectionErr == sql.ErrNoRows {
 			timeSeriesCardinalityReservationWaits.Inc()
-			timeSeriesCardinalityDecisions.WithLabelValues(resource, cardinalityOutcomeRejected).Inc()
-			return false, nil
-		} else if err != nil {
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+table+` WHERE `+keyPredicate, keyArgs...).Scan(&active); err != nil {
+				_ = finishAttempt(true)
+				return false, err
+			}
+			if active >= limit {
+				if releaseErr := finishAttempt(false); releaseErr != nil {
+					return false, releaseErr
+				}
+				timeSeriesCardinalityDecisions.WithLabelValues(resource, cardinalityOutcomeRejected).Inc()
+				return false, nil
+			}
+			// Every permitted token may currently be locked by an unrelated
+			// namespace. Select without locking and let the slot table's unique
+			// keys arbitrate this optimistic reservation.
+			selectionErr = tx.QueryRowContext(ctx, optimisticClaimQuery, claimArgs...).Scan(&slot)
+		}
+		if selectionErr == sql.ErrNoRows {
+			if rollbackErr := finishAttempt(true); rollbackErr != nil {
+				return false, rollbackErr
+			}
+			continue
+		} else if selectionErr != nil {
 			_ = finishAttempt(true)
-			return false, err
+			return false, selectionErr
 		}
 		var query string
 		var insertArgs []interface{}
@@ -308,7 +327,6 @@ func claimPostgresCardinalitySlot(ctx context.Context, tx *sql.Tx, table string,
 			return false, err
 		}
 
-		timeSeriesCardinalityReservationRetries.Inc()
 		lookupErr := tx.QueryRowContext(ctx, `SELECT identity_value FROM `+table+` WHERE `+keyPredicate+` AND `+identityColumn+`=`+identityPlaceholder, args...).Scan(&stored)
 		if lookupErr == nil {
 			if stored != identity {
@@ -330,6 +348,16 @@ func claimPostgresCardinalitySlot(ctx context.Context, tx *sql.Tx, table string,
 		// Roll back the attempt so its token lock does not survive the retry.
 		if rollbackErr := finishAttempt(true); rollbackErr != nil {
 			return false, rollbackErr
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+table+` WHERE `+keyPredicate, keyArgs...).Scan(&active); err != nil {
+			return false, err
+		}
+		if active >= limit {
+			timeSeriesCardinalityDecisions.WithLabelValues(resource, cardinalityOutcomeRejected).Inc()
+			return false, nil
+		}
+		if attempt < limit {
+			timeSeriesCardinalityReservationRetries.Inc()
 		}
 	}
 	return false, fmt.Errorf("unable to reserve time-series cardinality slot for metric %d after %d attempts", metricID, limit)

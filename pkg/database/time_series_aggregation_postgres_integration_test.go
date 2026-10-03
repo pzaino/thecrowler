@@ -430,7 +430,7 @@ func TestPostgresWebObjectHistorySurvivesReplacementAndFollowsSourceOwnership(t 
 			t.Fatal(err)
 		}
 		objectHash := fmt.Sprintf("%x", sha256.Sum256([]byte(document)))
-		if err := sqlDB.QueryRow(`INSERT INTO WebObjects(object_hash,object_content,details) VALUES($1,$2,$2::jsonb) RETURNING object_id`, objectHash, document).Scan(&objectID); err != nil {
+		if err := sqlDB.QueryRow(`INSERT INTO WebObjects(object_hash,object_content,details) VALUES($1,$2,$3::jsonb) RETURNING object_id`, objectHash, document, document).Scan(&objectID); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := sqlDB.Exec(`INSERT INTO WebObjectsIndex(index_id,object_id) VALUES($1,$2)`, indexID, objectID); err != nil {

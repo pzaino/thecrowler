@@ -106,3 +106,39 @@ func TestCardinalityIntegrityErrorMetric(t *testing.T) {
 		t.Fatalf("integrity counter = %v, want %v", got, before+1)
 	}
 }
+
+func TestCardinalityContentionMetricsDoNotReportRejection(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	mock.ExpectBegin()
+	tx, _ := db.Begin()
+	mock.ExpectExec(`SELECT pg_advisory_xact_lock`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT identity_value`).WillReturnError(sql.ErrNoRows)
+	mock.ExpectExec(`INSERT INTO TimeSeriesCardinalityTokens`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT COUNT`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectExec(`SAVEPOINT timeseries_cardinality_slot_attempt`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`FOR UPDATE OF t SKIP LOCKED`).WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(`SELECT COUNT`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(`ORDER BY t.token_number LIMIT 1`).WillReturnRows(sqlmock.NewRows([]string{"token_number"}).AddRow(0))
+	mock.ExpectQuery(`INSERT INTO TimeSeriesSeriesSlots`).WillReturnRows(sqlmock.NewRows([]string{"slot_number"}).AddRow(0))
+	mock.ExpectExec(`RELEASE SAVEPOINT timeseries_cardinality_slot_attempt`).WillReturnResult(sqlmock.NewResult(0, 0))
+
+	waitsBefore := testutil.ToFloat64(timeSeriesCardinalityReservationWaits)
+	rejectedBefore := testutil.ToFloat64(timeSeriesCardinalityDecisions.WithLabelValues(cardinalityResourceSeries, cardinalityOutcomeRejected))
+	admitted, err := claimPostgresCardinalitySlot(context.Background(), tx, "TimeSeriesSeriesSlots", 1, "", "hash", "identity", 1)
+	if err != nil || !admitted {
+		t.Fatalf("claim = %v, %v", admitted, err)
+	}
+	if got := testutil.ToFloat64(timeSeriesCardinalityReservationWaits); got != waitsBefore+1 {
+		t.Fatalf("wait counter = %v, want %v", got, waitsBefore+1)
+	}
+	if got := testutil.ToFloat64(timeSeriesCardinalityDecisions.WithLabelValues(cardinalityResourceSeries, cardinalityOutcomeRejected)); got != rejectedBefore {
+		t.Fatalf("rejected counter = %v, want unchanged %v", got, rejectedBefore)
+	}
+	if err = mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
