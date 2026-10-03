@@ -31,6 +31,7 @@ func TestPostgresCardinalityClaimsFineGrainedSlot(t *testing.T) {
 		t.Fatal(err)
 	}
 	mock.ExpectExec(`SAVEPOINT timeseries_cardinality_admission`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`SELECT pg_advisory_xact_lock`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(`SELECT identity_value FROM TimeSeriesSeriesSlots`).WillReturnError(sql.ErrNoRows)
 	mock.ExpectExec(`INSERT INTO TimeSeriesCardinalityTokens`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT COUNT`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))

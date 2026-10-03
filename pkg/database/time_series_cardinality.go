@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
@@ -214,6 +215,9 @@ func (m timeSeriesCardinalityMutation) admit(metricID uint64, scope TimeSeriesSc
 func claimPostgresCardinalitySlot(ctx context.Context, tx *sql.Tx, table string, metricID uint64, dimensionKey, identityHash, identity string, limit int) (bool, error) {
 	done := observePostgresPersistence(postgresOperationReservation)
 	defer done()
+	if err := lockPostgresCardinalityIdentity(ctx, tx, table, metricID, dimensionKey, identityHash); err != nil {
+		return false, fmt.Errorf("lock PostgreSQL cardinality identity: %w", err)
+	}
 	resource := cardinalityResourceSeries
 	if dimensionKey != "" {
 		resource = cardinalityResourceDimensionValue
@@ -291,6 +295,33 @@ func claimPostgresCardinalitySlot(ctx context.Context, tx *sql.Tx, table string,
 	}
 	timeSeriesCardinalityDecisions.WithLabelValues(resource, cardinalityOutcomeExisting).Inc()
 	return true, nil
+}
+
+// postgresCardinalityIdentityLockKey derives a stable advisory-lock key for one
+// logical identity. Including the slot table keeps the series and dimension
+// namespaces separate; the remaining fields preserve concurrency between
+// unrelated metrics, dimension keys, and identity hashes.
+func postgresCardinalityIdentityLockKey(table string, metricID uint64, dimensionKey, identityHash string) int64 {
+	hash := timeSeriesSHA256(
+		"timeseries-cardinality-identity-lock-v1",
+		table,
+		fmt.Sprintf("%d", metricID),
+		dimensionKey,
+		identityHash,
+	)
+	key, err := strconv.ParseUint(hash[:16], 16, 64)
+	if err != nil {
+		panic("invalid internal SHA-256 cardinality lock hash: " + err.Error())
+	}
+	return int64(key)
+}
+
+// lockPostgresCardinalityIdentity waits for any transaction publishing the
+// same logical identity. Transaction-scoped locking automatically follows the
+// caller's commit, rollback, and savepoint lifetime.
+func lockPostgresCardinalityIdentity(ctx context.Context, tx *sql.Tx, table string, metricID uint64, dimensionKey, identityHash string) error {
+	_, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, postgresCardinalityIdentityLockKey(table, metricID, dimensionKey, identityHash))
+	return err
 }
 
 func timeSeriesCardinalityDecision(ctx context.Context, tx *sql.Tx, dbms string, metricID uint64, seriesHash string, scope TimeSeriesScope, dimensions map[string]interface{}, policy cfg.TimeSeriesCardinalityConfig) (exceeded, missing bool, err error) {

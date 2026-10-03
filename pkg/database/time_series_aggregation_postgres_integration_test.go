@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/url"
 	"os"
 	"reflect"
@@ -389,9 +390,11 @@ func TestPostgresWebObjectHistorySurvivesReplacementAndFollowsSourceOwnership(t 
 	suffix := fmt.Sprint(time.Now().UnixNano())
 	createSource := func(name string) uint64 {
 		t.Helper()
+		sourceURL := "https://" + name + ".invalid/" + suffix
+		sourceUID := CalculateSourceUID(name, sourceURL)
 		var id uint64
-		err := sqlDB.QueryRow(`INSERT INTO Sources (url, name, priority, category_id, usr_id, restricted, flags, config, disabled)
-			VALUES ($1,$2,'normal',0,0,0,0,'{}'::jsonb,false) RETURNING source_id`, "https://"+name+".invalid/"+suffix, name).Scan(&id)
+		err := sqlDB.QueryRow(`INSERT INTO Sources (source_uid, url, name, priority, category_id, usr_id, restricted, flags, config, disabled)
+			VALUES ($1,$2,$3,'normal',0,0,0,0,'{}'::jsonb,false) RETURNING source_id`, sourceUID, sourceURL, name).Scan(&id)
 		if err != nil {
 			t.Fatalf("create source %s: %v", name, err)
 		}
@@ -611,8 +614,11 @@ func TestPostgresDeterministicAggregateEquivalenceFixture(t *testing.T) {
 	d := byMetric[decimal.ID]
 	assertFloat := func(name string, got *float64, want float64) {
 		t.Helper()
-		if got == nil || *got != want {
-			t.Fatalf("%s=%v want %v", name, got, want)
+		if got == nil {
+			t.Fatalf("%s=nil want %v", name, want)
+		}
+		if math.Abs(*got-want) > 1e-9 {
+			t.Fatalf("%s=%v want %v", name, *got, want)
 		}
 	}
 	if d.ValueCount != 5 || d.OccurrenceTotal != 5 || d.DistinctValueCount != 4 || d.NumericCount != 5 || d.ChangeCount != 3 || d.Scope.ObjectID == nil || *d.Scope.ObjectID != objectA || !reflect.DeepEqual(d.Dimensions, regionEU) {

@@ -28,6 +28,7 @@ func TestCardinalityDecisionMetrics(t *testing.T) {
 					dimensionKey = "region"
 				}
 				before := testutil.ToFloat64(timeSeriesCardinalityDecisions.WithLabelValues(resource, outcome))
+				mock.ExpectExec(`SELECT pg_advisory_xact_lock`).WillReturnResult(sqlmock.NewResult(0, 1))
 				if outcome == cardinalityOutcomeExisting {
 					mock.ExpectQuery(`SELECT identity_value`).WillReturnRows(sqlmock.NewRows([]string{"identity_value"}).AddRow("identity"))
 				} else {
@@ -93,6 +94,7 @@ func TestCardinalityIntegrityErrorMetric(t *testing.T) {
 	defer db.Close()
 	mock.ExpectBegin()
 	tx, _ := db.Begin()
+	mock.ExpectExec(`SELECT pg_advisory_xact_lock`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(`SELECT identity_value`).WillReturnRows(sqlmock.NewRows([]string{"identity_value"}).AddRow("different"))
 	before := testutil.ToFloat64(timeSeriesCardinalityIntegrityErrors.WithLabelValues(cardinalityResourceSeries))
 	if _, err = claimPostgresCardinalitySlot(context.Background(), tx, "TimeSeriesSeriesSlots", 1, "", "hash", "identity", 1); err == nil {
