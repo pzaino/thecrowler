@@ -35,6 +35,98 @@ const (
 	timeSeriesPostgresObservationBatchSize = 250
 )
 
+const timeSeriesObservationSavepoint = "timeseries_observation_persistence"
+
+func timeSeriesFailureCanSkip(policy cfg.TimeSeriesFailurePolicy) bool {
+	return policy == cfg.TimeSeriesFailureSkip || policy == cfg.TimeSeriesFailureLog || policy == cfg.TimeSeriesFailureLogSkip
+}
+
+// insertObservationWithCardinality is intentionally the only persistence path
+// that may acquire PostgreSQL cardinality slots. The early dedupe lookup means
+// an already persisted key cannot consume capacity or increment references.
+func insertObservationWithCardinality(ctx context.Context, tx *sql.Tx, dbms string, o *TimeSeriesObservation, cardinality cfg.TimeSeriesCardinalityConfig, failurePolicy cfg.TimeSeriesFailurePolicy) (TimeSeriesInsertResult, error) {
+	useSavepoint := timeSeriesFailureCanSkip(failurePolicy)
+	if useSavepoint {
+		if _, err := tx.ExecContext(ctx, `SAVEPOINT `+timeSeriesObservationSavepoint); err != nil {
+			return TimeSeriesInsertResult{}, fmt.Errorf("create time-series observation savepoint: %w", err)
+		}
+	}
+	rollback := func(cause error) (TimeSeriesInsertResult, error) {
+		if useSavepoint {
+			if _, err := tx.ExecContext(ctx, `ROLLBACK TO SAVEPOINT `+timeSeriesObservationSavepoint); err != nil {
+				return TimeSeriesInsertResult{}, fmt.Errorf("rollback time-series observation savepoint after %v: %w", cause, err)
+			}
+			if _, err := tx.ExecContext(ctx, `RELEASE SAVEPOINT `+timeSeriesObservationSavepoint); err != nil {
+				return TimeSeriesInsertResult{}, fmt.Errorf("release rolled-back time-series observation savepoint: %w", err)
+			}
+		}
+		return TimeSeriesInsertResult{}, cause
+	}
+	release := func() error {
+		if !useSavepoint {
+			return nil
+		}
+		_, err := tx.ExecContext(ctx, `RELEASE SAVEPOINT `+timeSeriesObservationSavepoint)
+		return err
+	}
+
+	// Prepare before touching capacity, but inside the savepoint: canonical JSON
+	// and series hashing can fail and must leave the outer transaction usable.
+	if o == nil {
+		return rollback(fmt.Errorf("time-series observation is nil"))
+	}
+	if cardinality.MaxDimensions > 0 && len(o.Dimensions) > cardinality.MaxDimensions {
+		return rollback(fmt.Errorf("%w: dimensions %d exceed limit %d", ErrTimeSeriesValueRejected, len(o.Dimensions), cardinality.MaxDimensions))
+	}
+	if _, err := prepareTimeSeriesObservationInsert(dbms, o); err != nil {
+		return rollback(err)
+	}
+
+	p := newInformationSeedPlaceholders(dbms)
+	var existing uint64
+	err := tx.QueryRowContext(ctx, `SELECT observation_id FROM TimeSeriesObservations WHERE dedupe_key=`+p.Next(), o.DedupeKey).Scan(&existing)
+	if err == nil {
+		o.ID = existing
+		if releaseErr := release(); releaseErr != nil {
+			return TimeSeriesInsertResult{}, releaseErr
+		}
+		return TimeSeriesInsertResult{ObservationID: existing, Duplicate: true}, nil
+	}
+	if err != sql.ErrNoRows {
+		return rollback(fmt.Errorf("detect duplicate time-series observation: %w", err))
+	}
+
+	exceeded, err := TimeSeriesCardinalityExceededTx(ctx, tx, dbms, o.MetricID, o.Scope, o.Dimensions, cardinality)
+	if err != nil {
+		return rollback(fmt.Errorf("admit time-series observation cardinality: %w", err))
+	}
+	if exceeded {
+		return rollback(fmt.Errorf("%w: cardinality limit exceeded", ErrTimeSeriesValueRejected))
+	}
+	result, err := insertTimeSeriesObservationTxContext(ctx, tx, dbms, o)
+	if err != nil {
+		return rollback(err)
+	}
+	// A concurrent winner can still turn the insert into a duplicate. Rolling
+	// back the unit (rather than trying to identify individual reservations)
+	// guarantees that the loser contributes neither slots nor references.
+	if result.Duplicate {
+		if useSavepoint {
+			if _, rollbackErr := tx.ExecContext(ctx, `ROLLBACK TO SAVEPOINT `+timeSeriesObservationSavepoint); rollbackErr != nil {
+				return TimeSeriesInsertResult{}, rollbackErr
+			}
+			if _, releaseErr := tx.ExecContext(ctx, `RELEASE SAVEPOINT `+timeSeriesObservationSavepoint); releaseErr != nil {
+				return TimeSeriesInsertResult{}, releaseErr
+			}
+		}
+		return result, nil
+	}
+	if err = release(); err != nil {
+		return TimeSeriesInsertResult{}, fmt.Errorf("release time-series observation savepoint: %w", err)
+	}
+	return result, nil
+}
+
 // InsertTimeSeriesObservation inserts one fact. A duplicate dedupe_key returns a
 // successful result with Duplicate=true and the existing observation ID.
 func InsertTimeSeriesObservation(db *Handler, observation *TimeSeriesObservation) (TimeSeriesInsertResult, error) {

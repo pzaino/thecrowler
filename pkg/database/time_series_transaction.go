@@ -13,6 +13,8 @@ import (
 	"strings"
 
 	"github.com/lib/pq"
+
+	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
 
 // TransactionTimeSeriesRepository exposes the emitter-facing Task 3 helpers on
@@ -129,4 +131,24 @@ func (r TransactionTimeSeriesRepository) InsertObservationContext(ctx context.Co
 		return TimeSeriesInsertResult{}, fmt.Errorf("time-series transaction is nil")
 	}
 	return insertTimeSeriesObservationTxContext(ctx, r.Tx, r.DBMS, observation)
+}
+
+// InsertObservationWithCardinality persists one observation while owning the
+// complete cardinality lifecycle. In particular, callers must not reserve a
+// series before calling this method: deduplication deliberately happens before
+// admission, and every reservation is in the same transaction as the insert
+// and active-reference accounting.
+func (r TransactionTimeSeriesRepository) InsertObservationWithCardinality(observation *TimeSeriesObservation, cardinality cfg.TimeSeriesCardinalityConfig, failurePolicy cfg.TimeSeriesFailurePolicy) (TimeSeriesInsertResult, error) {
+	return r.InsertObservationWithCardinalityContext(context.Background(), observation, cardinality, failurePolicy)
+}
+
+// InsertObservationWithCardinalityContext is the context-aware form of
+// InsertObservationWithCardinality. Skippable policies use a savepoint so any
+// SQL error can be returned to the emitter without poisoning PostgreSQL's
+// surrounding page transaction or retaining partially acquired capacity.
+func (r TransactionTimeSeriesRepository) InsertObservationWithCardinalityContext(ctx context.Context, observation *TimeSeriesObservation, cardinality cfg.TimeSeriesCardinalityConfig, failurePolicy cfg.TimeSeriesFailurePolicy) (TimeSeriesInsertResult, error) {
+	if r.Tx == nil {
+		return TimeSeriesInsertResult{}, fmt.Errorf("time-series transaction is nil")
+	}
+	return insertObservationWithCardinality(ctx, r.Tx, r.DBMS, observation, cardinality, failurePolicy)
 }
