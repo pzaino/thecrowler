@@ -1,0 +1,26 @@
+# Configuration for the Probot Settings app. Branch policy is intentionally
+# separate from the workflow so changing test implementation cannot silently
+# remove the merge gate.
+branches:
+  - name: main
+    protection:
+      required_status_checks:
+        strict: true
+        contexts:
+          - "PostgreSQL cardinality integration / postgres-integration"
+      enforce_admins: true
+      required_pull_request_reviews:
+        required_approving_review_count: 1
+        dismiss_stale_reviews: true
+      restrictions: null
+  - name: develop
+    protection:
+      required_status_checks:
+        strict: true
+        contexts:
+          - "PostgreSQL cardinality integration / postgres-integration"
+      enforce_admins: true
+      required_pull_request_reviews:
+        required_approving_review_count: 1
+        dismiss_stale_reviews: true
+      restrictions: null

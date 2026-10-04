@@ -1,0 +1,12 @@
+CREATE TABLE IF NOT EXISTS TimeSeriesCardinalityMaintenanceLock (lock_id INTEGER NOT NULL PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS DatabaseWriterCompatibility (lock_id INTEGER NOT NULL PRIMARY KEY CHECK(lock_id=1),writer_generation TEXT NOT NULL);
+INSERT INTO DatabaseWriterCompatibility(lock_id,writer_generation) VALUES(1,'reservation-v1.15') ON CONFLICT(lock_id) DO UPDATE SET writer_generation=excluded.writer_generation;
+INSERT OR IGNORE INTO TimeSeriesCardinalityMaintenanceLock(lock_id) VALUES (1);
+CREATE TABLE IF NOT EXISTS TimeSeriesObservationSeries (observation_id INTEGER NOT NULL REFERENCES TimeSeriesObservations(observation_id) ON DELETE CASCADE,metric_id INTEGER NOT NULL,series_hash VARCHAR(64) NOT NULL,PRIMARY KEY(observation_id,metric_id,series_hash),FOREIGN KEY(metric_id,series_hash) REFERENCES TimeSeriesActiveSeries(metric_id,series_hash) ON DELETE RESTRICT);
+CREATE INDEX IF NOT EXISTS idx_ts_observation_series_identity ON TimeSeriesObservationSeries(metric_id,series_hash);
+CREATE TABLE IF NOT EXISTS TimeSeriesObservationDimensions (observation_id INTEGER NOT NULL REFERENCES TimeSeriesObservations(observation_id) ON DELETE CASCADE,metric_id INTEGER NOT NULL,dimension_key TEXT NOT NULL,value_hash VARCHAR(64) NOT NULL,PRIMARY KEY(observation_id,metric_id,dimension_key,value_hash),FOREIGN KEY(metric_id,dimension_key,value_hash) REFERENCES TimeSeriesActiveDimensionValues(metric_id,dimension_key,value_hash) ON DELETE RESTRICT);
+CREATE INDEX IF NOT EXISTS idx_ts_observation_dimensions_identity ON TimeSeriesObservationDimensions(metric_id,dimension_key,value_hash);
+INSERT OR IGNORE INTO TimeSeriesObservationSeries SELECT observation_id,metric_id,series_hash FROM TimeSeriesObservations WHERE deleted_at IS NULL;
+INSERT OR IGNORE INTO TimeSeriesObservationDimensions SELECT o.observation_id,o.metric_id,a.dimension_key,a.value_hash FROM TimeSeriesObservations o JOIN TimeSeriesActiveDimensionValues a ON a.metric_id=o.metric_id JOIN json_each(o.dimensions) j ON j.key=a.dimension_key AND CASE WHEN j.type='text' THEN json_quote(j.value) ELSE json(j.value) END=json(a.canonical_value) WHERE o.deleted_at IS NULL;
+UPDATE DBSchemaVersion SET is_current=0;
+INSERT INTO DBSchemaVersion(version,description,is_current) VALUES('1.15','Fine-grained cardinality slots and normalized observation memberships',1) ON CONFLICT(version) DO UPDATE SET description=excluded.description,is_current=1;

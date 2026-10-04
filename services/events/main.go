@@ -580,6 +580,9 @@ func initAll(configFile *string, config *cfg.Config, lmt **rate.Limiter) error {
 		if err = applyEventsQuotaAfterConnect(*config); err != nil {
 			return fmt.Errorf("apply Events database quota: %w", err)
 		}
+		if err = cdb.CheckStartupCompatibility(context.Background(), dbHandler); err != nil {
+			return err
+		}
 		cmn.DebugMsg(cmn.DbgLvlInfo, "Database connection established")
 	}
 

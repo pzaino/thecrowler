@@ -70,6 +70,13 @@ RUN adduser -D eventsuser
 
 COPY --from=builder /app/bin/events /app/
 COPY --from=builder /app/bin/healthCheck /app/
+COPY --from=builder /app/bin/rebuildTimeSeriesCardinality /app/
+COPY --from=builder /app/bin/addSource /app/
+COPY --from=builder /app/bin/updateSourceStatus /app/
+COPY --from=builder /app/bin/addCategory /app/
+COPY --from=builder /app/bin/exportSources /app/
+COPY --from=builder /app/bin/removeSource /app/
+COPY --from=builder /app/bin/crowler-agt /app/
 COPY --from=builder /app/config.yaml /app/
 COPY --from=builder /app/schemas /app/schemas
 COPY --from=builder /app/plugins /app/plugins
@@ -78,6 +85,13 @@ COPY --from=builder /app/support /app/support
 
 # Ensure the executables have correct permissions
 RUN chmod +x events
+RUN chmod +x rebuildTimeSeriesCardinality
+RUN chmod +x addSource
+RUN chmod +x updateSourceStatus
+RUN chmod +x addCategory
+RUN chmod +x exportSources
+RUN chmod +x removeSource
+RUN chmod +x crowler-agt
 RUN chmod +x healthCheck
 
 # Create the data directory with appropriate permissions

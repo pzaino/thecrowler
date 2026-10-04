@@ -76,6 +76,12 @@ func emitInformationSeedMetricTx(repo TransactionTimeSeriesRepository, metric Ti
 }
 
 func emitInformationSeedMetricTxContext(ctx context.Context, repo TransactionTimeSeriesRepository, metric TimeSeriesMetric, event informationSeedObservationEvent) error {
+	cardinality := cfg.TimeSeriesCardinalityConfig{}
+	if len(metric.CardinalityPolicy) != 0 && string(metric.CardinalityPolicy) != "null" {
+		if err := json.Unmarshal(metric.CardinalityPolicy, &cardinality); err != nil {
+			return fmt.Errorf("decode metric cardinality policy: %w", err)
+		}
+	}
 	selector, err := decodeTimeSeriesMap(metric.Selector)
 	if err != nil {
 		return err
@@ -108,7 +114,7 @@ func emitInformationSeedMetricTxContext(ctx context.Context, repo TransactionTim
 		BucketStart: bucketStart, BucketEnd: bucketEnd, Scope: event.Scope,
 		Value: value, Dimensions: dimensions,
 	}
-	policy := TimeSeriesPreparationPolicy{StoreValueText: metric.StoreValueText, HashOnly: metric.HashOnly, MaxValueLength: 512}
+	policy := TimeSeriesPreparationPolicy{StoreValueText: metric.StoreValueText, HashOnly: metric.HashOnly, MaxValueLength: 512, MaxDimensions: cardinality.MaxDimensions}
 	prepared, err := PrepareTimeSeriesObservation(observation, metric.ValueType, policy)
 	if err != nil {
 		return err
@@ -129,7 +135,9 @@ func emitInformationSeedMetricTxContext(ctx context.Context, repo TransactionTim
 	if err != nil {
 		return err
 	}
-	_, err = repo.InsertObservationContext(ctx, &observation)
+	// Use the transaction repository rather than the raw insert helper: it owns
+	// admission and the shared active/reservation mutation boundary atomically.
+	_, err = repo.InsertObservationWithCardinalityContext(ctx, &observation, cardinality, metric.FailurePolicy)
 	return err
 }
 

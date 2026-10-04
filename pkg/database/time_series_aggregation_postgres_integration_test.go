@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/url"
 	"os"
 	"reflect"
@@ -24,7 +25,81 @@ import (
 const widgetHistoryDocument = `{"kind":"Widget","name":"backlog-widget","operational":{"count":7,"price":12.5},"region":"eu"}`
 const widgetReplacementDocument = `{"kind":"Widget","name":"backlog-widget","operational":{"count":9,"price":15.75},"region":"eu"}`
 
+func TestPostgresNormalizedMembershipSharedDimensions64Writers(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
+	defer cancel()
+	for _, dimension := range []string{"username", "media_pk", "shortcode"} {
+		t.Run(dimension, func(t *testing.T) {
+			db, sqlDB := openPostgresIntegrationTestDB(t)
+			metric, err := UpsertTimeSeriesMetric(db, &TimeSeriesMetric{Key: fmt.Sprintf("membership-%s-%d", dimension, time.Now().UnixNano()), DisplayName: "membership concurrency", SourceKind: cfg.TimeSeriesSourceCustom, ValueType: cfg.TimeSeriesValueInteger, Aggregate: cfg.TimeSeriesAggregateCount, Bucket: cfg.TimeSeriesBucketOneHour, TimeBasis: cfg.TimeSeriesTimeObservedAt, DedupeScope: cfg.TimeSeriesDedupeNone, ObjectType: cfg.TimeSeriesObjectWebObject, FailurePolicy: cfg.TimeSeriesFailureLogSkip, Selector: json.RawMessage(`{}`), Enabled: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				_, _ = sqlDB.Exec(`DELETE FROM TimeSeriesObservations WHERE metric_id=$1`, metric.ID)
+				_, _ = sqlDB.Exec(`DELETE FROM TimeSeriesDimensionSlots WHERE metric_id=$1`, metric.ID)
+				_, _ = sqlDB.Exec(`DELETE FROM TimeSeriesSeriesSlots WHERE metric_id=$1`, metric.ID)
+				_, _ = sqlDB.Exec(`DELETE FROM TimeSeriesActiveDimensionValues WHERE metric_id=$1`, metric.ID)
+				_, _ = sqlDB.Exec(`DELETE FROM TimeSeriesActiveSeries WHERE metric_id=$1`, metric.ID)
+				_, _ = sqlDB.Exec(`DELETE FROM TimeSeriesMetrics WHERE metric_id=$1`, metric.ID)
+			})
+			jobs := make(chan int, 100)
+			errs := make(chan error, 100)
+			var wg sync.WaitGroup
+			for writer := 0; writer < 64; writer++ {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					for n := range jobs {
+						tx, e := sqlDB.BeginTx(ctx, nil)
+						if e != nil {
+							errs <- e
+							continue
+						}
+						id, value := uint64(n+1), int64(n)
+						now := time.Now().UTC()
+						o := TimeSeriesObservation{MetricID: metric.ID, ObservedAt: now, CollectedAt: now, BucketStart: now.Truncate(time.Hour), BucketEnd: now.Truncate(time.Hour).Add(time.Hour), Scope: TimeSeriesScope{ObjectType: "webobject", ObjectID: &id}, Value: TimeSeriesValue{Integer: &value}, ValueHash: fmt.Sprint(n), DedupeKey: fmt.Sprintf("%s-%d-%d", dimension, n, metric.ID), Dimensions: map[string]interface{}{dimension: "shared"}}
+						_, e = (TransactionTimeSeriesRepository{Tx: tx, DBMS: DBPostgresStr}).InsertObservationWithCardinalityContext(ctx, &o, cfg.TimeSeriesCardinalityConfig{MaxSeriesPerMetric: 100, MaxValuesPerDimension: 1}, cfg.TimeSeriesFailureFailIndexing)
+						if e == nil {
+							e = tx.Commit()
+						} else {
+							_ = tx.Rollback()
+						}
+						if e != nil {
+							errs <- e
+						}
+					}
+				}()
+			}
+			for n := 0; n < 100; n++ {
+				jobs <- n
+			}
+			close(jobs)
+			wg.Wait()
+			close(errs)
+			for e := range errs {
+				t.Fatal(e)
+			}
+			var series, memberships, values int
+			if err = sqlDB.QueryRow(`SELECT COUNT(*) FROM TimeSeriesActiveSeries WHERE metric_id=$1`, metric.ID).Scan(&series); err != nil {
+				t.Fatal(err)
+			}
+			if err = sqlDB.QueryRow(`SELECT COUNT(*) FROM TimeSeriesObservationSeries WHERE metric_id=$1`, metric.ID).Scan(&memberships); err != nil {
+				t.Fatal(err)
+			}
+			if err = sqlDB.QueryRow(`SELECT COUNT(*) FROM TimeSeriesActiveDimensionValues WHERE metric_id=$1`, metric.ID).Scan(&values); err != nil {
+				t.Fatal(err)
+			}
+			if series != 100 || memberships != 100 || values != 1 {
+				t.Fatalf("series=%d memberships=%d values=%d", series, memberships, values)
+			}
+		})
+	}
+}
+
 func TestPostgresTimeSeriesCardinalityConcurrentAdmission(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
 	db, sqlDB := openPostgresIntegrationTestDB(t)
 	suffix := fmt.Sprint(time.Now().UnixNano())
 	metric, err := UpsertTimeSeriesMetric(db, &TimeSeriesMetric{Key: "cardinality-concurrency-" + suffix, DisplayName: "cardinality concurrency", SourceKind: cfg.TimeSeriesSourceCustom, ValueType: cfg.TimeSeriesValueInteger, Aggregate: cfg.TimeSeriesAggregateCount, Bucket: cfg.TimeSeriesBucketOneHour, TimeBasis: cfg.TimeSeriesTimeObservedAt, DedupeScope: cfg.TimeSeriesDedupeNone, ObjectType: cfg.TimeSeriesObjectWebObject, FailurePolicy: cfg.TimeSeriesFailureLogSkip, Selector: json.RawMessage(`{}`), Enabled: true})
@@ -33,22 +108,26 @@ func TestPostgresTimeSeriesCardinalityConcurrentAdmission(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		_, _ = sqlDB.Exec(`DELETE FROM TimeSeriesObservations WHERE metric_id=$1`, metric.ID)
+		_, _ = sqlDB.Exec(`DELETE FROM TimeSeriesDimensionSlots WHERE metric_id=$1`, metric.ID)
+		_, _ = sqlDB.Exec(`DELETE FROM TimeSeriesSeriesSlots WHERE metric_id=$1`, metric.ID)
 		_, _ = sqlDB.Exec(`DELETE FROM TimeSeriesActiveDimensionValues WHERE metric_id=$1`, metric.ID)
 		_, _ = sqlDB.Exec(`DELETE FROM TimeSeriesActiveSeries WHERE metric_id=$1`, metric.ID)
 		_, _ = sqlDB.Exec(`DELETE FROM TimeSeriesMetrics WHERE metric_id=$1`, metric.ID)
 	})
 
 	start := make(chan struct{})
-	results := make(chan bool, 2)
-	errors := make(chan error, 2)
+	const writers = 50
+	const limit = 10
+	results := make(chan bool, writers)
+	errors := make(chan error, writers)
 	var ready sync.WaitGroup
-	ready.Add(2)
-	for writer := 0; writer < 2; writer++ {
+	ready.Add(writers)
+	for writer := 0; writer < writers; writer++ {
 		writer := writer
 		go func() {
 			ready.Done()
 			<-start
-			tx, beginErr := sqlDB.BeginTx(context.Background(), nil)
+			tx, beginErr := sqlDB.BeginTx(ctx, nil)
 			if beginErr != nil {
 				errors <- beginErr
 				return
@@ -56,7 +135,7 @@ func TestPostgresTimeSeriesCardinalityConcurrentAdmission(t *testing.T) {
 			defer tx.Rollback()
 			scopeID := uint64(writer + 1)
 			dimensions := map[string]interface{}{"region": fmt.Sprintf("region-%d", writer)}
-			exceeded, guardErr := TimeSeriesCardinalityExceededTx(context.Background(), tx, DBPostgresStr, metric.ID, TimeSeriesScope{ObjectType: "webobject", ObjectID: &scopeID}, dimensions, cfg.TimeSeriesCardinalityConfig{MaxSeriesPerMetric: 1, MaxValuesPerDimension: 1})
+			exceeded, guardErr := TimeSeriesCardinalityExceededTx(ctx, tx, DBPostgresStr, metric.ID, TimeSeriesScope{ObjectType: "webobject", ObjectID: &scopeID}, dimensions, cfg.TimeSeriesCardinalityConfig{MaxSeriesPerMetric: limit, MaxValuesPerDimension: limit})
 			if guardErr != nil {
 				errors <- guardErr
 				return
@@ -82,7 +161,7 @@ func TestPostgresTimeSeriesCardinalityConcurrentAdmission(t *testing.T) {
 	ready.Wait()
 	close(start)
 	admitted := 0
-	for i := 0; i < 2; i++ {
+	for i := 0; i < writers; i++ {
 		select {
 		case err = <-errors:
 			t.Fatalf("concurrent cardinality writer: %v", err)
@@ -90,8 +169,8 @@ func TestPostgresTimeSeriesCardinalityConcurrentAdmission(t *testing.T) {
 			if ok {
 				admitted++
 			}
-		case <-time.After(10 * time.Second):
-			t.Fatal("concurrent cardinality writers timed out")
+		case <-ctx.Done():
+			t.Fatalf("concurrent cardinality writers timed out: %v", ctx.Err())
 		}
 	}
 	var series, values int
@@ -101,8 +180,8 @@ func TestPostgresTimeSeriesCardinalityConcurrentAdmission(t *testing.T) {
 	if err = sqlDB.QueryRow(`SELECT COUNT(*) FROM TimeSeriesActiveDimensionValues WHERE metric_id=$1`, metric.ID).Scan(&values); err != nil {
 		t.Fatal(err)
 	}
-	if admitted != 1 || series != 1 || values != 1 {
-		t.Fatalf("admitted=%d active series=%d dimension values=%d, want 1/1/1", admitted, series, values)
+	if admitted != limit || series != limit || values != limit {
+		t.Fatalf("admitted=%d active series=%d dimension values=%d, want %d/%d/%d", admitted, series, values, limit, limit, limit)
 	}
 }
 
@@ -144,6 +223,35 @@ func openPostgresIntegrationTestDB(t *testing.T) (*Handler, *sql.DB) {
 	}
 	var handler Handler = &PostgresHandler{db: database, dbms: DBPostgresStr, connStr: dsn.String()}
 	return &handler, database
+}
+
+// This is deliberately an integration assertion rather than a textual schema
+// test: it catches a migration which advertises the right version but forgets
+// either the one-current-version invariant or runtime-role access.
+func TestPostgresCurrentVersionUniquenessAndCardinalityPermissions(t *testing.T) {
+	_, sqlDB := openPostgresIntegrationTestDB(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+
+	var current, duplicateCurrent int
+	if err := sqlDB.QueryRowContext(ctx, `SELECT COUNT(*), COUNT(*) - COUNT(DISTINCT version) FROM DBSchemaVersion WHERE is_current`).Scan(&current, &duplicateCurrent); err != nil {
+		t.Fatal(err)
+	}
+	if current != 1 || duplicateCurrent != 0 {
+		t.Fatalf("current schema versions=%d duplicate versions=%d, want 1/0", current, duplicateCurrent)
+	}
+	for _, table := range []string{
+		"timeseriescardinalitytokens", "timeseriesseriesslots", "timeseriesdimensionslots",
+		"timeseriesobservationseries", "timeseriesobservationdimensions", "databasewritercompatibility",
+	} {
+		var allowed bool
+		if err := sqlDB.QueryRowContext(ctx, `SELECT has_table_privilege(current_user, $1, 'SELECT,INSERT,UPDATE,DELETE')`, table).Scan(&allowed); err != nil {
+			t.Fatalf("check permissions for %s: %v", table, err)
+		}
+		if !allowed {
+			t.Errorf("integration role lacks cardinality DML permissions on %s", table)
+		}
+	}
 }
 
 func createPostgresAggregationFixture(t *testing.T, db *Handler, sqlDB *sql.DB, runKey string) (uint64, TimeSeriesRange, time.Time) {
@@ -282,9 +390,11 @@ func TestPostgresWebObjectHistorySurvivesReplacementAndFollowsSourceOwnership(t 
 	suffix := fmt.Sprint(time.Now().UnixNano())
 	createSource := func(name string) uint64 {
 		t.Helper()
+		sourceURL := "https://" + name + ".invalid/" + suffix
+		sourceUID := CalculateSourceUID(name, sourceURL)
 		var id uint64
-		err := sqlDB.QueryRow(`INSERT INTO Sources (url, name, priority, category_id, usr_id, restricted, flags, config, disabled)
-			VALUES ($1,$2,'normal',0,0,0,0,'{}'::jsonb,false) RETURNING source_id`, "https://"+name+".invalid/"+suffix, name).Scan(&id)
+		err := sqlDB.QueryRow(`INSERT INTO Sources (source_uid, url, name, priority, category_id, usr_id, restricted, flags, config, disabled)
+			VALUES ($1,$2,$3,'normal',0,0,0,0,'{}'::jsonb,false) RETURNING source_id`, sourceUID, sourceURL, name).Scan(&id)
 		if err != nil {
 			t.Fatalf("create source %s: %v", name, err)
 		}
@@ -307,23 +417,55 @@ func TestPostgresWebObjectHistorySurvivesReplacementAndFollowsSourceOwnership(t 
 		t.Helper()
 		var indexID, objectID uint64
 		url := fmt.Sprintf("https://widget.invalid/%d/%s", source, suffix)
-		if err := sqlDB.QueryRow(`INSERT INTO SearchIndex(page_url,title,last_updated_at) VALUES($1,'Widget',$2)
+		if err := sqlDB.QueryRow(`INSERT INTO SearchIndex(page_url,title,summary,last_updated_at) VALUES($1,'Widget','Widget integration fixture',$2)
 			ON CONFLICT(page_url) DO UPDATE SET last_updated_at=EXCLUDED.last_updated_at RETURNING index_id`, url, at).Scan(&indexID); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := sqlDB.Exec(`INSERT INTO SourceSearchIndex(source_id,index_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, source, indexID); err != nil {
 			t.Fatal(err)
 		}
-		// This is the crawler's refresh/replacement sequence: delete the linked
-		// WebObject and then persist/link the newly hashed operational document.
-		if _, err := sqlDB.Exec(`DELETE FROM WebObjects WHERE object_id IN (SELECT object_id FROM WebObjectsIndex WHERE index_id=$1)`, indexID); err != nil {
+		// Remove this page's links before replacing its object, but retain any
+		// object which is shared with another page.
+		rows, err := sqlDB.Query(`SELECT object_id FROM WebObjectsIndex WHERE index_id=$1`, indexID)
+		if err != nil {
 			t.Fatal(err)
+		}
+		var previousObjectIDs []uint64
+		for rows.Next() {
+			var previousObjectID uint64
+			if err = rows.Scan(&previousObjectID); err != nil {
+				rows.Close()
+				t.Fatal(err)
+			}
+			previousObjectIDs = append(previousObjectIDs, previousObjectID)
+		}
+		if err = rows.Err(); err != nil {
+			rows.Close()
+			t.Fatal(err)
+		}
+		if err = rows.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = sqlDB.Exec(`DELETE FROM WebObjectsIndex WHERE index_id=$1`, indexID); err != nil {
+			t.Fatal(err)
+		}
+		for _, previousObjectID := range previousObjectIDs {
+			if _, err = sqlDB.Exec(`DELETE FROM WebObjects wo
+				WHERE wo.object_id=$1
+				  AND NOT EXISTS (SELECT 1 FROM WebObjectsIndex woi WHERE woi.object_id=wo.object_id)`, previousObjectID); err != nil {
+				t.Fatal(err)
+			}
 		}
 		objectHash := fmt.Sprintf("%x", sha256.Sum256([]byte(document)))
-		if err := sqlDB.QueryRow(`INSERT INTO WebObjects(object_hash,object_content,details) VALUES($1,$2,$2::jsonb) RETURNING object_id`, objectHash, document).Scan(&objectID); err != nil {
+		if err := sqlDB.QueryRow(`INSERT INTO WebObjects(object_hash,object_content,details)
+			VALUES($1,$2,$3::jsonb)
+			ON CONFLICT (object_hash) DO UPDATE SET
+				object_content=COALESCE(NULLIF(BTRIM(EXCLUDED.object_content), ''), WebObjects.object_content),
+				details=COALESCE(NULLIF(EXCLUDED.details, '{}'::jsonb), WebObjects.details)
+			RETURNING object_id`, objectHash, document, document).Scan(&objectID); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := sqlDB.Exec(`INSERT INTO WebObjectsIndex(index_id,object_id) VALUES($1,$2)`, indexID, objectID); err != nil {
+		if _, err := sqlDB.Exec(`INSERT INTO WebObjectsIndex(index_id,object_id) VALUES($1,$2) ON CONFLICT (index_id,object_id) DO NOTHING`, indexID, objectID); err != nil {
 			t.Fatal(err)
 		}
 		var decoded struct {
@@ -337,7 +479,8 @@ func TestPostgresWebObjectHistorySurvivesReplacementAndFollowsSourceOwnership(t 
 		attributeValue := strconv.Itoa(decoded.Operational.Count)
 		attributeHash := fmt.Sprintf("%x", sha256.Sum256([]byte(attributeValue)))
 		if _, err := sqlDB.Exec(`INSERT INTO ObjectAttributes(object_id,object_type,attribute_key,attribute_value,normalized_value,value_hash,attribute_type,source_path,context_ref)
-			VALUES($1,'webobject','operational_count',$2,$2,$3,'integer','operational.count',$4)`, objectID, attributeValue, attributeHash, suffix); err != nil {
+			VALUES($1,'webobject','operational_count',$2,$2,$3,'integer','operational.count',$4)
+			ON CONFLICT DO NOTHING`, objectID, attributeValue, attributeHash, suffix); err != nil {
 			t.Fatal(err)
 		}
 		return indexID, objectID
@@ -381,6 +524,9 @@ func TestPostgresWebObjectHistorySurvivesReplacementAndFollowsSourceOwnership(t 
 	indexID, oldObjectID := insertObject(primary, widgetHistoryDocument, base)
 	old := insertObservation(primary, indexID, oldObjectID, widgetHistoryDocument, base, nil)
 	controlIndex, controlObject := insertObject(control, widgetHistoryDocument, base)
+	if controlObject != oldObjectID {
+		t.Fatalf("identical WebObjects were not deduplicated: primary=%d control=%d", oldObjectID, controlObject)
+	}
 	_ = insertObservation(control, controlIndex, controlObject, widgetHistoryDocument, base, nil)
 	before, err := QueryTimeSeriesObservations(db, TimeSeriesQueryFilter{SourceID: &primary, Pagination: TimeSeriesPagination{Limit: 10}})
 	if err != nil {
@@ -392,6 +538,13 @@ func TestPostgresWebObjectHistorySurvivesReplacementAndFollowsSourceOwnership(t 
 	snapshot := before.Observations[0]
 
 	_, newObjectID := insertObject(primary, widgetReplacementDocument, base.Add(10*time.Minute))
+	var controlLinks int
+	if err = sqlDB.QueryRow(`SELECT COUNT(*) FROM WebObjectsIndex WHERE index_id=$1 AND object_id=$2`, controlIndex, controlObject).Scan(&controlLinks); err != nil {
+		t.Fatal(err)
+	}
+	if controlLinks != 1 {
+		t.Fatalf("primary replacement removed shared control WebObject link: links=%d, want 1", controlLinks)
+	}
 	newObservation := insertObservation(primary, indexID, newObjectID, widgetReplacementDocument, base.Add(10*time.Minute), &old)
 	after, err := QueryTimeSeriesObservations(db, TimeSeriesQueryFilter{SourceID: &primary, Pagination: TimeSeriesPagination{Limit: 10}})
 	if err != nil {
@@ -504,8 +657,11 @@ func TestPostgresDeterministicAggregateEquivalenceFixture(t *testing.T) {
 	d := byMetric[decimal.ID]
 	assertFloat := func(name string, got *float64, want float64) {
 		t.Helper()
-		if got == nil || *got != want {
-			t.Fatalf("%s=%v want %v", name, got, want)
+		if got == nil {
+			t.Fatalf("%s=nil want %v", name, want)
+		}
+		if math.Abs(*got-want) > 1e-9 {
+			t.Fatalf("%s=%v want %v", name, *got, want)
 		}
 	}
 	if d.ValueCount != 5 || d.OccurrenceTotal != 5 || d.DistinctValueCount != 4 || d.NumericCount != 5 || d.ChangeCount != 3 || d.Scope.ObjectID == nil || *d.Scope.ObjectID != objectA || !reflect.DeepEqual(d.Dimensions, regionEU) {
@@ -542,5 +698,98 @@ func TestPostgresDeterministicAggregateEquivalenceFixture(t *testing.T) {
 		if hashErr != nil || aggregate.AggregateHash != expected {
 			t.Fatalf("aggregate hash=%q expected=%q err=%v scope=%#v", aggregate.AggregateHash, expected, hashErr, aggregate.Scope)
 		}
+	}
+}
+
+func TestPostgresCardinalityOpenReservationDoesNotBlockIndependentSeries(t *testing.T) {
+	db, sqlDB := openPostgresIntegrationTestDB(t)
+	metric, err := UpsertTimeSeriesMetric(db, &TimeSeriesMetric{Key: fmt.Sprintf("cardinality-open-%d", time.Now().UnixNano()), DisplayName: "open reservation", SourceKind: cfg.TimeSeriesSourceCustom, ValueType: cfg.TimeSeriesValueInteger, Aggregate: cfg.TimeSeriesAggregateCount, Bucket: cfg.TimeSeriesBucketOneHour, TimeBasis: cfg.TimeSeriesTimeObservedAt, DedupeScope: cfg.TimeSeriesDedupeNone, ObjectType: cfg.TimeSeriesObjectWebObject, FailurePolicy: cfg.TimeSeriesFailureLogSkip, Selector: json.RawMessage(`{}`), Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = sqlDB.Exec(`DELETE FROM TimeSeriesDimensionSlots WHERE metric_id=$1`, metric.ID)
+		_, _ = sqlDB.Exec(`DELETE FROM TimeSeriesSeriesSlots WHERE metric_id=$1`, metric.ID)
+		_, _ = sqlDB.Exec(`DELETE FROM TimeSeriesMetrics WHERE metric_id=$1`, metric.ID)
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	tx1, err := sqlDB.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx1.Rollback()
+	firstID := uint64(101)
+	policy := cfg.TimeSeriesCardinalityConfig{MaxSeriesPerMetric: 100000, MaxValuesPerDimension: 100000}
+	if exceeded, guardErr := TimeSeriesCardinalityExceededTx(ctx, tx1, DBPostgresStr, metric.ID, TimeSeriesScope{ObjectType: "webobject", ObjectID: &firstID}, map[string]interface{}{"region": "held"}, policy); guardErr != nil || exceeded {
+		t.Fatalf("first reservation exceeded=%v err=%v", exceeded, guardErr)
+	}
+	finished := make(chan error, 1)
+	go func() {
+		tx2, beginErr := sqlDB.BeginTx(ctx, nil)
+		if beginErr != nil {
+			finished <- beginErr
+			return
+		}
+		defer tx2.Rollback()
+		secondID := uint64(202)
+		exceeded, guardErr := TimeSeriesCardinalityExceededTx(ctx, tx2, DBPostgresStr, metric.ID, TimeSeriesScope{ObjectType: "webobject", ObjectID: &secondID}, map[string]interface{}{"region": "independent"}, policy)
+		if guardErr != nil {
+			finished <- guardErr
+			return
+		}
+		if exceeded {
+			finished <- fmt.Errorf("independent series unexpectedly rejected")
+			return
+		}
+		finished <- tx2.Commit()
+	}()
+	select {
+	case err = <-finished:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatal("independent series blocked behind open reservation")
+	}
+}
+
+func TestPostgresCardinalityLargePrefillsAndPolicyChanges(t *testing.T) {
+	db, sqlDB := openPostgresIntegrationTestDB(t)
+	for _, prefill := range []int{13500, 50000, 100000} {
+		t.Run(fmt.Sprintf("prefill-%d-of-100000", prefill), func(t *testing.T) {
+			metric, err := UpsertTimeSeriesMetric(db, &TimeSeriesMetric{Key: fmt.Sprintf("cardinality-prefill-%d-%d", prefill, time.Now().UnixNano()), DisplayName: "cardinality prefill", SourceKind: cfg.TimeSeriesSourceCustom, ValueType: cfg.TimeSeriesValueInteger, Aggregate: cfg.TimeSeriesAggregateCount, Bucket: cfg.TimeSeriesBucketOneHour, TimeBasis: cfg.TimeSeriesTimeObservedAt, DedupeScope: cfg.TimeSeriesDedupeNone, ObjectType: cfg.TimeSeriesObjectWebObject, FailurePolicy: cfg.TimeSeriesFailureLogSkip, Selector: json.RawMessage(`{}`), Enabled: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				_, _ = sqlDB.Exec(`DELETE FROM TimeSeriesSeriesSlots WHERE metric_id=$1`, metric.ID)
+				_, _ = sqlDB.Exec(`DELETE FROM TimeSeriesMetrics WHERE metric_id=$1`, metric.ID)
+			})
+			if _, err = sqlDB.Exec(`INSERT INTO TimeSeriesSeriesSlots(metric_id,slot_number,series_hash,identity_value) SELECT $1,n,encode(sha256(n::text::bytea),'hex'),n::text FROM generate_series(0,$2-1) n`, metric.ID, prefill); err != nil {
+				t.Fatal(err)
+			}
+			claim := func(limit int, id uint64) (bool, error) {
+				tx, beginErr := sqlDB.BeginTx(context.Background(), nil)
+				if beginErr != nil {
+					return false, beginErr
+				}
+				defer tx.Rollback()
+				exceeded, claimErr := TimeSeriesCardinalityExceededTx(context.Background(), tx, DBPostgresStr, metric.ID, TimeSeriesScope{ObjectType: "webobject", ObjectID: &id}, nil, cfg.TimeSeriesCardinalityConfig{MaxSeriesPerMetric: limit})
+				return exceeded, claimErr
+			}
+			exceeded, claimErr := claim(100000, uint64(prefill+1))
+			if claimErr != nil || exceeded != (prefill == 100000) {
+				t.Fatalf("large prefill claim exceeded=%v err=%v", exceeded, claimErr)
+			}
+			// A reduction is based on the active allocation, not slot numbering.
+			if exceeded, claimErr := claim(prefill, uint64(prefill+2)); claimErr != nil || !exceeded {
+				t.Fatalf("reduced policy exceeded=%v err=%v", exceeded, claimErr)
+			}
+			// Raising the policy exposes additional tokens without remapping rows.
+			if exceeded, claimErr := claim(prefill+1, uint64(prefill+3)); claimErr != nil || exceeded {
+				t.Fatalf("increased policy exceeded=%v err=%v", exceeded, claimErr)
+			}
+		})
 	}
 }

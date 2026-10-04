@@ -127,13 +127,16 @@ CREATE TABLE IF NOT EXISTS DBSchemaVersion (
 DO $$
 BEGIN
     IF NOT EXISTS (
-        SELECT 1 FROM DBSchemaVersion WHERE version = '1.14'
+        SELECT 1 FROM DBSchemaVersion WHERE version = '1.15'
     ) THEN
         INSERT INTO DBSchemaVersion (version, description)
-        VALUES ('1.14', 'CROWler DB schema version 1.14');
+        VALUES ('1.15', 'CROWler DB schema version 1.15');
     END IF;
 END
 $$;
+UPDATE DBSchemaVersion SET is_current = (version = '1.15');
+CREATE UNIQUE INDEX IF NOT EXISTS uq_dbschemaversion_one_current
+    ON DBSchemaVersion (is_current) WHERE is_current = TRUE;
 ----------------------------------------------------------------
 
 
@@ -2236,19 +2239,49 @@ CREATE TABLE IF NOT EXISTS TimeSeriesObservations (
 
 CREATE TABLE IF NOT EXISTS TimeSeriesActiveSeries (
     metric_id BIGINT NOT NULL REFERENCES TimeSeriesMetrics(metric_id) ON DELETE RESTRICT,
-    series_hash VARCHAR(64) NOT NULL,
-    series_identity TEXT NOT NULL,
-    reference_count BIGINT NOT NULL CHECK (reference_count > 0),
+    series_hash VARCHAR(64) NOT NULL, series_identity TEXT NOT NULL, reference_count BIGINT NOT NULL DEFAULT 1 CHECK (reference_count > 0),
     PRIMARY KEY (metric_id, series_hash)
 );
 CREATE TABLE IF NOT EXISTS TimeSeriesActiveDimensionValues (
     metric_id BIGINT NOT NULL REFERENCES TimeSeriesMetrics(metric_id) ON DELETE RESTRICT,
-    dimension_key TEXT NOT NULL,
-    value_hash VARCHAR(64) NOT NULL,
-    canonical_value TEXT NOT NULL,
-    reference_count BIGINT NOT NULL CHECK (reference_count > 0),
+    dimension_key TEXT NOT NULL, value_hash VARCHAR(64) NOT NULL, canonical_value TEXT NOT NULL, reference_count BIGINT NOT NULL DEFAULT 1 CHECK(reference_count > 0),
     PRIMARY KEY (metric_id, dimension_key, value_hash)
 );
+CREATE TABLE IF NOT EXISTS TimeSeriesObservationSeries (
+    observation_id BIGINT NOT NULL REFERENCES TimeSeriesObservations(observation_id) ON DELETE CASCADE,
+    metric_id BIGINT NOT NULL, series_hash VARCHAR(64) NOT NULL,
+    PRIMARY KEY (observation_id, metric_id, series_hash),
+    FOREIGN KEY (metric_id, series_hash) REFERENCES TimeSeriesActiveSeries(metric_id, series_hash) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_ts_observation_series_identity ON TimeSeriesObservationSeries(metric_id, series_hash);
+CREATE TABLE IF NOT EXISTS TimeSeriesObservationDimensions (
+    observation_id BIGINT NOT NULL REFERENCES TimeSeriesObservations(observation_id) ON DELETE CASCADE,
+    metric_id BIGINT NOT NULL, dimension_key TEXT NOT NULL, value_hash VARCHAR(64) NOT NULL,
+    PRIMARY KEY (observation_id, metric_id, dimension_key, value_hash),
+    FOREIGN KEY (metric_id, dimension_key, value_hash) REFERENCES TimeSeriesActiveDimensionValues(metric_id, dimension_key, value_hash) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_ts_observation_dimensions_identity ON TimeSeriesObservationDimensions(metric_id, dimension_key, value_hash);
+
+CREATE TABLE IF NOT EXISTS TimeSeriesSeriesSlots (
+    metric_id BIGINT NOT NULL REFERENCES TimeSeriesMetrics(metric_id) ON DELETE RESTRICT,
+    slot_number BIGINT NOT NULL, series_hash VARCHAR(64) NOT NULL, identity_value TEXT NOT NULL,
+    PRIMARY KEY (metric_id, slot_number), UNIQUE (metric_id, series_hash)
+);
+CREATE TABLE IF NOT EXISTS TimeSeriesCardinalityTokens (
+    token_number BIGINT PRIMARY KEY CHECK (token_number >= 0)
+);
+INSERT INTO TimeSeriesCardinalityTokens(token_number)
+SELECT generate_series(0, 99999) ON CONFLICT DO NOTHING;
+CREATE TABLE IF NOT EXISTS TimeSeriesDimensionSlots (
+    metric_id BIGINT NOT NULL REFERENCES TimeSeriesMetrics(metric_id) ON DELETE RESTRICT,
+    dimension_key TEXT NOT NULL, slot_number BIGINT NOT NULL, value_hash VARCHAR(64) NOT NULL, identity_value TEXT NOT NULL,
+    PRIMARY KEY (metric_id, dimension_key, slot_number), UNIQUE (metric_id, dimension_key, value_hash)
+);
+CREATE TABLE IF NOT EXISTS DatabaseWriterCompatibility (
+    lock_id INTEGER PRIMARY KEY CHECK(lock_id = 1), writer_generation TEXT NOT NULL
+);
+INSERT INTO DatabaseWriterCompatibility(lock_id,writer_generation) VALUES (1,'reservation-v1.15')
+ON CONFLICT (lock_id) DO UPDATE SET writer_generation=EXCLUDED.writer_generation;
 
 CREATE TABLE IF NOT EXISTS TimeSeriesAggregates (
     aggregate_id BIGSERIAL PRIMARY KEY,
@@ -3733,6 +3766,11 @@ ALTER TABLE TimeSeriesMetrics OWNER TO :CROWLER_DB_USER;
 ALTER TABLE TimeSeriesObservations OWNER TO :CROWLER_DB_USER;
 ALTER TABLE TimeSeriesActiveSeries OWNER TO :CROWLER_DB_USER;
 ALTER TABLE TimeSeriesActiveDimensionValues OWNER TO :CROWLER_DB_USER;
+ALTER TABLE TimeSeriesSeriesSlots OWNER TO :CROWLER_DB_USER;
+ALTER TABLE TimeSeriesDimensionSlots OWNER TO :CROWLER_DB_USER;
+ALTER TABLE TimeSeriesCardinalityTokens OWNER TO :CROWLER_DB_USER;
+ALTER TABLE TimeSeriesObservationSeries OWNER TO :CROWLER_DB_USER;
+ALTER TABLE TimeSeriesObservationDimensions OWNER TO :CROWLER_DB_USER;
 
 -- Grants permissions to the user on the :"POSTGRES_DB" database
 SELECT grant_sequence_permissions('public', :'CROWLER_DB_USER');

@@ -505,18 +505,26 @@ func backfillObservationEntityBatch(db *Handler, dbms string, after uint64, limi
 			provPlaceholder += "::jsonb"
 		}
 		update := `UPDATE TimeSeriesObservations SET entity_id=` + entityPlaceholder + `, dimensions=` + dimPlaceholder + `, provenance=` + provPlaceholder + `, provenance_hash=` + hashPlaceholder + `, series_hash=` + seriesPlaceholder + `, last_updated_at=CURRENT_TIMESTAMP WHERE observation_id=` + idPlaceholder + ` AND entity_id IS NULL`
-		updateResult, updateErr := tx.Exec(update, item.entity, dimArg, provArg, provenanceHash, updated.SeriesHash, item.id)
-		if updateErr != nil {
-			return result, fmt.Errorf("update entity observation %d: %w", item.id, updateErr)
+		policy, policyErr := loadTimeSeriesCardinalityPolicyTx(context.Background(), tx, dbms, updated.MetricID)
+		if policyErr != nil {
+			return result, policyErr
 		}
-		affected, _ := updateResult.RowsAffected()
+		affected := int64(0)
+		mutation := newTimeSeriesCardinalityMutation(context.Background(), tx, dbms)
+		if err = mutation.replaceIdentity(original, &updated, policy, func() error {
+			updateResult, updateErr := tx.Exec(update, item.entity, dimArg, provArg, provenanceHash, updated.SeriesHash, item.id)
+			if updateErr != nil {
+				return fmt.Errorf("update entity observation %d: %w", item.id, updateErr)
+			}
+			affected, _ = updateResult.RowsAffected()
+			if affected != 1 {
+				return fmt.Errorf("update entity observation %d lost its identity-change race", item.id)
+			}
+			return nil
+		}); err != nil {
+			return result, err
+		}
 		if affected == 1 {
-			if err = decrementTimeSeriesCardinality(context.Background(), tx, dbms, original); err != nil {
-				return result, err
-			}
-			if err = incrementTimeSeriesCardinality(context.Background(), tx, dbms, &updated); err != nil {
-				return result, err
-			}
 			result.Updated++
 			observed := item.observed.UTC()
 			mergeAffectedRange(&result, &observed, &observed)

@@ -1466,6 +1466,11 @@ func main() {
 					closeResources(db, &vdiInstances)
 					cmn.DebugMsg(cmn.DbgLvlFatal, "applying engine database quota: %v", err)
 				}
+				if err = cdb.CheckStartupCompatibility(context.Background(), db); err != nil {
+					configMutex.Unlock()
+					closeResources(db, &vdiInstances)
+					cmn.DebugMsg(cmn.DbgLvlFatal, "%v", err)
+				}
 				if err = cdb.SyncConfiguredTimeSeriesMetrics(&db, config.TimeSeries); err != nil {
 					configMutex.Unlock()
 					closeResources(db, &vdiInstances) // Release resources
@@ -1497,6 +1502,10 @@ func main() {
 	if err = applyEngineDBQuotaAfterConnect(config); err != nil {
 		closeResources(db, &vdiInstances)
 		cmn.DebugMsg(cmn.DbgLvlFatal, "applying engine database quota: %v", err)
+	}
+	if err = cdb.CheckStartupCompatibility(context.Background(), db); err != nil {
+		closeResources(db, &vdiInstances)
+		cmn.DebugMsg(cmn.DbgLvlFatal, "%v", err)
 	}
 	if err = cdb.SyncConfiguredTimeSeriesMetrics(&db, config.TimeSeries); err != nil {
 		closeResources(db, &vdiInstances) // Release resources

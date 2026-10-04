@@ -107,6 +107,23 @@ func TestTimeSeriesRelease114CardinalityState(t *testing.T) {
 	}
 }
 
+func TestTimeSeriesRelease115NormalizedMembership(t *testing.T) {
+	t.Parallel()
+	files := []string{"postgresql-setup.pgsql", "mysql-setup.mysql", "sqlite-setup.sqlite3", "db_migrations/postgresql-migration-v1.15.pgsql", "db_migrations/mysql-migration-v1.15.mysql", "db_migrations/sqlite-migration-v1.15.sqlite3"}
+	for _, file := range files {
+		content, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		upper := strings.ToUpper(string(content))
+		for _, fragment := range []string{"TIMESERIESOBSERVATIONSERIES", "TIMESERIESOBSERVATIONDIMENSIONS", "OBSERVATION_ID", "IDX_TS_OBSERVATION_SERIES_IDENTITY", "IDX_TS_OBSERVATION_DIMENSIONS_IDENTITY"} {
+			if !strings.Contains(upper, fragment) {
+				t.Errorf("%s missing normalized membership fragment %q", file, fragment)
+			}
+		}
+	}
+}
+
 func TestPostgresTimeSeriesRelease114Indexes(t *testing.T) {
 	t.Parallel()
 

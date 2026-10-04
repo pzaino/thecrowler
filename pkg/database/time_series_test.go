@@ -7,8 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -19,91 +17,35 @@ import (
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
 
-func TestPostgresCardinalityUsesAdvisoryLockAndRechecks(t *testing.T) {
+func TestPostgresCardinalityClaimsFineGrainedSlot(t *testing.T) {
 	const metricID uint64 = 1
-	lockKey, err := timeSeriesCardinalityLockKey(metricID)
-	if err != nil {
-		t.Fatal(err)
-	}
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
 	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT pg_advisory_xact_lock_shared`).WillReturnResult(sqlmock.NewResult(0, 1))
 	tx, err := db.Begin()
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Both the optimistic probe and the authoritative post-lock probe see a
-	// missing identity and an available slot.
-	for pass := 0; pass < 2; pass++ {
-		mock.ExpectQuery(`SELECT series_identity FROM TimeSeriesActiveSeries`).WillReturnError(sql.ErrNoRows)
-		mock.ExpectQuery(`SELECT COUNT\(\*\) FROM TimeSeriesActiveSeries`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
-		if pass == 0 {
-			mock.ExpectExec(`SELECT pg_advisory_xact_lock\(\$1\)`).WithArgs(lockKey).WillReturnResult(sqlmock.NewResult(0, 1))
-		}
-	}
+	mock.ExpectExec(`SAVEPOINT timeseries_cardinality_admission`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`SELECT pg_advisory_xact_lock`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT identity_value FROM TimeSeriesSeriesSlots`).WillReturnError(sql.ErrNoRows)
+	mock.ExpectExec(`INSERT INTO TimeSeriesCardinalityTokens`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT COUNT`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectExec(`SAVEPOINT timeseries_cardinality_slot_attempt`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT t.token_number FROM TimeSeriesCardinalityTokens`).WillReturnRows(sqlmock.NewRows([]string{"token_number"}).AddRow(0))
+	mock.ExpectQuery(`INSERT INTO TimeSeriesSeriesSlots`).WillReturnRows(sqlmock.NewRows([]string{"slot_number"}).AddRow(0))
+	mock.ExpectExec(`RELEASE SAVEPOINT timeseries_cardinality_slot_attempt`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`RELEASE SAVEPOINT timeseries_cardinality_admission`).WillReturnResult(sqlmock.NewResult(0, 0))
 	exceeded, err := TimeSeriesCardinalityExceededTx(context.Background(), tx, DBPostgresStr, metricID, TimeSeriesScope{}, nil, cfg.TimeSeriesCardinalityConfig{MaxSeriesPerMetric: 1})
 	if err != nil || exceeded {
 		t.Fatalf("decision = exceeded %t, err %v", exceeded, err)
 	}
 	if err = mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestTimeSeriesCardinalityLockKey(t *testing.T) {
-	regressionIDs := []uint64{1, 2, 3, 4, 5, 6, 7, 8, 17}
-	for _, metricID := range regressionIDs {
-		digest := timeSeriesSHA256("thecrowler:timeseries-cardinality:v1", fmt.Sprintf("metric=%d", metricID))
-		raw, err := strconv.ParseUint(digest[:16], 16, 64)
-		if err != nil {
-			t.Fatalf("parse independent expected key for metric %d: %v", metricID, err)
-		}
-		want := int64(raw & uint64(math.MaxInt64))
-		got, err := timeSeriesCardinalityLockKey(metricID)
-		if err != nil {
-			t.Fatalf("key for metric %d: %v", metricID, err)
-		}
-		if got != want {
-			t.Errorf("key for metric %d = %d, want %d", metricID, got, want)
-		}
-	}
-
-	knownBrokenIDs := []uint64{1, 2, 3, 4, 5, 6, 8}
-	keys := make(map[int64]uint64, len(knownBrokenIDs))
-	for _, metricID := range knownBrokenIDs {
-		key, err := timeSeriesCardinalityLockKey(metricID)
-		if err != nil {
-			t.Fatalf("key for metric %d: %v", metricID, err)
-		}
-		if previous, exists := keys[key]; exists {
-			t.Errorf("metrics %d and %d unexpectedly share lock key %d", previous, metricID, key)
-		}
-		keys[key] = metricID
-	}
-
-	first, err := timeSeriesCardinalityLockKey(42)
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := timeSeriesCardinalityLockKey(42)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first != second {
-		t.Errorf("key is not deterministic: first %d, second %d", first, second)
-	}
-
-	for metricID := uint64(1); metricID <= 1000; metricID++ {
-		key, err := timeSeriesCardinalityLockKey(metricID)
-		if err != nil {
-			t.Fatalf("key for metric %d: %v", metricID, err)
-		}
-		if key < 0 || key > math.MaxInt64 {
-			t.Errorf("key for metric %d is outside signed range: %d", metricID, key)
-		}
 	}
 }
 
@@ -124,11 +66,14 @@ type timeSeriesArgumentMatcher func(driver.Value) bool
 func (m timeSeriesArgumentMatcher) Match(value driver.Value) bool { return m(value) }
 
 func expectTimeSeriesAccounting(mock sqlmock.Sqlmock, dimensions int) {
+	mock.ExpectExec(`SELECT pg_advisory_xact_lock_shared`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(`SELECT series_identity FROM TimeSeriesActiveSeries`).WillReturnRows(sqlmock.NewRows([]string{"series_identity"}))
 	mock.ExpectExec(`INSERT INTO TimeSeriesActiveSeries`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO TimeSeriesObservationSeries`).WillReturnResult(sqlmock.NewResult(0, 1))
 	for i := 0; i < dimensions; i++ {
 		mock.ExpectQuery(`SELECT canonical_value FROM TimeSeriesActiveDimensionValues`).WillReturnRows(sqlmock.NewRows([]string{"canonical_value"}))
 		mock.ExpectExec(`INSERT INTO TimeSeriesActiveDimensionValues`).WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectExec(`INSERT INTO TimeSeriesObservationDimensions`).WillReturnResult(sqlmock.NewResult(0, 1))
 	}
 }
 
@@ -324,7 +269,7 @@ func TestTimeSeriesObservationDuplicateAndBatchRollback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.Exec(`CREATE TABLE TimeSeriesActiveSeries (metric_id INTEGER NOT NULL, series_hash TEXT NOT NULL, series_identity TEXT NOT NULL, reference_count INTEGER NOT NULL CHECK(reference_count > 0), PRIMARY KEY(metric_id, series_hash)); CREATE TABLE TimeSeriesActiveDimensionValues (metric_id INTEGER NOT NULL, dimension_key TEXT NOT NULL, value_hash TEXT NOT NULL, canonical_value TEXT NOT NULL, reference_count INTEGER NOT NULL CHECK(reference_count > 0), PRIMARY KEY(metric_id, dimension_key, value_hash))`); err != nil {
+	if _, err = db.Exec(`CREATE TABLE TimeSeriesCardinalityMaintenanceLock(lock_id INTEGER NOT NULL PRIMARY KEY); INSERT INTO TimeSeriesCardinalityMaintenanceLock(lock_id) VALUES(1); CREATE TABLE TimeSeriesActiveSeries (metric_id INTEGER NOT NULL, series_hash TEXT NOT NULL, series_identity TEXT NOT NULL, reference_count INTEGER NOT NULL CHECK(reference_count > 0), PRIMARY KEY(metric_id, series_hash)); CREATE TABLE TimeSeriesActiveDimensionValues (metric_id INTEGER NOT NULL, dimension_key TEXT NOT NULL, value_hash TEXT NOT NULL, canonical_value TEXT NOT NULL, reference_count INTEGER NOT NULL CHECK(reference_count > 0), PRIMARY KEY(metric_id, dimension_key, value_hash)); CREATE TABLE TimeSeriesObservationSeries(observation_id INTEGER NOT NULL,metric_id INTEGER NOT NULL,series_hash TEXT NOT NULL,PRIMARY KEY(observation_id,metric_id,series_hash)); CREATE TABLE TimeSeriesObservationDimensions(observation_id INTEGER NOT NULL,metric_id INTEGER NOT NULL,dimension_key TEXT NOT NULL,value_hash TEXT NOT NULL,PRIMARY KEY(observation_id,metric_id,dimension_key,value_hash))`); err != nil {
 		t.Fatal(err)
 	}
 	var handler Handler = &SQLiteHandler{db: db, dbms: "SQLite"}
@@ -425,6 +370,9 @@ func TestPostgresTimeSeriesObservationDuplicateLooksUpExistingID(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"observation_id"}))
 	mock.ExpectQuery(`^SELECT observation_id FROM TimeSeriesObservations WHERE dedupe_key = \$1$`).
 		WithArgs("same-key").WillReturnRows(sqlmock.NewRows([]string{"observation_id"}).AddRow(uint64(37)))
+	mock.ExpectExec(`DELETE FROM TimeSeriesSeriesSlots`).
+		WithArgs(uint64(8), timeSeriesArgumentMatcher(func(value driver.Value) bool { return value != "" })).
+		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
 	result, err := InsertTimeSeriesObservation(&handler, &o)
