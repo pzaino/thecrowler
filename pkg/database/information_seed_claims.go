@@ -47,7 +47,11 @@ func UpdateInformationSeedStatusContext(ctx context.Context, db *Handler, id uin
 	if !isSupportedInformationSeedDBMS(dbms) {
 		return fmt.Errorf("unsupported database type for information seed status update: %s", (*db).DBMS())
 	}
-	tx, err := (*db).BeginTx(ctx, nil)
+	// Bound the transaction (see TransactionContext): legacy callers pass
+	// context.Background() here, which would otherwise leave the tx open forever.
+	txCtx, cancelTx := TransactionContext(ctx, nil)
+	defer cancelTx()
+	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
 		return err
 	}
@@ -120,7 +124,11 @@ func ClaimInformationSeeds(db *Handler, limit int, priority string, engine strin
 }
 
 func claimInformationSeedsPostgres(db *Handler, limit int, priority string, engine string, processingTimeout, retryAfter time.Duration) ([]InformationSeed, error) {
-	tx, err := (*db).Begin()
+	// Bound the claim transaction with the default timeout (see
+	// TransactionContext) so a stalled claimer cannot hold row locks forever.
+	txCtx, cancelTx := TransactionContext(context.Background(), nil)
+	defer cancelTx()
+	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -153,7 +161,11 @@ func postgresIntervalDuration(duration time.Duration) string {
 }
 
 func claimInformationSeedsMySQL(db *Handler, limit int, priority string, engine string, claimedAt, processingBefore, retryBefore time.Time) ([]InformationSeed, error) {
-	tx, err := (*db).Begin()
+	// Bound the claim transaction with the default timeout (see
+	// TransactionContext) so a stalled claimer cannot hold row locks forever.
+	txCtx, cancelTx := TransactionContext(context.Background(), nil)
+	defer cancelTx()
+	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -226,7 +238,11 @@ func claimInformationSeedsMySQL(db *Handler, limit int, priority string, engine 
 }
 
 func claimInformationSeedsSQLite(db *Handler, limit int, priority string, engine string, claimedAt, processingBefore, retryBefore time.Time) ([]InformationSeed, error) {
-	tx, err := (*db).Begin()
+	// Bound the claim transaction with the default timeout (see
+	// TransactionContext) so a stalled claimer cannot hold row locks forever.
+	txCtx, cancelTx := TransactionContext(context.Background(), nil)
+	defer cancelTx()
+	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
 		return nil, err
 	}

@@ -55,7 +55,11 @@ func CreateInformationSeedContext(ctx context.Context, db *Handler, seed *Inform
 	if !isSupportedInformationSeedDBMS(dbms) {
 		return 0, fmt.Errorf("unsupported database type for information seed creation: %s", (*db).DBMS())
 	}
-	tx, err := (*db).BeginTx(ctx, nil)
+	// Bound the transaction (see TransactionContext): legacy callers pass
+	// context.Background() here, which would otherwise leave the tx open forever.
+	txCtx, cancelTx := TransactionContext(ctx, nil)
+	defer cancelTx()
+	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
 		return 0, err
 	}
@@ -148,7 +152,11 @@ func SetInformationSeedDisabledContext(ctx context.Context, db *Handler, id uint
 	if !isSupportedInformationSeedDBMS(dbms) {
 		return fmt.Errorf("unsupported database type for information seed disabled update: %s", (*db).DBMS())
 	}
-	tx, err := (*db).BeginTx(ctx, nil)
+	// Bound the transaction (see TransactionContext): legacy callers pass
+	// context.Background() here, which would otherwise leave the tx open forever.
+	txCtx, cancelTx := TransactionContext(ctx, nil)
+	defer cancelTx()
+	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
 		return err
 	}
@@ -246,7 +254,11 @@ func UpdateInformationSeedContext(ctx context.Context, db *Handler, seed *Inform
 	if !isSupportedInformationSeedDBMS(dbms) {
 		return fmt.Errorf("unsupported database type for information seed update: %s", (*db).DBMS())
 	}
-	tx, err := (*db).BeginTx(ctx, nil)
+	// Bound the transaction (see TransactionContext): legacy callers pass
+	// context.Background() here, which would otherwise leave the tx open forever.
+	txCtx, cancelTx := TransactionContext(ctx, nil)
+	defer cancelTx()
+	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
 		return err
 	}

@@ -651,7 +651,7 @@ CREATE TABLE IF NOT EXISTS HTTPInfoIndex (
 
 UPDATE DBSchemaVersion SET is_current = 0;
 INSERT INTO DBSchemaVersion (version, description, is_current)
-VALUES ('1.15', 'CROWler DB schema version 1.15', 1)
+VALUES ('1.16', 'CROWler DB schema version 1.16', 1)
 ON CONFLICT(version) DO UPDATE SET description=excluded.description,is_current=1;
 
 --------------------------------------------------------------------------------
@@ -1396,7 +1396,7 @@ END;
 --------------------------------------------------------------------------------
 -- PostgreSQL-only function placeholders
 -- update_last_updated_at_column(): PostgreSQL stored function omitted; implement in application code when using SQLite.
--- cleanup_artifact_data(): PostgreSQL stored function omitted; implement in application code when using SQLite.
+-- cleanup_artifact_data_set(): PostgreSQL stored function omitted; SQLite uses the per-row trg_cleanup_* triggers above instead.
 -- update_last_updated_at_owner_relationships(): PostgreSQL stored function omitted; implement in application code when using SQLite.
 -- searchindex_tsv_trigger(): PostgreSQL stored function omitted; implement in application code when using SQLite.
 -- webobjects_content_trigger(): PostgreSQL stored function omitted; implement in application code when using SQLite.

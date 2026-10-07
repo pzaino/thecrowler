@@ -206,17 +206,27 @@ func performDBMaintenance(db cdb.Handler) error {
 }
 
 // This function simply query the database for URLs that need to be crawled
-func retrieveAvailableSources(db cdb.Handler, maxSources int) ([]cdb.Source, error) {
+func retrieveAvailableSources(db cdb.Handler, maxSources int) (sourcesToCrawl []cdb.Source, err error) {
 	// Check DB connection:
 	if err := db.CheckConnection(config); err != nil {
 		return nil, fmt.Errorf("error pinging the database: %w", err)
 	}
 
-	// Start a transaction
-	tx, err := db.Begin()
+	// Start a transaction bounded by database.transaction_timeout so a stalled
+	// claim query cannot hold source-row locks indefinitely.
+	txCtx, cancelTx := cdb.TransactionContext(context.Background(), &config)
+	defer cancelTx()
+	tx, err := db.BeginTx(txCtx, nil)
 	if err != nil {
 		return nil, err
 	}
+	txStarted := time.Now()
+	defer func() {
+		// Best-effort rollback (no-op after a successful commit); also covers
+		// panics between BEGIN and COMMIT.
+		_ = tx.Rollback()
+		cdb.LogTransactionOutcome("retrieveAvailableSources", txStarted, err)
+	}()
 	// Update the SQL query to fetch all necessary fields
 	query := `
 	SELECT
@@ -245,7 +255,6 @@ func retrieveAvailableSources(db cdb.Handler, maxSources int) ([]cdb.Source, err
 	}
 
 	// Iterate over the results and store them in a slice
-	var sourcesToCrawl []cdb.Source
 	for rows.Next() {
 		var src cdb.Source
 		if err := rows.Scan(&src.ID, &src.UID, &src.URL, &src.Restricted, &src.Flags, &src.Config, &src.SubPriority); err != nil {
@@ -277,7 +286,7 @@ func retrieveAvailableSources(db cdb.Handler, maxSources int) ([]cdb.Source, err
 	}
 
 	// Commit the transaction if everything is successful
-	if err := tx.Commit(); err != nil {
+	if err = tx.Commit(); err != nil {
 		return nil, err
 	}
 

@@ -127,14 +127,14 @@ CREATE TABLE IF NOT EXISTS DBSchemaVersion (
 DO $$
 BEGIN
     IF NOT EXISTS (
-        SELECT 1 FROM DBSchemaVersion WHERE version = '1.15'
+        SELECT 1 FROM DBSchemaVersion WHERE version = '1.16'
     ) THEN
         INSERT INTO DBSchemaVersion (version, description)
-        VALUES ('1.15', 'CROWler DB schema version 1.15');
+        VALUES ('1.16', 'CROWler DB schema version 1.16');
     END IF;
 END
 $$;
-UPDATE DBSchemaVersion SET is_current = (version = '1.15');
+UPDATE DBSchemaVersion SET is_current = (version = '1.16');
 CREATE UNIQUE INDEX IF NOT EXISTS uq_dbschemaversion_one_current
     ON DBSchemaVersion (is_current) WHERE is_current = TRUE;
 ----------------------------------------------------------------
@@ -610,6 +610,22 @@ CREATE INDEX IF NOT EXISTS idx_objattr_norm_trgm
     ON ObjectAttributes
     USING gin (normalized_value gin_trgm_ops);
 
+-- High-churn refresh_content workloads continuously replace WebObject
+-- attribute rows, so ObjectAttributes accumulates dead tuples far faster than
+-- a typical table.  Lower scale factors keep those dead tuples (and the MVCC
+-- snapshot horizon they pin) short-lived.  The toast.* parameters are set
+-- explicitly so aggressive vacuuming of the large TOASTed attribute values
+-- does not depend on default propagation from the main table; PostgreSQL has
+-- no toast.autovacuum_analyze_* variants (analyze settings always propagate).
+ALTER TABLE ObjectAttributes SET (
+    autovacuum_vacuum_scale_factor = 0.005,
+    autovacuum_vacuum_threshold = 25000,
+    autovacuum_analyze_scale_factor = 0.002,
+    autovacuum_analyze_threshold = 5000,
+    toast.autovacuum_vacuum_scale_factor = 0.005,
+    toast.autovacuum_vacuum_threshold = 10000
+);
+
 -- Entities type is generic (and it has to be in the CROWler) because we want to be able
 -- to link any type of entity to the indexed pages and the sources.
 CREATE TABLE IF NOT EXISTS Entities (
@@ -726,109 +742,96 @@ CREATE INDEX IF NOT EXISTS idx_objectcorrelations_rule_score
 CREATE INDEX IF NOT EXISTS idx_objectcorrelations_entity
     ON ObjectCorrelations(entity_id);
 
-CREATE OR REPLACE FUNCTION cleanup_artifact_data()
+-- refresh_content removes whole artifact sets (WebObjects, NetInfo, HTTPInfo)
+-- in bulk.  The legacy per-row cleanup trigger forced one cleanup round-trip
+-- per deleted row; these statement-level triggers process the whole deleted
+-- set once per DELETE statement through a transition table, keeping trigger
+-- overhead constant and index-friendly regardless of batch size.  Every
+-- trigger invoking this function must alias the OLD TABLE as
+-- 'deleted_artifacts' (the transition table name is resolved per trigger).
+-- SQLite and MySQL keep per-row triggers: they do not support transition
+-- tables.
+CREATE OR REPLACE FUNCTION cleanup_artifact_data_set()
 RETURNS trigger AS $$
 DECLARE
-    deleted_object_id BIGINT;
-    deleted_row JSONB;
+    artifact_type TEXT := TG_ARGV[0];
+    id_column TEXT;
 BEGIN
-    deleted_row := to_jsonb(OLD);
-
-    CASE TG_ARGV[0]
-        WHEN 'webobject' THEN
-            deleted_object_id :=
-                (deleted_row ->> 'object_id')::BIGINT;
-
-        WHEN 'netinfo' THEN
-            deleted_object_id :=
-                (deleted_row ->> 'netinfo_id')::BIGINT;
-
-        WHEN 'httpinfo' THEN
-            deleted_object_id :=
-                (deleted_row ->> 'httpinfo_id')::BIGINT;
-
-        ELSE
-            RAISE EXCEPTION
-                'cleanup_artifact_data(): unsupported artifact type %',
-                TG_ARGV[0];
-    END CASE;
-
-    IF deleted_object_id IS NULL THEN
+    IF artifact_type NOT IN ('webobject', 'netinfo', 'httpinfo') THEN
         RAISE EXCEPTION
-            'cleanup_artifact_data(): missing identifier for artifact type %',
-            TG_ARGV[0];
+            'cleanup_artifact_data_set(): unsupported artifact type %',
+            artifact_type;
     END IF;
 
-    DELETE FROM ObjectAttributes
-    WHERE object_type = TG_ARGV[0]
-      AND object_id = deleted_object_id;
+    -- The transition table exposes only the source table's own columns, so a
+    -- static CASE over d.netinfo_id would fail to parse when the trigger fires
+    -- on WebObjects.  Resolve the identifier column per artifact type and let
+    -- dynamic SQL bind it, keeping one shared function body for all three
+    -- triggers.  Four EXECUTEs per DELETE statement (not per row) keep the
+    -- parse cost negligible for bulk refresh_content deletions.
+    id_column := CASE artifact_type
+        WHEN 'webobject' THEN 'object_id'
+        WHEN 'netinfo'   THEN 'netinfo_id'
+        ELSE 'httpinfo_id'
+    END;
 
-    DELETE FROM EntityMemberships
-    WHERE object_type = TG_ARGV[0]
-      AND object_id = deleted_object_id;
+    EXECUTE format(
+        'DELETE FROM ObjectAttributes oa USING deleted_artifacts d' ||
+        ' WHERE oa.object_type = $1 AND oa.object_id = d.%I',
+        id_column)
+        USING artifact_type;
 
-    DELETE FROM ObjectCorrelations
-    WHERE (
-        object_type_1 = TG_ARGV[0]
-        AND object_id_1 = deleted_object_id
-    ) OR (
-        object_type_2 = TG_ARGV[0]
-        AND object_id_2 = deleted_object_id
-    );
+    EXECUTE format(
+        'DELETE FROM EntityMemberships em USING deleted_artifacts d' ||
+        ' WHERE em.object_type = $1 AND em.object_id = d.%I',
+        id_column)
+        USING artifact_type;
 
-    RETURN OLD;
+    -- One statement per correlation side so each can use its own composite
+    -- index (idx_objectcorrelations_obj1 / idx_objectcorrelations_obj2)
+    -- instead of fighting over an OR predicate.
+    EXECUTE format(
+        'DELETE FROM ObjectCorrelations oc USING deleted_artifacts d' ||
+        ' WHERE oc.object_type_1 = $1 AND oc.object_id_1 = d.%I',
+        id_column)
+        USING artifact_type;
+
+    EXECUTE format(
+        'DELETE FROM ObjectCorrelations oc USING deleted_artifacts d' ||
+        ' WHERE oc.object_type_2 = $1 AND oc.object_id_2 = d.%I',
+        id_column)
+        USING artifact_type;
+
+    RETURN NULL;
 END;
 $$ LANGUAGE plpgsql;
 
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_trigger
-        WHERE tgname = 'trg_cleanup_webobject'
-          AND tgrelid = 'webobjects'::regclass
-    ) THEN
-        CREATE TRIGGER trg_cleanup_webobject
-        AFTER DELETE ON WebObjects
-        FOR EACH ROW
-        EXECUTE FUNCTION cleanup_artifact_data('webobject');
-    END IF;
-END
-$$;
+-- Converge older installs (per-row triggers + cleanup_artifact_data) onto the
+-- statement-level design; DROP IF EXISTS keeps re-runs of this setup safe.
+DROP TRIGGER IF EXISTS trg_cleanup_webobject ON WebObjects;
+DROP TRIGGER IF EXISTS trg_cleanup_netinfo ON NetInfo;
+DROP TRIGGER IF EXISTS trg_cleanup_httpinfo ON HTTPInfo;
+DROP FUNCTION IF EXISTS cleanup_artifact_data();
+
+CREATE TRIGGER trg_cleanup_webobject
+AFTER DELETE ON WebObjects
+REFERENCING OLD TABLE AS deleted_artifacts
+FOR EACH STATEMENT
+EXECUTE FUNCTION cleanup_artifact_data_set('webobject');
 
 CREATE INDEX IF NOT EXISTS idx_sources_source_uid ON Sources(source_uid);
 
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_trigger
-        WHERE tgname = 'trg_cleanup_netinfo'
-          AND tgrelid = 'netinfo'::regclass
-    ) THEN
-        CREATE TRIGGER trg_cleanup_netinfo
-        AFTER DELETE ON NetInfo
-        FOR EACH ROW
-        EXECUTE FUNCTION cleanup_artifact_data('netinfo');
-    END IF;
-END
-$$;
+CREATE TRIGGER trg_cleanup_netinfo
+AFTER DELETE ON NetInfo
+REFERENCING OLD TABLE AS deleted_artifacts
+FOR EACH STATEMENT
+EXECUTE FUNCTION cleanup_artifact_data_set('netinfo');
 
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_trigger
-        WHERE tgname = 'trg_cleanup_httpinfo'
-          AND tgrelid = 'httpinfo'::regclass
-    ) THEN
-        CREATE TRIGGER trg_cleanup_httpinfo
-        AFTER DELETE ON HTTPInfo
-        FOR EACH ROW
-        EXECUTE FUNCTION cleanup_artifact_data('httpinfo');
-    END IF;
-END
-$$;
+CREATE TRIGGER trg_cleanup_httpinfo
+AFTER DELETE ON HTTPInfo
+REFERENCING OLD TABLE AS deleted_artifacts
+FOR EACH STATEMENT
+EXECUTE FUNCTION cleanup_artifact_data_set('httpinfo');
 ----------------------------------------------------------------
 
 

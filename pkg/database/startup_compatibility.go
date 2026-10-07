@@ -9,7 +9,7 @@ import (
 
 const (
 	// RequiredSchemaVersion is the oldest (and only) database schema this writer understands.
-	RequiredSchemaVersion = "1.15"
+	RequiredSchemaVersion = "1.16"
 	// WriterGeneration changes whenever two writer implementations may not safely share a database.
 	WriterGeneration = "reservation-v1.15"
 )

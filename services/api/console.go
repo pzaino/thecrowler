@@ -920,11 +920,20 @@ func performRemoveSourceContext(ctx context.Context, query string, qType int, db
 		return ConsoleResponse{Message: "Invalid request"}, nil
 	}
 
-	// Start a transaction
-	tx, err := (*db).BeginTx(ctx, nil)
+	// Start a transaction bounded by database.transaction_timeout; the HTTP
+	// request context (when present) cancels it even sooner.
+	txCtx, cancelTx := cdb.TransactionContext(ctx, &config)
+	defer cancelTx()
+	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
 		return ConsoleResponse{Message: errFailedToStartTransaction}, err
 	}
+	txStarted := time.Now()
+	defer func() {
+		// Best-effort rollback (no-op after commit); also covers panics.
+		_ = tx.Rollback()
+		cdb.LogTransactionOutcome("removeSource", txStarted, err)
+	}()
 
 	// Proceed with deleting the source using the obtained source_id
 	results, err = removeSourceContext(ctx, tx, sourceURL)
@@ -1385,10 +1394,20 @@ func performVacuumSourceContext(ctx context.Context, query string, qType int, db
 		return ConsoleResponse{Message: "Source ID or URL must be provided"}, fmt.Errorf("missing Source ID or URL")
 	}
 
-	tx, err := (*db).BeginTx(ctx, nil)
+	// Start a transaction bounded by database.transaction_timeout; the HTTP
+	// request context (when present) cancels it even sooner.
+	txCtx, cancelTx := cdb.TransactionContext(ctx, &config)
+	defer cancelTx()
+	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
 		return ConsoleResponse{Message: "Failed to start transaction"}, err
 	}
+	txStarted := time.Now()
+	defer func() {
+		// Best-effort rollback (no-op after commit); also covers panics.
+		_ = tx.Rollback()
+		cdb.LogTransactionOutcome("vacuumSource", txStarted, err)
+	}()
 
 	// Deleting indexed data
 	queries := []string{
@@ -1401,7 +1420,7 @@ func performVacuumSourceContext(ctx context.Context, query string, qType int, db
 	}
 
 	for _, query := range queries {
-		_, err := tx.ExecContext(ctx, query, filter.SourceID)
+		_, err = tx.ExecContext(ctx, query, filter.SourceID)
 		if err != nil {
 			err2 := tx.Rollback() // Rollback if any query fails
 			if err2 != nil {

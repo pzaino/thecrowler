@@ -99,7 +99,12 @@ func UpsertEntity(db *Handler, entity *Entity) (*Entity, error) {
 	if strings.TrimSpace(entity.Type) == "" {
 		return nil, fmt.Errorf("entity type is required")
 	}
-	tx, err := (*db).BeginTx(context.Background(), nil)
+	// Bound the transaction with the default timeout (see TransactionContext):
+	// these entry points historically used context.Background(), which left the
+	// transaction open forever if a query stalled on a lock.
+	txCtx, cancelTx := TransactionContext(context.Background(), nil)
+	defer cancelTx()
+	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("begin entity transaction: %w", err)
 	}
@@ -147,7 +152,12 @@ func UpsertEntityMembership(db *Handler, membership *EntityMembership) error {
 	if err != nil {
 		return fmt.Errorf("entity membership evidence: %w", err)
 	}
-	tx, err := (*db).BeginTx(context.Background(), nil)
+	// Bound the transaction with the default timeout (see TransactionContext):
+	// these entry points historically used context.Background(), which left the
+	// transaction open forever if a query stalled on a lock.
+	txCtx, cancelTx := TransactionContext(context.Background(), nil)
+	defer cancelTx()
+	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
 		return fmt.Errorf("begin entity membership transaction: %w", err)
 	}
@@ -196,7 +206,12 @@ func UpsertCorrelationRule(db *Handler, rule *CorrelationRule) (*CorrelationRule
 	if rule.Version == 0 {
 		rule.Version = 1
 	}
-	tx, err := (*db).BeginTx(context.Background(), nil)
+	// Bound the transaction with the default timeout (see TransactionContext):
+	// these entry points historically used context.Background(), which left the
+	// transaction open forever if a query stalled on a lock.
+	txCtx, cancelTx := TransactionContext(context.Background(), nil)
+	defer cancelTx()
+	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("begin correlation rule transaction: %w", err)
 	}
@@ -262,7 +277,12 @@ func UpsertObjectCorrelation(db *Handler, correlation *ObjectCorrelation) error 
 	if correlation.ObjectType1 == correlation.ObjectType2 && correlation.ObjectID1 == correlation.ObjectID2 {
 		return fmt.Errorf("correlation objects must be distinct")
 	}
-	tx, err := (*db).BeginTx(context.Background(), nil)
+	// Bound the transaction with the default timeout (see TransactionContext):
+	// these entry points historically used context.Background(), which left the
+	// transaction open forever if a query stalled on a lock.
+	txCtx, cancelTx := TransactionContext(context.Background(), nil)
+	defer cancelTx()
+	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
 		return fmt.Errorf("begin object correlation transaction: %w", err)
 	}
@@ -407,7 +427,12 @@ func mergeAffectedRange(result *EntityObservationBackfillResult, start, end *tim
 }
 
 func backfillObservationEntityBatch(db *Handler, dbms string, after uint64, limit int) (EntityObservationBackfillResult, error) {
-	tx, err := (*db).BeginTx(context.Background(), nil)
+	// Bound the transaction with the default timeout (see TransactionContext):
+	// these entry points historically used context.Background(), which left the
+	// transaction open forever if a query stalled on a lock.
+	txCtx, cancelTx := TransactionContext(context.Background(), nil)
+	defer cancelTx()
+	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
 		return EntityObservationBackfillResult{}, fmt.Errorf("begin entity observation backfill: %w", err)
 	}

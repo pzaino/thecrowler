@@ -1003,14 +1003,31 @@ func indexPageContext(waitCtx context.Context, ctx *ProcessContext, url string, 
 	}
 	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Database ready, Indexing page: %s", url)
 
-	// Start a transaction
-	tx, err := db.Begin()
+	// Start a transaction bounded by database.transaction_timeout so an
+	// abandoned indexing transaction can never hold locks and its MVCC
+	// snapshot indefinitely.
+	txCtx, cancelTx := cdb.TransactionContext(waitCtx, ctx.GetConfig())
+	defer cancelTx()
+	tx, err := db.BeginTx(txCtx, nil)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Error starting transaction: %v", err)
 		cmn.DebugMsg(cmn.DbgLvlError, "starting transaction: %v", err)
 		return 0, err
 	}
 	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Transaction started...")
+	txStarted := time.Now()
+	txCommitted := false
+	defer func() {
+		// Best-effort rollback: after a successful commit this is a no-op
+		// (sql.ErrTxDone). The deferred rollback also covers panics between
+		// BEGIN and COMMIT.
+		_ = tx.Rollback()
+		if txCommitted {
+			cdb.LogTransactionOutcome("indexPage", txStarted, nil)
+			return
+		}
+		cdb.LogTransactionOutcome("indexPage", txStarted, err)
+	}()
 	metricEmitter := newCrawlerIndexedArtifactEmitter(tx, ctx.GetConfig())
 	metricSnapshot, err := metricEmitter.LoadEnabledMetricSnapshot()
 	if err != nil {
@@ -1087,6 +1104,7 @@ func indexPageContext(waitCtx context.Context, ctx *ProcessContext, url string, 
 		rollbackTransaction(tx)
 		return 0, err
 	}
+	txCommitted = true
 	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Transaction committed successfully.")
 
 	// Out of transaction operations
@@ -1316,12 +1334,21 @@ func indexNetInfo(db cdb.Handler, url string, pageInfo *PageInfo, flags int) (ui
 		return 0, err
 	}
 
-	// Start a transaction
-	tx, err := db.Begin()
+	// Start a transaction bounded by database.transaction_timeout.
+	// indexNetInfo has no caller context plumbed through, so the bound is
+	// derived from the page configuration alone.
+	txCtx, cancelTx := cdb.TransactionContext(context.Background(), pageInfo.Config)
+	defer cancelTx()
+	tx, err := db.BeginTx(txCtx, nil)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "starting transaction: %v", err)
 		return 0, err
 	}
+	txStarted := time.Now()
+	defer func() {
+		_ = tx.Rollback()
+		cdb.LogTransactionOutcome("indexNetInfo", txStarted, err)
+	}()
 	metricEmitter := newCrawlerIndexedArtifactEmitter(tx, pageInfo.Config)
 	metricSnapshot, err := metricEmitter.LoadEnabledMetricSnapshot()
 	if err != nil {
@@ -2022,7 +2049,7 @@ func insertKeywordsWithTimeSeries(
 	var persisted []persistedKeyword
 	var err error
 	if db.DBMS() == cdb.DBPostgresStr {
-		persisted, err = upsertPostgresKeywords(db, indexID, ordered, occurrences)
+		persisted, err = upsertPostgresKeywords(db, currCfg, indexID, ordered, occurrences)
 	} else {
 		persisted, err = upsertPortableKeywords(db, indexID, ordered, occurrences)
 	}
@@ -2135,11 +2162,13 @@ func upsertPortableKeywords(db cdb.Handler, indexID uint64, ordered []string, oc
 // committed together, so callers never observe a page with only some keyword links.
 const postgresKeywordBatchSize = 500
 
-func upsertPostgresKeywords(db cdb.Handler, indexID uint64, ordered []string, occurrences map[string]int64) ([]persistedKeyword, error) {
+func upsertPostgresKeywords(db cdb.Handler, currCfg *cfg.Config, indexID uint64, ordered []string, occurrences map[string]int64) ([]persistedKeyword, error) {
 	if len(ordered) == 0 {
 		return nil, nil
 	}
-	tx, err := db.Begin()
+	txCtx, cancelTx := cdb.TransactionContext(context.Background(), currCfg)
+	defer cancelTx()
+	tx, err := db.BeginTx(txCtx, nil)
 	if err != nil {
 		return nil, err
 	}

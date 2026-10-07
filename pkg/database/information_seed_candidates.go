@@ -64,7 +64,11 @@ func UpsertInformationSeedCandidateDecisions(db *Handler, candidates []Informati
 		return fmt.Errorf("unsupported database type for information seed candidate decisions: %s", (*db).DBMS())
 	}
 
-	tx, err := (*db).Begin()
+	// Bound the candidate transaction with the default timeout (see
+	// TransactionContext).
+	txCtx, cancelTx := TransactionContext(context.Background(), nil)
+	defer cancelTx()
+	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to start information seed candidate transaction: %w", err)
 	}

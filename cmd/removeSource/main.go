@@ -17,6 +17,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"flag"
@@ -77,11 +78,15 @@ func removeSource(tx *sql.Tx, sourceURL string) (ConsoleResponse, error) {
 // in the SearchIndex, MetaTags, and KeywordIndex tables. Finally, it commits the transaction.
 // If any error occurs during the process, the transaction is rolled back and the error is returned.
 func removeSite(db *sql.DB, siteURL string) error {
-	// Start a transaction
-	tx, err := db.Begin()
+	// Start a transaction bounded by database.transaction_timeout so the
+	// orphan-cleanup scans cannot run unbounded.
+	txCtx, cancelTx := cdb.TransactionContext(context.Background(), &config)
+	defer cancelTx()
+	tx, err := db.BeginTx(txCtx, nil)
 	if err != nil {
 		return err
 	}
+	defer func() { _ = tx.Rollback() }()
 
 	if _, err = removeSource(tx, siteURL); err != nil {
 		if rollbackErr := tx.Rollback(); rollbackErr != nil {

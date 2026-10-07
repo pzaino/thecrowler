@@ -103,7 +103,12 @@ func LogicallyDeleteTimeSeriesObservation(ctx context.Context, db *Handler, obse
 	if err != nil {
 		return err
 	}
-	tx, err := (*db).BeginTx(ctx, nil)
+	// Bound the transaction (see TransactionContext): legacy callers pass
+	// context.Background() here, and the FOR UPDATE row lock below must not be
+	// held forever if the caller stalls.
+	txCtx, cancelTx := TransactionContext(ctx, nil)
+	defer cancelTx()
+	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
 		return err
 	}

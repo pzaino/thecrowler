@@ -1231,18 +1231,9 @@ func PruneTimeSeriesRetention(ctx context.Context, db *Handler, options TimeSeri
 			}
 			for batch := 0; batch < options.MaxBatches; batch++ {
 				if kind == "raw" {
-					tx, beginErr := (*db).BeginTx(ctx, nil)
-					if beginErr != nil {
-						return result, beginErr
-					}
-					p = newInformationSeedPlaceholders(dbms)
-					n, deleteErr := deleteTimeSeriesObservationsWithAccounting(ctx, tx, dbms, `metric_id = `+p.Next()+` AND `+timeColumn+` < `+p.Next(), []interface{}{metric.ID, cutoff}, options.BatchSize)
-					if deleteErr != nil {
-						_ = tx.Rollback()
-						return result, deleteErr
-					}
-					if commitErr := tx.Commit(); commitErr != nil {
-						return result, commitErr
+					n, pruneErr := pruneRawObservationBatch(ctx, db, dbms, metric.ID, cutoff, options.BatchSize)
+					if pruneErr != nil {
+						return result, pruneErr
 					}
 					result.RawDeleted += n
 					result.BatchesProcessed++
@@ -1305,4 +1296,28 @@ func dereferenceUint(v *uint64) uint64 {
 		return 0
 	}
 	return *v
+}
+
+// pruneRawObservationBatch deletes one bounded batch of expired raw
+// observations inside its own transaction. The transaction context is derived
+// from TransactionContext so a stalled batch can never hold locks and its
+// MVCC snapshot indefinitely; the deferred rollback covers panics between
+// BEGIN and COMMIT.
+func pruneRawObservationBatch(ctx context.Context, db *Handler, dbms string, metricID uint64, cutoff time.Time, batchSize int) (int64, error) {
+	txCtx, cancelTx := TransactionContext(ctx, nil)
+	defer cancelTx()
+	tx, err := (*db).BeginTx(txCtx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	p := newInformationSeedPlaceholders(dbms)
+	n, err := deleteTimeSeriesObservationsWithAccounting(txCtx, tx, dbms, `metric_id = `+p.Next()+` AND observed_at < `+p.Next(), []interface{}{metricID, cutoff}, batchSize)
+	if err != nil {
+		return 0, err
+	}
+	if err = tx.Commit(); err != nil {
+		return 0, err
+	}
+	return n, nil
 }

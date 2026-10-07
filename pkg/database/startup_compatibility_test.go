@@ -42,28 +42,28 @@ func startupFixture(t *testing.T, version string, complete bool, generation stri
 	return &SQLiteHandler{db: db, dbms: DBSQLiteStr}
 }
 
-func TestStartupCompatibilityRejectsV114(t *testing.T) {
-	err := CheckStartupCompatibility(context.Background(), startupFixture(t, "1.14", true, WriterGeneration))
-	if err == nil || !strings.Contains(err.Error(), "required schema=1.15") || !strings.Contains(err.Error(), "detected schema=1.14") || !strings.Contains(err.Error(), "stop all old writers") {
+func TestStartupCompatibilityRejectsV115(t *testing.T) {
+	err := CheckStartupCompatibility(context.Background(), startupFixture(t, "1.15", true, WriterGeneration))
+	if err == nil || !strings.Contains(err.Error(), "required schema=1.16") || !strings.Contains(err.Error(), "detected schema=1.15") || !strings.Contains(err.Error(), "stop all old writers") {
 		t.Fatalf("unexpected diagnostic: %v", err)
 	}
 }
 
-func TestStartupCompatibilityRejectsFalselyLabeledIncompleteV115(t *testing.T) {
-	err := CheckStartupCompatibility(context.Background(), startupFixture(t, "1.15", false, WriterGeneration))
+func TestStartupCompatibilityRejectsFalselyLabeledIncompleteV116(t *testing.T) {
+	err := CheckStartupCompatibility(context.Background(), startupFixture(t, "1.16", false, WriterGeneration))
 	if err == nil || !strings.Contains(err.Error(), "idx_ts_observation_dimensions_identity") {
 		t.Fatalf("unexpected diagnostic: %v", err)
 	}
 }
 
-func TestStartupCompatibilityAcceptsValidV115(t *testing.T) {
-	if err := CheckStartupCompatibility(context.Background(), startupFixture(t, "1.15", true, WriterGeneration)); err != nil {
+func TestStartupCompatibilityAcceptsValidV116(t *testing.T) {
+	if err := CheckStartupCompatibility(context.Background(), startupFixture(t, "1.16", true, WriterGeneration)); err != nil {
 		t.Fatalf("valid schema rejected: %v", err)
 	}
 }
 
 func TestStartupCompatibilityRejectsIncompatibleActiveWriterGeneration(t *testing.T) {
-	err := CheckStartupCompatibility(context.Background(), startupFixture(t, "1.15", true, "reservation-v1.14"))
+	err := CheckStartupCompatibility(context.Background(), startupFixture(t, "1.16", true, "reservation-v1.14"))
 	if err == nil || !strings.Contains(err.Error(), `incompatible active writer generation "reservation-v1.14"`) {
 		t.Fatalf("unexpected diagnostic: %v", err)
 	}

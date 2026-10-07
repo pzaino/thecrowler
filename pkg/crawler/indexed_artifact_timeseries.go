@@ -6,6 +6,7 @@
 package crawler
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -90,7 +91,9 @@ func emitIndexedArtifactsStandalone(
 	}
 
 	logger := crawlerTimeSeriesLogger{}
-	tx, err := db.Begin()
+	txCtx, cancelTx := cdb.TransactionContext(context.Background(), currCfg)
+	defer cancelTx()
+	tx, err := db.BeginTx(txCtx, nil)
 	if err != nil {
 		return fmt.Errorf("starting indexed-artifact time-series transaction: %w", err)
 	}

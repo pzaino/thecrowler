@@ -137,10 +137,21 @@ func InsertTimeSeriesObservation(db *Handler, observation *TimeSeriesObservation
 	if observation == nil {
 		return TimeSeriesInsertResult{}, fmt.Errorf("time-series observation is nil")
 	}
-	tx, err := (*db).BeginTx(context.Background(), nil)
+	// Bound the observation transaction with the default timeout (see
+	// TransactionContext): this legacy entry point passes no context, so an
+	// abandoned transaction could otherwise hold the cardinality fence forever.
+	txCtx, cancelTx := TransactionContext(context.Background(), nil)
+	defer cancelTx()
+	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
 		return TimeSeriesInsertResult{}, fmt.Errorf("begin time-series observation transaction: %w", err)
 	}
+	txStarted := time.Now()
+	defer func() {
+		// Best-effort rollback (no-op after commit); also covers panics.
+		_ = (*db).Rollback(tx)
+		LogTransactionOutcome("insertTimeSeriesObservation", txStarted, err)
+	}()
 	result, err := insertTimeSeriesObservationTx(tx, dbms, observation)
 	if err != nil {
 		_ = (*db).Rollback(tx)
@@ -163,29 +174,42 @@ func InsertTimeSeriesObservations(db *Handler, observations []TimeSeriesObservat
 	if len(observations) == 0 {
 		return []TimeSeriesInsertResult{}, nil
 	}
-	tx, err := (*db).BeginTx(context.Background(), nil)
+	// Bound the batch transaction with the default timeout (see
+	// TransactionContext): batches hold the cardinality fence for their whole
+	// lifetime and must not be able to hold it forever.
+	txCtx, cancelTx := TransactionContext(context.Background(), nil)
+	defer cancelTx()
+	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("begin time-series observation batch: %w", err)
 	}
+	txStarted := time.Now()
+	defer func() {
+		// Best-effort rollback (no-op after commit); also covers panics.
+		_ = (*db).Rollback(tx)
+		LogTransactionOutcome("insertTimeSeriesObservations", txStarted, err)
+	}()
 	if dbms == DBPostgresStr {
-		results, insertErr := insertPostgresTimeSeriesObservationsTx(context.Background(), tx, observations)
-		if insertErr != nil {
+		var pgResults []TimeSeriesInsertResult
+		pgResults, err = insertPostgresTimeSeriesObservationsTx(txCtx, tx, observations)
+		if err != nil {
 			_ = (*db).Rollback(tx)
-			return nil, insertErr
+			return nil, err
 		}
 		if err = (*db).Commit(tx); err != nil {
 			_ = (*db).Rollback(tx)
 			return nil, fmt.Errorf("commit time-series observation batch: %w", err)
 		}
-		return results, nil
+		return pgResults, nil
 	}
 
 	results := make([]TimeSeriesInsertResult, 0, len(observations))
 	for i := range observations {
-		result, insertErr := insertTimeSeriesObservationTx(tx, dbms, &observations[i])
-		if insertErr != nil {
+		var result TimeSeriesInsertResult
+		result, err = insertTimeSeriesObservationTx(tx, dbms, &observations[i])
+		if err != nil {
 			_ = (*db).Rollback(tx)
-			return nil, fmt.Errorf("insert time-series observation batch item %d: %w", i, insertErr)
+			return nil, fmt.Errorf("insert time-series observation batch item %d: %w", i, err)
 		}
 		results = append(results, result)
 	}

@@ -34,7 +34,11 @@ func LinkSourcesToInformationSeed(db *Handler, links []SourceSeedLink) error {
 		return nil
 	}
 
-	tx, err := (*db).Begin()
+	// Bound the link transaction with the default timeout (see
+	// TransactionContext).
+	txCtx, cancelTx := TransactionContext(context.Background(), nil)
+	defer cancelTx()
+	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to start source/information-seed link transaction: %w", err)
 	}
@@ -159,7 +163,11 @@ func LinkSourceToInformationSeedWithDiscoveryMetadata(db *Handler, sourceID, inf
 	if err != nil {
 		return err
 	}
-	tx, err := (*db).Begin()
+	// Bound the link transaction with the default timeout (see
+	// TransactionContext).
+	txCtx, cancelTx := TransactionContext(context.Background(), nil)
+	defer cancelTx()
+	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to start source discovery transaction: %w", err)
 	}
