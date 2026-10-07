@@ -221,9 +221,9 @@ func TestDocumentedAPIEndpointsAreRegistered(t *testing.T) {
 
 	initAPIv1()
 
-	doc, err := os.ReadFile("../../doc/api.md")
+	doc, err := os.ReadFile("../../docs/api/README.md")
 	if err != nil {
-		t.Fatalf("read doc/api.md: %v", err)
+		t.Fatalf("read docs/api/README.md: %v", err)
 	}
 	documented := documentedAPIEndpointRefs(string(doc))
 	if len(documented) == 0 {
