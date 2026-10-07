@@ -4,7 +4,7 @@ The CROWler API is a RESTful interface that allows users to interact with the CR
 
 The API is self documented and can be explored using the OpenAPI specification available at `/v1/openapi.json`. The API is versioned, and the current version is `v1`.
 
-Alternatively the APIs can be accessed via WebSocket streams for real-time updates. See the [WebSocket API documentation](./api/websockets.md) for more details.
+Alternatively the APIs can be accessed via WebSocket streams for real-time updates. See the [WebSocket API documentation](./websockets.md) for more details.
 
 There are 2 major types of API in the CROWLer:
 
@@ -358,3 +358,12 @@ The versioned time-series API reads materialized aggregate buckets by default. I
 * `GET /v1/timeseries/dimensions` compares aggregate buckets grouped by one configured dimension.
 
 See [Time-series observations and aggregates](timeseries.md#aggregate-first-http-api) for exact date formats, filters, response fields, pagination, privacy limits, aggregate-first queries, and drill-down examples.
+
+## Specialized CROWler APIs
+
+See the following specialized APIs for more advanced interactions:
+
+* [WebSocket API](websockets.md) for real-time updates.
+* [Time-series API](timeseries.md) for aggregate-first time-series data.
+* [Add sources API](addsource.md) for managing sources and seeds.
+* [Email-sources API](email-sources.md) for managing email sources.

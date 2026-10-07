@@ -107,7 +107,7 @@ The CROWler is built on a few core principles:
 
 ## Getting Started
 
-- Documentation: [doc/](https://github.com/pzaino/thecrowler/tree/develop/doc#readme)
+- Documentation: [docs/](https://github.com/pzaino/thecrowler/tree/main/docs#readme)
 - GPT-based Support [Chatbot](https://chatgpt.com/g/g-dEfqHkqrW-the-crowler-support) (You must be logged in on CHatGPT to use it properly, CustomGPTs have very limited access otherwise)
 - Configuration examples: [config.default](config.default)
 - Ruleset schemas: [schemas/](schemas/)
@@ -142,7 +142,7 @@ Its capabilities span crawling, interaction, detection, automation, security,
 and large-scale data analysis.
 
 Below is a **high-level overview** of the main feature areas.
-For a complete and detailed breakdown, see: **[doc/features.md](doc/features.md)**
+For a complete and detailed breakdown, see: **[docs/features.md](docs/features.md)**
 
 ### Web Crawling & Interaction
 
@@ -211,10 +211,10 @@ For a complete and detailed breakdown, see: **[doc/features.md](doc/features.md)
 - Late-data reaggregation, retention, and delayed entity backfill
 - Existing search tables remain authoritative; infrastructure telemetry is not part of the time-series system and is handled separately in Prometheus/logging/admin tooling
 
-See the [time-series guide](doc/timeseries.md) and [schema-valid examples](examples/timeseries/).
+See the [time-series guide](docs/time-series/timeseries.md) and [schema-valid examples](examples/timeseries/).
 
 **Full feature list and detailed explanations:**
-[doc/features.md](doc/features.md)
+[docs/features.md](docs/features.md)
 
 ### What problem does it solve?
 
@@ -291,7 +291,7 @@ which contains tools and even AI skills to quickly deploy the CROWler on differe
 platforms and environments. Seriously it takes just a minute to deploy a full fleet and no building is required. It supports both AMD 64 and ARM64 platforms.
 
 If you prefer to build the docker images yourself then follow the
-[instructions here](doc/docker_build.md).
+[instructions here](docs/docker_build.md).
 
 **Please note(1)**: If you have questions about config.yaml or the ENV vars,
 or the ruleset etc, you can use the GPT chatbot to help you. Just go to this
@@ -389,7 +389,7 @@ VDI image (Virtual Desktop Image).
 
 ### Usage
 
-For instruction on how to use it see [here](doc/usage.md).
+For instruction on how to use it see [here](docs/usage.md).
 
 ## Production
 

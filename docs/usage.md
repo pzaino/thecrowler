@@ -102,7 +102,7 @@ API with the following command:
 If you used docker compose to install The CROWler, then the API is already
 up and running.
 
-Check [this](./api.md) page for details on the API end-points and how to use them.
+Check [this](./api/README.md) page for details on the API end-points and how to use them.
 
 ## Information seed discovery
 

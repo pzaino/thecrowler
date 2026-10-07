@@ -26,7 +26,7 @@ For more info on the ruleset architecture see [Ruleset Architecture](./ruleset_a
 
 ## Architecture diagram
 
-![TheCROWler Microservice Architecture](./GeneralArchitecture.jpg)
+![TheCROWler Microservice Architecture](./general-architecture.jpg)
 
 ## Time-series analytical projection
 
