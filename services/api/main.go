@@ -1673,7 +1673,7 @@ func updateSourceHandler(w http.ResponseWriter, r *http.Request) {
 		totalSuccess.Add(1)
 	}
 	errCode := http.StatusInternalServerError
-	if isSourceConfigValidationError(err) {
+	if isSourceConfigValidationError(err) || isSourceRequestValidationError(err) {
 		errCode = http.StatusBadRequest
 	}
 	handleErrorAndRespond(w, err, results, "Error performing update Source: %v", errCode, successCode)
