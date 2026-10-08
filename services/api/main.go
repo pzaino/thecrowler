@@ -169,7 +169,7 @@ func initAll(configFile *string, config *cfg.Config, lmt **rate.Limiter) error {
 			return fmt.Errorf("apply API database quota: %w", err)
 		}
 		if err = cdb.CheckStartupCompatibility(context.Background(), dbHandler); err != nil {
-			return err
+			cmn.DebugMsg(cmn.DbgLvlError, "%v", err)
 		}
 		cmn.DebugMsg(cmn.DbgLvlInfo, "Database connection established")
 	}

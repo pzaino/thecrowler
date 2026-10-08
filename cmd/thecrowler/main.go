@@ -1475,10 +1475,10 @@ func main() {
 					closeResources(db, &vdiInstances)
 					cmn.DebugMsg(cmn.DbgLvlFatal, "applying engine database quota: %v", err)
 				}
+				// If the database is not compatible with the current startup requirements
+				// log it and continue with the startup process
 				if err = cdb.CheckStartupCompatibility(context.Background(), db); err != nil {
-					configMutex.Unlock()
-					closeResources(db, &vdiInstances)
-					cmn.DebugMsg(cmn.DbgLvlFatal, "%v", err)
+					cmn.DebugMsg(cmn.DbgLvlError, "%v", err)
 				}
 				if err = cdb.SyncConfiguredTimeSeriesMetrics(&db, config.TimeSeries); err != nil {
 					configMutex.Unlock()
