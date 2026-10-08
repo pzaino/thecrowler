@@ -179,7 +179,7 @@ func CreateEventWithRetries(db *Handler, event Event) (string, error) {
 
 	// Final failure
 	cmn.DebugMsg(cmn.DbgLvlError, "Failed to create event on the DB after retries: %d %v", i, err)
-	return "", fmt.Errorf("failed to create event after %d retries: %w", maxRetries, err)
+	return "", fmt.Errorf("failed to create event after %d retries: %v", maxRetries, err)
 }
 
 // Sets an event as processed by updating its expires_at to a short time in the future, effectively marking it as expired and preventing it from being processed again.
