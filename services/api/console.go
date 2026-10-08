@@ -775,7 +775,7 @@ func performAddSourceContext(ctx context.Context, query string, qType int, db *c
 
 	if qType == getQuery {
 		// Simple GET-style request, only URL provided
-		params.URL = strings.TrimSpace(cmn.NormalizeURL(query))
+		params.URL = cdb.NormalizeSourceURL(query)
 
 		// Apply defaults
 		params.Status = "pending"
@@ -789,7 +789,7 @@ func performAddSourceContext(ctx context.Context, query string, qType int, db *c
 		// extract AddSource parameters from JSON
 		extractAddSourceParams(query, &params)
 
-		params.URL = strings.TrimSpace(cmn.NormalizeURL(params.URL))
+		params.URL = cdb.NormalizeSourceURL(params.URL)
 		if params.URL == "" {
 			return ConsoleResponse{Message: "Invalid URL"}, fmt.Errorf("invalid URL")
 		}
@@ -1217,7 +1217,7 @@ func performUpdateSourceContext(ctx context.Context, query string, qType int, db
 
 	if qType == getQuery {
 		// Parse the query as a GET request (direct parameters)
-		normalizedURL := cmn.NormalizeURL(query)
+		normalizedURL := cdb.NormalizeSourceURL(query)
 		if normalizedURL != "" {
 			sqlParams.URL = &normalizedURL
 		}
@@ -1284,11 +1284,14 @@ func performUpdateSourceContext(ctx context.Context, query string, qType int, db
 
 	// Merge: start from the stored row and overwrite only the fields that are
 	// explicitly present in the request. An omitted url keeps the stored value
-	// byte-for-byte (no NormalizeURL call), so case-sensitive URL paths are
-	// never rewritten by an unrelated partial update.
+	// byte-for-byte, so case-sensitive URL paths are never rewritten by an
+	// unrelated partial update. An explicitly supplied url is canonicalized
+	// with NormalizeSourceURL, the same function used when storing sources, so
+	// host, path, query and fragment case are preserved and the stored value
+	// keeps matching URL-based lookups.
 	mergedURL := existingData.URL
 	if sqlParams.URL != nil {
-		mergedURL = cmn.NormalizeURL(*sqlParams.URL)
+		mergedURL = cdb.NormalizeSourceURL(*sqlParams.URL)
 	}
 
 	mergedData := cdb.UpdateSourceRequest{
@@ -1376,7 +1379,7 @@ func performVacuumSourceContext(ctx context.Context, query string, qType int, db
 
 	if qType == getQuery {
 		// Parse the query as a GET request (direct parameters)
-		filter.URL = cmn.NormalizeURL(query)
+		filter.URL = cdb.NormalizeSourceURL(query)
 	} else {
 		// Parse the query as a POST request (JSON payload)
 		err := json.Unmarshal([]byte(query), &filter)

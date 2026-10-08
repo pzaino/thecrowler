@@ -115,8 +115,13 @@ body keep their stored values, while explicitly supplied values — including
 zero values such as `false`, `0` or `""` — are applied. This means `disabled`
 can be set back to `false` and numeric fields can be reset to `0` directly
 through `/v1/source/update`. An omitted `url` leaves the stored URL
-byte-for-byte unchanged; an explicitly supplied `url` is normalized before it
-is stored, and an empty `url` is rejected with HTTP `400`. Configuration
+byte-for-byte unchanged; an explicitly supplied `url` is canonicalized with the
+same rules used when a source URL is stored (surrounding whitespace trimmed and
+percent-encoded `:`/`/` inside query values decoded) while host, path, query and
+fragment case are preserved, and an empty `url` is rejected with HTTP `400`.
+URL-based source lookup applies the same canonicalization, so it matches stored
+URLs exactly and is case-sensitive: URLs that differ only by letter case are
+treated as distinct sources. Configuration
 replacement happens only when `config` is present, and the stored
 configuration is passed through untouched when it is omitted.
 

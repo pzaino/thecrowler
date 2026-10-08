@@ -138,6 +138,62 @@ func TestNormalizeSourceURLMakesNestedURLsSearchable(t *testing.T) {
 	}
 }
 
+func TestGetSourceIDByURLIsCaseSensitive(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open sqlite database: %v", err)
+	}
+	defer db.Close()
+
+	_, err = db.Exec(`
+		CREATE TABLE Sources (
+			source_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			source_uid VARCHAR(64) NOT NULL,
+			url TEXT NOT NULL UNIQUE,
+			name VARCHAR(255),
+			priority VARCHAR(64) DEFAULT '' NOT NULL,
+			sub_priority INTEGER DEFAULT 0 NOT NULL,
+			category_id INTEGER DEFAULT 0 NOT NULL,
+			usr_id INTEGER DEFAULT 0 NOT NULL,
+			restricted INTEGER DEFAULT 2 NOT NULL,
+			flags INTEGER DEFAULT 0 NOT NULL,
+			config TEXT,
+			disabled BOOLEAN DEFAULT FALSE,
+			status VARCHAR(50) DEFAULT 'new' NOT NULL,
+			last_updated_at TIMESTAMP
+		)`)
+	if err != nil {
+		t.Fatalf("create Sources table: %v", err)
+	}
+
+	handler := Handler(&SQLiteHandler{db: db, dbms: DBSQLiteStr})
+	const storedURL = "https://www.instagram.com/p/DeEzfjLoCSs"
+	sourceID, err := CreateSource(&handler, &Source{URL: storedURL}, cfg.SourceConfig{})
+	if err != nil {
+		t.Fatalf("create source: %v", err)
+	}
+
+	var persisted string
+	if err := db.QueryRow(`SELECT url FROM Sources WHERE source_id = ?`, sourceID).Scan(&persisted); err != nil {
+		t.Fatalf("read stored source URL: %v", err)
+	}
+	if persisted != storedURL {
+		t.Fatalf("stored URL = %q, want case-preserved %q", persisted, storedURL)
+	}
+
+	// Lookup canonicalizes the key with the same function used for storage, so
+	// the exact stored URL resolves to its row...
+	if got, err := GetSourceID(SourceFilter{URL: storedURL}, &handler); err != nil || got != sourceID {
+		t.Fatalf("exact-case lookup = (%d, %v), want (%d, nil)", got, err, sourceID)
+	}
+
+	// ...while a URL that differs only by letter case is a different source and
+	// must not resolve.
+	if _, err := GetSourceID(SourceFilter{URL: "https://www.instagram.com/p/deezfjlocss"}, &handler); err == nil {
+		t.Fatal("differently-cased path unexpectedly resolved to a source")
+	}
+}
+
 func TestCalculateSourceUIDIsStableAndSensitiveToSourceIdentity(t *testing.T) {
 	got := CalculateSourceUID(" Example ", " https://example.test/path ")
 	if len(got) != 64 {
