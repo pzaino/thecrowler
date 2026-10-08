@@ -1338,7 +1338,7 @@ func TestConfigString(t *testing.T) {
 	}
 
 	// Define the expected string representation of the config
-	expected := "Config{Remote: {https://example.com /api 8080 us-west-1 mytoken  0  }, Database: {  0 testuser testpassword  0 0   0 0}, Crawler: {0 0 0 []  false false <nil>     0 0 false false 0 0 0 0 0 0  0  0 0 0  false  false     false false false false false false false false false false false false false false false false [] false 0 false false { 0 0     0 0 0}}, API: {  0 0 0 false false false false     false 0 0 0 0 false [] {false []} {false 0 []} false {false [] 0 0 0} {false     0 {false} {false   }}}, Selenium: [{    chrome  4444  false false     {0 0     0 0 0}}], RulesetsSchemaPath: path/to/schema, Rulesets: [], ImageStorageAPI: {  0    0  }, FileStorageAPI: {  0    0  }, HTTPHeaders: {false 0 false {false false false false false false false false false false false false false false false false} []}, NetworkInfo: {{false 0 } {false 0 } {false 0 } {false 0 { 0} false false false false false false  false false [] [] []    0 0 0   false 0  false  false 0 [] []} {false    0 } {  }}, OS: linux, DebugLevel: 1}"
+	expected := "Config{Remote: {https://example.com /api 8080 us-west-1 mytoken  0  }, Database: {  0 testuser testpassword  0 0   0 0 0}, Crawler: {0 0 0 []  false false <nil>     0 0 false false 0 0 0 0 0 0  0  0 0 0  false  false     false false false false false false false false false false false false false false false false [] false 0 false false { 0 0     0 0 0}}, API: {  0 0 0 false false false false     false 0 0 0 0 false [] {false []} {false 0 []} false {false [] 0 0 0} {false     0 {false} {false   }}}, Selenium: [{    chrome  4444  false false     {0 0     0 0 0}}], RulesetsSchemaPath: path/to/schema, Rulesets: [], ImageStorageAPI: {  0    0  }, FileStorageAPI: {  0    0  }, HTTPHeaders: {false 0 false {false false false false false false false false false false false false false false false false} []}, NetworkInfo: {{false 0 } {false 0 } {false 0 } {false 0 { 0} false false false false false false  false false [] [] []    0 0 0   false 0  false  false 0 [] []} {false    0 } {  }}, OS: linux, DebugLevel: 1}"
 
 	// Call the String method on the config
 	result := config.String()
@@ -2496,5 +2496,77 @@ information_seed:
 `))
 	if err == nil || !strings.Contains(err.Error(), "requires explicit transport") {
 		t.Fatalf("expected browser config without webdriver opt-in to fail, got %v", err)
+	}
+}
+
+// TestTransactionTimeoutValidation covers the database.transaction_timeout
+// clamping rules enforced by validateDatabase.
+func TestTransactionTimeoutValidation(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		input int
+		want  int
+	}{
+		{name: "zero falls back to default", input: 0, want: DefaultTransactionTimeoutSeconds},
+		{name: "below minimum falls back to default", input: 10, want: DefaultTransactionTimeoutSeconds},
+		{name: "minimum is kept", input: 30, want: 30},
+		{name: "valid value is kept", input: 600, want: 600},
+		{name: "above maximum is clamped", input: 100000, want: 86400},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			c := &Config{Database: Database{TransactionTimeout: test.input}}
+			c.validateDatabase()
+			if c.Database.TransactionTimeout != test.want {
+				t.Fatalf("TransactionTimeout = %d, want %d", c.Database.TransactionTimeout, test.want)
+			}
+		})
+	}
+}
+
+// TestTransactionTimeoutSchema keeps the JSON schema in sync with the Go
+// validation rules for database.transaction_timeout.
+func TestTransactionTimeoutSchema(t *testing.T) {
+	schemaData, err := os.ReadFile("../../schemas/crowler-config-schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schemaDocument struct {
+		Properties map[string]struct {
+			Properties map[string]json.RawMessage `json:"properties"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(schemaData, &schemaDocument); err != nil {
+		t.Fatal(err)
+	}
+	timeoutSchema := schemaDocument.Properties["database"].Properties["transaction_timeout"]
+	if len(timeoutSchema) == 0 {
+		t.Fatal("transaction_timeout schema not found")
+	}
+	schema := &jsonschema.Schema{}
+	if err := schema.UnmarshalJSON(timeoutSchema); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, test := range []struct {
+		name       string
+		value      int
+		wantIssues bool
+	}{
+		{name: "minimum", value: 30},
+		{name: "default", value: 300},
+		{name: "maximum", value: 86400},
+		{name: "below minimum", value: 29, wantIssues: true},
+		{name: "above maximum", value: 86401, wantIssues: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			document := []byte(fmt.Sprintf(`%d`, test.value))
+			issues, err := schema.ValidateBytes(context.Background(), document)
+			if err != nil {
+				t.Fatalf("schema validation error: %v", err)
+			}
+			if gotIssues := len(issues) != 0; gotIssues != test.wantIssues {
+				t.Fatalf("schema returned issues = %v, want issues = %v: %v", gotIssues, test.wantIssues, issues)
+			}
+		})
 	}
 }

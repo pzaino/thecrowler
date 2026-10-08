@@ -110,11 +110,20 @@ The route returns HTTP `200` with `{"message":"Source updated successfully"}`.
 Although the route is registered with a nominal `204` success code, the shared
 response helper changes it to `200` because the API always returns a JSON body.
 
-The current update request uses zero values to mean "not supplied" for scalar
-fields. Consequently, use a dedicated lifecycle endpoint or verify behavior
-before attempting to change `disabled` from `true` to `false`, or numeric fields
-to `0`, through `/v1/source/update`. Configuration replacement does not have
-that ambiguity because `config` is a pointer field.
+The update request uses presence-based semantics: fields omitted from the JSON
+body keep their stored values, while explicitly supplied values — including
+zero values such as `false`, `0` or `""` — are applied. This means `disabled`
+can be set back to `false` and numeric fields can be reset to `0` directly
+through `/v1/source/update`. An omitted `url` leaves the stored URL
+byte-for-byte unchanged; an explicitly supplied `url` is canonicalized with the
+same rules used when a source URL is stored (surrounding whitespace trimmed and
+percent-encoded `:`/`/` inside query values decoded) while host, path, query and
+fragment case are preserved, and an empty `url` is rejected with HTTP `400`.
+URL-based source lookup applies the same canonicalization, so it matches stored
+URLs exactly and is case-sensitive: URLs that differ only by letter case are
+treated as distinct sources. Configuration
+replacement happens only when `config` is present, and the stored
+configuration is passed through untouched when it is omitted.
 
 ## Canonical type and field names
 

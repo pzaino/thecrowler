@@ -192,18 +192,19 @@ func NewConfig() *Config {
 			SSLMode: cmn.DisableStr,
 		},
 		Database: Database{
-			Type:         "postgres",
-			Host:         cmn.LoalhostStr,
-			Port:         5432,
-			User:         "postgres",
-			Password:     "",
-			DBName:       "SitesIndex",
-			RetryTime:    5,
-			PingTime:     5,
-			SSLMode:      cmn.DisableStr,
-			OptimizeFor:  "",
-			MaxConns:     100,
-			MaxIdleConns: 75,
+			Type:               "postgres",
+			Host:               cmn.LoalhostStr,
+			Port:               5432,
+			User:               "postgres",
+			Password:           "",
+			DBName:             "SitesIndex",
+			RetryTime:          5,
+			PingTime:           5,
+			SSLMode:            cmn.DisableStr,
+			OptimizeFor:        "",
+			MaxConns:           100,
+			MaxIdleConns:       75,
+			TransactionTimeout: DefaultTransactionTimeoutSeconds,
 		},
 		Email: DefaultEmailConfig(),
 		Crawler: Crawler{
@@ -1359,6 +1360,12 @@ func (c *Config) validateDatabase() {
 	}
 	if c.Database.MaxIdleConns < 1 {
 		c.Database.MaxIdleConns = 75
+	}
+	if c.Database.TransactionTimeout < 30 {
+		c.Database.TransactionTimeout = DefaultTransactionTimeoutSeconds
+	}
+	if c.Database.TransactionTimeout > 86400 {
+		c.Database.TransactionTimeout = 86400
 	}
 }
 

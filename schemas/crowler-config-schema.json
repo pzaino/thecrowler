@@ -218,6 +218,18 @@
           "examples": [
             50
           ]
+        },
+        "transaction_timeout": {
+          "title": "CROWler DB Transaction Timeout",
+          "description": "Upper bound in seconds for a single application database transaction. Every transaction is started with a context deadline derived from this value so abandoned transactions release locks and their MVCC snapshot instead of stalling autovacuum and blocking DML indefinitely. Values below 30 fall back to the default (300).",
+          "type": "integer",
+          "minimum": 30,
+          "maximum": 86400,
+          "default": 300,
+          "examples": [
+            300,
+            600
+          ]
         }
       },
       "additionalProperties": false,

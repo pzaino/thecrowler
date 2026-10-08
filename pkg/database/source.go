@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
@@ -527,13 +528,24 @@ func deleteSourcesWithTimeSeriesCleanup(db *Handler, sourceIDs []uint64) error {
 		return nil
 	}
 	dbms := (*db).DBMS()
-	tx, err := (*db).BeginTx(context.Background(), nil)
+	// Bound the transaction with the default timeout: this path can scan an
+	// unbounded number of time-series observations for large sources, and must
+	// not hold locks and its MVCC snapshot forever if it stalls.
+	txCtx, cancelTx := TransactionContext(context.Background(), nil)
+	defer cancelTx()
+	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to start source deletion transaction: %w", err)
 	}
+	txStarted := time.Now()
+	defer func() {
+		// Best-effort rollback (no-op after commit); also covers panics.
+		_ = tx.Rollback()
+		LogTransactionOutcome("deleteSourcesWithTimeSeriesCleanup", txStarted, err)
+	}()
 	for _, sourceID := range sourceIDs {
 		p := newInformationSeedPlaceholders(dbms)
-		if _, err = deleteTimeSeriesObservationsWithAccounting(context.Background(), tx, dbms, `source_id = `+p.Next(), []interface{}{sourceID}, 0); err != nil {
+		if _, err = deleteTimeSeriesObservationsWithAccounting(txCtx, tx, dbms, `source_id = `+p.Next(), []interface{}{sourceID}, 0); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("clean time-series observations for source %d: %w", sourceID, err)
 		}
@@ -564,10 +576,19 @@ func VacuumSource(db *Handler, sourceID uint64) error {
 		return fmt.Errorf("sourceID must be provided")
 	}
 
-	tx, err := (*db).Begin()
+	// Bound the transaction with the default timeout (see TransactionContext).
+	txCtx, cancelTx := TransactionContext(context.Background(), nil)
+	defer cancelTx()
+	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to start transaction: %w", err)
 	}
+	txStarted := time.Now()
+	defer func() {
+		// Best-effort rollback (no-op after commit); also covers panics.
+		_ = tx.Rollback()
+		LogTransactionOutcome("vacuumSource", txStarted, err)
+	}()
 
 	// List of SQL queries to remove associated indexed data for the given source
 	queries := []string{
@@ -581,7 +602,7 @@ func VacuumSource(db *Handler, sourceID uint64) error {
 
 	// Execute each query in the list
 	for _, query := range queries {
-		_, err := tx.Exec(query, sourceID)
+		_, err = tx.Exec(query, sourceID)
 		if err != nil {
 			rollbackErr := tx.Rollback() // Rollback the transaction on error
 			if rollbackErr != nil {
@@ -592,7 +613,7 @@ func VacuumSource(db *Handler, sourceID uint64) error {
 	}
 
 	// Commit the transaction if all queries succeed
-	if err := tx.Commit(); err != nil {
+	if err = tx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 

@@ -352,16 +352,18 @@ func (response SourceConfigResponse) MarshalJSON() ([]byte, error) {
 }
 
 // updateSourceRequest represents the structure of an update source request.
-// Config is a pointer so an omitted configuration continues to preserve the
-// stored value, while an explicitly supplied email configuration can be saved.
+// It is a partial-update payload: mutable fields are pointers (and Details is
+// a nilable RawMessage) so an omitted field can be distinguished from an
+// explicitly supplied zero value such as false, 0 or "". Omitted fields keep
+// their stored values; explicitly supplied fields are applied as provided.
 type updateSourceRequest struct {
 	SourceID    int64                `json:"source_id,omitempty"`
-	URL         string               `json:"url,omitempty"`
+	URL         *string              `json:"url,omitempty"`
 	SubPriority *int                 `json:"sub_priority,omitempty"`
-	Status      string               `json:"status,omitempty"`
-	Restricted  int                  `json:"restricted,omitempty"`
-	Disabled    bool                 `json:"disabled,omitempty"`
-	Flags       int                  `json:"flags,omitempty"`
+	Status      *string              `json:"status,omitempty"`
+	Restricted  *int                 `json:"restricted,omitempty"`
+	Disabled    *bool                `json:"disabled,omitempty"`
+	Flags       *int                 `json:"flags,omitempty"`
 	Config      *SourceConfigRequest `json:"config,omitempty"`
 	Details     json.RawMessage      `json:"details,omitempty"`
 }

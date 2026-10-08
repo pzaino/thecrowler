@@ -36,6 +36,10 @@ type FileStorageAPI struct {
 	SSLMode string `json:"sslmode" yaml:"sslmode"` // SSL mode for API connection (e.g., "disable")
 }
 
+// DefaultTransactionTimeoutSeconds is the default upper bound applied to
+// long-lived database transactions (see Database.TransactionTimeout).
+const DefaultTransactionTimeoutSeconds = 300
+
 // Database represents the database configuration
 type Database struct {
 	Type         string `json:"type" yaml:"type"`                     // Type of database (e.g., "postgres", "mysql", "sqlite")
@@ -50,6 +54,11 @@ type Database struct {
 	OptimizeFor  string `json:"optimize_for" yaml:"optimize_for"`     // Optimize for the database connection (e.g., "read", "write")
 	MaxConns     int    `json:"max_conns" yaml:"max_conns"`           // Maximum number of connections to the database
 	MaxIdleConns int    `json:"max_idle_conns" yaml:"max_idle_conns"` // Maximum number of idle connections to the database
+	// TransactionTimeout bounds how long any single application transaction
+	// may stay open (in seconds). Transactions are started with a
+	// context deadline derived from this value so an abandoned transaction
+	// is cancelled instead of holding locks and its MVCC snapshot forever.
+	TransactionTimeout int `json:"transaction_timeout" yaml:"transaction_timeout"` // Timeout for a single database transaction (in seconds)
 }
 
 // Crawler represents the crawler configuration

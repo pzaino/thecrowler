@@ -254,7 +254,9 @@ func insertScreenshotWithTimeSeries(db cdb.Handler, screenshot Screenshot, currC
 	if screenshot.IndexID == 0 {
 		return errors.New("index ID is required")
 	}
-	tx, err := db.Begin()
+	txCtx, cancelTx := cdb.TransactionContext(context.Background(), currCfg)
+	defer cancelTx()
+	tx, err := db.BeginTx(txCtx, nil)
 	if err != nil {
 		return err
 	}

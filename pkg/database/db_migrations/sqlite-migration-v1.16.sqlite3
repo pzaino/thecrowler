@@ -1,0 +1,8 @@
+-- v1.16 is a PostgreSQL-only autovacuum tuning change; SQLite has no
+-- equivalent storage parameter.  This ledger-only migration keeps upgraded
+-- SQLite databases at the same schema version as fresh installs so the
+-- 1.16 writer compatibility check passes either way.
+UPDATE DBSchemaVersion SET is_current=0;
+INSERT INTO DBSchemaVersion(version,description,is_current)
+VALUES('1.16','CROWler DB schema version 1.16',1)
+ON CONFLICT(version) DO UPDATE SET description=excluded.description,is_current=1;

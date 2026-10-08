@@ -39,6 +39,8 @@ database:
   max_conns: 50
   # Idle pool size (≥25; ~25–30% of max_conns is typical)
   max_idle_conns: 30
+  # Max seconds a single DB transaction may stay open (30..86400, default 300)
+  transaction_timeout: 300
 
 # --------------------------
 # Email crawling runtime

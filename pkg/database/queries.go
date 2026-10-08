@@ -21,8 +21,6 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
-
-	cmn "github.com/pzaino/thecrowler/pkg/common"
 )
 
 // GetSourceID retrieves the source ID from the database based on the provided filter.
@@ -39,8 +37,12 @@ func GetSourceIDContext(ctx context.Context, filter SourceFilter, db *Handler) (
 
 	// Dynamically build the WHERE clause based on the input struct
 	if filter.URL != "" {
+		// Canonicalize the lookup key with the same function used when storing
+		// source URLs so URL-based lookups stay consistent with storage. Unlike
+		// common.NormalizeURL, this preserves host, path, query and fragment
+		// case, which source URLs (for example Instagram shortcodes) rely on.
 		whereClauses = append(whereClauses, "url = $"+fmt.Sprint(parID))
-		args = append(args, cmn.NormalizeURL(filter.URL))
+		args = append(args, NormalizeSourceURL(filter.URL))
 		parID++
 	}
 	if filter.SourceID > 0 {

@@ -128,7 +128,7 @@ jobs:
             --port 5432 \
             --username "$POSTGRES_USER" \
             --dbname "$POSTGRES_DB" \
-            --file pkg/database/db_migrations/postgresql-migration-v1.15.pgsql
+            --file pkg/database/db_migrations/postgresql-migration-v1.16.pgsql
 
           current_version="$(
             PGPASSWORD="$POSTGRES_PASSWORD" \
@@ -142,7 +142,7 @@ jobs:
               --command "SELECT version FROM DBSchemaVersion WHERE is_current"
           )"
 
-          test "$current_version" = "1.15"
+          test "$current_version" = "1.16"
 
       - name: Run PostgreSQL integration suite
         env:

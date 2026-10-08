@@ -35,8 +35,17 @@ import (
 
 var errInvalidSourceConfig = errors.New("invalid source configuration")
 
+// errInvalidSourceRequest marks malformed update payloads that the client can
+// fix (for example an explicitly supplied empty url); the HTTP layer maps it
+// to a 4xx response instead of a 500.
+var errInvalidSourceRequest = errors.New("invalid source request")
+
 func isSourceConfigValidationError(err error) bool {
 	return errors.Is(err, errInvalidSourceConfig)
+}
+
+func isSourceRequestValidationError(err error) bool {
+	return errors.Is(err, errInvalidSourceRequest)
 }
 
 const (
@@ -766,7 +775,7 @@ func performAddSourceContext(ctx context.Context, query string, qType int, db *c
 
 	if qType == getQuery {
 		// Simple GET-style request, only URL provided
-		params.URL = strings.TrimSpace(cmn.NormalizeURL(query))
+		params.URL = cdb.NormalizeSourceURL(query)
 
 		// Apply defaults
 		params.Status = "pending"
@@ -780,7 +789,7 @@ func performAddSourceContext(ctx context.Context, query string, qType int, db *c
 		// extract AddSource parameters from JSON
 		extractAddSourceParams(query, &params)
 
-		params.URL = strings.TrimSpace(cmn.NormalizeURL(params.URL))
+		params.URL = cdb.NormalizeSourceURL(params.URL)
 		if params.URL == "" {
 			return ConsoleResponse{Message: "Invalid URL"}, fmt.Errorf("invalid URL")
 		}
@@ -920,11 +929,20 @@ func performRemoveSourceContext(ctx context.Context, query string, qType int, db
 		return ConsoleResponse{Message: "Invalid request"}, nil
 	}
 
-	// Start a transaction
-	tx, err := (*db).BeginTx(ctx, nil)
+	// Start a transaction bounded by database.transaction_timeout; the HTTP
+	// request context (when present) cancels it even sooner.
+	txCtx, cancelTx := cdb.TransactionContext(ctx, &config)
+	defer cancelTx()
+	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
 		return ConsoleResponse{Message: errFailedToStartTransaction}, err
 	}
+	txStarted := time.Now()
+	defer func() {
+		// Best-effort rollback (no-op after commit); also covers panics.
+		_ = tx.Rollback()
+		cdb.LogTransactionOutcome("removeSource", txStarted, err)
+	}()
 
 	// Proceed with deleting the source using the obtained source_id
 	results, err = removeSourceContext(ctx, tx, sourceURL)
@@ -1199,13 +1217,22 @@ func performUpdateSourceContext(ctx context.Context, query string, qType int, db
 
 	if qType == getQuery {
 		// Parse the query as a GET request (direct parameters)
-		sqlParams.URL = cmn.NormalizeURL(query)
+		normalizedURL := cdb.NormalizeSourceURL(query)
+		if normalizedURL != "" {
+			sqlParams.URL = &normalizedURL
+		}
 	} else {
 		// Parse the query as a POST request (JSON payload)
 		err := json.Unmarshal([]byte(query), &sqlParams)
 		if err != nil {
 			return ConsoleResponse{Message: "Invalid update request"}, fmt.Errorf("invalid JSON: %w", err)
 		}
+	}
+
+	// Sources.url is NOT NULL UNIQUE, so an explicitly supplied URL must never
+	// be empty: reject it instead of replacing a valid stored URL with "".
+	if sqlParams.URL != nil && strings.TrimSpace(*sqlParams.URL) == "" {
+		return ConsoleResponse{Message: "Invalid URL"}, fmt.Errorf("%w: url must not be empty", errInvalidSourceRequest)
 	}
 
 	var requestedConfig *cfg.SourceConfig
@@ -1218,8 +1245,8 @@ func performUpdateSourceContext(ctx context.Context, query string, qType int, db
 	}
 
 	// Resolve sourceID if only URL is provided
-	if sqlParams.SourceID == 0 && sqlParams.URL != "" {
-		sourceID, err := cdb.GetSourceIDContext(ctx, cdb.SourceFilter{URL: sqlParams.URL}, db)
+	if sqlParams.SourceID == 0 && sqlParams.URL != nil {
+		sourceID, err := cdb.GetSourceIDContext(ctx, cdb.SourceFilter{URL: *sqlParams.URL}, db)
 		if err != nil {
 			return ConsoleResponse{Message: "Failed to resolve Source ID"}, err
 		}
@@ -1248,16 +1275,6 @@ func performUpdateSourceContext(ctx context.Context, query string, qType int, db
 	if err != nil {
 		return ConsoleResponse{Message: "Failed to retrieve source data"}, fmt.Errorf("error querying existing source data: %w", err)
 	}
-	// extract and validate Config JSON:
-	var srcConfig cfg.SourceConfig
-	if sourceConfig != nil {
-		//existingData.Config = json.RawMessage(*sourceConfig)
-		// Transform sourceConfig into the API source configuration struct.
-		if err := json.Unmarshal([]byte(*sourceConfig), &srcConfig); err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling the Config field from DB: %v", err)
-		}
-	}
-
 	// extract free JSON form Details:
 	if sourceDetails != nil {
 		existingData.Details = json.RawMessage(*sourceDetails)
@@ -1265,31 +1282,58 @@ func performUpdateSourceContext(ctx context.Context, query string, qType int, db
 		existingData.Details = json.RawMessage("{}")
 	}
 
-	subPriority := existingData.SubPriority
-	if sqlParams.SubPriority != nil {
-		subPriority = *sqlParams.SubPriority
+	// Merge: start from the stored row and overwrite only the fields that are
+	// explicitly present in the request. An omitted url keeps the stored value
+	// byte-for-byte, so case-sensitive URL paths are never rewritten by an
+	// unrelated partial update. An explicitly supplied url is canonicalized
+	// with NormalizeSourceURL, the same function used when storing sources, so
+	// host, path, query and fragment case are preserved and the stored value
+	// keeps matching URL-based lookups.
+	mergedURL := existingData.URL
+	if sqlParams.URL != nil {
+		mergedURL = cdb.NormalizeSourceURL(*sqlParams.URL)
 	}
 
-	mergedConfig := srcConfig
-	if requestedConfig != nil {
-		mergedConfig = *requestedConfig
-	}
-
-	// Merge existing data with provided updates
 	mergedData := cdb.UpdateSourceRequest{
 		SourceID:    sqlParams.SourceID,
-		URL:         coalesce(sqlParams.URL, existingData.URL),
-		SubPriority: subPriority,
-		Status:      coalesce(sqlParams.Status, existingData.Status),
-		Restricted:  coalesceInt(sqlParams.Restricted, existingData.Restricted),
-		Disabled:    coalesceBool(sqlParams.Disabled, existingData.Disabled),
-		Flags:       coalesceInt(sqlParams.Flags, existingData.Flags),
-		Details:     coalesceJSON(sqlParams.Details, existingData.Details),
+		URL:         mergedURL,
+		SubPriority: existingData.SubPriority,
+		Status:      existingData.Status,
+		Restricted:  existingData.Restricted,
+		Disabled:    existingData.Disabled,
+		Flags:       existingData.Flags,
+		Details:     existingData.Details,
+	}
+	if sqlParams.SubPriority != nil {
+		mergedData.SubPriority = *sqlParams.SubPriority
+	}
+	if sqlParams.Status != nil {
+		mergedData.Status = *sqlParams.Status
+	}
+	if sqlParams.Restricted != nil {
+		mergedData.Restricted = *sqlParams.Restricted
+	}
+	if sqlParams.Disabled != nil {
+		mergedData.Disabled = *sqlParams.Disabled
+	}
+	if sqlParams.Flags != nil {
+		mergedData.Flags = *sqlParams.Flags
+	}
+	if sqlParams.Details != nil {
+		mergedData.Details = sqlParams.Details
 	}
 
-	mergedConfigJSON, err := json.Marshal(mergedConfig)
-	if err != nil {
-		return ConsoleResponse{Message: "Invalid config"}, fmt.Errorf("%w: failed to marshal config for update: %v", errInvalidSourceConfig, err)
+	// Config: replace the stored configuration only when the request supplies
+	// one; otherwise pass the stored bytes through unchanged so an unrelated
+	// update never reserializes or replaces the stored configuration.
+	var configParam []byte
+	if requestedConfig != nil {
+		configParam, err = json.Marshal(*requestedConfig)
+		if err != nil {
+			return ConsoleResponse{Message: "Invalid config"}, fmt.Errorf("%w: failed to marshal config for update: %v", errInvalidSourceConfig, err)
+		}
+	} else if sourceConfig != nil {
+		configParam = []byte(*sourceConfig)
 	}
 
 	// Perform the update
@@ -1309,13 +1353,13 @@ func performUpdateSourceContext(ctx context.Context, query string, qType int, db
 		updateQuery = strings.ReplaceAll(updateQuery, "::jsonb", "")
 	}
 	_, err = (*db).ExecContext(ctx, updateQuery,
-		cmn.NormalizeURL(mergedData.URL),
+		mergedData.URL,
 		mergedData.SubPriority,
 		mergedData.Status,
 		mergedData.Restricted,
 		mergedData.Disabled,
 		mergedData.Flags,
-		mergedConfigJSON,
+		configParam,
 		mergedData.Details,
 		mergedData.SourceID,
 	)
@@ -1324,36 +1368,6 @@ func performUpdateSourceContext(ctx context.Context, query string, qType int, db
 	}
 
 	return ConsoleResponse{Message: "Source updated successfully"}, nil
-}
-
-func coalesce(newValue, existingValue string) string {
-	if newValue != "" {
-		return newValue
-	}
-	return existingValue
-}
-
-func coalesceInt(newValue, existingValue int) int {
-	if newValue != 0 {
-		return newValue
-	}
-	return existingValue
-}
-
-func coalesceBool(newValue, existingValue bool) bool {
-	// In case of boolean, use a specific value (e.g., a pointer or extra logic)
-	// Here, assuming `false` is not a valid new value
-	if newValue {
-		return newValue
-	}
-	return existingValue
-}
-
-func coalesceJSON(newValue, existingValue json.RawMessage) json.RawMessage {
-	if len(newValue) > 0 {
-		return newValue
-	}
-	return existingValue
 }
 
 func performVacuumSource(query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
@@ -1365,7 +1379,7 @@ func performVacuumSourceContext(ctx context.Context, query string, qType int, db
 
 	if qType == getQuery {
 		// Parse the query as a GET request (direct parameters)
-		filter.URL = cmn.NormalizeURL(query)
+		filter.URL = cdb.NormalizeSourceURL(query)
 	} else {
 		// Parse the query as a POST request (JSON payload)
 		err := json.Unmarshal([]byte(query), &filter)
@@ -1385,10 +1399,20 @@ func performVacuumSourceContext(ctx context.Context, query string, qType int, db
 		return ConsoleResponse{Message: "Source ID or URL must be provided"}, fmt.Errorf("missing Source ID or URL")
 	}
 
-	tx, err := (*db).BeginTx(ctx, nil)
+	// Start a transaction bounded by database.transaction_timeout; the HTTP
+	// request context (when present) cancels it even sooner.
+	txCtx, cancelTx := cdb.TransactionContext(ctx, &config)
+	defer cancelTx()
+	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
 		return ConsoleResponse{Message: "Failed to start transaction"}, err
 	}
+	txStarted := time.Now()
+	defer func() {
+		// Best-effort rollback (no-op after commit); also covers panics.
+		_ = tx.Rollback()
+		cdb.LogTransactionOutcome("vacuumSource", txStarted, err)
+	}()
 
 	// Deleting indexed data
 	queries := []string{
@@ -1401,7 +1425,7 @@ func performVacuumSourceContext(ctx context.Context, query string, qType int, db
 	}
 
 	for _, query := range queries {
-		_, err := tx.ExecContext(ctx, query, filter.SourceID)
+		_, err = tx.ExecContext(ctx, query, filter.SourceID)
 		if err != nil {
 			err2 := tx.Rollback() // Rollback if any query fails
 			if err2 != nil {

@@ -511,3 +511,113 @@ func TestPostgresSourceClaimUsesSubPriorityOrdering(t *testing.T) {
 		}
 	}
 }
+
+// TestPostgresStatementLevelCleanupTriggerContract pins the v1.16 artifact
+// cleanup design: fresh installs and upgrades must ship the identical shared
+// statement-level function, the legacy per-row function must be gone from the
+// setup file (the migration drops it explicitly), and dialects without
+// transition tables must keep their per-row triggers.
+func TestPostgresStatementLevelCleanupTriggerContract(t *testing.T) {
+	t.Parallel()
+
+	setup, err := os.ReadFile("postgresql-setup.pgsql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration, err := os.ReadFile("db_migrations/postgresql-migration-v1.16.pgsql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	setupStr, migrationStr := string(setup), string(migration)
+
+	const fnName = "cleanup_artifact_data_set()"
+	extractBody := func(s string) string {
+		start := strings.Index(s, "CREATE OR REPLACE FUNCTION "+fnName)
+		if start < 0 {
+			return ""
+		}
+		end := strings.Index(s[start:], "$$ LANGUAGE plpgsql;")
+		if end < 0 {
+			return ""
+		}
+		return s[start : start+end]
+	}
+	setupBody := extractBody(setupStr)
+	migrationBody := extractBody(migrationStr)
+	if setupBody == "" {
+		t.Fatal("postgresql-setup.pgsql missing cleanup_artifact_data_set()")
+	}
+	if migrationBody == "" {
+		t.Fatal("postgresql-migration-v1.16.pgsql missing cleanup_artifact_data_set()")
+	}
+	if setupBody != migrationBody {
+		t.Fatal("cleanup_artifact_data_set() body differs between setup and migration (fresh installs must equal upgrades)")
+	}
+
+	for _, fragment := range []string{
+		"REFERENCING OLD TABLE AS deleted_artifacts",
+		"FOR EACH STATEMENT",
+		"EXECUTE format(",
+	} {
+		if !strings.Contains(setupStr, fragment) {
+			t.Errorf("postgresql-setup.pgsql missing %q", fragment)
+		}
+		if !strings.Contains(migrationStr, fragment) {
+			t.Errorf("postgresql-migration-v1.16.pgsql missing %q", fragment)
+		}
+	}
+	if strings.Contains(setupStr, "EXECUTE FUNCTION cleanup_artifact_data(") {
+		t.Error("postgresql-setup.pgsql still attaches the legacy per-row cleanup_artifact_data()")
+	}
+	if !strings.Contains(setupStr, "DROP FUNCTION IF EXISTS cleanup_artifact_data()") {
+		t.Error("postgresql-setup.pgsql must drop the legacy cleanup_artifact_data() on re-runs")
+	}
+	for _, fragment := range []string{
+		"DROP TRIGGER IF EXISTS trg_cleanup_webobject",
+		"DROP FUNCTION IF EXISTS cleanup_artifact_data()",
+	} {
+		if !strings.Contains(migrationStr, fragment) {
+			t.Errorf("postgresql-migration-v1.16.pgsql missing legacy cleanup %q", fragment)
+		}
+	}
+
+	// SQLite has no transition tables and must keep the per-row equivalents.
+	sqlite, err := os.ReadFile("sqlite-setup.sqlite3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, trigger := range []string{"trg_cleanup_webobject", "trg_cleanup_netinfo", "trg_cleanup_httpinfo"} {
+		if !strings.Contains(string(sqlite), trigger) {
+			t.Errorf("sqlite-setup.sqlite3 missing %s", trigger)
+		}
+	}
+	if strings.Contains(string(sqlite), "REFERENCING OLD TABLE") {
+		t.Error("sqlite-setup.sqlite3 must not use PostgreSQL transition tables")
+	}
+}
+
+// TestPostgresSchemaVersion116LedgerCoverage keeps every base setup and
+// v1.16 migration file advertising the same schema version the writer
+// requires, so fresh installs, upgrades, and the compatibility check agree.
+func TestPostgresSchemaVersion116LedgerCoverage(t *testing.T) {
+	t.Parallel()
+
+	files := []string{
+		"postgresql-setup.pgsql", "mysql-setup.mysql", "sqlite-setup.sqlite3",
+		"db_migrations/postgresql-migration-v1.16.pgsql",
+		"db_migrations/mysql-migration-v1.16.mysql",
+		"db_migrations/sqlite-migration-v1.16.sqlite3",
+	}
+	for _, file := range files {
+		content, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(content), "'1.16'") && !strings.Contains(string(content), "\"1.16\"") {
+			t.Errorf("%s missing schema version 1.16 stamp", file)
+		}
+	}
+	if RequiredSchemaVersion != "1.16" {
+		t.Fatalf("RequiredSchemaVersion = %q, want 1.16", RequiredSchemaVersion)
+	}
+}
