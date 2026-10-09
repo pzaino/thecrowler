@@ -3,6 +3,7 @@
 package crawler
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strconv"
@@ -72,7 +73,7 @@ func TestPostgresWebObjectRefreshUsesReplacementPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = deleteWebObjects(tx, indexID); err != nil {
+	if err = deleteWebObjects(context.Background(), handler, indexID); err != nil {
 		t.Fatal(err)
 	}
 	newID, _, newHash, err := insertOrUpdateWebObjects(tx, indexID, page(9, 15.75))
