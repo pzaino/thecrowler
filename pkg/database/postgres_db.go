@@ -40,9 +40,20 @@ const (
 
 // PostgresHandler is the implementation of the DatabaseHandler interface
 type PostgresHandler struct {
-	db      *sql.DB
-	dbms    string
-	connStr string
+	db                 *sql.DB
+	dbms               string
+	connStr            string
+	transactionTimeout int
+}
+
+// TransactionTimeoutSeconds implements TransactionTimeoutProvider so callers
+// that hold only a Handler can bound transactions with the configured
+// database.transaction_timeout.
+func (handler *PostgresHandler) TransactionTimeoutSeconds() int {
+	if handler == nil {
+		return cfg.DefaultTransactionTimeoutSeconds
+	}
+	return normalizedTransactionTimeoutSeconds(handler.transactionTimeout)
 }
 
 // SetConnectionLimits adjusts the existing PostgreSQL connection pool. The
@@ -87,6 +98,7 @@ func (handler *PostgresHandler) Connect(c cfg.Config) error {
 	connectionString := buildConnectionString(c)
 	handler.connStr = connectionString
 	handler.dbms = "PostgreSQL"
+	handler.transactionTimeout = normalizedTransactionTimeoutSeconds(c.Database.TransactionTimeout)
 
 	// Set a limit for retries
 	retryInterval := time.Duration(c.Database.RetryTime) * time.Second

@@ -98,7 +98,7 @@ func loadTimeSeriesCardinalityPolicyTx(ctx context.Context, tx *sql.Tx, dbms str
 // LogicallyDeleteTimeSeriesObservation marks a live observation deleted and
 // removes its exact references in the same transaction. Repeated calls are
 // idempotent.
-func LogicallyDeleteTimeSeriesObservation(ctx context.Context, db *Handler, observationID uint64) error {
+func LogicallyDeleteTimeSeriesObservation(ctx context.Context, db *Handler, observationID uint64) (retErr error) {
 	dbms, err := validateTimeSeriesDB(db)
 	if err != nil {
 		return err
@@ -106,13 +106,16 @@ func LogicallyDeleteTimeSeriesObservation(ctx context.Context, db *Handler, obse
 	// Bound the transaction (see TransactionContext): legacy callers pass
 	// context.Background() here, and the FOR UPDATE row lock below must not be
 	// held forever if the caller stalls.
-	txCtx, cancelTx := TransactionContext(ctx, nil)
+	txCtx, cancelTx := TransactionContextForHandler(ctx, db)
 	defer cancelTx()
 	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
-		return err
+		return NormalizeTransactionError(txCtx, err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() {
+		_ = tx.Rollback()
+		retErr = NormalizeTransactionError(txCtx, retErr)
+	}()
 	p := newInformationSeedPlaceholders(dbms)
 	query := `SELECT ` + timeSeriesObservationColumns + ` FROM TimeSeriesObservations WHERE observation_id=` + p.Next()
 	if dbms == DBPostgresStr {

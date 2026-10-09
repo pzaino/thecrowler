@@ -34,12 +34,24 @@ import (
 
 // SQLiteHandler is the implementation of the DatabaseHandler interface
 type SQLiteHandler struct {
-	db   *sql.DB
-	dbms string
+	db                 *sql.DB
+	dbms               string
+	transactionTimeout int
+}
+
+// TransactionTimeoutSeconds implements TransactionTimeoutProvider so callers
+// that hold only a Handler can bound transactions with the configured
+// database.transaction_timeout.
+func (handler *SQLiteHandler) TransactionTimeoutSeconds() int {
+	if handler == nil {
+		return cfg.DefaultTransactionTimeoutSeconds
+	}
+	return normalizedTransactionTimeoutSeconds(handler.transactionTimeout)
 }
 
 // Connect connects to an SQLite database
 func (handler *SQLiteHandler) Connect(c cfg.Config) error {
+	handler.transactionTimeout = normalizedTransactionTimeoutSeconds(c.Database.TransactionTimeout)
 	// Construct the connection string from the Config struct
 	connectionString := fmt.Sprintf("file:%s?cache=shared&mode=rwc", c.Database.DBName)
 

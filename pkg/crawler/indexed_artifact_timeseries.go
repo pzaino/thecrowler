@@ -82,7 +82,7 @@ func emitIndexedArtifactsStandalone(
 	db cdb.Handler,
 	currCfg *cfg.Config,
 	inputs []tse.IndexedArtifactInput,
-) error {
+) (retErr error) {
 	if db == nil ||
 		currCfg == nil ||
 		!currCfg.TimeSeries.Enabled ||
@@ -95,7 +95,7 @@ func emitIndexedArtifactsStandalone(
 	defer cancelTx()
 	tx, err := db.BeginTx(txCtx, nil)
 	if err != nil {
-		return fmt.Errorf("starting indexed-artifact time-series transaction: %w", err)
+		return cdb.NormalizeTransactionError(txCtx, fmt.Errorf("starting indexed-artifact time-series transaction: %w", err))
 	}
 	logger.Debugf("standalone emission started artifacts=%d", len(inputs))
 
@@ -111,6 +111,7 @@ func emitIndexedArtifactsStandalone(
 				)
 			}
 		}
+		retErr = cdb.NormalizeTransactionError(txCtx, retErr)
 	}()
 
 	emitter := newCrawlerIndexedArtifactEmitter(tx, currCfg)

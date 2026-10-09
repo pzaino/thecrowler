@@ -523,25 +523,26 @@ func DeleteSources(db *Handler, sourceIDs []uint64) error {
 	return deleteSourcesWithTimeSeriesCleanup(db, converted)
 }
 
-func deleteSourcesWithTimeSeriesCleanup(db *Handler, sourceIDs []uint64) error {
+func deleteSourcesWithTimeSeriesCleanup(db *Handler, sourceIDs []uint64) (retErr error) {
 	if len(sourceIDs) == 0 {
 		return nil
 	}
 	dbms := (*db).DBMS()
-	// Bound the transaction with the default timeout: this path can scan an
+	// Bound the transaction with the configured timeout: this path can scan an
 	// unbounded number of time-series observations for large sources, and must
 	// not hold locks and its MVCC snapshot forever if it stalls.
-	txCtx, cancelTx := TransactionContext(context.Background(), nil)
+	txCtx, cancelTx := TransactionContextForHandler(context.Background(), db)
 	defer cancelTx()
 	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
-		return fmt.Errorf("failed to start source deletion transaction: %w", err)
+		return NormalizeTransactionError(txCtx, fmt.Errorf("failed to start source deletion transaction: %w", err))
 	}
 	txStarted := time.Now()
 	defer func() {
 		// Best-effort rollback (no-op after commit); also covers panics.
 		_ = tx.Rollback()
-		LogTransactionOutcome("deleteSourcesWithTimeSeriesCleanup", txStarted, err)
+		retErr = NormalizeTransactionError(txCtx, retErr)
+		LogTransactionOutcome("deleteSourcesWithTimeSeriesCleanup", txStarted, retErr)
 	}()
 	for _, sourceID := range sourceIDs {
 		p := newInformationSeedPlaceholders(dbms)
@@ -571,23 +572,24 @@ func deleteSourcesWithTimeSeriesCleanup(db *Handler, sourceIDs []uint64) error {
 }
 
 // VacuumSource performs a VACUUM operation for the collected data associated with a given Source ID.
-func VacuumSource(db *Handler, sourceID uint64) error {
+func VacuumSource(db *Handler, sourceID uint64) (retErr error) {
 	if sourceID == 0 {
 		return fmt.Errorf("sourceID must be provided")
 	}
 
-	// Bound the transaction with the default timeout (see TransactionContext).
-	txCtx, cancelTx := TransactionContext(context.Background(), nil)
+	// Bound the transaction with the configured timeout (see TransactionContext).
+	txCtx, cancelTx := TransactionContextForHandler(context.Background(), db)
 	defer cancelTx()
 	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
-		return fmt.Errorf("failed to start transaction: %w", err)
+		return NormalizeTransactionError(txCtx, fmt.Errorf("failed to start transaction: %w", err))
 	}
 	txStarted := time.Now()
 	defer func() {
 		// Best-effort rollback (no-op after commit); also covers panics.
 		_ = tx.Rollback()
-		LogTransactionOutcome("vacuumSource", txStarted, err)
+		retErr = NormalizeTransactionError(txCtx, retErr)
+		LogTransactionOutcome("vacuumSource", txStarted, retErr)
 	}()
 
 	// List of SQL queries to remove associated indexed data for the given source

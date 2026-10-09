@@ -1303,14 +1303,17 @@ func dereferenceUint(v *uint64) uint64 {
 // from TransactionContext so a stalled batch can never hold locks and its
 // MVCC snapshot indefinitely; the deferred rollback covers panics between
 // BEGIN and COMMIT.
-func pruneRawObservationBatch(ctx context.Context, db *Handler, dbms string, metricID uint64, cutoff time.Time, batchSize int) (int64, error) {
-	txCtx, cancelTx := TransactionContext(ctx, nil)
+func pruneRawObservationBatch(ctx context.Context, db *Handler, dbms string, metricID uint64, cutoff time.Time, batchSize int) (deleted int64, retErr error) {
+	txCtx, cancelTx := TransactionContextForHandler(ctx, db)
 	defer cancelTx()
 	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
-		return 0, err
+		return 0, NormalizeTransactionError(txCtx, err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() {
+		_ = tx.Rollback()
+		retErr = NormalizeTransactionError(txCtx, retErr)
+	}()
 	p := newInformationSeedPlaceholders(dbms)
 	n, err := deleteTimeSeriesObservationsWithAccounting(txCtx, tx, dbms, `metric_id = `+p.Next()+` AND observed_at < `+p.Next(), []interface{}{metricID, cutoff}, batchSize)
 	if err != nil {

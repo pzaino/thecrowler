@@ -88,7 +88,7 @@ func canonicalOptionalJSON(raw json.RawMessage) (interface{}, error) {
 }
 
 // UpsertEntity persists an entity without assigning any domain-specific schema.
-func UpsertEntity(db *Handler, entity *Entity) (*Entity, error) {
+func UpsertEntity(db *Handler, entity *Entity) (entityResult *Entity, retErr error) {
 	dbms, err := validateTimeSeriesDB(db)
 	if err != nil {
 		return nil, err
@@ -99,16 +99,19 @@ func UpsertEntity(db *Handler, entity *Entity) (*Entity, error) {
 	if strings.TrimSpace(entity.Type) == "" {
 		return nil, fmt.Errorf("entity type is required")
 	}
-	// Bound the transaction with the default timeout (see TransactionContext):
+	// Bound the transaction with the configured timeout (see TransactionContext):
 	// these entry points historically used context.Background(), which left the
 	// transaction open forever if a query stalled on a lock.
-	txCtx, cancelTx := TransactionContext(context.Background(), nil)
+	txCtx, cancelTx := TransactionContextForHandler(context.Background(), db)
 	defer cancelTx()
 	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
-		return nil, fmt.Errorf("begin entity transaction: %w", err)
+		return nil, NormalizeTransactionError(txCtx, fmt.Errorf("begin entity transaction: %w", err))
 	}
-	defer func() { _ = (*db).Rollback(tx) }()
+	defer func() {
+		_ = (*db).Rollback(tx)
+		retErr = NormalizeTransactionError(txCtx, retErr)
+	}()
 	p := newInformationSeedPlaceholders(dbms)
 	if entity.ID == 0 {
 		query := `INSERT INTO Entities (entity_type) VALUES (` + p.Next() + `)`
@@ -137,7 +140,7 @@ func UpsertEntity(db *Handler, entity *Entity) (*Entity, error) {
 
 // UpsertEntityMembership persists a membership and emits configured
 // entity_membership observations in the same transaction.
-func UpsertEntityMembership(db *Handler, membership *EntityMembership) error {
+func UpsertEntityMembership(db *Handler, membership *EntityMembership) (retErr error) {
 	dbms, err := validateTimeSeriesDB(db)
 	if err != nil {
 		return err
@@ -152,16 +155,19 @@ func UpsertEntityMembership(db *Handler, membership *EntityMembership) error {
 	if err != nil {
 		return fmt.Errorf("entity membership evidence: %w", err)
 	}
-	// Bound the transaction with the default timeout (see TransactionContext):
+	// Bound the transaction with the configured timeout (see TransactionContext):
 	// these entry points historically used context.Background(), which left the
 	// transaction open forever if a query stalled on a lock.
-	txCtx, cancelTx := TransactionContext(context.Background(), nil)
+	txCtx, cancelTx := TransactionContextForHandler(context.Background(), db)
 	defer cancelTx()
 	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
-		return fmt.Errorf("begin entity membership transaction: %w", err)
+		return NormalizeTransactionError(txCtx, fmt.Errorf("begin entity membership transaction: %w", err))
 	}
-	defer func() { _ = (*db).Rollback(tx) }()
+	defer func() {
+		_ = (*db).Rollback(tx)
+		retErr = NormalizeTransactionError(txCtx, retErr)
+	}()
 	args := []interface{}{membership.EntityID, membership.ObjectType, membership.ObjectID, membership.Confidence, nullableString(membership.MembershipRole), nullableString(membership.MembershipType), evidence}
 	values := []string{}
 	p := newInformationSeedPlaceholders(dbms)
@@ -191,7 +197,7 @@ func UpsertEntityMembership(db *Handler, membership *EntityMembership) error {
 
 // UpsertCorrelationRule persists rule metadata. Observations intentionally omit
 // the full rule definition so configured metrics cannot leak sensitive rules.
-func UpsertCorrelationRule(db *Handler, rule *CorrelationRule) (*CorrelationRule, error) {
+func UpsertCorrelationRule(db *Handler, rule *CorrelationRule) (ruleResult *CorrelationRule, retErr error) {
 	dbms, err := validateTimeSeriesDB(db)
 	if err != nil {
 		return nil, err
@@ -206,16 +212,19 @@ func UpsertCorrelationRule(db *Handler, rule *CorrelationRule) (*CorrelationRule
 	if rule.Version == 0 {
 		rule.Version = 1
 	}
-	// Bound the transaction with the default timeout (see TransactionContext):
+	// Bound the transaction with the configured timeout (see TransactionContext):
 	// these entry points historically used context.Background(), which left the
 	// transaction open forever if a query stalled on a lock.
-	txCtx, cancelTx := TransactionContext(context.Background(), nil)
+	txCtx, cancelTx := TransactionContextForHandler(context.Background(), db)
 	defer cancelTx()
 	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
-		return nil, fmt.Errorf("begin correlation rule transaction: %w", err)
+		return nil, NormalizeTransactionError(txCtx, fmt.Errorf("begin correlation rule transaction: %w", err))
 	}
-	defer func() { _ = (*db).Rollback(tx) }()
+	defer func() {
+		_ = (*db).Rollback(tx)
+		retErr = NormalizeTransactionError(txCtx, retErr)
+	}()
 	p := newInformationSeedPlaceholders(dbms)
 	if rule.ID == 0 {
 		values := []string{p.Next(), p.Next(), p.Next(), p.Next()}
@@ -259,7 +268,7 @@ func normalizeCorrelationOrder(c *ObjectCorrelation) {
 
 // UpsertObjectCorrelation persists a result and emits both object_correlation
 // and correlation_rule observations atomically with it.
-func UpsertObjectCorrelation(db *Handler, correlation *ObjectCorrelation) error {
+func UpsertObjectCorrelation(db *Handler, correlation *ObjectCorrelation) (retErr error) {
 	dbms, err := validateTimeSeriesDB(db)
 	if err != nil {
 		return err
@@ -277,16 +286,19 @@ func UpsertObjectCorrelation(db *Handler, correlation *ObjectCorrelation) error 
 	if correlation.ObjectType1 == correlation.ObjectType2 && correlation.ObjectID1 == correlation.ObjectID2 {
 		return fmt.Errorf("correlation objects must be distinct")
 	}
-	// Bound the transaction with the default timeout (see TransactionContext):
+	// Bound the transaction with the configured timeout (see TransactionContext):
 	// these entry points historically used context.Background(), which left the
 	// transaction open forever if a query stalled on a lock.
-	txCtx, cancelTx := TransactionContext(context.Background(), nil)
+	txCtx, cancelTx := TransactionContextForHandler(context.Background(), db)
 	defer cancelTx()
 	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
-		return fmt.Errorf("begin object correlation transaction: %w", err)
+		return NormalizeTransactionError(txCtx, fmt.Errorf("begin object correlation transaction: %w", err))
 	}
-	defer func() { _ = (*db).Rollback(tx) }()
+	defer func() {
+		_ = (*db).Rollback(tx)
+		retErr = NormalizeTransactionError(txCtx, retErr)
+	}()
 	p := newInformationSeedPlaceholders(dbms)
 	args := []interface{}{correlation.ObjectType1, correlation.ObjectID1, correlation.ObjectType2, correlation.ObjectID2, correlation.RuleID, correlation.EntityID, correlation.Score, correlation.Confidence}
 	values := make([]string, len(args))
@@ -426,17 +438,20 @@ func mergeAffectedRange(result *EntityObservationBackfillResult, start, end *tim
 	}
 }
 
-func backfillObservationEntityBatch(db *Handler, dbms string, after uint64, limit int) (EntityObservationBackfillResult, error) {
-	// Bound the transaction with the default timeout (see TransactionContext):
+func backfillObservationEntityBatch(db *Handler, dbms string, after uint64, limit int) (backfillResult EntityObservationBackfillResult, retErr error) {
+	// Bound the transaction with the configured timeout (see TransactionContext):
 	// these entry points historically used context.Background(), which left the
 	// transaction open forever if a query stalled on a lock.
-	txCtx, cancelTx := TransactionContext(context.Background(), nil)
+	txCtx, cancelTx := TransactionContextForHandler(context.Background(), db)
 	defer cancelTx()
 	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
-		return EntityObservationBackfillResult{}, fmt.Errorf("begin entity observation backfill: %w", err)
+		return EntityObservationBackfillResult{}, NormalizeTransactionError(txCtx, fmt.Errorf("begin entity observation backfill: %w", err))
 	}
-	defer func() { _ = (*db).Rollback(tx) }()
+	defer func() {
+		_ = (*db).Rollback(tx)
+		retErr = NormalizeTransactionError(txCtx, retErr)
+	}()
 	p := newInformationSeedPlaceholders(dbms)
 	query := `SELECT o.observation_id, o.observed_at, o.dimensions, o.provenance, em.entity_id, em.confidence, em.evidence, em.membership_role, em.membership_type
 		FROM TimeSeriesObservations o JOIN EntityMemberships em ON em.object_type=o.object_type AND em.object_id=o.object_id

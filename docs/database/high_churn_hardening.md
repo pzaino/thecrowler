@@ -55,6 +55,72 @@ should still set:
   on PostgreSQL 15 only the client-side `transaction_timeout` config above is
   available.
 
+### 1.1 Reliable timeout classification
+
+**Problem.** A driver often reports a deadline expiry indirectly: after the
+transaction context expires, `database/sql` frequently returns the
+transaction-state error (`sql.ErrTxDone`) from the next statement rather than
+`context.DeadlineExceeded`. Classifying only `context.DeadlineExceeded` (or
+matching error strings) therefore mislabels real timeouts, and callers such as
+`UpdateSourceState()` store that secondary error in `Sources.last_error`.
+
+**Change.**
+
+- `ErrTransactionTimeout` is a sentinel classifying a transaction aborted by
+  its deadline; `IsTransactionTimeout(err)` recognises it *and* raw
+  `context.DeadlineExceeded` (backwards compatible).
+- `NormalizeTransactionError(txCtx, err)` makes the transaction context
+  authoritative: an expired deadline returns an error wrapping
+  `ErrTransactionTimeout` while preserving the original cause; an explicit
+  cancellation stays a cancellation (never a timeout); a live context (or nil
+  context/error) leaves the error unchanged. A successful transaction stays
+  successful.
+- Every context-bounded transaction normalizes its error before it leaves the
+  owning function (named return plus a deferred normalizer, so wrapped return
+  values and post-commit failures are handled correctly). Borrowing timeout
+  handling from a transaction context that has already committed is
+  explicitly avoided (`indexPageContext` does not classify a post-commit
+  keyword failure against the finished main transaction).
+
+### 1.2 Configured timeout for handler-only call sites
+
+**Problem.** Many `pkg/database` entry points historically passed `nil` config
+to `TransactionContext`, so they silently used the 300s default and ignored a
+configured `database.transaction_timeout`.
+
+**Change.**
+
+- The concrete handlers (`PostgresHandler`, `SQLiteHandler`) retain the
+  validated timeout when they connect and expose it through the optional
+  `TransactionTimeoutProvider` capability interface
+  (`TransactionTimeoutSeconds() int`). The main `Handler` interface is
+  intentionally not extended, so existing fakes and mocks are unaffected.
+- `TransactionContextForHandler(parent, *Handler)` uses the provider value
+  when valid and otherwise falls back to `cfg.DefaultTransactionTimeoutSeconds`.
+  All `nil`-config transaction sites in `pkg/database` now use it, preserving
+  each site's existing parent context (`ctx` where one was already threaded,
+  `context.Background()` otherwise). No package-global mutable state is
+  introduced and `pkg/database` does not import `pkg/crawler`.
+
+### 1.3 indexPage phase diagnostics
+
+**Problem.** When `indexPage` failed, the logs identified only the whole
+transaction, not which phase (metric snapshot, search index, web object,
+attributes, artifacts, metatags, commit, keywords) stalled or timed out.
+
+**Change.** `indexPageContext` tracks an in-memory phase marker and, on
+failure, emits exactly one aggregated line — no per-row or per-statement
+logging and no payload/HTML/SQL arguments:
+
+```
+operation=indexPage phase=<phase> elapsed=<d> source_id=<id> index_id=<id> timeout=<true|false> error=<err>
+```
+
+`index_id` is reported when known (after the search-index upsert). Success
+keeps the existing debug-level completion line. `phase` distinguishes the
+main-transaction phases from `post_commit_keywords`, so a keyword failure
+after commit is reported as such rather than as a transaction timeout.
+
 ## 2. Table-specific autovacuum for ObjectAttributes (and its TOAST)
 
 **Problem.** `refresh_content` constantly replaces rows in `ObjectAttributes`.
@@ -146,3 +212,12 @@ statement-level `pg_trigger` shape, version stamp) and
 Static contracts live in `schema_sql_test.go`. CI applies the v1.16
 migration twice (fresh + repeat) and asserts the current version before
 running the integration suite.
+
+Timeout classification and phase diagnostics are covered by unit tests that do
+not require a database: `TestNormalizeTransactionError`,
+`TestIsTransactionTimeout`, `TestTransactionContextForHandler`, and
+`TestConcreteHandlerTransactionTimeoutSeconds` in `pkg/database`, plus
+`TestFormatIndexPagePhaseClassifiesTimeout`,
+`TestFormatIndexPagePhaseNonTimeout`, and
+`TestLogIndexPagePhaseDoesNotPanic` in `pkg/crawler`. The expiry tests use a
+millisecond context and never wait for a real transaction timeout.

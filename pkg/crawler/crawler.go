@@ -969,7 +969,22 @@ func indexPage(ctx *ProcessContext, url string, pageInfo *PageInfo) (uint64, err
 	return indexPageContext(context.Background(), ctx, url, pageInfo)
 }
 
-func indexPageContext(waitCtx context.Context, ctx *ProcessContext, url string, pageInfo *PageInfo) (uint64, error) {
+func getIndexIDForURL(db *cdb.Handler, url string) (uint64, error) {
+	var indexID uint64
+	err := (*db).QueryRow(`SELECT index_id FROM SearchIndex WHERE page_url = $1`, url).Scan(&indexID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return 0, nil
+		}
+		return 0, err
+	}
+	return indexID, nil
+}
+
+func indexPageContext(waitCtx context.Context,
+	ctx *ProcessContext,
+	url string,
+	pageInfo *PageInfo) (resultIndexID uint64, retErr error) {
 	if pageInfo == nil {
 		return 0, errors.New("pageInfo cannot be nil")
 	}
@@ -994,14 +1009,51 @@ func indexPageContext(waitCtx context.Context, ctx *ProcessContext, url string, 
 	defer release()
 
 	db := *ctx.db
+	process_cfg := ctx.GetConfig()
 
 	// Before updating the source state, check if the database connection is still alive
-	err = db.WaitForConnection(config, 0)
+	err = db.WaitForConnection(*process_cfg, 0)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, dbConnCheckErr, err)
 		return 0, err
 	}
 	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Database ready, Indexing page: %s", url)
+
+	var indexID uint64
+
+	// Check if we need to delete existing webObjects for this page
+	// before starting the indexing process.
+	if ctx.config.Crawler.RefreshContent {
+		indexID, err = getIndexIDForURL(ctx.db, url)
+		if err != nil {
+			cmn.DebugMsg(
+				cmn.DbgLvlDebug4,
+				"[DEBUG-Indexing] Error checking existing indexID for URL %s: %v",
+				url,
+				err,
+			)
+			cmn.DebugMsg(
+				cmn.DbgLvlError,
+				"checking existing indexID for URL %s: %v",
+				url,
+				err,
+			)
+			return 0, err
+		}
+
+		if indexID != 0 {
+			// We need to delete existing webObjects for this indexID
+			err = deleteWebObjects(waitCtx, ctx.db, indexID)
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError,
+					"deleting existing WebObjects for indexID %d: %v",
+					indexID,
+					err,
+				)
+				return 0, err
+			}
+		}
+	}
 
 	// Start a transaction bounded by database.transaction_timeout so an
 	// abandoned indexing transaction can never hold locks and its MVCC
@@ -1012,21 +1064,37 @@ func indexPageContext(waitCtx context.Context, ctx *ProcessContext, url string, 
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Error starting transaction: %v", err)
 		cmn.DebugMsg(cmn.DbgLvlError, "starting transaction: %v", err)
-		return 0, err
+		return 0, cdb.NormalizeTransactionError(txCtx, err)
 	}
 	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Transaction started...")
 	txStarted := time.Now()
 	txCommitted := false
+	phase := "load_metric_snapshot"
+	var knownIndexID uint64
+	var sourceID uint64
+	if ctx.source != nil {
+		sourceID = ctx.source.ID
+	}
 	defer func() {
 		// Best-effort rollback: after a successful commit this is a no-op
 		// (sql.ErrTxDone). The deferred rollback also covers panics between
 		// BEGIN and COMMIT.
 		_ = tx.Rollback()
 		if txCommitted {
+			// The main page transaction committed, so any remaining error comes
+			// from a post-commit phase and must not be reclassified against the
+			// (already finished) main transaction context.
 			cdb.LogTransactionOutcome("indexPage", txStarted, nil)
+			if retErr != nil {
+				logIndexPagePhase("indexPage", phase, txStarted, sourceID, knownIndexID, retErr)
+			}
 			return
 		}
-		cdb.LogTransactionOutcome("indexPage", txStarted, err)
+		retErr = cdb.NormalizeTransactionError(txCtx, retErr)
+		cdb.LogTransactionOutcome("indexPage", txStarted, retErr)
+		if retErr != nil {
+			logIndexPagePhase("indexPage", phase, txStarted, sourceID, knownIndexID, retErr)
+		}
 	}()
 	metricEmitter := newCrawlerIndexedArtifactEmitter(tx, ctx.GetConfig())
 	metricSnapshot, err := metricEmitter.LoadEnabledMetricSnapshot()
@@ -1036,27 +1104,19 @@ func indexPageContext(waitCtx context.Context, ctx *ProcessContext, url string, 
 	}
 
 	// Insert or update the page in SearchIndex
-	indexID, err := insertOrUpdateSearchIndex(tx, url, pageInfo)
+	phase = "upsert_search_index"
+	indexID, err = insertOrUpdateSearchIndex(tx, url, pageInfo)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Error inserting or updating SearchIndex: %v", err)
 		cmn.DebugMsg(cmn.DbgLvlError, "inserting or updating SearchIndex: %v", err)
 		rollbackTransaction(tx)
 		return 0, err
 	}
+	knownIndexID = indexID
 	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] SearchIndex updated with indexID: %d", indexID)
 
-	if ctx.config.Crawler.RefreshContent {
-		// We need to delete existing webObjects for this indexID
-		err = deleteWebObjects(tx, indexID)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Error deleting existing WebObjects for indexID %d: %v", indexID, err)
-			cmn.DebugMsg(cmn.DbgLvlError, "deleting existing WebObjects: %v", err)
-			rollbackTransaction(tx)
-			return 0, err
-		}
-	}
-
 	// Insert or update the page in WebObjects
+	phase = "upsert_webobject"
 	objID, detailsJSON, objectHash, err := insertOrUpdateWebObjects(tx, indexID, pageInfo)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Error inserting or updating WebObjects: %v", err)
@@ -1067,6 +1127,7 @@ func indexPageContext(waitCtx context.Context, ctx *ProcessContext, url string, 
 	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] WebObjects updated with indexID: %d", indexID)
 
 	// Index object attributes for WebObjet
+	phase = "index_object_attributes"
 	err = indexObjectAttributes(tx, objID, "webobject", detailsJSON, ctx.GetConfig(), metricSnapshot)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Error inserting or updating Object Attributes: %v", err)
@@ -1075,6 +1136,7 @@ func indexPageContext(waitCtx context.Context, ctx *ProcessContext, url string, 
 	}
 	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Object Attributes indexed for objectID: %d", objID)
 
+	phase = "emit_artifact_timeseries"
 	if err = emitPersistedArtifact(tx, ctx.GetConfig(), metricSnapshot, tse.IndexedArtifactInput{
 		SourceKind: cfg.TimeSeriesSourceWebObject, IndexID: indexID, RowID: uint64(objID),
 		ObjectType: "webobject", ObjectID: uint64(objID), SubjectKey: objectHash, Hash: objectHash,
@@ -1085,6 +1147,7 @@ func indexPageContext(waitCtx context.Context, ctx *ProcessContext, url string, 
 	}
 
 	// Insert MetaTags
+	phase = "insert_metatags"
 	if pageInfo.Config.Crawler.CollectMetaTags {
 		err = insertMetaTagsWithTimeSeries(tx, indexID, pageInfo.MetaTags, pageInfo.Config, metricSnapshot)
 		if err != nil {
@@ -1097,6 +1160,7 @@ func indexPageContext(waitCtx context.Context, ctx *ProcessContext, url string, 
 	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] MetaTags inserted for indexID: %d", indexID)
 
 	// Commit the transaction
+	phase = "commit"
 	err = commitTransaction(tx)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Error committing transaction: %v", err)
@@ -1110,6 +1174,7 @@ func indexPageContext(waitCtx context.Context, ctx *ProcessContext, url string, 
 	// Out of transaction operations
 
 	// Store keywords only after the main page transaction has committed successfully.
+	phase = "post_commit_keywords"
 	if pageInfo.Config.Crawler.CollectKeywords {
 		err = insertKeywordsWithTimeSeries(db, indexID, pageInfo, pageInfo.Config)
 		if err != nil {
@@ -1126,6 +1191,21 @@ func indexPageContext(waitCtx context.Context, ctx *ProcessContext, url string, 
 
 	// Return the index ID
 	return indexID, nil
+}
+
+// formatIndexPagePhase builds the single aggregated diagnostic line emitted for
+// a failed indexPage phase. It intentionally includes no page payload, HTML,
+// attributes, or SQL arguments; only the operation, phase, timing, identifiers,
+// and the timeout classification.
+func formatIndexPagePhase(operation, phase string, elapsed time.Duration, sourceID, indexID uint64, err error) string {
+	return fmt.Sprintf(
+		"operation=%s phase=%s elapsed=%s source_id=%d index_id=%d timeout=%t error=%v",
+		operation, phase, elapsed, sourceID, indexID, cdb.IsTransactionTimeout(err), err,
+	)
+}
+
+func logIndexPagePhase(operation, phase string, started time.Time, sourceID, indexID uint64, err error) {
+	cmn.DebugMsg(cmn.DbgLvlError, "%s", formatIndexPagePhase(operation, phase, time.Since(started), sourceID, indexID, err))
 }
 
 func indexObjectAttributes(
@@ -1320,7 +1400,7 @@ func insertObjectAttribute(
 }
 
 // indexNetInfo indexes the network information of a source in the database
-func indexNetInfo(db cdb.Handler, url string, pageInfo *PageInfo, flags int) (uint64, error) {
+func indexNetInfo(db cdb.Handler, url string, pageInfo *PageInfo, flags int) (resultIndexID uint64, retErr error) {
 	// Acquire a lock to ensure that only one goroutine is accessing the database
 	//indexPageMutex.Lock()
 	//defer indexPageMutex.Unlock()
@@ -1342,12 +1422,13 @@ func indexNetInfo(db cdb.Handler, url string, pageInfo *PageInfo, flags int) (ui
 	tx, err := db.BeginTx(txCtx, nil)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "starting transaction: %v", err)
-		return 0, err
+		return 0, cdb.NormalizeTransactionError(txCtx, err)
 	}
 	txStarted := time.Now()
 	defer func() {
 		_ = tx.Rollback()
-		cdb.LogTransactionOutcome("indexNetInfo", txStarted, err)
+		retErr = cdb.NormalizeTransactionError(txCtx, retErr)
+		cdb.LogTransactionOutcome("indexNetInfo", txStarted, retErr)
 	}()
 	metricEmitter := newCrawlerIndexedArtifactEmitter(tx, pageInfo.Config)
 	metricSnapshot, err := metricEmitter.LoadEnabledMetricSnapshot()
@@ -1465,16 +1546,84 @@ func strLeft(s string, x int) string {
 	return string(runes[:x])
 }
 
-// deleteWebObjects deletes web object entries associated with a given index ID from the database.
-func deleteWebObjects(tx *sql.Tx, indexID uint64) error {
-	_, err := tx.Exec(`
-		DELETE FROM WebObjects
-		WHERE object_id IN (
-			SELECT object_id
-			FROM WebObjectsIndex
-			WHERE index_id = $1
-		)`, indexID)
-	return err
+const webObjectCleanupTimeout = 15 * time.Minute
+
+// deleteWebObjects removes all WebObjects currently associated with indexID.
+//
+// Refresh-content cleanup deliberately runs in its own transaction so that
+// potentially expensive WebObject/ObjectAttributes cleanup does not consume
+// the indexPage transaction's database.transaction_timeout budget.
+//
+// The transaction is still bounded to prevent a pathological cleanup from
+// remaining open indefinitely and holding an MVCC snapshot.
+//
+// Any error is returned to the caller. The caller must not continue with the
+// replacement WebObject when cleanup fails, otherwise old and new generations
+// could coexist for the same page.
+func deleteWebObjects(
+	parent context.Context,
+	db *cdb.Handler,
+	indexID uint64,
+) (retErr error) {
+	if db == nil || *db == nil {
+		return errors.New("database handler is nil")
+	}
+	if indexID == 0 {
+		return errors.New("index ID is required")
+	}
+	if parent == nil {
+		parent = context.Background()
+	}
+
+	cleanupCtx, cancelCleanup := context.WithTimeout(
+		parent,
+		webObjectCleanupTimeout,
+	)
+	defer cancelCleanup()
+
+	tx, err := (*db).BeginTx(cleanupCtx, nil)
+	if err != nil {
+		return cdb.NormalizeTransactionError(cleanupCtx, err)
+	}
+
+	started := time.Now()
+	committed := false
+
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+
+		retErr = cdb.NormalizeTransactionError(cleanupCtx, retErr)
+		cdb.LogTransactionOutcome(
+			"deleteWebObjects",
+			started,
+			retErr,
+		)
+	}()
+
+	_, err = tx.ExecContext(
+		cleanupCtx,
+		`
+			DELETE FROM WebObjects
+			WHERE object_id IN (
+				SELECT object_id
+				FROM WebObjectsIndex
+				WHERE index_id = $1
+			)
+		`,
+		indexID,
+	)
+	if err != nil {
+		return err
+	}
+
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+
+	committed = true
+	return nil
 }
 
 // insertOrUpdateWebObjects inserts or updates a web object entry in the database.
@@ -2162,7 +2311,7 @@ func upsertPortableKeywords(db cdb.Handler, indexID uint64, ordered []string, oc
 // committed together, so callers never observe a page with only some keyword links.
 const postgresKeywordBatchSize = 500
 
-func upsertPostgresKeywords(db cdb.Handler, currCfg *cfg.Config, indexID uint64, ordered []string, occurrences map[string]int64) ([]persistedKeyword, error) {
+func upsertPostgresKeywords(db cdb.Handler, currCfg *cfg.Config, indexID uint64, ordered []string, occurrences map[string]int64) (persisted []persistedKeyword, retErr error) {
 	if len(ordered) == 0 {
 		return nil, nil
 	}
@@ -2170,9 +2319,12 @@ func upsertPostgresKeywords(db cdb.Handler, currCfg *cfg.Config, indexID uint64,
 	defer cancelTx()
 	tx, err := db.BeginTx(txCtx, nil)
 	if err != nil {
-		return nil, err
+		return nil, cdb.NormalizeTransactionError(txCtx, err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() {
+		_ = tx.Rollback()
+		retErr = cdb.NormalizeTransactionError(txCtx, retErr)
+	}()
 
 	result := make([]persistedKeyword, 0, len(ordered))
 	for start := 0; start < len(ordered); start += postgresKeywordBatchSize {
