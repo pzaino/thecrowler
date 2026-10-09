@@ -1009,16 +1009,6 @@ func indexPageContext(waitCtx context.Context,
 	defer release()
 
 	db := *ctx.db
-	var indexID uint64
-
-	// Check if the page already exists in the index and retrieve its indexID if it does.
-	indexID, err = getIndexIDForURL(ctx.db, url)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Error checking existing indexID for URL %s: %v", url, err)
-		cmn.DebugMsg(cmn.DbgLvlError, "checking existing indexID for URL %s: %v", url, err)
-		return 0, err
-	}
-
 	process_cfg := ctx.GetConfig()
 
 	// Before updating the source state, check if the database connection is still alive
@@ -1029,15 +1019,29 @@ func indexPageContext(waitCtx context.Context,
 	}
 	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Database ready, Indexing page: %s", url)
 
+	var indexID uint64
+
+	// Check if the page already exists in the index and retrieve its indexID if it does.
+	indexID, err = getIndexIDForURL(ctx.db, url)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Error checking existing indexID for URL %s: %v", url, err)
+		cmn.DebugMsg(cmn.DbgLvlError, "checking existing indexID for URL %s: %v", url, err)
+		return 0, err
+	}
+
 	// Check if we need to delete existing webObjects for this page
 	// before starting the indexing process.
 	if ctx.config.Crawler.RefreshContent && (indexID != 0) {
 		//phase = "delete_previous_webobjects"
 		// We need to delete existing webObjects for this indexID
-		err = deleteWebObjects(ctx.db, indexID)
+		err = deleteWebObjects(waitCtx, ctx.db, indexID)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Error deleting existing WebObjects for indexID %d: %v", indexID, err)
-			cmn.DebugMsg(cmn.DbgLvlError, "deleting existing WebObjects: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError,
+				"deleting existing WebObjects for indexID %d: %v",
+				indexID,
+				err,
+			)
+			return 0, err
 		}
 	}
 
@@ -1532,16 +1536,84 @@ func strLeft(s string, x int) string {
 	return string(runes[:x])
 }
 
-// deleteWebObjects deletes web object entries associated with a given index ID from the database.
-func deleteWebObjects(db *cdb.Handler, indexID uint64) error {
-	_, err := (*db).Exec(`
-		DELETE FROM WebObjects
-		WHERE object_id IN (
-			SELECT object_id
-			FROM WebObjectsIndex
-			WHERE index_id = $1
-		)`, indexID)
-	return err
+const webObjectCleanupTimeout = 15 * time.Minute
+
+// deleteWebObjects removes all WebObjects currently associated with indexID.
+//
+// Refresh-content cleanup deliberately runs in its own transaction so that
+// potentially expensive WebObject/ObjectAttributes cleanup does not consume
+// the indexPage transaction's database.transaction_timeout budget.
+//
+// The transaction is still bounded to prevent a pathological cleanup from
+// remaining open indefinitely and holding an MVCC snapshot.
+//
+// Any error is returned to the caller. The caller must not continue with the
+// replacement WebObject when cleanup fails, otherwise old and new generations
+// could coexist for the same page.
+func deleteWebObjects(
+	parent context.Context,
+	db *cdb.Handler,
+	indexID uint64,
+) (retErr error) {
+	if db == nil || *db == nil {
+		return errors.New("database handler is nil")
+	}
+	if indexID == 0 {
+		return errors.New("index ID is required")
+	}
+	if parent == nil {
+		parent = context.Background()
+	}
+
+	cleanupCtx, cancelCleanup := context.WithTimeout(
+		parent,
+		webObjectCleanupTimeout,
+	)
+	defer cancelCleanup()
+
+	tx, err := (*db).BeginTx(cleanupCtx, nil)
+	if err != nil {
+		return cdb.NormalizeTransactionError(cleanupCtx, err)
+	}
+
+	started := time.Now()
+	committed := false
+
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+
+		retErr = cdb.NormalizeTransactionError(cleanupCtx, retErr)
+		cdb.LogTransactionOutcome(
+			"deleteWebObjects",
+			started,
+			retErr,
+		)
+	}()
+
+	_, err = tx.ExecContext(
+		cleanupCtx,
+		`
+			DELETE FROM WebObjects
+			WHERE object_id IN (
+				SELECT object_id
+				FROM WebObjectsIndex
+				WHERE index_id = $1
+			)
+		`,
+		indexID,
+	)
+	if err != nil {
+		return err
+	}
+
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+
+	committed = true
+	return nil
 }
 
 // insertOrUpdateWebObjects inserts or updates a web object entry in the database.
