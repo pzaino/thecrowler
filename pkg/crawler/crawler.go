@@ -1021,27 +1021,37 @@ func indexPageContext(waitCtx context.Context,
 
 	var indexID uint64
 
-	// Check if the page already exists in the index and retrieve its indexID if it does.
-	indexID, err = getIndexIDForURL(ctx.db, url)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Error checking existing indexID for URL %s: %v", url, err)
-		cmn.DebugMsg(cmn.DbgLvlError, "checking existing indexID for URL %s: %v", url, err)
-		return 0, err
-	}
-
 	// Check if we need to delete existing webObjects for this page
 	// before starting the indexing process.
-	if ctx.config.Crawler.RefreshContent && (indexID != 0) {
-		//phase = "delete_previous_webobjects"
-		// We need to delete existing webObjects for this indexID
-		err = deleteWebObjects(waitCtx, ctx.db, indexID)
+	if ctx.config.Crawler.RefreshContent {
+		indexID, err = getIndexIDForURL(ctx.db, url)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError,
-				"deleting existing WebObjects for indexID %d: %v",
-				indexID,
+			cmn.DebugMsg(
+				cmn.DbgLvlDebug4,
+				"[DEBUG-Indexing] Error checking existing indexID for URL %s: %v",
+				url,
+				err,
+			)
+			cmn.DebugMsg(
+				cmn.DbgLvlError,
+				"checking existing indexID for URL %s: %v",
+				url,
 				err,
 			)
 			return 0, err
+		}
+
+		if indexID != 0 {
+			// We need to delete existing webObjects for this indexID
+			err = deleteWebObjects(waitCtx, ctx.db, indexID)
+			if err != nil {
+				cmn.DebugMsg(cmn.DbgLvlError,
+					"deleting existing WebObjects for indexID %d: %v",
+					indexID,
+					err,
+				)
+				return 0, err
+			}
 		}
 	}
 
