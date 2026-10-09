@@ -128,8 +128,8 @@ func TestPostgresWebObjectRefreshUsesReplacementPath(t *testing.T) {
 	}
 
 	if err = setupTx.QueryRow(`
-		INSERT INTO SearchIndex(page_url, title)
-		VALUES($1, 'Widget')
+		INSERT INTO SearchIndex(page_url, title, summary)
+		VALUES($1, 'Widget', '')
 		RETURNING index_id`,
 		"https://crawler-widget.invalid/page/"+suffix,
 	).Scan(&indexID); err != nil {
