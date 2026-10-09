@@ -90,8 +90,13 @@ func TestPostgresWebObjectRefreshUsesReplacementPath(t *testing.T) {
 	}
 	defer func() { _ = setupTx.Rollback() }()
 
+	sourceURL := "https://crawler-widget.invalid/" + suffix
+	sourceName := "widget refresh"
+	sourceUID := cdb.CalculateSourceUID(sourceName, sourceURL)
+
 	if err = setupTx.QueryRow(`
 		INSERT INTO Sources(
+			source_uid,
 			url,
 			name,
 			priority,
@@ -104,7 +109,8 @@ func TestPostgresWebObjectRefreshUsesReplacementPath(t *testing.T) {
 		)
 		VALUES(
 			$1,
-			'widget refresh',
+			$2,
+			$3,
 			'normal',
 			0,
 			0,
@@ -114,7 +120,9 @@ func TestPostgresWebObjectRefreshUsesReplacementPath(t *testing.T) {
 			false
 		)
 		RETURNING source_id`,
-		"https://crawler-widget.invalid/"+suffix,
+		sourceUID,
+		sourceURL,
+		sourceName,
 	).Scan(&sourceID); err != nil {
 		t.Fatal(err)
 	}

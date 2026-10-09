@@ -50,8 +50,12 @@ func TestPostgresMetaTagDuplicateAndConcurrentPersistence(t *testing.T) {
 
 	suffix := fmt.Sprint(time.Now().UnixNano())
 	var indexID uint64
-	if err = handler.QueryRow(`INSERT INTO SearchIndex(page_url,title) VALUES($1,'metatags') RETURNING index_id`,
-		"https://metatag-set.invalid/"+suffix).Scan(&indexID); err != nil {
+	if err = handler.QueryRow(
+		`INSERT INTO SearchIndex(page_url, title, summary)
+		VALUES($1, 'metatags', '')
+		RETURNING index_id`,
+		"https://metatag-set.invalid/"+suffix,
+	).Scan(&indexID); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {

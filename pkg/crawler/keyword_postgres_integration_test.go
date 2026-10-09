@@ -49,8 +49,12 @@ func TestPostgresKeywordSetPersistence(t *testing.T) {
 	const workers = 4
 	indexIDs := make([]uint64, workers)
 	for i := range indexIDs {
-		if err = handler.QueryRow(`INSERT INTO SearchIndex(page_url,title) VALUES($1,'keywords') RETURNING index_id`,
-			fmt.Sprintf("https://keyword-set.invalid/%s/%d", suffix, i)).Scan(&indexIDs[i]); err != nil {
+		if err = handler.QueryRow(
+			`INSERT INTO SearchIndex(page_url, title, summary)
+			VALUES($1, 'keywords', '')
+			RETURNING index_id`,
+			fmt.Sprintf("https://keyword-set.invalid/%s/%d", suffix, i),
+		).Scan(&indexIDs[i]); err != nil {
 			t.Fatal(err)
 		}
 	}

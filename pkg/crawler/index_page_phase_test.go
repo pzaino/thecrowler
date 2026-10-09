@@ -52,6 +52,21 @@ func TestFormatIndexPagePhaseNonTimeout(t *testing.T) {
 }
 
 func TestLogIndexPagePhaseDoesNotPanic(t *testing.T) {
-	logIndexPagePhase("indexPage", "commit", time.Now().Add(-time.Second), 1, 2, nil)
-	logIndexPagePhase("indexPage", "commit", time.Now().Add(-time.Second), 1, 2, cdb.ErrTransactionTimeout)
+	logIndexPagePhase(
+		"indexPage",
+		"commit",
+		time.Now().Add(-time.Second),
+		1,
+		2,
+		fmt.Errorf("commit failed"),
+	)
+
+	logIndexPagePhase(
+		"indexPage",
+		"commit",
+		time.Now().Add(-time.Second),
+		1,
+		2,
+		cdb.ErrTransactionTimeout,
+	)
 }
