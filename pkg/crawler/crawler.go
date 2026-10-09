@@ -971,7 +971,7 @@ func indexPage(ctx *ProcessContext, url string, pageInfo *PageInfo) (uint64, err
 
 func getIndexIDForURL(db *cdb.Handler, url string) (uint64, error) {
 	var indexID uint64
-	err := (*db).QueryRow(`SELECT index_id FROM SearchIndex WHERE url = $1`, url).Scan(&indexID)
+	err := (*db).QueryRow(`SELECT index_id FROM SearchIndex WHERE page_url = $1`, url).Scan(&indexID)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return 0, nil
