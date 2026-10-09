@@ -218,13 +218,14 @@ func retrieveAvailableSources(db cdb.Handler, maxSources int) (sourcesToCrawl []
 	defer cancelTx()
 	tx, err := db.BeginTx(txCtx, nil)
 	if err != nil {
-		return nil, err
+		return nil, cdb.NormalizeTransactionError(txCtx, err)
 	}
 	txStarted := time.Now()
 	defer func() {
 		// Best-effort rollback (no-op after a successful commit); also covers
 		// panics between BEGIN and COMMIT.
 		_ = tx.Rollback()
+		err = cdb.NormalizeTransactionError(txCtx, err)
 		cdb.LogTransactionOutcome("retrieveAvailableSources", txStarted, err)
 	}()
 	// Update the SQL query to fetch all necessary fields

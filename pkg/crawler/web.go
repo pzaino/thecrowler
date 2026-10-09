@@ -250,7 +250,7 @@ func insertScreenshot(db cdb.Handler, screenshot Screenshot) error {
 	return err
 }
 
-func insertScreenshotWithTimeSeries(db cdb.Handler, screenshot Screenshot, currCfg *cfg.Config) error {
+func insertScreenshotWithTimeSeries(db cdb.Handler, screenshot Screenshot, currCfg *cfg.Config) (retErr error) {
 	if screenshot.IndexID == 0 {
 		return errors.New("index ID is required")
 	}
@@ -258,9 +258,12 @@ func insertScreenshotWithTimeSeries(db cdb.Handler, screenshot Screenshot, currC
 	defer cancelTx()
 	tx, err := db.BeginTx(txCtx, nil)
 	if err != nil {
-		return err
+		return cdb.NormalizeTransactionError(txCtx, err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() {
+		_ = tx.Rollback()
+		retErr = cdb.NormalizeTransactionError(txCtx, retErr)
+	}()
 	emitter := newCrawlerIndexedArtifactEmitter(tx, currCfg)
 	snapshot, err := emitter.LoadEnabledMetricSnapshot()
 	if err != nil {

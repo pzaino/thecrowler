@@ -26,7 +26,7 @@ import (
 
 // LinkSourcesToInformationSeed idempotently records source/information-seed
 // relationships. Duplicate source/seed pairs are ignored and treated as success.
-func LinkSourcesToInformationSeed(db *Handler, links []SourceSeedLink) error {
+func LinkSourcesToInformationSeed(db *Handler, links []SourceSeedLink) (retErr error) {
 	if db == nil || *db == nil {
 		return fmt.Errorf("database handler is nil")
 	}
@@ -34,16 +34,17 @@ func LinkSourcesToInformationSeed(db *Handler, links []SourceSeedLink) error {
 		return nil
 	}
 
-	// Bound the link transaction with the default timeout (see
+	// Bound the link transaction with the configured timeout (see
 	// TransactionContext).
-	txCtx, cancelTx := TransactionContext(context.Background(), nil)
+	txCtx, cancelTx := TransactionContextForHandler(context.Background(), db)
 	defer cancelTx()
 	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
-		return fmt.Errorf("failed to start source/information-seed link transaction: %w", err)
+		return NormalizeTransactionError(txCtx, fmt.Errorf("failed to start source/information-seed link transaction: %w", err))
 	}
 	committed := false
 	defer rollbackIfUncommitted(tx, &committed)
+	defer func() { retErr = NormalizeTransactionError(txCtx, retErr) }()
 
 	var query string
 	switch normalizeInformationSeedDBMS((*db).DBMS()) {
@@ -148,7 +149,7 @@ func LinkSourceToInformationSeed(db *Handler, sourceID, informationSeedID uint64
 // source/seed relationship and records per-discovery provenance on that exact
 // relationship row. Nil metadata fields are left unchanged on duplicate links so
 // partial updates cannot clear unrelated metadata attributes.
-func LinkSourceToInformationSeedWithDiscoveryMetadata(db *Handler, sourceID, informationSeedID uint64, metadata InformationSeedDiscoveryMetadata) error {
+func LinkSourceToInformationSeedWithDiscoveryMetadata(db *Handler, sourceID, informationSeedID uint64, metadata InformationSeedDiscoveryMetadata) (retErr error) {
 	if db == nil || *db == nil {
 		return fmt.Errorf("database handler is nil")
 	}
@@ -163,16 +164,17 @@ func LinkSourceToInformationSeedWithDiscoveryMetadata(db *Handler, sourceID, inf
 	if err != nil {
 		return err
 	}
-	// Bound the link transaction with the default timeout (see
+	// Bound the link transaction with the configured timeout (see
 	// TransactionContext).
-	txCtx, cancelTx := TransactionContext(context.Background(), nil)
+	txCtx, cancelTx := TransactionContextForHandler(context.Background(), db)
 	defer cancelTx()
 	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
-		return fmt.Errorf("failed to start source discovery transaction: %w", err)
+		return NormalizeTransactionError(txCtx, fmt.Errorf("failed to start source discovery transaction: %w", err))
 	}
 	committed := false
 	defer rollbackIfUncommitted(tx, &committed)
+	defer func() { retErr = NormalizeTransactionError(txCtx, retErr) }()
 	args := []interface{}{sourceID, informationSeedID, nullableArg(metadata.DiscoveryProvider), nullableArg(metadata.DiscoveryQuery), nullableArg(metadata.DiscoveryRank), nullableArg(metadata.CandidateScore), nullableArg(metadata.CandidateReason), nullableArg(metadataJSON)}
 	var query string
 	switch dbms {

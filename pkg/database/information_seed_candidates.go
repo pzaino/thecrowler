@@ -51,7 +51,7 @@ type InformationSeedCandidateFilter struct {
 // UpsertInformationSeedCandidateDecisions inserts or updates information seed
 // candidate decision evidence. The operation is idempotent for a single seed,
 // normalized URL, provider, query, rank, and run attempt tuple.
-func UpsertInformationSeedCandidateDecisions(db *Handler, candidates []InformationSeedCandidate) error {
+func UpsertInformationSeedCandidateDecisions(db *Handler, candidates []InformationSeedCandidate) (retErr error) {
 	if db == nil || *db == nil {
 		return fmt.Errorf("database handler is nil")
 	}
@@ -64,16 +64,17 @@ func UpsertInformationSeedCandidateDecisions(db *Handler, candidates []Informati
 		return fmt.Errorf("unsupported database type for information seed candidate decisions: %s", (*db).DBMS())
 	}
 
-	// Bound the candidate transaction with the default timeout (see
+	// Bound the candidate transaction with the configured timeout (see
 	// TransactionContext).
-	txCtx, cancelTx := TransactionContext(context.Background(), nil)
+	txCtx, cancelTx := TransactionContextForHandler(context.Background(), db)
 	defer cancelTx()
 	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
-		return fmt.Errorf("failed to start information seed candidate transaction: %w", err)
+		return NormalizeTransactionError(txCtx, fmt.Errorf("failed to start information seed candidate transaction: %w", err))
 	}
 	committed := false
 	defer rollbackIfUncommitted(tx, &committed)
+	defer func() { retErr = NormalizeTransactionError(txCtx, retErr) }()
 
 	query := informationSeedCandidateUpsertQuery(dbms)
 	for _, candidate := range candidates {

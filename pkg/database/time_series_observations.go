@@ -129,7 +129,7 @@ func insertObservationWithCardinality(ctx context.Context, tx *sql.Tx, dbms stri
 
 // InsertTimeSeriesObservation inserts one fact. A duplicate dedupe_key returns a
 // successful result with Duplicate=true and the existing observation ID.
-func InsertTimeSeriesObservation(db *Handler, observation *TimeSeriesObservation) (TimeSeriesInsertResult, error) {
+func InsertTimeSeriesObservation(db *Handler, observation *TimeSeriesObservation) (insertResult TimeSeriesInsertResult, retErr error) {
 	dbms, err := validateTimeSeriesDB(db)
 	if err != nil {
 		return TimeSeriesInsertResult{}, err
@@ -137,20 +137,21 @@ func InsertTimeSeriesObservation(db *Handler, observation *TimeSeriesObservation
 	if observation == nil {
 		return TimeSeriesInsertResult{}, fmt.Errorf("time-series observation is nil")
 	}
-	// Bound the observation transaction with the default timeout (see
+	// Bound the observation transaction with the configured timeout (see
 	// TransactionContext): this legacy entry point passes no context, so an
 	// abandoned transaction could otherwise hold the cardinality fence forever.
-	txCtx, cancelTx := TransactionContext(context.Background(), nil)
+	txCtx, cancelTx := TransactionContextForHandler(context.Background(), db)
 	defer cancelTx()
 	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
-		return TimeSeriesInsertResult{}, fmt.Errorf("begin time-series observation transaction: %w", err)
+		return TimeSeriesInsertResult{}, NormalizeTransactionError(txCtx, fmt.Errorf("begin time-series observation transaction: %w", err))
 	}
 	txStarted := time.Now()
 	defer func() {
 		// Best-effort rollback (no-op after commit); also covers panics.
 		_ = (*db).Rollback(tx)
-		LogTransactionOutcome("insertTimeSeriesObservation", txStarted, err)
+		retErr = NormalizeTransactionError(txCtx, retErr)
+		LogTransactionOutcome("insertTimeSeriesObservation", txStarted, retErr)
 	}()
 	result, err := insertTimeSeriesObservationTx(tx, dbms, observation)
 	if err != nil {
@@ -166,7 +167,7 @@ func InsertTimeSeriesObservation(db *Handler, observation *TimeSeriesObservation
 
 // InsertTimeSeriesObservations inserts a batch atomically. Duplicates are
 // policy successes; any other error rolls the whole batch back.
-func InsertTimeSeriesObservations(db *Handler, observations []TimeSeriesObservation) ([]TimeSeriesInsertResult, error) {
+func InsertTimeSeriesObservations(db *Handler, observations []TimeSeriesObservation) (insertResults []TimeSeriesInsertResult, retErr error) {
 	dbms, err := validateTimeSeriesDB(db)
 	if err != nil {
 		return nil, err
@@ -174,20 +175,21 @@ func InsertTimeSeriesObservations(db *Handler, observations []TimeSeriesObservat
 	if len(observations) == 0 {
 		return []TimeSeriesInsertResult{}, nil
 	}
-	// Bound the batch transaction with the default timeout (see
+	// Bound the batch transaction with the configured timeout (see
 	// TransactionContext): batches hold the cardinality fence for their whole
 	// lifetime and must not be able to hold it forever.
-	txCtx, cancelTx := TransactionContext(context.Background(), nil)
+	txCtx, cancelTx := TransactionContextForHandler(context.Background(), db)
 	defer cancelTx()
 	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
-		return nil, fmt.Errorf("begin time-series observation batch: %w", err)
+		return nil, NormalizeTransactionError(txCtx, fmt.Errorf("begin time-series observation batch: %w", err))
 	}
 	txStarted := time.Now()
 	defer func() {
 		// Best-effort rollback (no-op after commit); also covers panics.
 		_ = (*db).Rollback(tx)
-		LogTransactionOutcome("insertTimeSeriesObservations", txStarted, err)
+		retErr = NormalizeTransactionError(txCtx, retErr)
+		LogTransactionOutcome("insertTimeSeriesObservations", txStarted, retErr)
 	}()
 	if dbms == DBPostgresStr {
 		var pgResults []TimeSeriesInsertResult

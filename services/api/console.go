@@ -916,7 +916,7 @@ func performRemoveSource(query string, qType int, db *cdb.Handler) (ConsoleRespo
 	return performRemoveSourceContext(context.Background(), query, qType, db)
 }
 
-func performRemoveSourceContext(ctx context.Context, query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
+func performRemoveSourceContext(ctx context.Context, query string, qType int, db *cdb.Handler) (consoleResponse ConsoleResponse, retErr error) {
 	var results ConsoleResponse
 	var sourceURL string // Assuming the source URL is passed. Adjust as necessary based on input.
 
@@ -935,13 +935,14 @@ func performRemoveSourceContext(ctx context.Context, query string, qType int, db
 	defer cancelTx()
 	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
-		return ConsoleResponse{Message: errFailedToStartTransaction}, err
+		return ConsoleResponse{Message: errFailedToStartTransaction}, cdb.NormalizeTransactionError(txCtx, err)
 	}
 	txStarted := time.Now()
 	defer func() {
 		// Best-effort rollback (no-op after commit); also covers panics.
 		_ = tx.Rollback()
-		cdb.LogTransactionOutcome("removeSource", txStarted, err)
+		retErr = cdb.NormalizeTransactionError(txCtx, retErr)
+		cdb.LogTransactionOutcome("removeSource", txStarted, retErr)
 	}()
 
 	// Proceed with deleting the source using the obtained source_id
@@ -1374,7 +1375,7 @@ func performVacuumSource(query string, qType int, db *cdb.Handler) (ConsoleRespo
 	return performVacuumSourceContext(context.Background(), query, qType, db)
 }
 
-func performVacuumSourceContext(ctx context.Context, query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
+func performVacuumSourceContext(ctx context.Context, query string, qType int, db *cdb.Handler) (consoleResponse ConsoleResponse, retErr error) {
 	var filter cdb.SourceFilter
 
 	if qType == getQuery {
@@ -1405,13 +1406,14 @@ func performVacuumSourceContext(ctx context.Context, query string, qType int, db
 	defer cancelTx()
 	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
-		return ConsoleResponse{Message: "Failed to start transaction"}, err
+		return ConsoleResponse{Message: "Failed to start transaction"}, cdb.NormalizeTransactionError(txCtx, err)
 	}
 	txStarted := time.Now()
 	defer func() {
 		// Best-effort rollback (no-op after commit); also covers panics.
 		_ = tx.Rollback()
-		cdb.LogTransactionOutcome("vacuumSource", txStarted, err)
+		retErr = cdb.NormalizeTransactionError(txCtx, retErr)
+		cdb.LogTransactionOutcome("vacuumSource", txStarted, retErr)
 	}()
 
 	// Deleting indexed data

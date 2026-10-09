@@ -31,7 +31,7 @@ func CreateInformationSeed(db *Handler, seed *InformationSeed) (uint64, error) {
 }
 
 // CreateInformationSeedContext inserts a seed in a transaction bound to ctx.
-func CreateInformationSeedContext(ctx context.Context, db *Handler, seed *InformationSeed) (uint64, error) {
+func CreateInformationSeedContext(ctx context.Context, db *Handler, seed *InformationSeed) (seedID uint64, retErr error) {
 	if db == nil || *db == nil {
 		return 0, fmt.Errorf("database handler is nil")
 	}
@@ -57,14 +57,15 @@ func CreateInformationSeedContext(ctx context.Context, db *Handler, seed *Inform
 	}
 	// Bound the transaction (see TransactionContext): legacy callers pass
 	// context.Background() here, which would otherwise leave the tx open forever.
-	txCtx, cancelTx := TransactionContext(ctx, nil)
+	txCtx, cancelTx := TransactionContextForHandler(ctx, db)
 	defer cancelTx()
 	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
-		return 0, err
+		return 0, NormalizeTransactionError(txCtx, err)
 	}
 	committed := false
 	defer rollbackIfUncommitted(tx, &committed)
+	defer func() { retErr = NormalizeTransactionError(txCtx, retErr) }()
 	args := []interface{}{seed.CategoryID, seed.UsrID, seedText, status, priority, engine, seed.Disabled, config}
 	var id uint64
 	switch dbms {
@@ -141,7 +142,7 @@ func GetInformationSeedByIDContext(ctx context.Context, db *Handler, id uint64) 
 func SetInformationSeedDisabled(db *Handler, id uint64, disabled bool) error {
 	return SetInformationSeedDisabledContext(context.Background(), db, id, disabled)
 }
-func SetInformationSeedDisabledContext(ctx context.Context, db *Handler, id uint64, disabled bool) error {
+func SetInformationSeedDisabledContext(ctx context.Context, db *Handler, id uint64, disabled bool) (retErr error) {
 	if db == nil || *db == nil {
 		return fmt.Errorf("database handler is nil")
 	}
@@ -154,14 +155,15 @@ func SetInformationSeedDisabledContext(ctx context.Context, db *Handler, id uint
 	}
 	// Bound the transaction (see TransactionContext): legacy callers pass
 	// context.Background() here, which would otherwise leave the tx open forever.
-	txCtx, cancelTx := TransactionContext(ctx, nil)
+	txCtx, cancelTx := TransactionContextForHandler(ctx, db)
 	defer cancelTx()
 	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
-		return err
+		return NormalizeTransactionError(txCtx, err)
 	}
 	committed := false
 	defer rollbackIfUncommitted(tx, &committed)
+	defer func() { retErr = NormalizeTransactionError(txCtx, retErr) }()
 	p := newInformationSeedPlaceholders(dbms)
 	var previous bool
 	if err = tx.QueryRowContext(ctx, `SELECT disabled FROM InformationSeed WHERE information_seed_id = `+p.Next(), id).Scan(&previous); err != nil {
@@ -230,7 +232,7 @@ func emitInformationSeedLifecycleObservationsTxContext(ctx context.Context, tx *
 func UpdateInformationSeed(db *Handler, seed *InformationSeed) error {
 	return UpdateInformationSeedContext(context.Background(), db, seed)
 }
-func UpdateInformationSeedContext(ctx context.Context, db *Handler, seed *InformationSeed) error {
+func UpdateInformationSeedContext(ctx context.Context, db *Handler, seed *InformationSeed) (retErr error) {
 	if db == nil || *db == nil {
 		return fmt.Errorf("database handler is nil")
 	}
@@ -256,14 +258,15 @@ func UpdateInformationSeedContext(ctx context.Context, db *Handler, seed *Inform
 	}
 	// Bound the transaction (see TransactionContext): legacy callers pass
 	// context.Background() here, which would otherwise leave the tx open forever.
-	txCtx, cancelTx := TransactionContext(ctx, nil)
+	txCtx, cancelTx := TransactionContextForHandler(ctx, db)
 	defer cancelTx()
 	tx, err := (*db).BeginTx(txCtx, nil)
 	if err != nil {
-		return err
+		return NormalizeTransactionError(txCtx, err)
 	}
 	committed := false
 	defer rollbackIfUncommitted(tx, &committed)
+	defer func() { retErr = NormalizeTransactionError(txCtx, retErr) }()
 	p := newInformationSeedPlaceholders(dbms)
 	query := `UPDATE InformationSeed SET category_id = ` + p.Next() + `, usr_id = ` + p.Next() + `, information_seed = ` + p.Next() + `, status = ` + p.Next() + `, priority = ` + p.Next() + `, engine = ` + p.Next() + `, disabled = ` + p.Next() + `, config = ` + p.Next()
 	if dbms == DBPostgresStr {
