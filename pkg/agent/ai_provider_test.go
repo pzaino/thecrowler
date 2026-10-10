@@ -67,9 +67,9 @@ func TestNormalizeLLMRequestMapping(t *testing.T) {
 		"top_p":       "0.7",
 	}
 	config := map[string]interface{}{}
-	input := map[string]interface{}{StrRequest: "ignored"}
+	ictx := InputContext{Response: "ignored"}
 
-	req, err := normalizeLLMRequest(params, config, input)
+	req, err := normalizeLLMRequest(params, config, ictx)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -93,7 +93,7 @@ func TestNormalizeLLMRequestMessagesPriority(t *testing.T) {
 		"prompt":   "fallback",
 		"url":      "https://example.com/v1/chat/completions",
 	}
-	req, err := normalizeLLMRequest(params, map[string]interface{}{}, map[string]interface{}{StrRequest: "ignored"})
+	req, err := normalizeLLMRequest(params, map[string]interface{}{}, InputContext{Response: "ignored"})
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}

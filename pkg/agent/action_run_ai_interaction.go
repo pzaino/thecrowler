@@ -41,14 +41,16 @@ func (a *AIInteractionAction) Execute(params map[string]interface{}) (map[string
 	}
 	rval[StrConfig] = config
 
-	inputRaw, err := getInput(params)
-	if err != nil {
+	if _, err := getInput(params); err != nil {
 		rval[StrStatus] = StatusError
 		rval[StrMessage] = err.Error()
 		return rval, err
 	}
 
-	resolved, err := normalizeLLMRequest(params, config, inputRaw)
+	// Canonical input context: $response is the previous step's payload.
+	ictx := NewInputContext(params)
+
+	resolved, err := normalizeLLMRequest(params, config, ictx)
 	if err != nil {
 		rval[StrStatus] = StatusError
 		rval[StrMessage] = err.Error()
@@ -91,28 +93,77 @@ func (a *AIInteractionAction) Execute(params map[string]interface{}) (map[string
 	return rval, nil
 }
 
-func normalizeLLMRequest(params, config, inputRaw map[string]interface{}) (LLMRequest, error) {
-	getResolvedString := func(key string) string {
+func normalizeLLMRequest(params, config map[string]interface{}, ictx InputContext) (LLMRequest, error) {
+	getResolvedString := func(key string) (string, error) {
 		v, ok := params[key]
 		if !ok || v == nil {
-			return ""
+			return "", nil
 		}
 		s, ok := v.(string)
 		if !ok {
-			return ""
+			return "", nil
 		}
-		return strings.TrimSpace(resolveResponseString(inputRaw, s))
+		resolved, err := ResolveString(ictx, s)
+		if err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(resolved), nil
+	}
+	resolveField := func(key, nestedKey string) (string, error) {
+		raw, err := getResolvedString(key)
+		if err != nil {
+			return "", err
+		}
+		if raw != "" {
+			return raw, nil
+		}
+		nested, err := nestedConfigString(config, ictx, "ai", nestedKey)
+		if err != nil {
+			return "", err
+		}
+		if nested != "" {
+			return nested, nil
+		}
+		return resolveConfigString(config, ictx, nestedKey)
 	}
 
-	provider := firstString(getResolvedString("provider"), nestedConfigString(config, inputRaw, "ai", "provider"), defaultLLMProvider)
-	url := firstString(getResolvedString("url"), nestedConfigString(config, inputRaw, "ai", "url"), resolveConfigString(config, inputRaw, "url"))
-	auth := firstString(getResolvedString("auth"), nestedConfigString(config, inputRaw, "ai", "auth"), resolveConfigString(config, inputRaw, "auth"))
-	model := firstString(getResolvedString("model"), nestedConfigString(config, inputRaw, "ai", "model"), resolveConfigString(config, inputRaw, "model"))
+	provider, err := resolveField("provider", "provider")
+	if err != nil {
+		return LLMRequest{}, err
+	}
+	if provider == "" {
+		provider = defaultLLMProvider
+	}
+	url, err := resolveField("url", "url")
+	if err != nil {
+		return LLMRequest{}, err
+	}
+	auth, err := resolveField("auth", "auth")
+	if err != nil {
+		return LLMRequest{}, err
+	}
+	model, err := resolveField("model", "model")
+	if err != nil {
+		return LLMRequest{}, err
+	}
 
-	messages := normalizeMessages(params, inputRaw)
-	prompt := firstString(getResolvedString("prompt"), getResolvedString(StrMessage))
+	messages, err := normalizeMessages(params, ictx)
+	if err != nil {
+		return LLMRequest{}, err
+	}
+	promptRaw, err := getResolvedString("prompt")
+	if err != nil {
+		return LLMRequest{}, err
+	}
+	messageRaw, err := getResolvedString(StrMessage)
+	if err != nil {
+		return LLMRequest{}, err
+	}
+	prompt := firstString(promptRaw, messageRaw)
 	if prompt == "" {
-		if req, ok := inputRaw[StrRequest].(string); ok {
+		if req, ok := ictx.Response.(string); ok {
+			prompt = strings.TrimSpace(req)
+		} else if req, ok := params[StrRequest].(string); ok {
 			prompt = strings.TrimSpace(req)
 		}
 	}
@@ -123,22 +174,26 @@ func normalizeLLMRequest(params, config, inputRaw map[string]interface{}) (LLMRe
 		return LLMRequest{}, fmt.Errorf(ErrMissingURL)
 	}
 
-	temperature, err := parseOptionalFloat(params, inputRaw, "temperature")
+	temperature, err := parseOptionalFloat(params, ictx, "temperature")
 	if err != nil {
 		return LLMRequest{}, err
 	}
-	maxTokens, err := parseOptionalInt(params, inputRaw, "max_tokens")
+	maxTokens, err := parseOptionalInt(params, ictx, "max_tokens")
 	if err != nil {
 		return LLMRequest{}, err
 	}
-	topP, err := parseOptionalFloat(params, inputRaw, "top_p")
+	topP, err := parseOptionalFloat(params, ictx, "top_p")
 	if err != nil {
 		return LLMRequest{}, err
 	}
 
 	extras := map[string]interface{}{}
 	for _, key := range []string{"presence_penalty", "frequency_penalty", "stop", "echo", "logprobs", "n", "logit_bias", "stream"} {
-		if val, ok := resolveOptionalParam(params, inputRaw, key); ok {
+		val, ok, err := resolveOptionalParam(params, ictx, key)
+		if err != nil {
+			return LLMRequest{}, err
+		}
+		if ok {
 			extras[key] = val
 		}
 	}
@@ -247,18 +302,25 @@ func matchesPolicyPattern(pattern, actual string) bool {
 	return pattern == actual
 }
 
-func normalizeMessages(params, inputRaw map[string]interface{}) []interface{} {
+func normalizeMessages(params map[string]interface{}, ictx InputContext) ([]interface{}, error) {
 	if msgs, ok := params["messages"].([]interface{}); ok && len(msgs) > 0 {
-		resolved := resolveValue(inputRaw, msgs)
-		if out, ok := resolved.([]interface{}); ok {
-			return out
+		resolved, err := ResolveValue(ictx, msgs)
+		if err != nil {
+			return nil, err
 		}
+		if out, ok := resolved.([]interface{}); ok {
+			return out, nil
+		}
+		return nil, fmt.Errorf("invalid 'messages' parameter")
 	}
-	return nil
+	return nil, nil
 }
 
-func parseOptionalFloat(params, inputRaw map[string]interface{}, key string) (*float64, error) {
-	val, ok := resolveOptionalParam(params, inputRaw, key)
+func parseOptionalFloat(params map[string]interface{}, ictx InputContext, key string) (*float64, error) {
+	val, ok, err := resolveOptionalParam(params, ictx, key)
+	if err != nil {
+		return nil, err
+	}
 	if !ok {
 		return nil, nil
 	}
@@ -282,8 +344,11 @@ func parseOptionalFloat(params, inputRaw map[string]interface{}, key string) (*f
 	}
 }
 
-func parseOptionalInt(params, inputRaw map[string]interface{}, key string) (*int, error) {
-	val, ok := resolveOptionalParam(params, inputRaw, key)
+func parseOptionalInt(params map[string]interface{}, ictx InputContext, key string) (*int, error) {
+	val, ok, err := resolveOptionalParam(params, ictx, key)
+	if err != nil {
+		return nil, err
+	}
 	if !ok {
 		return nil, nil
 	}
@@ -307,29 +372,51 @@ func parseOptionalInt(params, inputRaw map[string]interface{}, key string) (*int
 	}
 }
 
-func resolveOptionalParam(params, inputRaw map[string]interface{}, key string) (interface{}, bool) {
+func resolveOptionalParam(params map[string]interface{}, ictx InputContext, key string) (interface{}, bool, error) {
 	raw, ok := params[key]
 	if !ok || raw == nil {
-		return nil, false
+		return nil, false, nil
 	}
 	if s, ok := raw.(string); ok {
-		return resolveResponseString(inputRaw, s), true
+		resolved, err := ResolveString(ictx, s)
+		if err != nil {
+			return nil, false, err
+		}
+		return resolved, true, nil
 	}
-	return resolveValue(inputRaw, raw), true
+	resolved, err := ResolveValue(ictx, raw)
+	if err != nil {
+		return nil, false, err
+	}
+	return resolved, true, nil
 }
 
-func nestedConfigString(config map[string]interface{}, inputRaw map[string]interface{}, key, nested string) string {
+func nestedConfigString(config map[string]interface{}, ictx InputContext, key, nested string) (string, error) {
 	cfgSection := mapStringAny(config[key])
 	if len(cfgSection) == 0 {
-		return ""
+		return "", nil
 	}
 	v, _ := cfgSection[nested].(string)
-	return strings.TrimSpace(resolveResponseString(inputRaw, v))
+	if strings.TrimSpace(v) == "" {
+		return "", nil
+	}
+	resolved, err := ResolveString(ictx, v)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(resolved), nil
 }
 
-func resolveConfigString(config map[string]interface{}, inputRaw map[string]interface{}, key string) string {
+func resolveConfigString(config map[string]interface{}, ictx InputContext, key string) (string, error) {
 	v, _ := config[key].(string)
-	return strings.TrimSpace(resolveResponseString(inputRaw, v))
+	if strings.TrimSpace(v) == "" {
+		return "", nil
+	}
+	resolved, err := ResolveString(ictx, v)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(resolved), nil
 }
 
 func firstString(values ...string) string {

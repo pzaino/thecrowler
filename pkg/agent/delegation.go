@@ -34,20 +34,39 @@ type delegationGraph struct {
 	Edges []string `json:"edges"`
 }
 
-func resolveDelegationTarget(step map[string]interface{}, input map[string]interface{}) (delegationTarget, error) {
+func resolveDelegationTarget(step map[string]interface{}, ictx InputContext) (delegationTarget, error) {
 	if step == nil {
 		return delegationTarget{}, fmt.Errorf("missing decision branch")
 	}
+	resolve := func(raw string) (string, error) {
+		resolved, err := ResolveString(ictx, raw)
+		if err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(resolved), nil
+	}
 	target := delegationTarget{}
 	if agentID, _ := step["agent_id"].(string); strings.TrimSpace(agentID) != "" {
-		target.AgentID = strings.TrimSpace(resolveResponseString(input, agentID))
+		resolved, err := resolve(agentID)
+		if err != nil {
+			return delegationTarget{}, err
+		}
+		target.AgentID = resolved
 	}
 	if agentName, _ := step["agent_name"].(string); strings.TrimSpace(agentName) != "" {
-		target.AgentName = strings.TrimSpace(resolveResponseString(input, agentName))
+		resolved, err := resolve(agentName)
+		if err != nil {
+			return delegationTarget{}, err
+		}
+		target.AgentName = resolved
 	}
 	if target.AgentID == "" {
 		if callAgent, _ := step["call_agent"].(string); strings.TrimSpace(callAgent) != "" {
-			target.AgentName = strings.TrimSpace(resolveResponseString(input, callAgent))
+			resolved, err := resolve(callAgent)
+			if err != nil {
+				return delegationTarget{}, err
+			}
+			target.AgentName = resolved
 		}
 	}
 	if target.AgentID == "" && target.AgentName == "" {

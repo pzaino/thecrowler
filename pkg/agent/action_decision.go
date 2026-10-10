@@ -47,7 +47,9 @@ func (d *DecisionAction) Execute(params map[string]interface{}) (map[string]inte
 	}
 	rval[StrConfig] = config
 
-	// Extract previous step response
+	// Canonical input context: $response is the previous step's payload.
+	// The triggering event stays addressable as $event.
+	ictx := NewInputContext(params)
 	inputRaw, _ := getInput(params)
 
 	condition, ok := params["condition"].(map[string]interface{})
@@ -57,7 +59,7 @@ func (d *DecisionAction) Execute(params map[string]interface{}) (map[string]inte
 		return rval, fmt.Errorf("missing 'condition' parameter")
 	}
 
-	result, err := evaluateCondition(condition, params, inputRaw)
+	result, err := evaluateCondition(condition, ictx)
 	if err != nil {
 		rval[StrStatus] = StatusError
 		rval[StrMessage] = fmt.Sprintf("failed to evaluate condition: %v", err)
@@ -96,7 +98,7 @@ func (d *DecisionAction) Execute(params map[string]interface{}) (map[string]inte
 
 	var results map[string]interface{}
 	if nextStep != nil {
-		target, resolveErr := resolveDelegationTarget(nextStep, inputRaw)
+		target, resolveErr := resolveDelegationTarget(nextStep, ictx)
 		if resolveErr != nil {
 			emitDelegationAudit(params, "", auditOutcomeDenied, resolveErr.Error())
 			rval[StrStatus] = StatusError
@@ -186,7 +188,7 @@ func (d *DecisionAction) Execute(params map[string]interface{}) (map[string]inte
 	return rval, nil
 }
 
-func evaluateCondition(condition, params, rawInput map[string]interface{}) (interface{}, error) {
+func evaluateCondition(condition map[string]interface{}, ictx InputContext) (interface{}, error) {
 	// Check which condition to evaluate (agents usually support `if` and `switch` type conditions)
 	conditionType, _ := condition["condition_type"].(string)
 	conditionType = strings.ToLower(strings.TrimSpace(conditionType))
@@ -201,35 +203,39 @@ func evaluateCondition(condition, params, rawInput map[string]interface{}) (inte
 		}
 
 		// Evaluate the condition
-		return evaluateIfCondition(expr, rawInput)
+		return evaluateIfCondition(expr, ictx)
 	}
 
 	// Check if the condition is a `switch` condition
 	if conditionType == "switch" {
-		// Extract the switch condition
-		expr, ok := params["expression"].(string)
+		// Extract the switch expression from the condition itself.
+		expr, ok := condition["expression"].(string)
 		if !ok {
 			return false, fmt.Errorf("missing 'expression' in condition")
 		}
 
 		// Also, check if the switch many cases needs to be resolved
-		// This should be an array of cases like {"1": "case1", "2": "case2", "default": "default"}
+		// This should be a map of cases like {"1": "case1", "2": "case2", "default": "default"}
 		rawCases, ok := condition["cases"].(map[string]interface{})
 		if !ok {
 			return false, fmt.Errorf("missing 'cases' in condition")
 		}
 
 		// Evaluate the switch condition
-		return evaluateSwitchCondition(expr, rawCases, rawInput)
+		return evaluateSwitchCondition(expr, rawCases, ictx)
 	}
 
 	return false, fmt.Errorf("unsupported condition type: %s", conditionType)
 }
 
 // evaluateIfCondition evaluates a boolean condition based on the given expression and parameters.
-func evaluateIfCondition(expression string, rawInput map[string]interface{}) (bool, error) {
+func evaluateIfCondition(expression string, ictx InputContext) (bool, error) {
 	// Check if expr needs to be resolved
-	expression = resolveResponseString(rawInput, expression)
+	resolved, err := ResolveString(ictx, expression)
+	if err != nil {
+		return false, err
+	}
+	expression = resolved
 
 	// Wrap string values in single quotes
 	expression = wrapStrings(expression)
@@ -270,7 +276,7 @@ func wrapStrings(expression string) string {
 }
 
 // evaluateSwitchCondition evaluates a switch-like condition based on the given expression and cases.
-func evaluateSwitchCondition(expression string, rawCases, rawInput map[string]interface{}) (interface{}, error) {
+func evaluateSwitchCondition(expression string, rawCases map[string]interface{}, ictx InputContext) (interface{}, error) {
 
 	// Parse the expression (basic implementation)
 	// example expression: "test == test", or just "test"
@@ -279,13 +285,16 @@ func evaluateSwitchCondition(expression string, rawCases, rawInput map[string]in
 	var err error
 	if len(parts) > 1 {
 		// use evaluateIfCondition for comparison
-		expr, err = evaluateIfCondition(expression, rawInput)
+		expr, err = evaluateIfCondition(expression, ictx)
 		if err != nil {
 			return false, fmt.Errorf("invalid switch condition: %s", expression)
 		}
 	} else {
 		// Check if expression needs to be resolved
-		expr = resolveResponseString(rawInput, expression)
+		expr, err = ResolveString(ictx, expression)
+		if err != nil {
+			return false, err
+		}
 	}
 
 	// Check if cases needs to be resolved
@@ -293,17 +302,17 @@ func evaluateSwitchCondition(expression string, rawCases, rawInput map[string]in
 	// Convert rawCases to a map
 	for k, v := range rawCases {
 		// Check if k needs to be resolved
-		k = resolveResponseString(rawInput, k)
-		// Check if v needs to be resolved
-		// Is V a map?
-		if _, ok := v.(map[string]interface{}); ok {
-			v = resolveValue(rawInput, v)
-		} else {
-			// Check if v is a string
-			// If it is, resolve it
-			v = resolveResponseString(rawInput, v.(string))
+		resolvedKey, err := ResolveString(ictx, k)
+		if err != nil {
+			return false, err
 		}
-		cases[k] = v
+		// Check if v needs to be resolved (any JSON type, without
+		// in-place mutation of the stored manifest).
+		resolvedValue, err := ResolveValue(ictx, v)
+		if err != nil {
+			return false, err
+		}
+		cases[resolvedKey] = resolvedValue
 	}
 
 	// Look for matching cases in params

@@ -60,20 +60,35 @@ func (e *CreateEventAction) Execute(params map[string]interface{}) (map[string]i
 		rval[StrMessage] = err.Error()
 		return rval, err
 	}
-	eventMap, _ := eventRaw[StrRequest].(map[string]interface{})
+
+	// Canonical input context: $response is the previous step's payload.
+	ictx := NewInputContext(params)
+	resolveField := func(raw string) (string, error) {
+		return ResolveString(ictx, raw)
+	}
 
 	// Transform eventRaw into an event struct
 	event := cdb.Event{}
 	event.Details = eventRaw
 	if params["event_type"] != nil {
 		eType, _ := params["event_type"].(string)
-		eType = strings.TrimSpace(resolveResponseString(eventMap, eType))
-		event.Type = eType
+		resolved, err := resolveField(eType)
+		if err != nil {
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = err.Error()
+			return rval, err
+		}
+		event.Type = strings.TrimSpace(resolved)
 	}
 	if params["source"] != nil {
 		eSource, _ := params["source"].(string)
-		eSource = resolveResponseString(eventMap, eSource)
-		eSourceInt, err := strconv.ParseUint(eSource, 10, 64)
+		resolved, err := resolveField(eSource)
+		if err != nil {
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = err.Error()
+			return rval, err
+		}
+		eSourceInt, err := strconv.ParseUint(resolved, 10, 64)
 		if err != nil {
 			rval[StrStatus] = StatusError
 			rval[StrMessage] = fmt.Sprintf("invalid source ID: %v", err)
@@ -86,9 +101,14 @@ func (e *CreateEventAction) Execute(params map[string]interface{}) (map[string]i
 	// Check if there is a timestamp params
 	if params["timestamp"] != nil {
 		eTimestamp, _ := params["timestamp"].(string)
-		eTimestamp = resolveResponseString(eventMap, eTimestamp)
+		resolved, err := resolveField(eTimestamp)
+		if err != nil {
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = err.Error()
+			return rval, err
+		}
 		// convert eTimestamp to a time.Time
-		t, err := time.Parse("2006-01-02 15:04:05", eTimestamp)
+		t, err := time.Parse("2006-01-02 15:04:05", resolved)
 		if err != nil {
 			rval[StrStatus] = StatusError
 			rval[StrMessage] = fmt.Sprintf("invalid timestamp: %v", err)
@@ -102,22 +122,37 @@ func (e *CreateEventAction) Execute(params map[string]interface{}) (map[string]i
 	// Check if there is a Severity params
 	if params["severity"] != nil {
 		eSeverity, _ := params["severity"].(string)
-		eSeverity = strings.ToUpper(strings.TrimSpace(resolveResponseString(eventMap, eSeverity)))
-		event.Severity = eSeverity
+		resolved, err := resolveField(eSeverity)
+		if err != nil {
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = err.Error()
+			return rval, err
+		}
+		event.Severity = strings.ToUpper(strings.TrimSpace(resolved))
 	} else {
 		event.Severity = "medium"
 	}
 	// ExpiresAt
 	if params["expires_at"] != nil {
 		eExpiresAt, _ := params["expires_at"].(string)
-		eExpiresAt = resolveResponseString(eventMap, eExpiresAt)
-		event.ExpiresAt = eExpiresAt
+		resolved, err := resolveField(eExpiresAt)
+		if err != nil {
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = err.Error()
+			return rval, err
+		}
+		event.ExpiresAt = resolved
 	}
 	// Check if there is a Details params
 	if params["details"] != nil {
 		eDetails, _ := params["details"].(map[string]interface{})
-		eDetailsProcessed := resolveValue(eventMap, eDetails)
-		event.Details, _ = eDetailsProcessed.(map[string]interface{})
+		resolved, err := ResolveValue(ictx, eDetails)
+		if err != nil {
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = err.Error()
+			return rval, err
+		}
+		event.Details, _ = resolved.(map[string]interface{})
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

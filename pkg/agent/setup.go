@@ -693,12 +693,52 @@ func deepCopyJob(j Job) Job {
 	for i, step := range j.Steps {
 		m := make(map[string]any, len(step))
 		for k, v := range step {
-			m[k] = v
+			m[k] = deepCloneStepValue(v)
 		}
 		out.Steps[i] = m
 	}
 
 	return out
+}
+
+// deepCloneStepValue deterministically clones step params so repeated and
+// concurrent runs cannot mutate the stored manifest through shared nested
+// maps or slices. Scalar and foreign values (handlers, drivers, registers)
+// are shared by reference; plain JSON containers are deep-copied, with
+// map[interface{}]interface{} normalized to map[string]any.
+func deepCloneStepValue(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for key, item := range t {
+			out[key] = deepCloneStepValue(item)
+		}
+		return out
+	case map[interface{}]interface{}:
+		converted, ok := cmn.ConvertMapIIToSI(t).(map[string]any)
+		if !ok {
+			return v
+		}
+		return deepCloneStepValue(converted)
+	case []any:
+		out := make([]any, len(t))
+		for i, item := range t {
+			out[i] = deepCloneStepValue(item)
+		}
+		return out
+	case []map[string]any:
+		out := make([]map[string]any, len(t))
+		for i, item := range t {
+			if cloned, ok := deepCloneStepValue(item).(map[string]any); ok {
+				out[i] = cloned
+			} else {
+				out[i] = item
+			}
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 // ExecuteJobs executes all jobs in the configuration

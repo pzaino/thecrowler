@@ -18,11 +18,7 @@ package agent
 import (
 	"errors"
 	"fmt"
-	"regexp"
-	"strings"
 	"sync"
-
-	cmn "github.com/pzaino/thecrowler/pkg/common"
 )
 
 const (
@@ -53,9 +49,6 @@ const (
 	// jsonAppType is the application type for JSON
 	jsonAppType = "application/json"
 )
-
-var responseTokenPattern1 = regexp.MustCompile(`\$response(?:\.[a-zA-Z0-9_]+)+`)
-var responseTokenPattern2 = regexp.MustCompile(`{{(.*?)}}`)
 
 // DecisionTrace represents a decision trace for human readable explanations
 type DecisionTrace struct {
@@ -260,97 +253,6 @@ func getInput(params map[string]interface{}) (map[string]interface{}, error) {
 	}
 	input[StrRequest] = params[StrRequest]
 	return input, nil
-}
-
-// ResolveResponseToken takes a token string (e.g. "$response.container.source_id")
-// and resolves it using the provided JSON document.
-func resolveResponseToken(doc map[string]interface{}, token string) interface{} {
-	tokenStr := strings.TrimSpace(token)
-	if tokenStr == "" {
-		return token
-	}
-
-	if tokenStr == "$response" {
-		// If token is just "$response", return the whole response document
-		return doc
-	}
-
-	const prefix = "$response"
-	if !strings.HasPrefix(tokenStr, prefix) {
-		// not a response token, return as-is
-		return token
-	}
-
-	// remove the "$response" prefix
-	path := strings.TrimPrefix(tokenStr, prefix)
-	if path == "" {
-		// token was just "$response": return the whole document
-		return doc
-	}
-
-	// remove a leading dot if present, then split the path into keys
-	path = strings.TrimPrefix(path, ".")
-
-	keys := strings.Split(path, ".")
-	return cmn.JsonParser(doc, keys...)
-}
-
-// resolveResponseString scans an input string for any occurrences of tokens like
-// "$response.xxx" and replaces them with the corresponding value from the JSON document.
-func resolveResponseString(doc map[string]interface{}, input string) string {
-	if doc == nil {
-		return input
-	}
-	inputStr := strings.TrimSpace(input)
-	if inputStr == "" {
-		return input
-	}
-	// check if input has {{ and }} and resolve them
-	result := responseTokenPattern2.ReplaceAllStringFunc(inputStr, func(token string) string {
-		key := strings.Trim(token, "{}")
-		key = strings.TrimSpace(key)
-		// Check if key is a valid key
-		if key == "" {
-			return token
-		}
-		value, _, err := cmn.KVStore.Get(key, "")
-		if err != nil {
-			return token // Keep original if key is missing
-		}
-		valueStr, _ := value.(string)
-		return valueStr
-	})
-	// pattern matches "$response" followed by one or more dot-prefixed keys
-	matches := responseTokenPattern1.FindAllString(result, -1)
-	for _, token := range matches {
-		value := resolveResponseToken(doc, token)
-		result = strings.ReplaceAll(result, token, fmt.Sprintf("%v", value))
-	}
-	return result
-}
-
-// resolveValue takes an arbitrary value that might be a string containing tokens,
-// a map, or a slice (array) and recursively resolves all $response tokens within it.
-func resolveValue(doc map[string]interface{}, value interface{}) interface{} {
-	switch v := value.(type) {
-	case string:
-		// Resolve any tokens within the string.
-		return resolveResponseString(doc, v)
-	case map[string]interface{}:
-		// Recursively process each key-value pair.
-		for key, val := range v {
-			v[key] = resolveValue(doc, val)
-		}
-		return v
-	case []interface{}:
-		// Recursively process each element in the slice.
-		for i, item := range v {
-			v[i] = resolveValue(doc, item)
-		}
-		return v
-	default:
-		return v
-	}
 }
 
 // Action interface for generic actions

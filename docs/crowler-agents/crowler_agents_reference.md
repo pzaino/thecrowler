@@ -123,6 +123,25 @@ Some runtime implementations also support key-value interpolation through:
 
 This lets authors build dynamic URLs, prompts, commands, event payloads, and decision expressions.
 
+### 4.1 Canonical `$response` contract
+
+The same meaning holds in every action type:
+
+* `$response` is the previous step's payload. `$response.foo.bar` resolves
+  only within that payload; array elements use `$response.items[0].id`.
+* A parameter that is exactly `$response` or `$response.a.b` keeps its JSON
+  type (number, boolean, array, object, null). References embedded in a
+  larger string interpolate as text.
+* `$event` (with the same path syntax) addresses the triggering
+  event/request and is stable across all steps of a run.
+* Unknown paths are explicit step errors naming the path; the runtime never
+  substitutes `<nil>` or `%!s(...)` placeholders.
+* Resolution never mutates the stored manifest, so repeated and parallel
+  runs see pristine inputs.
+* Deprecated alias: `$response.input.x` / `$response.request.x` fall back to
+  `$response.x` when the canonical path does not resolve. New manifests must
+  use canonical paths.
+
 ## 5. Agent manifest versions
 
 CROWler supports two manifest styles.

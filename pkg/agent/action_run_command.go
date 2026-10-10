@@ -145,8 +145,14 @@ func (r *RunCommandAction) Execute(params map[string]interface{}) (map[string]in
 		cmdStr = commandRaw[StrRequest].(string)
 		commandMap["command"] = cmdStr
 	}
-	// Check if cmdStr needs to be resolved
-	cmdStr = resolveResponseString(commandMap, cmdStr)
+	// Resolve references against the previous step's payload.
+	resolvedCmd, err := ResolveString(NewInputContext(params), cmdStr)
+	if err != nil {
+		rval[StrStatus] = StatusError
+		rval[StrMessage] = err.Error()
+		return rval, err
+	}
+	cmdStr = resolvedCmd
 
 	command := cmdStr
 	args := strings.Fields(command)
@@ -161,12 +167,19 @@ func (r *RunCommandAction) Execute(params map[string]interface{}) (map[string]in
 	argsList = append(argsList, strings.Join(args[1:], " "))
 
 	// Retrieve chrootDir and privileges from parameters
+	ictx := NewInputContext(params)
 	chrootDir := ""
 	if params["chroot_dir"] != nil {
 		tChrootDir, ok := params["chroot_dir"].(string)
 		if ok {
 			// Check if tChrootDir needs to be resolved
-			chrootDir = resolveResponseString(commandMap, tChrootDir)
+			resolved, err := ResolveString(ictx, tChrootDir)
+			if err != nil {
+				rval[StrStatus] = StatusError
+				rval[StrMessage] = err.Error()
+				return rval, err
+			}
+			chrootDir = resolved
 		}
 	}
 	// Check if we have UID and GID
@@ -176,7 +189,13 @@ func (r *RunCommandAction) Execute(params map[string]interface{}) (map[string]in
 		tUID, ok := params["uid"].(string)
 		if ok {
 			// Check if tUID needs to be resolved
-			tUID = resolveResponseString(commandMap, tUID)
+			resolved, err := ResolveString(ictx, tUID)
+			if err != nil {
+				rval[StrStatus] = StatusError
+				rval[StrMessage] = err.Error()
+				return rval, err
+			}
+			tUID = resolved
 		}
 		// Convert tUID to a uint32, checking for valid range
 		uidParsed, err := strconv.ParseUint(tUID, 10, 32)
@@ -191,7 +210,13 @@ func (r *RunCommandAction) Execute(params map[string]interface{}) (map[string]in
 		tGID, ok := params["gid"].(string)
 		if ok {
 			// Check if tGID needs to be resolved
-			tGID = resolveResponseString(commandMap, tGID)
+			resolved, err := ResolveString(ictx, tGID)
+			if err != nil {
+				rval[StrStatus] = StatusError
+				rval[StrMessage] = err.Error()
+				return rval, err
+			}
+			tGID = resolved
 		}
 		// Convert tGID to a uint32, checking for valid range
 		gidParsed, err := strconv.ParseUint(tGID, 10, 32)

@@ -58,12 +58,14 @@ func (p *PluginAction) Execute(params map[string]interface{}) (map[string]interf
 	}
 
 	// Recover previous step response
-	inputRaw, err := getInput(params)
-	if err != nil {
+	if _, err := getInput(params); err != nil {
 		rval[StrStatus] = StatusError
 		rval[StrMessage] = err.Error()
 		return rval, err
 	}
+
+	// Canonical input context: $response is the previous step's payload.
+	ictx := NewInputContext(params)
 
 	// Extract plugin's names from params
 	plgName, ok := params["plugin_name"].(string)
@@ -73,7 +75,13 @@ func (p *PluginAction) Execute(params map[string]interface{}) (map[string]interf
 		return rval, errors.New("missing 'plugin' parameter")
 	}
 	// Check if plgName needs to be resolved
-	plgName = strings.TrimSpace(resolveResponseString(inputRaw, plgName))
+	resolvedName, err := ResolveString(ictx, plgName)
+	if err != nil {
+		rval[StrStatus] = StatusError
+		rval[StrMessage] = err.Error()
+		return rval, err
+	}
+	plgName = strings.TrimSpace(resolvedName)
 	if plgName == "" {
 		rval[StrStatus] = StatusError
 		rval[StrMessage] = "empty plugin name"
@@ -127,19 +135,27 @@ func (p *PluginAction) Execute(params map[string]interface{}) (map[string]interf
 			k != "config" &&
 			k != "vdi_hook" &&
 			k != "db_handler" {
-			// Check if the value needs to be resolved
-			// To do that, first check which type of value it is
-			// If it's a string, resolve it
-			// If it's a map, resolve the values
-			if _, ok := v.(string); ok {
-				plgParams[k] = resolveResponseString(inputRaw, v.(string))
-			} else {
-				// Check if it's a map
-				if _, ok := v.(map[string]interface{}); ok {
-					plgParams[k] = resolveValue(inputRaw, v)
-				} else {
-					plgParams[k] = v
+			// Resolve references against the canonical input context.
+			// Non-string scalars pass through untouched.
+			switch tv := v.(type) {
+			case string:
+				resolved, err := ResolveString(ictx, tv)
+				if err != nil {
+					rval[StrStatus] = StatusError
+					rval[StrMessage] = err.Error()
+					return rval, err
 				}
+				plgParams[k] = resolved
+			case map[string]interface{}:
+				resolved, err := ResolveValue(ictx, tv)
+				if err != nil {
+					rval[StrStatus] = StatusError
+					rval[StrMessage] = err.Error()
+					return rval, err
+				}
+				plgParams[k] = resolved
+			default:
+				plgParams[k] = v
 			}
 		}
 	}
