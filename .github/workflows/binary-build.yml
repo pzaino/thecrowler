@@ -1,0 +1,68 @@
+name: CROWler binary builds
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  static-binaries:
+    name: Static binaries ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+    env:
+      CGO_ENABLED: '0'
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build every CROWler executable using the release script
+        run: bash ./autobuild.sh all
+      - name: Verify all expected binaries were produced
+        shell: bash
+        run: |
+          set -euo pipefail
+          for binary in \
+            thecrowler rebuildTimeSeriesCardinality addSource \
+            updateSourceStatus addCategory exportSources removeSource \
+            crowler-agt api events healthCheck; do
+            test -s "bin/${binary}" || { echo "Missing/empty bin/${binary}"; exit 1; }
+          done
+
+  sql-parser:
+    name: SQL parser CGO=${{ matrix.cgo }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cgo: ['0', '1']
+    env:
+      CGO_ENABLED: ${{ matrix.cgo }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Exercise parser and SQL authorization tests
+        run: go test ./pkg/agent -run 'TestSQLParserBuildModes|TestGateDecisionsAcrossGrants|TestGateTemplatedReads' -count=1

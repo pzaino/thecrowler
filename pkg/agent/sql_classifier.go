@@ -63,7 +63,7 @@ func (c *SQLClassifier) Classify(sql string) SQLClassificationType {
 	}
 	// The parser is authoritative for comments, string literals, quoted
 	// identifiers, and dollar-quoted bodies.
-	tree, err := pgq.Parse(sql)
+	tree, err := parsePostgresSQL(sql)
 	if err != nil {
 		return SQLRejected
 	}

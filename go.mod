@@ -95,7 +95,7 @@ require (
 	github.com/olekukonko/errors v1.3.0 // indirect
 	github.com/olekukonko/ll v0.1.8 // indirect
 	github.com/olekukonko/tablewriter v1.1.5 // indirect
-	github.com/pganalyze/pg_query_go/v6 v6.2.5 // indirect
+	github.com/pganalyze/pg_query_go/v6 v6.2.5
 	github.com/pierrec/lz4/v4 v4.1.31 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/pkg/errors v0.9.1 // indirect
@@ -104,6 +104,9 @@ require (
 	github.com/prometheus/procfs v0.22.0 // indirect
 	github.com/qri-io/jsonpointer v0.1.1 // indirect
 	github.com/ssor/bom v0.0.0-20170718123548-6386211fdfcf // indirect
+	github.com/tetratelabs/wazero v1.11.0 // indirect
+	github.com/wasilibs/go-pgquery v0.0.0-20260428021157-dca720e45577
+	github.com/wasilibs/wazero-helpers v0.0.0-20250123031827-cd30c44769bb // indirect
 	github.com/xdg-go/pbkdf2 v1.0.0 // indirect
 	github.com/xdg-go/scram v1.2.0 // indirect
 	github.com/xdg-go/stringprep v1.0.4 // indirect
