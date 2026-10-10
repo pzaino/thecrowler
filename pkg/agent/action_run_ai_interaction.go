@@ -55,7 +55,16 @@ func (a *AIInteractionAction) Execute(params map[string]interface{}) (map[string
 		return rval, err
 	}
 
-	if err := enforceAIUsagePolicy(config, resolved); err != nil {
+	// Enforce provider/model policy against the same identity snapshot the
+	// capability/trust/contract gates use. The runtime stores the snapshot as
+	// an AgentIdentity struct; legacy map-form snapshots are still honored.
+	if identity, hasIdentity := parseRuntimeIdentity(params); hasIdentity {
+		if err := enforceAIUsagePolicyForIdentity(identity, resolved); err != nil {
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = err.Error()
+			return rval, err
+		}
+	} else if err := enforceAIUsagePolicy(config, resolved); err != nil {
 		rval[StrStatus] = StatusError
 		rval[StrMessage] = err.Error()
 		return rval, err
@@ -146,6 +155,42 @@ func normalizeLLMRequest(params, config, inputRaw map[string]interface{}) (LLMRe
 		TopP:        topP,
 		Extras:      extras,
 	}, nil
+}
+
+// enforceAIUsagePolicyForIdentity applies the AI provider/model policy to a
+// parsed identity snapshot (the struct form the runtime stores).
+func enforceAIUsagePolicyForIdentity(identity AgentIdentity, req LLMRequest) error {
+	if trustLevelRank(identity.TrustLevel) < trustLevelRank("trusted") && disallowHighTrustModel(req.Model) {
+		return fmt.Errorf("AI policy denied model %q for trust_level %q", req.Model, identity.TrustLevel)
+	}
+
+	if identity.Contract != nil {
+		for _, token := range identity.Contract.ForbiddenActions {
+			if err := matchAIContractToken(token, req); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// matchAIContractToken matches one forbidden_actions entry against the request.
+func matchAIContractToken(token string, req LLMRequest) error {
+	normalized := strings.ToLower(strings.TrimSpace(token))
+	switch {
+	case normalized == "aiinteraction":
+		return fmt.Errorf("AI policy denied: agent contract forbids AIInteraction")
+	case strings.HasPrefix(normalized, "provider:"):
+		if matchesPolicyPattern(strings.TrimPrefix(normalized, "provider:"), strings.ToLower(req.Provider)) {
+			return fmt.Errorf("AI policy denied provider %q by contract", req.Provider)
+		}
+	case strings.HasPrefix(normalized, "model:"):
+		if matchesPolicyPattern(strings.TrimPrefix(normalized, "model:"), strings.ToLower(req.Model)) {
+			return fmt.Errorf("AI policy denied model %q by contract", req.Model)
+		}
+	}
+	return nil
 }
 
 func enforceAIUsagePolicy(config map[string]interface{}, req LLMRequest) error {

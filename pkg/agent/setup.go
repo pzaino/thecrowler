@@ -349,8 +349,11 @@ func (jc *JobConfig) normalizeAgentIdentity() error {
 	if strings.TrimSpace(jc.AgentIdentity.TrustLevel) == "" {
 		jc.AgentIdentity.TrustLevel = "restricted"
 	}
+	// An explicit v2 identity without capabilities grants nothing: under
+	// enforcement every privileged action is denied (fail-closed). The
+	// omnipotent `all` fallback is isolated to v1-derived identities above.
 	if len(jc.AgentIdentity.Capabilities) == 0 {
-		jc.AgentIdentity.Capabilities = []string{"all"}
+		jc.AgentIdentity.Capabilities = []string{}
 	}
 	if strings.TrimSpace(jc.AgentIdentity.Reasoning) == "" {
 		jc.AgentIdentity.Reasoning = "fixed"
@@ -837,9 +840,8 @@ func (je *JobEngine) executeJobsWithContext(j *JobConfig, iCfg map[string]any, e
 	}
 }
 
-// executeJobGroup runs jobs in a group serially
+// executeJobGroup runs jobs in a group serially with a fresh per-group budget.
 func executeJobGroup(je *JobEngine, steps []map[string]any, identity *AgentIdentity, execCtx AgentExecutionContext, flags cfg.AgentRuntimeConfig) error {
-	lastResult := make(map[string]any)
 	var budget *constraintBudgetManager
 	if flags.IdentityEnforcement && identity != nil {
 		b, err := newConstraintBudgetManager(*identity)
@@ -847,7 +849,17 @@ func executeJobGroup(je *JobEngine, steps []map[string]any, identity *AgentIdent
 			return err
 		}
 		budget = b
+		defer budget.release()
 	}
+	return executeJobGroupWithBudget(je, steps, identity, execCtx, flags, budget)
+}
+
+// executeJobGroupWithBudget runs jobs in a group serially against an existing
+// group budget. Fallback steps use this variant so they are charged to the
+// same group instead of receiving a fresh budget. Only the budget owner
+// (executeJobGroup) releases the context, never a fallback invocation.
+func executeJobGroupWithBudget(je *JobEngine, steps []map[string]any, identity *AgentIdentity, execCtx AgentExecutionContext, flags cfg.AgentRuntimeConfig, budget *constraintBudgetManager) error {
+	lastResult := make(map[string]any)
 
 	if (flags.IdentityEnforcement || flags.ContractEnforcement) && identity != nil {
 		je.appendAudit(AuditEvent{
@@ -882,7 +894,7 @@ func executeJobGroup(je *JobEngine, steps []map[string]any, identity *AgentIdent
 			(*step)["params"] = params
 		}
 		if (flags.IdentityEnforcement || flags.ContractEnforcement) && identity != nil {
-			applyExecutionContext(params, execCtx)
+			applyExecutionContext(params, execCtx, flags)
 		}
 		if flags.IdentityEnforcement && identity != nil {
 			if !capabilityAllowed(*identity, actionName) {
@@ -971,6 +983,9 @@ func executeJobGroup(je *JobEngine, steps []map[string]any, identity *AgentIdent
 		}
 
 		result, err := action.Execute(params)
+		// retryCharged records whether retry attempts already consumed group
+		// budget, in which case the success mark below must not double-count.
+		retryCharged := false
 		if err != nil {
 			if rawRetry, hasRetry := (*step)["retry"]; hasRetry {
 				retryConfig, enabled, retryErr := parseRetryConfig(rawRetry)
@@ -983,11 +998,17 @@ func executeJobGroup(je *JobEngine, steps []map[string]any, identity *AgentIdent
 				}
 
 				if enabled {
-					result, err = executeWithRetry(
+					var retried bool
+					result, err, retried = executeWithRetryBudget(
 						action,
 						params,
 						retryConfig,
+						actionName,
+						budget,
 					)
+					if retried {
+						retryCharged = true
+					}
 				}
 			}
 
@@ -996,7 +1017,7 @@ func executeJobGroup(je *JobEngine, steps []map[string]any, identity *AgentIdent
 				je.appendAudit(AuditEvent{RunID: execCtx.RunID, TraceID: execCtx.TraceID, AgentID: auditAgentID, AgentName: auditAgentName, Owner: auditOwner, Action: actionName, RequiredCapability: requiredCapabilityForActionName(actionName), CapabilitiesUsed: capabilitiesUsed(identity, actionName), Outcome: auditOutcomeError, Reason: err.Error(), FailurePolicy: policy})
 				if fallback, hasFallback := (*step)["fallback"].([]map[string]interface{}); hasFallback && policy != "continue" {
 					cmn.DebugMsg(cmn.DbgLvlError, "Action %s failed, executing fallback steps", actionName)
-					return executeJobGroup(je, fallback, identity, execCtx, flags)
+					return executeJobGroupWithBudget(je, fallback, identity, execCtx, flags, budget)
 				}
 				switch policy {
 				case "continue":
@@ -1004,7 +1025,7 @@ func executeJobGroup(je *JobEngine, steps []map[string]any, identity *AgentIdent
 				case "fallback":
 					if fallback, hasFallback := (*step)["fallback"].([]map[string]interface{}); hasFallback {
 						cmn.DebugMsg(cmn.DbgLvlError, "Action %s failed, executing fallback steps", actionName)
-						return executeJobGroup(je, fallback, identity, execCtx, flags)
+						return executeJobGroupWithBudget(je, fallback, identity, execCtx, flags, budget)
 					}
 					return fmt.Errorf("action %s failed: %v", actionName, err)
 				default:
@@ -1016,7 +1037,7 @@ func executeJobGroup(je *JobEngine, steps []map[string]any, identity *AgentIdent
 		// Update the result for the next job in the group
 		lastResult = result
 		je.appendAudit(AuditEvent{RunID: execCtx.RunID, TraceID: execCtx.TraceID, AgentID: auditAgentID, AgentName: auditAgentName, Owner: auditOwner, Action: actionName, RequiredCapability: requiredCapabilityForActionName(actionName), CapabilitiesUsed: capabilitiesUsed(identity, actionName), Outcome: auditOutcomeAllowed, Reason: "action_completed"})
-		if flags.IdentityEnforcement && identity != nil {
+		if flags.IdentityEnforcement && identity != nil && !retryCharged {
 			budget.markActionExecuted(actionName)
 		}
 		if flags.MemoryRuntime && je != nil && je.memory != nil {
@@ -1034,9 +1055,25 @@ func executeWithRetry(
 	params map[string]any,
 	retryConfig RetryConfig,
 ) (map[string]interface{}, error) {
+	result, err, _ := executeWithRetryBudget(action, params, retryConfig, "", nil)
+	return result, err
+}
+
+// executeWithRetryBudget executes an action with retry logic, charging every
+// retry attempt to the group's budget. It returns whether any retry attempt
+// ran (so the caller can avoid double-charging the step). A nil budget
+// preserves the legacy unenforced behavior.
+func executeWithRetryBudget(
+	action Action,
+	params map[string]any,
+	retryConfig RetryConfig,
+	actionName string,
+	budget *constraintBudgetManager,
+) (map[string]interface{}, error, bool) {
 	var (
 		lastError error
 		result    map[string]any
+		retried   bool
 	)
 
 	baseDelay := retryConfig.BaseDelay
@@ -1083,9 +1120,18 @@ func executeWithRetry(
 
 		time.Sleep(delay)
 
+		if budget != nil {
+			if err := budget.preStepCheck(actionName); err != nil {
+				return nil, err, retried
+			}
+		}
+		retried = true
 		result, lastError = action.Execute(params)
+		if budget != nil {
+			budget.markActionExecuted(actionName)
+		}
 		if lastError == nil {
-			return result, nil
+			return result, nil, retried
 		}
 	}
 
@@ -1093,7 +1139,7 @@ func executeWithRetry(
 		"action failed after %d retries: %w",
 		retryConfig.MaxRetries,
 		lastError,
-	)
+	), retried
 }
 
 /*

@@ -16,6 +16,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strings"
@@ -41,6 +42,12 @@ type AgentExecutionContext struct {
 	StartedAt        time.Time     `json:"started_at"`
 }
 
+// constraintBudgetManager owns one job group's step counter, elapsed-time
+// deadline and cancellation context. Budgets are per job group: parallel
+// groups each get their own manager, retries/fallbacks within a group are
+// charged to that same group, and a delegated agent's groups receive fresh
+// independently scoped managers (the delegation step itself is charged once
+// to the caller's group). There is intentionally no global agent-run budget.
 type constraintBudgetManager struct {
 	startedAt      time.Time
 	timeBudget     time.Duration
@@ -49,11 +56,14 @@ type constraintBudgetManager struct {
 	eventRateLimit float64
 	executedSteps  int
 	eventsCreated  int
+	ctx            context.Context
+	cancel         context.CancelFunc
 }
 
 func newConstraintBudgetManager(identity AgentIdentity) (*constraintBudgetManager, error) {
 	bm := &constraintBudgetManager{startedAt: time.Now().UTC()}
 	if identity.Constraints == nil {
+		bm.ctx, bm.cancel = context.WithCancel(context.Background())
 		return bm, nil
 	}
 
@@ -67,12 +77,30 @@ func newConstraintBudgetManager(identity AgentIdentity) (*constraintBudgetManage
 		bm.timeBudget = d
 		bm.hasTimeBudget = true
 	}
+	if bm.hasTimeBudget {
+		bm.ctx, bm.cancel = context.WithDeadline(context.Background(), bm.startedAt.Add(bm.timeBudget))
+	} else {
+		bm.ctx, bm.cancel = context.WithCancel(context.Background())
+	}
 	return bm, nil
+}
+
+// release frees the group context; callers defer it at group end.
+func (bm *constraintBudgetManager) release() {
+	if bm == nil || bm.cancel == nil {
+		return
+	}
+	bm.cancel()
 }
 
 func (bm *constraintBudgetManager) preStepCheck(actionName string) error {
 	if bm == nil {
 		return nil
+	}
+	if bm.ctx != nil {
+		if err := bm.ctx.Err(); err != nil {
+			return fmt.Errorf("constraint gate denied action %s: time_budget exceeded (%s)", actionName, bm.timeBudget)
+		}
 	}
 	if bm.maxSteps > 0 && bm.executedSteps >= bm.maxSteps {
 		return fmt.Errorf("constraint gate denied action %s: max_steps exceeded (%d)", actionName, bm.maxSteps)
@@ -323,12 +351,18 @@ func dbQueryAllowed(identity AgentIdentity, sql string) bool {
 	return false
 }
 
+// trustLevelRank orders trust levels. The schema vocabulary
+// (untrusted, restricted, trusted, system) is mapped explicitly;
+// privileged/high/internal/medium are long-standing runtime synonyms
+// and keep their historical ranks.
 func trustLevelRank(level string) int {
 	switch strings.ToLower(strings.TrimSpace(level)) {
-	case "privileged", "high", "internal":
+	case "system", "privileged", "high", "internal":
 		return 3
 	case "trusted", "medium":
 		return 2
+	case "untrusted", "restricted":
+		return 1
 	default:
 		return 1
 	}
@@ -347,7 +381,11 @@ func trustAllowed(identity AgentIdentity, actionName string) bool {
 	return trustLevelRank(identity.TrustLevel) >= minTrustRankForAction(actionName)
 }
 
-func applyExecutionContext(params map[string]interface{}, ctx AgentExecutionContext) {
+// applyExecutionContext attaches the run identity snapshot and the active
+// enforcement flags to step params. Persisting the flags here (not just the
+// snapshot) guarantees delegated agents inherit the caller's enforcement
+// posture through delegationCtx instead of silently running unenforced.
+func applyExecutionContext(params map[string]interface{}, ctx AgentExecutionContext, flags cfg.AgentRuntimeConfig) {
 	if params == nil {
 		return
 	}
@@ -372,6 +410,9 @@ func applyExecutionContext(params map[string]interface{}, ctx AgentExecutionCont
 			}
 		}
 	}
+	runtimeMap["identity_enforcement"] = flags.IdentityEnforcement
+	runtimeMap["contract_enforcement"] = flags.ContractEnforcement
+	runtimeMap["memory_runtime"] = flags.MemoryRuntime
 	runtimeMap["run_id"] = ctx.RunID
 	runtimeMap["trace_id"] = ctx.TraceID
 	runtimeMap["source"] = ctx.Source
