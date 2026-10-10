@@ -294,6 +294,7 @@ func RunToolLoop(config ToolLoopConfig) (ToolLoopResult, error) {
 	advertised := advertiseTools(config.Registry, allowlist)
 	state = &toolLoopState{
 		messages: initialLoopMessages(config),
+		seenIDs:  map[string]bool{},
 		deadline: time.Now().Add(effectiveTimeout),
 		runID:    result.RunID,
 		traceID:  result.TraceID,
@@ -356,23 +357,22 @@ func RunToolLoop(config ToolLoopConfig) (ToolLoopResult, error) {
 			return result, nil
 		}
 
-		// Echo the assistant message with its tool-call structures before
-		// any result message, preserving provider order and IDs.
-		state.messages = append(state.messages, buildAssistantEcho(normalized))
+		// Assign effective correlation IDs for the whole batch BEFORE
+		// executing anything: any ambiguity denies the batch with zero
+		// handler invocations.
+		effectiveIDs, err := assignEffectiveIDs(normalized.ToolCalls, round, state)
+		if err != nil {
+			emitToolAudit(result.RunID, result.TraceID, agentID, agentName, owner, "", auditOutcomeDenied, ToolDenyDuplicateCallID)
+			return fail(ToolLoopDenied, "duplicate tool call ID", err)
+		}
 
-		seenIDs := map[string]bool{}
-		for _, call := range normalized.ToolCalls {
-			callID := toolCallCorrelationID(call)
-			if call.ID != "" {
-				if seenIDs[call.ID] {
-					emitToolAudit(result.RunID, result.TraceID, agentID, agentName, owner, call.Name, auditOutcomeDenied, ToolDenyDuplicateCallID)
-					return fail(ToolLoopDenied, "duplicate tool call ID",
-						fmt.Errorf("tool loop denied: duplicate tool call ID"))
-				}
-				seenIDs[call.ID] = true
-			}
+		// Echo the assistant message with its tool-call structures before
+		// any result message, using the same effective IDs.
+		state.messages = append(state.messages, buildAssistantEcho(normalized, effectiveIDs))
+
+		for i, call := range normalized.ToolCalls {
 			msgs, _, terminal, terminalErr := processToolCall(
-				loopCtx, config, auth, call, callID, state)
+				loopCtx, config, auth, call, effectiveIDs[i], state)
 			state.messages = msgs
 			if terminal != nil {
 				terminal.ToolCallCount = state.toolCalls
@@ -380,6 +380,31 @@ func RunToolLoop(config ToolLoopConfig) (ToolLoopResult, error) {
 			}
 		}
 	}
+}
+
+// assignEffectiveIDs computes one unambiguous correlation ID per call and
+// records them in the run-scoped ledger. Valid provider IDs are preserved;
+// blank IDs synthesize deterministic run-local values carrying round and
+// position. Any repeat — explicit-explicit, synthetic-synthetic across
+// rounds, or explicit-synthetic — denies the batch before any execution.
+func assignEffectiveIDs(calls []LLMToolCall, round int, state *toolLoopState) ([]string, error) {
+	ids := make([]string, len(calls))
+	batch := map[string]bool{}
+	for i, call := range calls {
+		id := strings.TrimSpace(call.ID)
+		if id == "" {
+			id = fmt.Sprintf("local-r%d-c%d", round, i)
+		}
+		if state.seenIDs[id] || batch[id] {
+			return nil, denyTool(ToolDenyDuplicateCallID, "duplicate tool call ID")
+		}
+		batch[id] = true
+		ids[i] = id
+	}
+	for _, id := range ids {
+		state.seenIDs[id] = true
+	}
+	return ids, nil
 }
 
 // processToolCall authorizes, executes, and records one proposed call. It
@@ -397,7 +422,7 @@ func processToolCall(
 	deny := func(code string) ([]any, ToolCallSummary, *ToolLoopResult, error) {
 		state.consecutiveDenials++
 		emitToolAudit(auth.RunID, auth.TraceID, agentID, agentName, owner, call.Name, auditOutcomeDenied, code)
-		denied := ToolCallSummary{Name: call.Name, ID: call.ID, Index: call.Index, Status: "denied", ReasonCode: code}
+		denied := ToolCallSummary{Name: call.Name, ID: callID, Index: call.Index, Status: "denied", ReasonCode: code}
 		state.summaries = append(state.summaries, denied)
 		msgs := append(state.messages, toolResultMessage(callID, map[string]any{"error": "denied: " + code}))
 		if state.consecutiveDenials >= maxConsecutiveToolDenials {
@@ -463,7 +488,7 @@ func processToolCall(
 	}
 	state.toolCalls++
 	state.messages = append(state.messages, toolResultMessage(callID, observation))
-	summary = ToolCallSummary{Name: call.Name, ID: call.ID, Index: call.Index,
+	summary = ToolCallSummary{Name: call.Name, ID: callID, Index: call.Index,
 		Status: status, ResultBytes: len(serialized)}
 	state.summaries = append(state.summaries, summary)
 	if status == "failed" && config.StopOnToolError {
@@ -481,6 +506,7 @@ type toolLoopState struct {
 	toolCalls          int
 	totalResultBytes   int
 	consecutiveDenials int
+	seenIDs            map[string]bool
 	deadline           time.Time
 	runID              string
 	traceID            string
@@ -534,15 +560,22 @@ func initialLoopMessages(config ToolLoopConfig) []any {
 // buildAssistantEcho preserves the assistant message including its
 // tool-call structures. Arguments re-serialize from normalized form;
 // provider order and IDs are preserved verbatim.
-func buildAssistantEcho(normalized LLMNormalizedResponse) map[string]any {
+// buildAssistantEcho preserves the assistant message including its
+// tool-call structures, keyed by the batch effective IDs assigned up front
+// so echo, tool messages, summaries, and audits all share one value.
+func buildAssistantEcho(normalized LLMNormalizedResponse, effectiveIDs []string) map[string]any {
 	calls := make([]any, 0, len(normalized.ToolCalls))
-	for _, call := range normalized.ToolCalls {
+	for i, call := range normalized.ToolCalls {
+		id := ""
+		if i < len(effectiveIDs) {
+			id = effectiveIDs[i]
+		}
 		args, err := json.Marshal(call.Arguments)
 		if err != nil {
 			args = []byte("{}")
 		}
 		calls = append(calls, map[string]any{
-			"id":   toolCallCorrelationID(call),
+			"id":   id,
 			"type": "function",
 			"function": map[string]any{
 				"name":      call.Name,
@@ -555,17 +588,6 @@ func buildAssistantEcho(normalized LLMNormalizedResponse) map[string]any {
 		"content":    normalized.Content,
 		"tool_calls": calls,
 	}
-}
-
-// toolCallCorrelationID returns the provider ID, synthesizing a stable local
-// one (local-<index>) for dialects that supply none. The same value keys
-// both the assistant echo and the matching tool message, which the
-// follow-up wire test verifies round-trips.
-func toolCallCorrelationID(call LLMToolCall) string {
-	if strings.TrimSpace(call.ID) != "" {
-		return call.ID
-	}
-	return fmt.Sprintf("local-%d", call.Index)
 }
 
 // toolResultMessage builds one role:tool message with bounded JSON content.

@@ -1,12 +1,15 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func loadToolFixture(t *testing.T, name string) map[string]any {
@@ -288,5 +291,182 @@ func TestProviderKeepsRawBodyCompatibility(t *testing.T) {
 	}
 	if _, err := NormalizeChatCompletion(resp); err == nil {
 		t.Fatalf("normalization must reject non-chat payloads")
+	}
+}
+
+// TestProviderContextCancelsBlockedRequest proves cancellation pre-headers:
+// a short deadline aborts the client quickly. (Whether the far end
+// observes the disconnect depends on transport teardown timing and is not
+// asserted here; the slow-body test below covers mid-read cancellation.)
+func TestProviderContextCancelsBlockedRequest(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-time.After(5 * time.Second):
+		}
+	}))
+	defer server.Close()
+
+	provider := &OpenAICompatibleProvider{}
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := provider.ExecuteWithContext(ctx, LLMRequest{URL: server.URL, Model: "m", Prompt: "hi"})
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatalf("expected cancellation error")
+	}
+	if elapsed > 4*time.Second {
+		t.Fatalf("cancellation took too long: %v", elapsed)
+	}
+}
+
+func floatPtr(v float64) *float64 { return &v }
+
+func intPtr(v int) *int { return &v }
+
+// TestProviderContextInterruptsSlowBody proves cancellation during reads.
+func TestProviderContextInterruptsSlowBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		select {
+		case <-r.Context().Done():
+		case <-time.After(5 * time.Second):
+		}
+	}))
+	defer server.Close()
+
+	provider := &OpenAICompatibleProvider{}
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := provider.ExecuteWithContext(ctx, LLMRequest{URL: server.URL, Model: "m", Prompt: "hi"})
+	if err == nil {
+		t.Fatalf("expected cancellation error")
+	}
+	if time.Since(start) > 4*time.Second {
+		t.Fatalf("body-read cancellation took too long")
+	}
+}
+
+// TestProviderCapsOversizedBodyWhileReading pins the read-time bound.
+func TestProviderCapsOversizedBodyWhileReading(t *testing.T) {
+	payload := strings.Repeat("z", maxLLMResponseBytes+1024)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"` + payload + `"}}]}`))
+	}))
+	defer server.Close()
+
+	provider := &OpenAICompatibleProvider{}
+	_, err := provider.ExecuteWithContext(context.Background(),
+		LLMRequest{URL: server.URL, Model: "m", Prompt: "hi", Auth: "Bearer s3cret"})
+	if err == nil || !strings.Contains(err.Error(), "exceeded") {
+		t.Fatalf("expected size error, got %v", err)
+	}
+}
+
+// TestProviderContextPathMatchesLegacyWire proves both transports agree.
+func TestProviderContextPathMatchesLegacyWire(t *testing.T) {
+	var bodies []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("decode: %v", err)
+			return
+		}
+		encoded, _ := json.Marshal(payload)
+		bodies = append(bodies, string(encoded))
+		if r.Header.Get("Authorization") != "Bearer tok" {
+			t.Errorf("auth header lost")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"hi"},"finish_reason":"stop"}],"model":"m"}`))
+	}))
+	defer server.Close()
+
+	provider := &OpenAICompatibleProvider{}
+	req := LLMRequest{
+		URL: server.URL, Auth: "Bearer tok", Model: "m",
+		Messages:   []any{map[string]any{"role": "user", "content": "hi"}},
+		Tools:      []LLMToolDefinition{{Type: "function", Function: LLMFunctionSpec{Name: "ping", Parameters: map[string]any{"type": "object"}}}},
+		ToolChoice: LLMToolChoice{Mode: "auto"}, HasToolChoice: true,
+		Temperature: floatPtr(0.2), MaxTokens: intPtr(50),
+	}
+	legacy, err := provider.Execute(req)
+	if err != nil {
+		t.Fatalf("legacy path: %v", err)
+	}
+	withCtx, err := provider.ExecuteWithContext(context.Background(), req)
+	if err != nil {
+		t.Fatalf("context path: %v", err)
+	}
+	if !reflect.DeepEqual(legacy, withCtx) {
+		t.Fatalf("transport responses differ:\n%#v\n%#v", legacy, withCtx)
+	}
+	if len(bodies) != 2 || bodies[0] != bodies[1] {
+		t.Fatalf("request bodies differ")
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(bodies[0]), &decoded); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if decoded["model"] != "m" || decoded["tool_choice"] != "auto" {
+		t.Fatalf("wire shape changed: %v", decoded)
+	}
+	if _, has := decoded["tools"]; !has {
+		t.Fatalf("tools lost on the wire: %v", decoded)
+	}
+}
+
+// TestProviderContextPathSurfacesStatus pins non-2xx parity on the new path.
+func TestProviderContextPathSurfacesStatus(t *testing.T) {
+	server, _ := toolCaptureServer(t, `{"error":{"message":"busy"}}`, http.StatusServiceUnavailable)
+	provider := &OpenAICompatibleProvider{}
+	_, err := provider.ExecuteWithContext(context.Background(),
+		LLMRequest{URL: server.URL, Model: "m", Prompt: "hi"})
+	if err == nil || !strings.Contains(err.Error(), "status 503") {
+		t.Fatalf("expected status error, got %v", err)
+	}
+}
+
+// TestToolLoopCancellationViaTransport proves end-to-end cancelled status
+// when the group deadline expires mid-request.
+func TestToolLoopCancellationViaTransport(t *testing.T) {
+	blocker := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-blocker:
+		}
+	}))
+	defer server.Close()
+	defer close(blocker)
+
+	// The built-in provider implements the context-aware interface, so the
+	// loop deadline propagates into the in-flight HTTP exchange.
+	provider := &OpenAICompatibleProvider{}
+	registry := NewAgentToolRegistry()
+	counter := &stubAgentTool{name: "search_indexed_pages", description: "d",
+		schema: map[string]any{"type": "object"}, capabilities: []string{"db_read"}}
+	if err := registry.Register(counter); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	config := loopTestConfig(provider, registry)
+	config.URL = server.URL
+	config.Model = "m"
+	config.Allowlist = []string{"search_indexed_pages"}
+	config.Limits = DefaultToolLoopLimits()
+	config.Limits.Timeout = 150 * time.Millisecond
+	result, err := RunToolLoop(config)
+	if err == nil || result.Status != ToolLoopCancelled {
+		t.Fatalf("expected cancelled terminal, got %+v, %v", result, err)
+	}
+	if counter.calls != 0 {
+		t.Fatalf("cancelled run must not execute tools")
 	}
 }

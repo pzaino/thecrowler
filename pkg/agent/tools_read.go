@@ -216,8 +216,11 @@ func (p *pageSearchTool) Execute(ctx context.Context, args map[string]any) (map[
 		return nil, denyTool(ToolDenyContext, "run context expired")
 	}
 	// Narrow public API: stored-function search with bound limit. The query
-	// travels only as a bound parameter, never as SQL text.
-	rows, err := cdb.SearchPages(ctx, &runtime.DB, query, searchLanguageFixed, cdb.SearchFunctionOptions{Limit: limit})
+	// travels only as a bound parameter, never as SQL text. Source scoping
+	// is enforced by the database before LIMIT via the SourceUID filter;
+	// the Go-side check below remains purely as a defense-in-depth
+	// assertion and never establishes correctness on its own.
+	rows, err := cdb.SearchPages(ctx, &runtime.DB, query, searchLanguageFixed, cdb.SearchFunctionOptions{Limit: limit, SourceUID: filterUID})
 	if err != nil {
 		return nil, fmt.Errorf("page search failed")
 	}

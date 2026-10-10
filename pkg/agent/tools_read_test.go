@@ -144,7 +144,7 @@ func TestSearchIndexedPagesAdapter(t *testing.T) {
 		"snippet", "created_at", "last_updated_at", "rank"}).
 		AddRow(1, "uid-a", "https://a.example/x", "TA", "SNIP", nil, nil, 0.9).
 		AddRow(2, "uid-b", "https://b.example/y", "TB", "SNIP", nil, nil, 0.8)
-	mock.ExpectQuery("search_pages").WillReturnRows(rows)
+	mock.ExpectQuery(`^SELECT \* FROM search_pages\(\$1, \$2\) LIMIT \$3$`).WillReturnRows(rows)
 
 	result, err := tool.Execute(ctx, map[string]any{"query": "forecast", "limit": float64(10)})
 	if err != nil {
@@ -165,7 +165,7 @@ func TestSearchIndexedPagesAdapter(t *testing.T) {
 	scopedRows := sqlmock.NewRows([]string{"source_id", "source_uid", "url", "name", "priority", "sub_priority", "category_id", "usr_id", "restricted", "flags", "config"})
 	scopedRows.AddRow(int64(7), "uid-a", "https://a.example", "A", "high", int64(0), int64(1), int64(1), int64(0), int64(0), []byte("{}"))
 	mock.ExpectQuery("SELECT source_id").WillReturnRows(scopedRows)
-	mock.ExpectQuery("search_pages").WillReturnRows(
+	mock.ExpectQuery(`SELECT \* FROM search_pages\(\$1, \$2\) WHERE source_uid = \$3 LIMIT \$4`).WillReturnRows(
 		sqlmock.NewRows([]string{"index_id", "source_uid", "page_url", "title",
 			"snippet", "created_at", "last_updated_at", "rank"}).
 			AddRow(1, "uid-a", "https://a.example/x", "TA", "SNIP", nil, nil, 0.9).

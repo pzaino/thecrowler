@@ -25,9 +25,15 @@ import (
 // PostgreSQL search functions. The database functions themselves do not accept
 // pagination arguments, so non-zero Limit and Offset values are appended outside
 // the function call. A zero Limit means "no LIMIT".
+//
+// SourceUID optionally restricts results to one source. Every search function
+// output carries a source_uid column, so the filter is applied in the same
+// outer query before LIMIT/OFFSET. An empty SourceUID leaves the query
+// byte-identical to the unfiltered form.
 type SearchFunctionOptions struct {
-	Limit  int
-	Offset int
+	Limit     int
+	Offset    int
+	SourceUID string
 }
 
 // CorrelatedSourceSearchResult represents one row returned by
@@ -338,6 +344,10 @@ func queryPostgresSearchFunction(ctx context.Context, db *Handler, functionName 
 	}
 
 	query := fmt.Sprintf("SELECT * FROM %s(%s)", functionName, joinFunctionArgs(functionArgs))
+	if opts.SourceUID != "" {
+		args = append(args, opts.SourceUID)
+		query += fmt.Sprintf(" WHERE source_uid = $%d", len(args))
+	}
 	if opts.Limit > 0 {
 		args = append(args, opts.Limit)
 		query += fmt.Sprintf(" LIMIT $%d", len(args))

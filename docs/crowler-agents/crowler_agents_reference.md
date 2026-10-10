@@ -921,9 +921,13 @@ Validation semantics (all checked before any provider HTTP call):
   model, usage, raw}`. `raw` always carries the untouched provider
   envelope for audit. This is unrelated to OpenAI `response_format`, which
   passes through untouched.
-* Normalized `tool_calls` preserve provider order and call IDs (empty ID
-  when the dialect supplies none, disambiguated by index). Arguments arrive
-  as objects whether the provider encoded them as JSON text or objects.
+* Normalized `tool_calls` preserve provider order and call IDs. Dialects
+  without IDs (or blank IDs) receive run-scoped synthetic IDs
+  (`local-r<round>-c<position>`) used identically in the assistant echo,
+  the `role:"tool"` response, summaries, and audits; any effective-ID
+  collision across the run denies the batch before anything executes.
+  Arguments arrive as objects whether the provider encoded them as JSON
+  text or objects.
 * Downstream steps read `$response.content`,
   `$response.tool_calls[0].name`, and
   `$response.tool_calls[0].arguments.city`. **Nothing executes a returned

@@ -108,7 +108,7 @@ func loopTestRegistry(t *testing.T) *AgentToolRegistry {
 	return registry
 }
 
-func loopTestConfig(provider *scriptedProvider, registry *AgentToolRegistry) ToolLoopConfig {
+func loopTestConfig(provider LLMProvider, registry *AgentToolRegistry) ToolLoopConfig {
 	return ToolLoopConfig{
 		Provider:     provider,
 		ProviderName: "scripted",
@@ -271,15 +271,15 @@ func TestToolLoopMissingIDsSynthesized(t *testing.T) {
 	if result.Status != ToolLoopCompleted || len(result.ToolCalls) != 1 {
 		t.Fatalf("bad terminal: %+v", result)
 	}
-	if result.ToolCalls[0].ID != "" {
-		t.Fatalf("provider-absent ID must stay empty in summaries: %+v", result.ToolCalls[0])
+	if result.ToolCalls[0].ID != "local-r1-c0" {
+		t.Fatalf("summary must carry the effective ID: %+v", result.ToolCalls[0])
 	}
 	msgs := provider.requests[1].Messages
 	assistant, _ := msgs[1].(map[string]any)
 	echoCalls, _ := assistant["tool_calls"].([]any)
 	echoEntry, _ := echoCalls[0].(map[string]any)
 	toolMsg, _ := msgs[2].(map[string]any)
-	if echoEntry["id"] != "local-0" || toolMsg["tool_call_id"] != "local-0" {
+	if echoEntry["id"] != "local-r1-c0" || toolMsg["tool_call_id"] != "local-r1-c0" {
 		t.Fatalf("local ID must round-trip: %#v vs %#v", echoEntry, toolMsg)
 	}
 }
@@ -303,8 +303,8 @@ func TestToolLoopDuplicateIDsDenied(t *testing.T) {
 	if err == nil || result.Status != ToolLoopDenied {
 		t.Fatalf("expected denied duplicate IDs, got %+v, %v", result, err)
 	}
-	if counter.calls != 1 {
-		t.Fatalf("first occurrence executes once, repeats denied; ran %d", counter.calls)
+	if counter.calls != 0 {
+		t.Fatalf("colliding batch must not execute; ran %d", counter.calls)
 	}
 }
 
@@ -628,5 +628,149 @@ func TestParallelGroupsRunIsolatedLoops(t *testing.T) {
 	}
 	if got := provider.providerCalls(); got != 4 {
 		t.Fatalf("expected 4 model rounds (2 per group), got %d", got)
+	}
+}
+
+// idLoopConfig builds a loop config with a counting fake tool.
+func idLoopConfig(provider *scriptedProvider, counter *stubAgentTool) ToolLoopConfig {
+	registry := NewAgentToolRegistry()
+	if err := registry.Register(counter); err != nil {
+		panic(err)
+	}
+	config := loopTestConfig(provider, registry)
+	config.Allowlist = []string{counter.name}
+	return config
+}
+
+func idCounter() *stubAgentTool {
+	return &stubAgentTool{name: "search_indexed_pages", description: "d",
+		schema: map[string]any{"type": "object"}, capabilities: []string{"db_read"}}
+}
+
+// TestEffectiveIDsUniqueAcrossRounds proves missing IDs in successive rounds
+// never collide: the round component disambiguates identical positions.
+func TestEffectiveIDsUniqueAcrossRounds(t *testing.T) {
+	provider := &scriptedProvider{name: "scripted", responses: []any{
+		chatWithCalls(map[string]any{"type": "function",
+			"function": map[string]any{"name": "search_indexed_pages", "arguments": map[string]any{}}}),
+		chatWithCalls(map[string]any{"type": "function",
+			"function": map[string]any{"name": "search_indexed_pages", "arguments": map[string]any{}}}),
+		chatWithText("done"),
+	}}
+	counter := idCounter()
+	config := idLoopConfig(provider, counter)
+	result, err := RunToolLoop(config)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != ToolLoopCompleted || len(result.ToolCalls) != 2 {
+		t.Fatalf("bad terminal: %+v", result)
+	}
+	if result.ToolCalls[0].ID != "local-r1-c0" || result.ToolCalls[1].ID != "local-r2-c0" {
+		t.Fatalf("round-scoped IDs wrong: %+v", result.ToolCalls)
+	}
+	if counter.calls != 2 {
+		t.Fatalf("expected 2 executions, got %d", counter.calls)
+	}
+}
+
+// TestExplicitSyntheticPrefixCollisionDenied proves an explicit provider ID
+// colliding with a synthesized one fails closed with zero batch executions.
+func TestExplicitSyntheticPrefixCollisionDenied(t *testing.T) {
+	provider := &scriptedProvider{name: "scripted", responses: []any{
+		chatWithCalls(
+			stringCall("local-r1-c1", "search_indexed_pages", `{}`),
+			map[string]any{"type": "function",
+				"function": map[string]any{"name": "search_indexed_pages", "arguments": map[string]any{}}}),
+		chatWithText("done"),
+	}}
+	counter := idCounter()
+	config := idLoopConfig(provider, counter)
+	result, err := RunToolLoop(config)
+	if err == nil || result.Status != ToolLoopDenied {
+		t.Fatalf("expected collision denial, got %+v, %v", result, err)
+	}
+	if counter.calls != 0 {
+		t.Fatalf("colliding batch must not execute, ran %d", counter.calls)
+	}
+}
+
+// TestDuplicateIDsAcrossRoundsDenied proves ledger enforcement spans rounds:
+// the second round's repeat denies, while the completed first round stands.
+func TestDuplicateIDsAcrossRoundsDenied(t *testing.T) {
+	provider := &scriptedProvider{name: "scripted", responses: []any{
+		chatWithCalls(stringCall("same", "search_indexed_pages", `{}`)),
+		chatWithCalls(stringCall("same", "search_indexed_pages", `{}`)),
+	}}
+	counter := idCounter()
+	config := idLoopConfig(provider, counter)
+	result, err := RunToolLoop(config)
+	if err == nil || result.Status != ToolLoopDenied {
+		t.Fatalf("expected cross-round denial, got %+v, %v", result, err)
+	}
+	if counter.calls != 1 {
+		t.Fatalf("first round stands, second denied; ran %d", counter.calls)
+	}
+}
+
+// TestCollidingBatchExecutesNothing proves one bad ID in a multi-call batch
+// blocks the whole batch before any handler runs.
+func TestCollidingBatchExecutesNothing(t *testing.T) {
+	provider := &scriptedProvider{name: "scripted", responses: []any{
+		chatWithCalls(
+			stringCall("ok-1", "search_indexed_pages", `{}`),
+			stringCall("ok-1", "search_indexed_pages", `{}`)),
+	}}
+	counter := idCounter()
+	config := idLoopConfig(provider, counter)
+	_, err := RunToolLoop(config)
+	if err == nil {
+		t.Fatalf("expected batch denial")
+	}
+	if counter.calls != 0 {
+		t.Fatalf("invalid batch executed %d handlers", counter.calls)
+	}
+}
+
+// TestWhitespaceIDsTreatedAsMissing proves blank IDs synthesize cleanly.
+func TestWhitespaceIDsTreatedAsMissing(t *testing.T) {
+	provider := &scriptedProvider{name: "scripted", responses: []any{
+		chatWithCalls(stringCall("   ", "search_indexed_pages", `{}`)),
+		chatWithText("done"),
+	}}
+	counter := idCounter()
+	config := idLoopConfig(provider, counter)
+	result, err := RunToolLoop(config)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != ToolLoopCompleted || result.ToolCalls[0].ID != "local-r1-c0" {
+		t.Fatalf("blank ID must synthesize: %+v", result.ToolCalls)
+	}
+}
+
+// TestExplicitIDsPreserved proves valid provider IDs flow through unchanged
+// across echo, tool messages, summaries, and audits.
+func TestExplicitIDsPreserved(t *testing.T) {
+	provider := &scriptedProvider{name: "scripted", responses: []any{
+		chatWithCalls(stringCall("call-abc-123", "search_indexed_pages", `{}`)),
+		chatWithText("done"),
+	}}
+	counter := idCounter()
+	config := idLoopConfig(provider, counter)
+	result, err := RunToolLoop(config)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ToolCalls[0].ID != "call-abc-123" {
+		t.Fatalf("provider ID must be preserved: %+v", result.ToolCalls[0])
+	}
+	msgs := provider.requests[1].Messages
+	assistant, _ := msgs[1].(map[string]any)
+	echoCalls, _ := assistant["tool_calls"].([]any)
+	echoEntry, _ := echoCalls[0].(map[string]any)
+	toolMsg, _ := msgs[2].(map[string]any)
+	if echoEntry["id"] != "call-abc-123" || toolMsg["tool_call_id"] != "call-abc-123" {
+		t.Fatalf("explicit ID must round-trip: %#v vs %#v", echoEntry, toolMsg)
 	}
 }

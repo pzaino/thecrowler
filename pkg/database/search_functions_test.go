@@ -53,6 +53,60 @@ func TestSearchFunctionWrapperAppliesPaginationOutsideFunctionCall(t *testing.T)
 	}
 }
 
+func TestSearchFunctionSourceFilterAppliesBeforeLimit(t *testing.T) {
+	fake := &searchFunctionTestHandler{dbms: "PostgreSQL", queryErr: errors.New("stop after capture")}
+	db := Handler(fake)
+
+	_, err := SearchPages(context.Background(), &db, "nginx", "english", SearchFunctionOptions{Limit: 10, SourceUID: "uid-a"})
+	if err == nil || !strings.Contains(err.Error(), "stop after capture") {
+		t.Fatalf("expected captured query error, got %v", err)
+	}
+	want := "SELECT * FROM search_pages($1, $2) WHERE source_uid = $3 LIMIT $4"
+	if fake.lastQuery != want {
+		t.Fatalf("filter must precede limit, got: %s", fake.lastQuery)
+	}
+	if len(fake.lastArgs) != 4 || fake.lastArgs[0] != "nginx" || fake.lastArgs[1] != "english" ||
+		fake.lastArgs[2] != "uid-a" || fake.lastArgs[3] != 10 {
+		t.Fatalf("unexpected args: %#v", fake.lastArgs)
+	}
+}
+
+func TestSearchFunctionSourceFilterWithOffset(t *testing.T) {
+	fake := &searchFunctionTestHandler{dbms: "PostgreSQL", queryErr: errors.New("stop after capture")}
+	db := Handler(fake)
+
+	_, err := SearchPages(context.Background(), &db, "nginx", "english",
+		SearchFunctionOptions{Limit: 10, Offset: 5, SourceUID: "uid-a"})
+	if err == nil || !strings.Contains(err.Error(), "stop after capture") {
+		t.Fatalf("expected captured query error, got %v", err)
+	}
+	want := "SELECT * FROM search_pages($1, $2) WHERE source_uid = $3 LIMIT $4 OFFSET $5"
+	if fake.lastQuery != want {
+		t.Fatalf("unexpected query: %s", fake.lastQuery)
+	}
+	if len(fake.lastArgs) != 5 || fake.lastArgs[2] != "uid-a" ||
+		fake.lastArgs[3] != 10 || fake.lastArgs[4] != 5 {
+		t.Fatalf("unexpected args: %#v", fake.lastArgs)
+	}
+}
+
+func TestSearchFunctionEmptySourceFilterLeavesQueryUnchanged(t *testing.T) {
+	fake := &searchFunctionTestHandler{dbms: "PostgreSQL", queryErr: errors.New("stop after capture")}
+	db := Handler(fake)
+
+	_, err := SearchPages(context.Background(), &db, "nginx", "english",
+		SearchFunctionOptions{Limit: 10, SourceUID: ""})
+	if err == nil || !strings.Contains(err.Error(), "stop after capture") {
+		t.Fatalf("expected captured query error, got %v", err)
+	}
+	if fake.lastQuery != "SELECT * FROM search_pages($1, $2) LIMIT $3" {
+		t.Fatalf("empty filter must not alter the query: %s", fake.lastQuery)
+	}
+	if len(fake.lastArgs) != 3 {
+		t.Fatalf("unexpected args: %#v", fake.lastArgs)
+	}
+}
+
 func TestSearchArtifactsFieldsUsesJSONBCast(t *testing.T) {
 	fake := &searchFunctionTestHandler{dbms: "PostgreSQL", queryErr: errors.New("stop after capture")}
 	db := Handler(fake)
