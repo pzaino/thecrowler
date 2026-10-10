@@ -19,9 +19,27 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/qri-io/jsonschema"
 )
+
+// jsonSchemaCompileMu serializes JSON Schema compilation: the underlying
+// implementation keeps an unsynchronized global keyword registry, so
+// concurrent compiles race. Validation of already-compiled schemas stays
+// lock-free; compiles are tiny and infrequent.
+var jsonSchemaCompileMu sync.Mutex
+
+// compileJSONSchema unmarshals one schema document for dialect checks.
+func compileJSONSchema(doc []byte) (jsonschema.Schema, error) {
+	var compiled jsonschema.Schema
+	jsonSchemaCompileMu.Lock()
+	defer jsonSchemaCompileMu.Unlock()
+	if err := json.Unmarshal(doc, &compiled); err != nil {
+		return compiled, err
+	}
+	return compiled, nil
+}
 
 // Tool parameter schemas follow JSON Schema Draft-07 (the dialect used by
 // schemas/crowler-agent-schema.json). `$defs` is tolerated as an alias for
@@ -47,8 +65,7 @@ func checkParameterSchema(params map[string]any, toolIndex int) error {
 	if err != nil {
 		return schemaError(toolIndex, "", "cannot serialize parameters")
 	}
-	var compiled jsonschema.Schema
-	if err := json.Unmarshal(encoded, &compiled); err != nil {
+	if _, err := compileJSONSchema(encoded); err != nil {
 		return schemaError(toolIndex, "", "malformed schema (%s)", shortSchemaError(err))
 	}
 	return checkSchemaNode(params, params, toolIndex, "")

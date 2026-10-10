@@ -285,6 +285,7 @@ var actionCapability = map[string]string{
 	"PluginExecution": "plugin_execution",
 	"CreateEvent":     "emit_event",
 	"APIRequest":      "api_request",
+	"AgentToolLoop":   "tool_execution",
 }
 
 // delegationCapabilityName is the schema capability needed to delegate.
@@ -489,7 +490,7 @@ func trustLevelRank(level string) int {
 
 func minTrustRankForAction(actionName string) int {
 	switch strings.TrimSpace(actionName) {
-	case "RunCommand", "DBQuery", "PluginExecution":
+	case "RunCommand", "DBQuery", "PluginExecution", "AgentToolLoop":
 		return 2
 	default:
 		return 1

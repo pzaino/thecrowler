@@ -91,6 +91,7 @@ func RegisterActions(engine *JobEngine) {
 	engine.RegisterAction(&DBQueryAction{})
 	engine.RegisterAction(&PluginAction{})
 	engine.RegisterAction(&DecisionAction{})
+	engine.RegisterAction(&AgentToolLoopAction{})
 }
 
 // NewJobEngine creates a new job engine

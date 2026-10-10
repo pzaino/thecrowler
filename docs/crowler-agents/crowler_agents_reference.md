@@ -947,6 +947,31 @@ Operations:
 References: <https://docs.ollama.com/api/openai-compatibility>,
 <https://docs.ollama.com/capabilities/tool-calling>.
 
+#### 11.2.2 Authorized tool execution (`AgentToolLoop`)
+
+Phase 2 tool proposals are inert data. The opt-in `AgentToolLoop` action
+runs a bounded synchronous loop over vetted read-only tools
+(`get_source_status`, `search_indexed_pages`): at most 4 model rounds, 8
+tool calls, 16 KiB per observation, 64 KiB aggregate, 30 s elapsed, with the
+shorter job-group deadline always prevailing. One `AgentToolLoop` step is
+one job-group attempt; internal calls consume independent nested caps.
+
+Every proposed call passes, in order: explicit opt-in, valid identity with
+enforcement on, trusted registry membership, explicit run allowlist (the
+`all` wildcard never satisfies it), required capabilities (or `all`),
+trusted standing plus contract (`tools` / `tool:<name>` bans), Draft-07
+argument-instance validation, tool resource scope, and time/count budgets.
+Denials carry stable reason codes and stop the run after 3 consecutive
+denials; failures never print prompts, arguments, or credentials. Tool
+results are size-bounded, secret-redacted observations returned as
+`role:"tool"` messages with matching `tool_call_id`s; the run ends on final
+text, budget exhaustion, cancellation, or provider error.
+
+Policy fields (`allowlist`, `limits`, `allowed_sources`) must be statically
+declared — input references there are rejected — and `AgentToolLoop`
+requires the `tool_execution` capability plus identity enforcement (`all`
+without enforcement still refuses). See `agents/examples/tool-loop-reader.agent.yaml`.
+
 ### 11.3 `DBQuery`
 
 Use `DBQuery` to query a database.

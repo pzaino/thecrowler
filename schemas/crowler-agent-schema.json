@@ -76,7 +76,8 @@
                             "schedule_event",
                             "call_plugin",
                             "ai_reasoning",
-                            "delegate"
+                            "delegate",
+                            "tool_execution"
                         ]
                     }
                 },
@@ -375,7 +376,7 @@
                                 },
                                 "action": {
                                     "type": "string",
-                                    "description": "The action to be performed in this step.\nAPIRequest: Make a RESTful API request.\nAIInteraction: Interact with one of the known AI models (via API).\nDBQuery: Query a database.\nRunCommand: Run a command on the system.\nPluginExecution: Execute a CROWler's plugin.\nCreateEvent: Create an event in the CROWler system.\nDecision takes a decision based on the output of the previous step.",
+                                    "description": "The action to be performed in this step.\nAPIRequest: Make a RESTful API request.\nAIInteraction: Interact with one of the known AI models (via API).\nDBQuery: Query a database.\nRunCommand: Run a command on the system.\nPluginExecution: Execute a CROWler's plugin.\nCreateEvent: Create an event in the CROWler system.\nDecision takes a decision based on the output of the previous step.\nAgentToolLoop: Run an explicitly enabled, bounded tool-calling loop over vetted read-only tools.",
                                     "enum": [
                                         "APIRequest",
                                         "AIInteraction",
@@ -383,7 +384,8 @@
                                         "RunCommand",
                                         "PluginExecution",
                                         "CreateEvent",
-                                        "Decision"
+                                        "Decision",
+                                        "AgentToolLoop"
                                     ]
                                 },
                                 "params": {
@@ -959,6 +961,112 @@
                                                 },
                                                 "required": [
                                                     "condition"
+                                                ]
+                                            }
+                                        }
+                                    }
+                                },
+                                {
+                                    "if": {
+                                        "properties": {
+                                            "action": {
+                                                "const": "AgentToolLoop"
+                                            }
+                                        }
+                                    },
+                                    "then": {
+                                        "properties": {
+                                            "params": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "provider": {
+                                                        "type": "string",
+                                                        "description": "Registered LLM provider name (default openai-compatible)."
+                                                    },
+                                                    "url": {
+                                                        "type": "string",
+                                                        "description": "OpenAI-compatible chat completions endpoint."
+                                                    },
+                                                    "auth": {
+                                                        "type": "string",
+                                                        "description": "Optional authorization credential."
+                                                    },
+                                                    "model": {
+                                                        "type": "string",
+                                                        "description": "Tool-capable model name."
+                                                    },
+                                                    "prompt": {
+                                                        "type": "string",
+                                                        "description": "Opening user prompt when messages are absent."
+                                                    },
+                                                    "messages": {
+                                                        "type": "array",
+                                                        "description": "Opening chat messages; take precedence over prompt.",
+                                                        "items": {
+                                                            "type": "object"
+                                                        }
+                                                    },
+                                                    "allowlist": {
+                                                        "type": "array",
+                                                        "description": "Explicit trusted tool names permitted for this run. Required; must be statically declared.",
+                                                        "minItems": 1,
+                                                        "items": {
+                                                            "type": "string",
+                                                            "minLength": 1
+                                                        }
+                                                    },
+                                                    "allowed_sources": {
+                                                        "type": "array",
+                                                        "description": "Optional source-ID scope for resource access.",
+                                                        "items": {
+                                                            "type": "integer",
+                                                            "minimum": 1
+                                                        }
+                                                    },
+                                                    "limits": {
+                                                        "type": "object",
+                                                        "description": "Optional tightening within hard ceilings (4 rounds, 8 calls, 16 KiB per result, 64 KiB total, 30s).",
+                                                        "properties": {
+                                                            "max_model_rounds": {
+                                                                "type": "integer",
+                                                                "minimum": 1
+                                                            },
+                                                            "max_tool_calls": {
+                                                                "type": "integer",
+                                                                "minimum": 1
+                                                            },
+                                                            "max_result_bytes": {
+                                                                "type": "integer",
+                                                                "minimum": 1
+                                                            },
+                                                            "max_total_result_bytes": {
+                                                                "type": "integer",
+                                                                "minimum": 1
+                                                            },
+                                                            "timeout": {
+                                                                "oneOf": [
+                                                                    {
+                                                                        "type": "string"
+                                                                    },
+                                                                    {
+                                                                        "type": "number",
+                                                                        "minimum": 0
+                                                                    }
+                                                                ]
+                                                            },
+                                                            "stop_on_tool_error": {
+                                                                "type": "boolean"
+                                                            }
+                                                        },
+                                                        "additionalProperties": false
+                                                    },
+                                                    "stop_on_tool_error": {
+                                                        "type": "boolean",
+                                                        "description": "Stop the loop on ordinary tool execution errors."
+                                                    }
+                                                },
+                                                "required": [
+                                                    "allowlist"
                                                 ]
                                             }
                                         }

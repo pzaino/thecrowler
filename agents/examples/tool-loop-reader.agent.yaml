@@ -1,0 +1,56 @@
+# Authorized tool loop: an explicitly enabled, bounded, synchronous
+# model/tool run over vetted read-only tools. Nothing here executes
+# arbitrary actions, SQL, URLs, commands, or plugins: the allowlist names
+# registry tools only, and every proposal passes capability, trust,
+# contract, argument-schema, scope, and budget gates before execution.
+#
+# Operator setup: point url at an OpenAI-compatible endpoint (for example a
+# LAN Ollama host at http://OLLAMA_HOST:11434/v1/chat/completions) with a
+# tool-capable model installed. Auth depends on proxy setup.
+format_version: v2
+agent_identity:
+  agent_id: tool-loop-reader
+  name: Tool Loop Reader
+  agent_type: executor
+  owner: platform
+  trust_level: trusted
+  capabilities:
+    - ai_reasoning
+    - db_read
+    - tool_execution
+    - emit_event
+  memory:
+    scope: none
+  constraints:
+    max_steps: 4
+    time_budget: 2m
+jobs:
+  - name: Tool Loop Reader
+    process: serial
+    trigger_type: manual
+    trigger_name: run_tool_loop
+    steps:
+      - action: AgentToolLoop
+        params:
+          url: "http://OLLAMA_HOST:11434/v1/chat/completions"
+          model: "tool-capable-model"
+          prompt: "Summarize the status of source 7 in one sentence."
+          allowlist:
+            - get_source_status
+            - search_indexed_pages
+          allowed_sources:
+            - 7
+          limits:
+            max_model_rounds: 3
+            max_tool_calls: 4
+            max_result_bytes: 8192
+            max_total_result_bytes: 32768
+            timeout: 25s
+      - action: CreateEvent
+        params:
+          event_name: ai.tool_loop.completed
+          event_type: ai.tool_loop.completed
+          source: "0"
+          severity: info
+          details:
+            result: "$response"
