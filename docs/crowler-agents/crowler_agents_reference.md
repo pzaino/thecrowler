@@ -855,6 +855,78 @@ Authoring guidance:
 * Keep prompts explicit about expected keys.
 * Treat AI as a bounded decision component, not an unconstrained executor.
 
+#### 11.2.1 Tool calling (inert proposals, no execution)
+
+`AIInteraction` can offer declarative function schemas to the model and read
+back structured tool-call proposals as data. At most 16 tools per request and
+64 KiB of serialized declarations are accepted.
+
+```yaml
+- action: AIInteraction
+  params:
+    url: "http://OLLAMA_LAN_IP:11434/v1/chat/completions"
+    model: "<a locally installed tool-capable model>"
+    messages:
+      - role: user
+        content: "What is the forecast dividend for Oslo?"
+    tools:
+      - type: function
+        function:
+          name: get_forecast
+          description: "Look up the weather forecast."
+          parameters:
+            type: object
+            properties:
+              city:
+                type: string
+            required:
+              - city
+    tool_choice: auto
+    output_mode: normalized
+```
+
+Rules:
+
+* `tools` entries need `type: function`, a unique non-empty `name`, and a
+  `parameters` object schema with `type: object`. Step params win over
+  `config.ai.tools`; `config.ai.tool_choice` is the lower-priority default.
+* `tool_choice` is `auto`, `none`, `required`, or
+  `{type: function, function: {name: ...}}`.
+* With tools, a legacy `prompt` becomes one explicit `user` chat message;
+  explicit `messages` take precedence. Without tools the prompt-only wire
+  payload is unchanged.
+* `stream: true` with tools is rejected; non-tool streaming is unchanged.
+* `output_mode: raw` (default) returns the provider response map untouched.
+  `output_mode: normalized` returns `{content, tool_calls, finish_reason,
+  model, usage, raw}`. `raw` always carries the untouched provider
+  envelope for audit. This is unrelated to OpenAI `response_format`, which
+  passes through untouched.
+* Normalized `tool_calls` preserve provider order and call IDs (empty ID
+  when the dialect supplies none, disambiguated by index). Arguments arrive
+  as objects whether the provider encoded them as JSON text or objects.
+* Downstream steps read `$response.content`,
+  `$response.tool_calls[0].name`, and
+  `$response.tool_calls[0].arguments.city`. **Nothing executes a returned
+  call**: no dispatch, no database access, no plugin or command execution,
+  no follow-up model call, no tool-result feedback. A model-supplied
+  function name, arguments, URL, or SQL fragment is untrusted input.
+
+Operations:
+
+* One request yields one response over the existing `openai-compatible`
+  provider, including LAN Ollama endpoints exposing
+  `/v1/chat/completions`. Ollama's native `/api/chat` dialect is not used.
+  Auth is optional (LAN Ollama normally needs none); endpoint URLs always
+  come from operator configuration — CROWler never discovers endpoints.
+* A 30s HTTP timeout bounds in-flight I/O and an 8 MiB cap bounds retained
+  provider output; non-2xx provider statuses surface as explicit step
+  errors. Auth tokens, prompts, and full responses never appear in error
+  text or logs.
+* Identity, contract, budget, and delegation gates run before any transport.
+
+References: <https://docs.ollama.com/api/openai-compatibility>,
+<https://docs.ollama.com/capabilities/tool-calling>.
+
 ### 11.3 `DBQuery`
 
 Use `DBQuery` to query a database.

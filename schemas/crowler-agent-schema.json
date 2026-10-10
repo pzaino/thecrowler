@@ -607,6 +607,117 @@
                                                     "user": {
                                                         "type": "string",
                                                         "description": "The user to be used for the AI interaction."
+                                                    },
+                                                    "tools": {
+                                                        "type": "array",
+                                                        "description": "Inert function declarations offered to the model. They are validated and serialized but never executed by CROWler.",
+                                                        "items": {
+                                                            "type": "object",
+                                                            "properties": {
+                                                                "type": {
+                                                                    "type": "string",
+                                                                    "enum": [
+                                                                        "function"
+                                                                    ]
+                                                                },
+                                                                "function": {
+                                                                    "type": "object",
+                                                                    "properties": {
+                                                                        "name": {
+                                                                            "type": "string",
+                                                                            "minLength": 1
+                                                                        },
+                                                                        "description": {
+                                                                            "type": "string"
+                                                                        },
+                                                                        "parameters": {
+                                                                            "type": "object",
+                                                                            "description": "JSON Schema object constraining the function arguments.",
+                                                                            "properties": {
+                                                                                "type": {
+                                                                                    "type": "string",
+                                                                                    "enum": [
+                                                                                        "object"
+                                                                                    ]
+                                                                                },
+                                                                                "properties": {
+                                                                                    "type": "object"
+                                                                                },
+                                                                                "required": {
+                                                                                    "type": "array",
+                                                                                    "items": {
+                                                                                        "type": "string"
+                                                                                    }
+                                                                                }
+                                                                            },
+                                                                            "required": [
+                                                                                "type"
+                                                                            ]
+                                                                        }
+                                                                    },
+                                                                    "required": [
+                                                                        "name",
+                                                                        "parameters"
+                                                                    ],
+                                                                    "additionalProperties": true
+                                                                }
+                                                            },
+                                                            "required": [
+                                                                "type",
+                                                                "function"
+                                                            ],
+                                                            "additionalProperties": true
+                                                        }
+                                                    },
+                                                    "tool_choice": {
+                                                        "description": "How the model may use declared tools: auto, none, required, or a function selector.",
+                                                        "oneOf": [
+                                                            {
+                                                                "type": "string",
+                                                                "enum": [
+                                                                    "auto",
+                                                                    "none",
+                                                                    "required"
+                                                                ]
+                                                            },
+                                                            {
+                                                                "type": "object",
+                                                                "properties": {
+                                                                    "type": {
+                                                                        "type": "string",
+                                                                        "enum": [
+                                                                            "function"
+                                                                        ]
+                                                                    },
+                                                                    "function": {
+                                                                        "type": "object",
+                                                                        "properties": {
+                                                                            "name": {
+                                                                                "type": "string",
+                                                                                "minLength": 1
+                                                                            }
+                                                                        },
+                                                                        "required": [
+                                                                            "name"
+                                                                        ],
+                                                                        "additionalProperties": true
+                                                                    }
+                                                                },
+                                                                "required": [
+                                                                    "type",
+                                                                    "function"
+                                                                ],
+                                                                "additionalProperties": true
+                                                            }
+                                                        ]
+                                                    },
+                                                    "output_mode": {
+                                                        "type": "string",
+                                                        "description": "CROWler-side output contract: raw preserves the provider response map, normalized returns the stable typed shape. Distinct from OpenAI response_format, which passes through untouched.",
+                                                        "enum": [
+                                                            "raw",
+                                                            "normalized"
+                                                        ]
                                                     }
                                                 },
                                                 "oneOf": [

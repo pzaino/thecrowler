@@ -912,6 +912,16 @@ func (je *JobEngine) executeJobsWithContextResult(j *JobConfig, iCfg map[string]
 				return nil, fmt.Errorf("invalid params for first step of job group '%s': expected mapping", jobGroup.Name)
 			}
 
+			// Seed the first step input from the invocation context (for
+			// example delegated payloads). Manifest-explicit input wins;
+			// without either, actions see whatever their own contract
+			// requires (some tolerate missing input, some error).
+			if inputVal, ok := iCfg[StrRequest]; ok && inputVal != nil {
+				if _, present := paramsMap[StrRequest]; !present {
+					paramsMap[StrRequest] = inputVal
+				}
+			}
+
 			// Ensure "StrConfig" exists within "params" and is a map[string]interface{}
 			if _, ok := paramsMap[StrConfig]; !ok || paramsMap[StrConfig] == nil {
 				paramsMap[StrConfig] = make(map[string]interface{})

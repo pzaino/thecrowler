@@ -1,0 +1,41 @@
+{
+  "id": "chatcmpl-ollama-1",
+  "object": "chat.completion",
+  "created": 1729000001,
+  "model": "qwen3:8b",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "call_ollama_1",
+            "type": "function",
+            "function": {
+              "name": "get_forecast",
+              "arguments": {
+                "city": "Oslo",
+                "days": 3
+              }
+            }
+          },
+          {
+            "type": "function",
+            "function": {
+              "name": "ping",
+              "arguments": null
+            }
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 52,
+    "completion_tokens": 21,
+    "total_tokens": 73
+  }
+}

@@ -168,8 +168,13 @@ func (d *DecisionAction) Execute(params map[string]interface{}) (map[string]inte
 				delegationCtx[k] = v
 			}
 		}
-		if inputVal, ok := inputRaw[StrRequest]; ok {
+		// The callee always starts with a defined input: the caller's
+		// forwarded payload when present, otherwise an empty mapping. This
+		// keeps real actions usable as delegated first steps.
+		if inputVal, ok := inputRaw[StrRequest]; ok && inputVal != nil {
 			delegationCtx[StrRequest] = inputVal
+		} else {
+			delegationCtx[StrRequest] = map[string]interface{}{}
 		}
 		delegated, err := AgentsEngine.ExecuteAgentResult(agentRef, delegationCtx)
 		if err != nil {

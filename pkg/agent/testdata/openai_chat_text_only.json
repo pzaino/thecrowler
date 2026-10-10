@@ -1,0 +1,21 @@
+{
+  "id": "chatcmpl-openai-2",
+  "object": "chat.completion",
+  "created": 1729000002,
+  "model": "gpt-4o-mini",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "The forecast calls for clear skies."
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 12,
+    "completion_tokens": 9,
+    "total_tokens": 21
+  }
+}

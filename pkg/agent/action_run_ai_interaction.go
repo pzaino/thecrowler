@@ -87,7 +87,26 @@ func (a *AIInteractionAction) Execute(params map[string]interface{}) (map[string
 		return rval, err
 	}
 
-	rval[StrResponse] = responseMap
+	// Output contract: raw (default) preserves the provider response map
+	// exactly; normalized opt-in returns the stable typed shape. Tool
+	// calls are inert data in both modes — nothing here interprets them.
+	if resolved.OutputMode == LLMOutputNormalized {
+		payload, err := ExtractChatPayload(responseMap)
+		if err != nil {
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = err.Error()
+			return rval, err
+		}
+		normalized, err := NormalizeChatCompletion(payload)
+		if err != nil {
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = err.Error()
+			return rval, err
+		}
+		rval[StrResponse] = normalized.ToMap()
+	} else {
+		rval[StrResponse] = responseMap
+	}
 	rval[StrStatus] = StatusSuccess
 	rval[StrMessage] = "AI interaction successful"
 	return rval, nil
@@ -174,6 +193,33 @@ func normalizeLLMRequest(params, config map[string]interface{}, ictx InputContex
 		return LLMRequest{}, fmt.Errorf(ErrMissingURL)
 	}
 
+	// Declarative tool configuration. Step-level params win; config.ai.*
+	// acts as lower-priority defaults, mirroring provider/url/auth/model.
+	// Nothing here executes anything.
+	tools, err := normalizeTools(params, config, ictx)
+	if err != nil {
+		return LLMRequest{}, err
+	}
+	toolChoice, hasToolChoice, err := normalizeToolChoice(params, config, ictx)
+	if err != nil {
+		return LLMRequest{}, err
+	}
+	outputMode, err := normalizeOutputMode(params, ictx)
+	if err != nil {
+		return LLMRequest{}, err
+	}
+	if len(tools) > 0 {
+		if streamRequested(params, ictx) {
+			return LLMRequest{}, fmt.Errorf("streaming with tool calling is not supported: set stream to false")
+		}
+		if len(messages) == 0 {
+			// Tool-enabled calls require chat messages; synthesize one
+			// explicit user message from the legacy prompt instead of
+			// sending a completion-only payload to /v1/chat/completions.
+			messages = []interface{}{map[string]interface{}{"role": "user", "content": prompt}}
+		}
+	}
+
 	temperature, err := parseOptionalFloat(params, ictx, "temperature")
 	if err != nil {
 		return LLMRequest{}, err
@@ -199,17 +245,104 @@ func normalizeLLMRequest(params, config map[string]interface{}, ictx InputContex
 	}
 
 	return LLMRequest{
-		Provider:    provider,
-		URL:         url,
-		Auth:        auth,
-		Model:       model,
-		Messages:    messages,
-		Prompt:      prompt,
-		Temperature: temperature,
-		MaxTokens:   maxTokens,
-		TopP:        topP,
-		Extras:      extras,
+		Provider:      provider,
+		URL:           url,
+		Auth:          auth,
+		Model:         model,
+		Messages:      messages,
+		Prompt:        prompt,
+		Temperature:   temperature,
+		MaxTokens:     maxTokens,
+		TopP:          topP,
+		Extras:        extras,
+		Tools:         tools,
+		ToolChoice:    toolChoice,
+		HasToolChoice: hasToolChoice,
+		OutputMode:    outputMode,
 	}, nil
+}
+
+// normalizeTools resolves and validates tool declarations without mutating
+// the manifest. Step params win; config.ai.tools is the default.
+func normalizeTools(params, config map[string]interface{}, ictx InputContext) ([]LLMToolDefinition, error) {
+	raw, ok := params["tools"]
+	if !ok || raw == nil {
+		if aiSection := mapStringAny(config["ai"]); len(aiSection) > 0 {
+			raw, ok = aiSection["tools"]
+		}
+		if !ok || raw == nil {
+			return nil, nil
+		}
+	}
+	resolved, err := ResolveValue(ictx, raw)
+	if err != nil {
+		return nil, err
+	}
+	entries, ok := resolved.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("invalid tools: expected array")
+	}
+	return validateToolDefinitions(entries)
+}
+
+// normalizeToolChoice resolves the tool-use policy with step-over-config
+// precedence.
+func normalizeToolChoice(params, config map[string]interface{}, ictx InputContext) (LLMToolChoice, bool, error) {
+	if raw, ok := params["tool_choice"]; ok && raw != nil {
+		resolved, err := ResolveValue(ictx, raw)
+		if err != nil {
+			return LLMToolChoice{}, false, err
+		}
+		return parseToolChoice(resolved)
+	}
+	if aiSection := mapStringAny(config["ai"]); len(aiSection) > 0 {
+		if raw, ok := aiSection["tool_choice"]; ok && raw != nil {
+			resolved, err := ResolveValue(ictx, raw)
+			if err != nil {
+				return LLMToolChoice{}, false, err
+			}
+			return parseToolChoice(resolved)
+		}
+	}
+	return LLMToolChoice{}, false, nil
+}
+
+// normalizeOutputMode reads the CROWler-side output contract. Absent means
+// raw (full backward compatibility); anything else must be "normalized".
+func normalizeOutputMode(params map[string]interface{}, ictx InputContext) (string, error) {
+	raw, ok := params["output_mode"]
+	if !ok || raw == nil {
+		return LLMOutputRaw, nil
+	}
+	resolved, err := ResolveString(ictx, fmt.Sprintf("%v", raw))
+	if err != nil {
+		return "", err
+	}
+	switch strings.ToLower(strings.TrimSpace(resolved)) {
+	case "", LLMOutputRaw:
+		return LLMOutputRaw, nil
+	case LLMOutputNormalized:
+		return LLMOutputNormalized, nil
+	default:
+		return "", fmt.Errorf("invalid output_mode %q: want raw or normalized", resolved)
+	}
+}
+
+// streamRequested reports whether the step asks for streaming responses.
+func streamRequested(params map[string]interface{}, ictx InputContext) bool {
+	val, ok, err := resolveOptionalParam(params, ictx, "stream")
+	if err != nil || !ok {
+		return false
+	}
+	switch v := val.(type) {
+	case bool:
+		return v
+	case string:
+		lowered := strings.ToLower(strings.TrimSpace(v))
+		return lowered == "true" || lowered == "1"
+	default:
+		return false
+	}
 }
 
 // enforceAIUsagePolicyForIdentity applies the AI provider/model policy to a
