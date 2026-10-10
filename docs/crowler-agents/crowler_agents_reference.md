@@ -896,6 +896,26 @@ Rules:
   explicit `messages` take precedence. Without tools the prompt-only wire
   payload is unchanged.
 * `stream: true` with tools is rejected; non-tool streaming is unchanged.
+
+Validation semantics (all checked before any provider HTTP call):
+
+* `tool_choice` consistency: absent choice omits the wire field; with no
+  declared tools only `none` is accepted (`auto`, `required`, and named
+  selectors are rejected); with tools, a named selector must match a
+  declared function name exactly (case-sensitive). A named choice never
+  authorizes execution.
+* `stream` accepts boolean `true`/`false` and the legacy strings `"true"`,
+  `"false"`, `"1"`, `"0"`; absent means unset. Numbers, collections,
+  explicit null, unknown strings, and unresolvable `$response` references
+  are rejected. One resolved value feeds both the tools/stream gate and
+  request serialization.
+* Parameter schemas follow JSON Schema Draft-07 (`$defs` tolerated as an
+  alias for `definitions`): `properties`/`required`/`items`/combinators are
+  recursed; every nonempty `required` entry must be a unique nonempty
+  string declared in sibling `properties`; `$ref` must be local (`#/...`)
+  and resolve inside the same document — external references are rejected
+  without any network fetch. Malformed keyword shapes are rejected at
+  compile time by the project's schema validator.
 * `output_mode: raw` (default) returns the provider response map untouched.
   `output_mode: normalized` returns `{content, tool_calls, finish_reason,
   model, usage, raw}`. `raw` always carries the untouched provider

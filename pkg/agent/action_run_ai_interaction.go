@@ -204,12 +204,23 @@ func normalizeLLMRequest(params, config map[string]interface{}, ictx InputContex
 	if err != nil {
 		return LLMRequest{}, err
 	}
+	// Cross-field consistency on the effective (resolved, precedence-applied)
+	// tool set: a named or selective choice must address declared tools.
+	if err := checkToolChoiceConsistency(tools, toolChoice, hasToolChoice); err != nil {
+		return LLMRequest{}, err
+	}
 	outputMode, err := normalizeOutputMode(params, ictx)
 	if err != nil {
 		return LLMRequest{}, err
 	}
+	// One resolution feeds both the tool/stream compatibility decision and
+	// request serialization, so the two can never diverge.
+	stream, streamPresent, err := parseStreamSetting(params, ictx)
+	if err != nil {
+		return LLMRequest{}, err
+	}
 	if len(tools) > 0 {
-		if streamRequested(params, ictx) {
+		if stream {
 			return LLMRequest{}, fmt.Errorf("streaming with tool calling is not supported: set stream to false")
 		}
 		if len(messages) == 0 {
@@ -234,7 +245,7 @@ func normalizeLLMRequest(params, config map[string]interface{}, ictx InputContex
 	}
 
 	extras := map[string]interface{}{}
-	for _, key := range []string{"presence_penalty", "frequency_penalty", "stop", "echo", "logprobs", "n", "logit_bias", "stream"} {
+	for _, key := range []string{"presence_penalty", "frequency_penalty", "stop", "echo", "logprobs", "n", "logit_bias"} {
 		val, ok, err := resolveOptionalParam(params, ictx, key)
 		if err != nil {
 			return LLMRequest{}, err
@@ -242,6 +253,9 @@ func normalizeLLMRequest(params, config map[string]interface{}, ictx InputContex
 		if ok {
 			extras[key] = val
 		}
+	}
+	if streamPresent {
+		extras["stream"] = stream
 	}
 
 	return LLMRequest{
@@ -328,20 +342,38 @@ func normalizeOutputMode(params map[string]interface{}, ictx InputContext) (stri
 	}
 }
 
-// streamRequested reports whether the step asks for streaming responses.
-func streamRequested(params map[string]interface{}, ictx InputContext) bool {
-	val, ok, err := resolveOptionalParam(params, ictx, "stream")
-	if err != nil || !ok {
-		return false
+// parseStreamSetting resolves and type-checks the stream parameter without
+// dropping errors. Absent means (false, false, nil). Boolean true/false and
+// the legacy strings "true"/"false"/"1"/"0" (trimmed, case-insensitive)
+// normalize to their Boolean meaning. Every other explicitly provided value,
+// including null, numbers, collections, unresolvable references, and unknown
+// string tokens, is a deterministic validation error.
+func parseStreamSetting(params map[string]interface{}, ictx InputContext) (bool, bool, error) {
+	raw, present := params["stream"]
+	if !present {
+		return false, false, nil
 	}
-	switch v := val.(type) {
-	case bool:
-		return v
-	case string:
-		lowered := strings.ToLower(strings.TrimSpace(v))
-		return lowered == "true" || lowered == "1"
+	if raw == nil {
+		return false, false, fmt.Errorf("invalid stream: expected boolean")
+	}
+	if flag, ok := raw.(bool); ok {
+		return flag, true, nil
+	}
+	text, ok := raw.(string)
+	if !ok {
+		return false, false, fmt.Errorf("invalid stream: expected boolean")
+	}
+	resolved, err := ResolveString(ictx, text)
+	if err != nil {
+		return false, false, err
+	}
+	switch strings.ToLower(strings.TrimSpace(resolved)) {
+	case "true", "1":
+		return true, true, nil
+	case "false", "0":
+		return false, true, nil
 	default:
-		return false
+		return false, false, fmt.Errorf("invalid stream %q: want true, false, 1, or 0", resolved)
 	}
 }
 

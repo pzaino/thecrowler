@@ -2,6 +2,8 @@ package agent
 
 import (
 	"encoding/json"
+	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -168,5 +170,105 @@ func TestNormalizedResponseShape(t *testing.T) {
 	var decoded map[string]any
 	if err := json.Unmarshal(encoded, &decoded); err != nil {
 		t.Fatalf("round trip: %v", err)
+	}
+}
+
+// TestParameterSchemaValidation pins structural Draft-07 checks.
+func TestParameterSchemaValidation(t *testing.T) {
+	tool := func(params map[string]any) []any {
+		return []any{map[string]any{"type": "function", "function": map[string]any{
+			"name": "f", "parameters": params}}}
+	}
+	valid := []map[string]any{
+		{"type": "object"},
+		{"type": "object", "properties": map[string]any{
+			"city": map[string]any{"type": "string"},
+			"geo": map[string]any{"type": "object", "properties": map[string]any{
+				"lat": map[string]any{"type": "number"},
+			}, "required": []any{"lat"}},
+			"tags": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"mode": map[string]any{"oneOf": []any{
+				map[string]any{"type": "string"}, map[string]any{"type": "null"}}},
+		}, "required": []any{"city"}},
+		{"type": "object", "definitions": map[string]any{
+			"addr": map[string]any{"type": "object", "properties": map[string]any{
+				"zip": map[string]any{"type": "string"}}, "required": []any{"zip"}}},
+			"properties": map[string]any{
+				"home": map[string]any{"$ref": "#/definitions/addr"}}},
+		{"type": "object", "properties": map[string]any{
+			"pick": map[string]any{"anyOf": []any{
+				map[string]any{"type": "string"}, map[string]any{"type": "integer"}}},
+			"all": map[string]any{"allOf": []any{map[string]any{"type": "object"}}},
+		}},
+		{"type": "object", "properties": map[string]any{
+			"level": map[string]any{"type": "string", "enum": []any{"a", "b"}}}},
+	}
+	for i, params := range valid {
+		if _, err := validateToolDefinitions(tool(params)); err != nil {
+			t.Fatalf("valid %d rejected: %v", i, err)
+		}
+	}
+	invalid := []struct {
+		name   string
+		params string
+		want   string
+	}{
+		{"unknown required", `{"type":"object","properties":{"a":{"type":"string"}},"required":["b"]}`, "unknown property"},
+		{"required without properties", `{"type":"object","required":["a"]}`, "no declared properties"},
+		{"duplicate required", `{"type":"object","properties":{"a":{"type":"string"}},"required":["a","a"]}`, "duplicate entry"},
+		{"empty required name", `{"type":"object","properties":{"a":{"type":"string"}},"required":[" "]}`, "nonempty strings"},
+		{"nested unknown required", `{"type":"object","properties":{"o":{"type":"object","properties":{"x":{"type":"string"}},"required":["y"]}}}`, "unknown property"},
+		{"properties wrong type", `{"type":"object","properties":"nope"}`, "malformed schema"},
+		{"required wrong type", `{"type":"object","required":42}`, "required.*expected array"},
+		{"required number entry", `{"type":"object","properties":{"a":{"type":"string"}},"required":[42]}`, "array of strings"},
+		{"items invalid", `{"type":"object","properties":{"a":{"type":"array","items":42}}}`, "malformed schema"},
+		{"bad type name", `{"type":"object","properties":{"a":{"type":"fancy"}}}`, "malformed schema"},
+		{"dangling ref", `{"type":"object","properties":{"a":{"$ref":"#/definitions/gone"}}}`, "dangling reference"},
+		{"external ref", `{"type":"object","properties":{"a":{"$ref":"https://example.com/s.json"}}}`, "external references"},
+		{"bad combinator", `{"type":"object","properties":{"a":{"oneOf":42}}}`, "malformed schema"},
+		{"empty combinator", `{"type":"object","properties":{"a":{"oneOf":[]}}}`, "non-empty array"},
+	}
+	for _, tc := range invalid {
+		var params map[string]any
+		if err := json.Unmarshal([]byte(tc.params), &params); err != nil {
+			t.Fatalf("%s: bad fixture: %v", tc.name, err)
+		}
+		_, err := validateToolDefinitions(tool(params))
+		if err == nil {
+			t.Fatalf("%s: expected rejection", tc.name)
+			continue
+		}
+		matched, matchErr := regexp.MatchString(tc.want, err.Error())
+		if matchErr != nil || !matched {
+			t.Fatalf("%s: expected %q, got %v", tc.name, tc.want, err)
+		}
+	}
+}
+
+// TestInvalidSchemaFailsBeforeTransport proves malformed declarations never
+// reach the provider.
+func TestInvalidSchemaFailsBeforeTransport(t *testing.T) {
+	server, count := countingToolServer(t, `{"choices":[]}`, http.StatusOK)
+	a := &AIInteractionAction{}
+	_, err := a.Execute(map[string]interface{}{
+		StrConfig:  map[string]interface{}{},
+		StrRequest: "hi",
+		"url":      server.URL,
+		"model":    "m",
+		"prompt":   "hi",
+		"tools": []any{map[string]any{"type": "function", "function": map[string]any{
+			"name": "f", "parameters": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"a": map[string]any{"type": "string"},
+				},
+				"required": []any{"ghost"},
+			}}}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "unknown property") {
+		t.Fatalf("expected schema rejection, got %v", err)
+	}
+	if *count != 0 {
+		t.Fatalf("invalid schema reached HTTP")
 	}
 }

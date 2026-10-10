@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v2"
 )
 
 func fixtureBytes(t *testing.T, name string) []byte {
@@ -228,5 +230,126 @@ func TestInvalidOutputModeFailsBeforeHTTP(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "invalid output_mode") {
 		t.Fatalf("expected output_mode error, got %v", err)
+	}
+}
+
+// hostileToolProvider returns tool calls named after CROWler actions with
+// argument payloads that would be harmful if ever interpreted.
+type hostileToolProvider struct{}
+
+func (p *hostileToolProvider) Name() string { return "hostile-tools" }
+
+func (p *hostileToolProvider) Execute(req LLMRequest) (map[string]interface{}, error) {
+	return map[string]interface{}{
+		"choices": []any{map[string]any{
+			"message": map[string]any{
+				"role":    "assistant",
+				"content": "",
+				"tool_calls": []any{
+					map[string]any{"id": "h1", "type": "function", "function": map[string]any{
+						"name": "RunCommand", "arguments": map[string]any{"command": "touch /tmp/crowler-phase2-pwned"}}},
+					map[string]any{"id": "h2", "type": "function", "function": map[string]any{
+						"name": "DBQuery", "arguments": map[string]any{"query": "DROP TABLE Events"}}},
+					map[string]any{"id": "h3", "type": "function", "function": map[string]any{
+						"name": "APIRequest", "arguments": map[string]any{"url": "http://169.254.169.254/"}}},
+				},
+			},
+			"finish_reason": "tool_calls",
+		}},
+		"model": "hostile",
+	}, nil
+}
+
+// TestToolCallsRemainInert proves model-proposed calls matching CROWler
+// action names produce data only: no command runs, no database writes, no
+// HTTP dispatch, no follow-up model call.
+func TestToolCallsRemainInert(t *testing.T) {
+	resetLLMProvidersForTest()
+	t.Cleanup(func() {
+		resetLLMProvidersForTest()
+		RegisterLLMProvider(&OpenAICompatibleProvider{})
+	})
+	RegisterLLMProvider(&hostileToolProvider{})
+
+	canary := "/tmp/crowler-phase2-pwned"
+	_ = os.Remove(canary)
+	t.Cleanup(func() { _ = os.Remove(canary) })
+
+	engine := NewJobEngine()
+	engine.RegisterAction(&AIInteractionAction{})
+	capture := &inputCaptureAction{name: "CreateEvent"}
+	engine.RegisterAction(capture)
+	agentCfg := &JobConfig{
+		FormatVersion: AgentFormatVersionV2,
+		AgentIdentity: &AgentIdentity{AgentID: "inert", Name: "Inert",
+			TrustLevel: "trusted", Capabilities: []string{"ai_reasoning", "emit_event"}},
+		Jobs: []Job{{Name: "Inert", Process: "serial", TriggerType: "manual", TriggerName: "run",
+			Steps: []map[string]interface{}{
+				{"action": "AIInteraction", "params": map[string]interface{}{
+					"input":    map[string]interface{}{},
+					"provider": "hostile-tools",
+					"url":      "https://example.com/v1/chat",
+					"model":    "hostile",
+					"prompt":   "do harm",
+					"tools": []any{map[string]any{"type": "function", "function": map[string]any{
+						"name": "RunCommand", "parameters": map[string]any{"type": "object"}}}},
+					"output_mode": "normalized",
+				}},
+				{"action": "CreateEvent", "params": map[string]interface{}{}},
+			}}},
+	}
+	if err := engine.ExecuteJobs(agentCfg, runtimeEnforcedCfg()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, err := os.Stat(canary); !os.IsNotExist(err) {
+		t.Fatalf("tool call was executed: canary exists")
+	}
+	if len(capture.got) != 1 {
+		t.Fatalf("expected one capture, got %d", len(capture.got))
+	}
+	seen, ok := capture.got[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected mapping, got %#v", capture.got[0])
+	}
+	calls, ok := seen["tool_calls"].([]any)
+	if !ok || len(calls) != 3 {
+		t.Fatalf("tool calls lost in dataflow: %#v", seen)
+	}
+	names := map[string]bool{}
+	for _, raw := range calls {
+		entry, ok := raw.(map[string]any)
+		if !ok {
+			t.Fatalf("bad call entry: %#v", raw)
+		}
+		name, _ := entry["name"].(string)
+		names[name] = true
+	}
+	for _, want := range []string{"RunCommand", "DBQuery", "APIRequest"} {
+		if !names[want] {
+			t.Fatalf("call %q missing: %v", want, names)
+		}
+	}
+}
+
+// yamlUnmarshalToolDoc decodes YAML exactly like the manifest loader does,
+// surfacing map[interface{}]interface{} nesting.
+func yamlUnmarshalToolDoc(doc string, out any) error {
+	return yaml.Unmarshal([]byte(doc), out)
+}
+
+// TestNestedYAMLToolMaps proves YAML-decoded nested maps (which decode as
+// map[interface{}]interface{}) validate and normalize.
+func TestNestedYAMLToolMaps(t *testing.T) {
+	doc := "type: function\nfunction:\n  name: f\n  parameters:\n    type: object\n    properties:\n      o:\n        type: object\n        properties:\n          x:\n            type: string\n        required:\n          - x\n"
+	var decoded map[interface{}]interface{}
+	if err := yamlUnmarshalToolDoc(doc, &decoded); err != nil {
+		t.Fatalf("yaml decode: %v", err)
+	}
+	defs, err := validateToolDefinitions([]any{decoded})
+	if err != nil {
+		t.Fatalf("yaml-decoded tools rejected: %v", err)
+	}
+	if defs[0].Function.Name != "f" {
+		t.Fatalf("bad def: %+v", defs[0])
 	}
 }

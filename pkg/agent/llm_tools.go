@@ -248,6 +248,11 @@ func validateToolDefinitions(rawTools []any) ([]LLMToolDefinition, error) {
 				}
 			}
 		}
+		// Structural Draft-07 validation with required-property
+		// consistency and local-only $ref integrity.
+		if err := checkParameterSchema(params, i); err != nil {
+			return nil, err
+		}
 		description, _ := fnMap["description"].(string)
 		defs = append(defs, LLMToolDefinition{
 			Type: "function",
@@ -447,6 +452,39 @@ func toolArgumentErrorDetail(err error) string {
 		return "malformed arguments JSON"
 	default:
 		return "arguments must be an object"
+	}
+}
+
+// checkToolChoiceConsistency validates a tool_choice against the effective
+// declared tool set. Absent choice preserves legacy wire behavior (the field
+// is omitted). With no tools, only "none" passes; auto/required/named
+// selectors are rejected before HTTP. With tools, auto/none/required pass
+// and a named selector must match exactly one declared function with
+// case-sensitive wire identity. A named choice never authorizes execution;
+// it only constrains the provider request. Errors are field-scoped and
+// carry no prompts, secrets, or response bodies.
+func checkToolChoiceConsistency(tools []LLMToolDefinition, choice LLMToolChoice, hasChoice bool) error {
+	if !hasChoice {
+		return nil
+	}
+	if len(tools) == 0 {
+		if choice.Mode == "none" {
+			return nil
+		}
+		return fmt.Errorf("invalid tool_choice %q: no tools declared", choice.Mode)
+	}
+	switch choice.Mode {
+	case "none", "auto", "required":
+		return nil
+	case "function":
+		for _, tool := range tools {
+			if tool.Function.Name == choice.Name {
+				return nil
+			}
+		}
+		return fmt.Errorf("invalid tool_choice: function %q matches no declared tool", choice.Name)
+	default:
+		return fmt.Errorf("invalid tool_choice %q: want auto, none, required, or a function selector", choice.Mode)
 	}
 }
 
