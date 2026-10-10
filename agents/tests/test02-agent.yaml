@@ -1,0 +1,88 @@
+jobs:
+  - name: commit_msg_assistant
+    description: "Suggest a 1-line Conventional Commit for staged changes."
+    process: serial
+    trigger_type: manual
+    trigger_name: commit-msg   # run by name from another agent or your API/CLI
+    steps:
+      - description: "Get staged diff"
+        action: RunCommand
+        params:
+          command: git diff --staged
+
+      - description: "If no staged changes, stop."
+        action: Decision
+        params:
+          condition:
+            condition_type: if
+            # engine exposes previous step’s stdout/exit_code as $response.*
+            expression: "$response.stdout == ''"
+            on_true:
+              agent_name: commit_msg_done_no_changes
+            on_false:
+              agent_name: commit_msg_generate
+
+  - name: commit_msg_generate
+    description: "Ask an AI model to format a Conventional Commit."
+    process: serial
+    trigger_type: manual
+    trigger_name: commit_msg_assistant
+    steps:
+      - description: "Draft conventional commit message from diff"
+        action: AIInteraction
+        params:
+          model: gpt-4o-mini
+          api_key: "${SECRETS.OPENAI_API_KEY}"   # recommend secrets indirection
+          temperature: 0.2
+          max_tokens: 120
+          messages:
+            - role: system
+              content: |
+                You are a commit message assistant.
+                Rules:
+                - Output exactly one single-line Conventional Commit.
+                - Be concise; prefer present tense imperative.
+                - If the intent is unclear, summarize the main change succinctly.
+                - Never include backticks or quotes.
+            - role: user
+              content: |
+                Write the commit message for these staged changes (unified diff):
+                ----
+                $response.stdout
+                ----
+
+      - description: "Publish the suggestion as a CROWler event (safe default)"
+        action: CreateEvent
+        params:
+          event_name: "COMMIT_MESSAGE_SUGGESTED"
+          event_type: "agent.output"
+          # You can attach arbitrary fields here (schema requires name/type only)
+          suggestion: "$response.choices[0].message.content"
+
+  - name: commit_msg_apply   # optional, perform the actual commit
+    description: "Use the latest suggested message to commit."
+    process: serial
+    trigger_type: manual
+    trigger_name: commit-apply
+    steps:
+      - description: "Fetch last suggestion from your store or pass it in"
+        action: RunCommand
+        params:
+          command: 'echo "${COMMIT_MSG}"'
+      - description: "Run git commit"
+        action: RunCommand
+        params:
+          # quote carefully; many shells need single quotes around %s
+          command: "git commit -m \"$response.stdout\""
+
+  - name: commit_msg_done_no_changes
+    description: "No-op when nothing is staged."
+    process: serial
+    trigger_type: manual
+    trigger_name: commit_msg_assistant
+    steps:
+      - description: "Emit no-changes event"
+        action: CreateEvent
+        params:
+          event_name: "NO_STAGED_CHANGES"
+          event_type: "agent.info"

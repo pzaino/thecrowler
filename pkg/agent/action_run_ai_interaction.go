@@ -41,21 +41,32 @@ func (a *AIInteractionAction) Execute(params map[string]interface{}) (map[string
 	}
 	rval[StrConfig] = config
 
-	inputRaw, err := getInput(params)
+	if _, err := getInput(params); err != nil {
+		rval[StrStatus] = StatusError
+		rval[StrMessage] = err.Error()
+		return rval, err
+	}
+
+	// Canonical input context: $response is the previous step's payload.
+	ictx := NewInputContext(params)
+
+	resolved, err := normalizeLLMRequest(params, config, ictx)
 	if err != nil {
 		rval[StrStatus] = StatusError
 		rval[StrMessage] = err.Error()
 		return rval, err
 	}
 
-	resolved, err := normalizeLLMRequest(params, config, inputRaw)
-	if err != nil {
-		rval[StrStatus] = StatusError
-		rval[StrMessage] = err.Error()
-		return rval, err
-	}
-
-	if err := enforceAIUsagePolicy(config, resolved); err != nil {
+	// Enforce provider/model policy against the same identity snapshot the
+	// capability/trust/contract gates use. The runtime stores the snapshot as
+	// an AgentIdentity struct; legacy map-form snapshots are still honored.
+	if identity, hasIdentity := parseRuntimeIdentity(params); hasIdentity {
+		if err := enforceAIUsagePolicyForIdentity(identity, resolved); err != nil {
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = err.Error()
+			return rval, err
+		}
+	} else if err := enforceAIUsagePolicy(config, resolved); err != nil {
 		rval[StrStatus] = StatusError
 		rval[StrMessage] = err.Error()
 		return rval, err
@@ -76,34 +87,102 @@ func (a *AIInteractionAction) Execute(params map[string]interface{}) (map[string
 		return rval, err
 	}
 
-	rval[StrResponse] = responseMap
+	// Output contract: raw (default) preserves the provider response map
+	// exactly; normalized opt-in returns the stable typed shape. Tool
+	// calls are inert data in both modes — nothing here interprets them.
+	if resolved.OutputMode == LLMOutputNormalized {
+		payload, err := ExtractChatPayload(responseMap)
+		if err != nil {
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = err.Error()
+			return rval, err
+		}
+		normalized, err := NormalizeChatCompletion(payload)
+		if err != nil {
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = err.Error()
+			return rval, err
+		}
+		rval[StrResponse] = normalized.ToMap()
+	} else {
+		rval[StrResponse] = responseMap
+	}
 	rval[StrStatus] = StatusSuccess
 	rval[StrMessage] = "AI interaction successful"
 	return rval, nil
 }
 
-func normalizeLLMRequest(params, config, inputRaw map[string]interface{}) (LLMRequest, error) {
-	getResolvedString := func(key string) string {
+func normalizeLLMRequest(params, config map[string]interface{}, ictx InputContext) (LLMRequest, error) {
+	getResolvedString := func(key string) (string, error) {
 		v, ok := params[key]
 		if !ok || v == nil {
-			return ""
+			return "", nil
 		}
 		s, ok := v.(string)
 		if !ok {
-			return ""
+			return "", nil
 		}
-		return strings.TrimSpace(resolveResponseString(inputRaw, s))
+		resolved, err := ResolveString(ictx, s)
+		if err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(resolved), nil
+	}
+	resolveField := func(key, nestedKey string) (string, error) {
+		raw, err := getResolvedString(key)
+		if err != nil {
+			return "", err
+		}
+		if raw != "" {
+			return raw, nil
+		}
+		nested, err := nestedConfigString(config, ictx, "ai", nestedKey)
+		if err != nil {
+			return "", err
+		}
+		if nested != "" {
+			return nested, nil
+		}
+		return resolveConfigString(config, ictx, nestedKey)
 	}
 
-	provider := firstString(getResolvedString("provider"), nestedConfigString(config, inputRaw, "ai", "provider"), defaultLLMProvider)
-	url := firstString(getResolvedString("url"), nestedConfigString(config, inputRaw, "ai", "url"), resolveConfigString(config, inputRaw, "url"))
-	auth := firstString(getResolvedString("auth"), nestedConfigString(config, inputRaw, "ai", "auth"), resolveConfigString(config, inputRaw, "auth"))
-	model := firstString(getResolvedString("model"), nestedConfigString(config, inputRaw, "ai", "model"), resolveConfigString(config, inputRaw, "model"))
+	provider, err := resolveField("provider", "provider")
+	if err != nil {
+		return LLMRequest{}, err
+	}
+	if provider == "" {
+		provider = defaultLLMProvider
+	}
+	url, err := resolveField("url", "url")
+	if err != nil {
+		return LLMRequest{}, err
+	}
+	auth, err := resolveField("auth", "auth")
+	if err != nil {
+		return LLMRequest{}, err
+	}
+	model, err := resolveField("model", "model")
+	if err != nil {
+		return LLMRequest{}, err
+	}
 
-	messages := normalizeMessages(params, inputRaw)
-	prompt := firstString(getResolvedString("prompt"), getResolvedString(StrMessage))
+	messages, err := normalizeMessages(params, ictx)
+	if err != nil {
+		return LLMRequest{}, err
+	}
+	promptRaw, err := getResolvedString("prompt")
+	if err != nil {
+		return LLMRequest{}, err
+	}
+	messageRaw, err := getResolvedString(StrMessage)
+	if err != nil {
+		return LLMRequest{}, err
+	}
+	prompt := firstString(promptRaw, messageRaw)
 	if prompt == "" {
-		if req, ok := inputRaw[StrRequest].(string); ok {
+		if req, ok := ictx.Response.(string); ok {
+			prompt = strings.TrimSpace(req)
+		} else if req, ok := params[StrRequest].(string); ok {
 			prompt = strings.TrimSpace(req)
 		}
 	}
@@ -114,38 +193,224 @@ func normalizeLLMRequest(params, config, inputRaw map[string]interface{}) (LLMRe
 		return LLMRequest{}, fmt.Errorf(ErrMissingURL)
 	}
 
-	temperature, err := parseOptionalFloat(params, inputRaw, "temperature")
+	// Declarative tool configuration. Step-level params win; config.ai.*
+	// acts as lower-priority defaults, mirroring provider/url/auth/model.
+	// Nothing here executes anything.
+	tools, err := normalizeTools(params, config, ictx)
 	if err != nil {
 		return LLMRequest{}, err
 	}
-	maxTokens, err := parseOptionalInt(params, inputRaw, "max_tokens")
+	toolChoice, hasToolChoice, err := normalizeToolChoice(params, config, ictx)
 	if err != nil {
 		return LLMRequest{}, err
 	}
-	topP, err := parseOptionalFloat(params, inputRaw, "top_p")
+	// Cross-field consistency on the effective (resolved, precedence-applied)
+	// tool set: a named or selective choice must address declared tools.
+	if err := checkToolChoiceConsistency(tools, toolChoice, hasToolChoice); err != nil {
+		return LLMRequest{}, err
+	}
+	outputMode, err := normalizeOutputMode(params, ictx)
+	if err != nil {
+		return LLMRequest{}, err
+	}
+	// One resolution feeds both the tool/stream compatibility decision and
+	// request serialization, so the two can never diverge.
+	stream, streamPresent, err := parseStreamSetting(params, ictx)
+	if err != nil {
+		return LLMRequest{}, err
+	}
+	if len(tools) > 0 {
+		if stream {
+			return LLMRequest{}, fmt.Errorf("streaming with tool calling is not supported: set stream to false")
+		}
+		if len(messages) == 0 {
+			// Tool-enabled calls require chat messages; synthesize one
+			// explicit user message from the legacy prompt instead of
+			// sending a completion-only payload to /v1/chat/completions.
+			messages = []interface{}{map[string]interface{}{"role": "user", "content": prompt}}
+		}
+	}
+
+	temperature, err := parseOptionalFloat(params, ictx, "temperature")
+	if err != nil {
+		return LLMRequest{}, err
+	}
+	maxTokens, err := parseOptionalInt(params, ictx, "max_tokens")
+	if err != nil {
+		return LLMRequest{}, err
+	}
+	topP, err := parseOptionalFloat(params, ictx, "top_p")
 	if err != nil {
 		return LLMRequest{}, err
 	}
 
 	extras := map[string]interface{}{}
-	for _, key := range []string{"presence_penalty", "frequency_penalty", "stop", "echo", "logprobs", "n", "logit_bias", "stream"} {
-		if val, ok := resolveOptionalParam(params, inputRaw, key); ok {
+	for _, key := range []string{"presence_penalty", "frequency_penalty", "stop", "echo", "logprobs", "n", "logit_bias"} {
+		val, ok, err := resolveOptionalParam(params, ictx, key)
+		if err != nil {
+			return LLMRequest{}, err
+		}
+		if ok {
 			extras[key] = val
 		}
 	}
+	if streamPresent {
+		extras["stream"] = stream
+	}
 
 	return LLMRequest{
-		Provider:    provider,
-		URL:         url,
-		Auth:        auth,
-		Model:       model,
-		Messages:    messages,
-		Prompt:      prompt,
-		Temperature: temperature,
-		MaxTokens:   maxTokens,
-		TopP:        topP,
-		Extras:      extras,
+		Provider:      provider,
+		URL:           url,
+		Auth:          auth,
+		Model:         model,
+		Messages:      messages,
+		Prompt:        prompt,
+		Temperature:   temperature,
+		MaxTokens:     maxTokens,
+		TopP:          topP,
+		Extras:        extras,
+		Tools:         tools,
+		ToolChoice:    toolChoice,
+		HasToolChoice: hasToolChoice,
+		OutputMode:    outputMode,
 	}, nil
+}
+
+// normalizeTools resolves and validates tool declarations without mutating
+// the manifest. Step params win; config.ai.tools is the default.
+func normalizeTools(params, config map[string]interface{}, ictx InputContext) ([]LLMToolDefinition, error) {
+	raw, ok := params["tools"]
+	if !ok || raw == nil {
+		if aiSection := mapStringAny(config["ai"]); len(aiSection) > 0 {
+			raw, ok = aiSection["tools"]
+		}
+		if !ok || raw == nil {
+			return nil, nil
+		}
+	}
+	resolved, err := ResolveValue(ictx, raw)
+	if err != nil {
+		return nil, err
+	}
+	entries, ok := resolved.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("invalid tools: expected array")
+	}
+	return validateToolDefinitions(entries)
+}
+
+// normalizeToolChoice resolves the tool-use policy with step-over-config
+// precedence.
+func normalizeToolChoice(params, config map[string]interface{}, ictx InputContext) (LLMToolChoice, bool, error) {
+	if raw, ok := params["tool_choice"]; ok && raw != nil {
+		resolved, err := ResolveValue(ictx, raw)
+		if err != nil {
+			return LLMToolChoice{}, false, err
+		}
+		return parseToolChoice(resolved)
+	}
+	if aiSection := mapStringAny(config["ai"]); len(aiSection) > 0 {
+		if raw, ok := aiSection["tool_choice"]; ok && raw != nil {
+			resolved, err := ResolveValue(ictx, raw)
+			if err != nil {
+				return LLMToolChoice{}, false, err
+			}
+			return parseToolChoice(resolved)
+		}
+	}
+	return LLMToolChoice{}, false, nil
+}
+
+// normalizeOutputMode reads the CROWler-side output contract. Absent means
+// raw (full backward compatibility); anything else must be "normalized".
+func normalizeOutputMode(params map[string]interface{}, ictx InputContext) (string, error) {
+	raw, ok := params["output_mode"]
+	if !ok || raw == nil {
+		return LLMOutputRaw, nil
+	}
+	resolved, err := ResolveString(ictx, fmt.Sprintf("%v", raw))
+	if err != nil {
+		return "", err
+	}
+	switch strings.ToLower(strings.TrimSpace(resolved)) {
+	case "", LLMOutputRaw:
+		return LLMOutputRaw, nil
+	case LLMOutputNormalized:
+		return LLMOutputNormalized, nil
+	default:
+		return "", fmt.Errorf("invalid output_mode %q: want raw or normalized", resolved)
+	}
+}
+
+// parseStreamSetting resolves and type-checks the stream parameter without
+// dropping errors. Absent means (false, false, nil). Boolean true/false and
+// the legacy strings "true"/"false"/"1"/"0" (trimmed, case-insensitive)
+// normalize to their Boolean meaning. Every other explicitly provided value,
+// including null, numbers, collections, unresolvable references, and unknown
+// string tokens, is a deterministic validation error.
+func parseStreamSetting(params map[string]interface{}, ictx InputContext) (bool, bool, error) {
+	raw, present := params["stream"]
+	if !present {
+		return false, false, nil
+	}
+	if raw == nil {
+		return false, false, fmt.Errorf("invalid stream: expected boolean")
+	}
+	if flag, ok := raw.(bool); ok {
+		return flag, true, nil
+	}
+	text, ok := raw.(string)
+	if !ok {
+		return false, false, fmt.Errorf("invalid stream: expected boolean")
+	}
+	resolved, err := ResolveString(ictx, text)
+	if err != nil {
+		return false, false, err
+	}
+	switch strings.ToLower(strings.TrimSpace(resolved)) {
+	case "true", "1":
+		return true, true, nil
+	case "false", "0":
+		return false, true, nil
+	default:
+		return false, false, fmt.Errorf("invalid stream %q: want true, false, 1, or 0", resolved)
+	}
+}
+
+// enforceAIUsagePolicyForIdentity applies the AI provider/model policy to a
+// parsed identity snapshot (the struct form the runtime stores).
+func enforceAIUsagePolicyForIdentity(identity AgentIdentity, req LLMRequest) error {
+	if trustLevelRank(identity.TrustLevel) < trustLevelRank("trusted") && disallowHighTrustModel(req.Model) {
+		return fmt.Errorf("AI policy denied model %q for trust_level %q", req.Model, identity.TrustLevel)
+	}
+
+	if identity.Contract != nil {
+		for _, token := range identity.Contract.ForbiddenActions {
+			if err := matchAIContractToken(token, req); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// matchAIContractToken matches one forbidden_actions entry against the request.
+func matchAIContractToken(token string, req LLMRequest) error {
+	normalized := strings.ToLower(strings.TrimSpace(token))
+	switch {
+	case normalized == "aiinteraction":
+		return fmt.Errorf("AI policy denied: agent contract forbids AIInteraction")
+	case strings.HasPrefix(normalized, "provider:"):
+		if matchesPolicyPattern(strings.TrimPrefix(normalized, "provider:"), strings.ToLower(req.Provider)) {
+			return fmt.Errorf("AI policy denied provider %q by contract", req.Provider)
+		}
+	case strings.HasPrefix(normalized, "model:"):
+		if matchesPolicyPattern(strings.TrimPrefix(normalized, "model:"), strings.ToLower(req.Model)) {
+			return fmt.Errorf("AI policy denied model %q by contract", req.Model)
+		}
+	}
+	return nil
 }
 
 func enforceAIUsagePolicy(config map[string]interface{}, req LLMRequest) error {
@@ -202,18 +467,25 @@ func matchesPolicyPattern(pattern, actual string) bool {
 	return pattern == actual
 }
 
-func normalizeMessages(params, inputRaw map[string]interface{}) []interface{} {
+func normalizeMessages(params map[string]interface{}, ictx InputContext) ([]interface{}, error) {
 	if msgs, ok := params["messages"].([]interface{}); ok && len(msgs) > 0 {
-		resolved := resolveValue(inputRaw, msgs)
-		if out, ok := resolved.([]interface{}); ok {
-			return out
+		resolved, err := ResolveValue(ictx, msgs)
+		if err != nil {
+			return nil, err
 		}
+		if out, ok := resolved.([]interface{}); ok {
+			return out, nil
+		}
+		return nil, fmt.Errorf("invalid 'messages' parameter")
 	}
-	return nil
+	return nil, nil
 }
 
-func parseOptionalFloat(params, inputRaw map[string]interface{}, key string) (*float64, error) {
-	val, ok := resolveOptionalParam(params, inputRaw, key)
+func parseOptionalFloat(params map[string]interface{}, ictx InputContext, key string) (*float64, error) {
+	val, ok, err := resolveOptionalParam(params, ictx, key)
+	if err != nil {
+		return nil, err
+	}
 	if !ok {
 		return nil, nil
 	}
@@ -237,8 +509,11 @@ func parseOptionalFloat(params, inputRaw map[string]interface{}, key string) (*f
 	}
 }
 
-func parseOptionalInt(params, inputRaw map[string]interface{}, key string) (*int, error) {
-	val, ok := resolveOptionalParam(params, inputRaw, key)
+func parseOptionalInt(params map[string]interface{}, ictx InputContext, key string) (*int, error) {
+	val, ok, err := resolveOptionalParam(params, ictx, key)
+	if err != nil {
+		return nil, err
+	}
 	if !ok {
 		return nil, nil
 	}
@@ -262,29 +537,51 @@ func parseOptionalInt(params, inputRaw map[string]interface{}, key string) (*int
 	}
 }
 
-func resolveOptionalParam(params, inputRaw map[string]interface{}, key string) (interface{}, bool) {
+func resolveOptionalParam(params map[string]interface{}, ictx InputContext, key string) (interface{}, bool, error) {
 	raw, ok := params[key]
 	if !ok || raw == nil {
-		return nil, false
+		return nil, false, nil
 	}
 	if s, ok := raw.(string); ok {
-		return resolveResponseString(inputRaw, s), true
+		resolved, err := ResolveString(ictx, s)
+		if err != nil {
+			return nil, false, err
+		}
+		return resolved, true, nil
 	}
-	return resolveValue(inputRaw, raw), true
+	resolved, err := ResolveValue(ictx, raw)
+	if err != nil {
+		return nil, false, err
+	}
+	return resolved, true, nil
 }
 
-func nestedConfigString(config map[string]interface{}, inputRaw map[string]interface{}, key, nested string) string {
+func nestedConfigString(config map[string]interface{}, ictx InputContext, key, nested string) (string, error) {
 	cfgSection := mapStringAny(config[key])
 	if len(cfgSection) == 0 {
-		return ""
+		return "", nil
 	}
 	v, _ := cfgSection[nested].(string)
-	return strings.TrimSpace(resolveResponseString(inputRaw, v))
+	if strings.TrimSpace(v) == "" {
+		return "", nil
+	}
+	resolved, err := ResolveString(ictx, v)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(resolved), nil
 }
 
-func resolveConfigString(config map[string]interface{}, inputRaw map[string]interface{}, key string) string {
+func resolveConfigString(config map[string]interface{}, ictx InputContext, key string) (string, error) {
 	v, _ := config[key].(string)
-	return strings.TrimSpace(resolveResponseString(inputRaw, v))
+	if strings.TrimSpace(v) == "" {
+		return "", nil
+	}
+	resolved, err := ResolveString(ictx, v)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(resolved), nil
 }
 
 func firstString(values ...string) string {

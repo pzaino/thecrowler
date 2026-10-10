@@ -42,12 +42,9 @@ func (a *APIRequestAction) Execute(params map[string]interface{}) (map[string]in
 	const putType = "PUT"
 	const patchType = "PATCH"
 
-	input, err := getInput(params)
-	if err != nil {
-		// This step has no input, so let's assume input is empty
-		input = map[string]interface{}{}
-	}
-	inputMap, _ := input[StrRequest].(map[string]interface{})
+	// The first step may carry no input; resolution then sees an empty
+	// payload and literal parameters pass through untouched.
+	_, _ = getInput(params)
 
 	config, err := getConfig(params)
 	if err != nil {
@@ -57,6 +54,9 @@ func (a *APIRequestAction) Execute(params map[string]interface{}) (map[string]in
 	}
 	rval[StrConfig] = config
 
+	// Canonical input context: $response is the previous step's payload.
+	ictx := NewInputContext(params)
+
 	url, ok := params["url"].(string)
 	if !ok {
 		rval[StrStatus] = StatusError
@@ -64,7 +64,12 @@ func (a *APIRequestAction) Execute(params map[string]interface{}) (map[string]in
 		return rval, errors.New(ErrMissingURL)
 	}
 	// Resolve any $response.xxx tokens in the URL string (if any)
-	url = resolveResponseString(input, url)
+	url, err = ResolveString(ictx, url)
+	if err != nil {
+		rval[StrStatus] = StatusError
+		rval[StrMessage] = err.Error()
+		return rval, err
+	}
 	// Check if the final URL is valid
 	if !cmn.IsURLValid(url) {
 		rval[StrStatus] = StatusError
@@ -92,10 +97,27 @@ func (a *APIRequestAction) Execute(params map[string]interface{}) (map[string]in
 	if request["type"] == postType || request["type"] == putType || request["type"] == patchType {
 		switch b := params["body"].(type) {
 		case map[string]interface{}:
-			b = resolveValue(inputMap, b).(map[string]interface{})
-			request["body"] = string(cmn.ConvertMapToJSON(b))
+			resolved, err := ResolveValue(ictx, b)
+			if err != nil {
+				rval[StrStatus] = StatusError
+				rval[StrMessage] = err.Error()
+				return rval, err
+			}
+			resolvedMap, ok := resolved.(map[string]interface{})
+			if !ok {
+				rval[StrStatus] = StatusError
+				rval[StrMessage] = "invalid 'body' parameter"
+				return rval, fmt.Errorf("invalid 'body' parameter")
+			}
+			request["body"] = string(cmn.ConvertMapToJSON(resolvedMap))
 		case string:
-			request["body"] = resolveResponseString(inputMap, b)
+			resolved, err := ResolveString(ictx, b)
+			if err != nil {
+				rval[StrStatus] = StatusError
+				rval[StrMessage] = err.Error()
+				return rval, err
+			}
+			request["body"] = resolved
 		case nil:
 			request["body"] = "{}"
 		default:
@@ -115,13 +137,25 @@ func (a *APIRequestAction) Execute(params map[string]interface{}) (map[string]in
 	if params["auth"] != nil {
 		auth, ok := params["auth"].(string)
 		if ok {
-			auth = strings.TrimSpace(resolveResponseString(inputMap, auth))
+			resolved, err := ResolveString(ictx, auth)
+			if err != nil {
+				rval[StrStatus] = StatusError
+				rval[StrMessage] = err.Error()
+				return rval, err
+			}
+			auth = strings.TrimSpace(resolved)
 		}
 		requestHeaders["Authorization"] = auth
 	} else if config["api_key"] != nil {
 		auth, ok := config["api_key"].(string)
 		if ok {
-			auth = strings.TrimSpace(resolveResponseString(inputMap, auth))
+			resolved, err := ResolveString(ictx, auth)
+			if err != nil {
+				rval[StrStatus] = StatusError
+				rval[StrMessage] = err.Error()
+				return rval, err
+			}
+			auth = strings.TrimSpace(resolved)
 			requestHeaders["Authorization"] = auth
 		}
 	}
@@ -129,7 +163,18 @@ func (a *APIRequestAction) Execute(params map[string]interface{}) (map[string]in
 	if params["headers"] != nil {
 		headers, ok := params["headers"].(map[string]interface{})
 		if ok {
-			headersProcessed := resolveValue(inputMap, headers).(map[string]interface{})
+			resolved, err := ResolveValue(ictx, headers)
+			if err != nil {
+				rval[StrStatus] = StatusError
+				rval[StrMessage] = err.Error()
+				return rval, err
+			}
+			headersProcessed, ok := resolved.(map[string]interface{})
+			if !ok {
+				rval[StrStatus] = StatusError
+				rval[StrMessage] = "invalid 'headers' parameter"
+				return rval, fmt.Errorf("invalid 'headers' parameter")
+			}
 			maps.Copy(requestHeaders, headersProcessed)
 		}
 	}

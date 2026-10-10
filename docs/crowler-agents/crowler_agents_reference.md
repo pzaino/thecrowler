@@ -123,6 +123,25 @@ Some runtime implementations also support key-value interpolation through:
 
 This lets authors build dynamic URLs, prompts, commands, event payloads, and decision expressions.
 
+### 4.1 Canonical `$response` contract
+
+The same meaning holds in every action type:
+
+* `$response` is the previous step's payload. `$response.foo.bar` resolves
+  only within that payload; array elements use `$response.items[0].id`.
+* A parameter that is exactly `$response` or `$response.a.b` keeps its JSON
+  type (number, boolean, array, object, null). References embedded in a
+  larger string interpolate as text.
+* `$event` (with the same path syntax) addresses the triggering
+  event/request and is stable across all steps of a run.
+* Unknown paths are explicit step errors naming the path; the runtime never
+  substitutes `<nil>` or `%!s(...)` placeholders.
+* Resolution never mutates the stored manifest, so repeated and parallel
+  runs see pristine inputs.
+* Deprecated alias: `$response.input.x` / `$response.request.x` fall back to
+  `$response.x` when the canonical path does not resolve. New manifests must
+  use canonical paths.
+
 ## 5. Agent manifest versions
 
 CROWler supports two manifest styles.
@@ -418,9 +437,38 @@ capabilities:
   - schedule_event
   - call_plugin
   - ai_reasoning
+  - delegate
 ```
 
 Use only these exact strings when validating against `schemas/crowler-agent-schema.json`.
+
+Action-to-capability mapping enforced with identity enforcement on:
+
+| Action | Required capability |
+|---|---|
+| `APIRequest` | `api_request` |
+| `AIInteraction` | `ai_reasoning` |
+| `DBQuery` | `db_read` for read-only statements, `db_write` for mutations (PostgreSQL AST classification; ambiguous statements are rejected) |
+| `RunCommand` | `command_execution` |
+| `PluginExecution` | `plugin_execution` (`call_plugin` accepted) |
+| `CreateEvent` | `emit_event` |
+| `Decision` local branching | none |
+| `Decision` delegation | `delegate` |
+
+Notes:
+
+* `all` remains a wildcard for known actions; it never authorizes unknown
+  actions and never masks unparseable SQL.
+* `network_access`, `file_system_access`, and `schedule_event` are
+  schema-reserved for future gates and currently grant nothing by
+  themselves.
+* Legacy runtime spellings `run_command`, `create_event`, `ai_interaction`,
+  and `db_query` are still honored where previously accepted; new manifests
+  must use the canonical names. `decision` alone never authorizes
+  delegation.
+* Trust ranks: `system` is top tier with `privileged`; `trusted` is mid;
+  `restricted`/`untrusted` are low. `DBQuery`, `RunCommand`, and
+  `PluginExecution` need rank 2 (`trusted`) or higher.
 
 ### 8.8 `constraints`
 
@@ -443,6 +491,22 @@ Use Go duration strings for time budgets:
 * `30s`,
 * `10m`,
 * `1h`.
+
+Step/time budgets apply independently to each job group, including groups
+running in parallel. Every executed attempt counts: the initial attempt,
+each retry attempt, and every fallback step consume one unit whether they
+succeed or fail; only actions rejected before invocation (capability,
+contract, or validation denials) are uncharged. Failed `CreateEvent`
+attempts also consume event-rate units. A delegated agent's own groups are
+metered separately (only the delegation step charges the caller). There is
+no global agent-run budget.
+
+Time-budget limits: the deadline is enforced before each step, before each
+retry attempt, and inside context-aware event creation (which caps its own
+I/O by the remaining budget and fails fast once exhausted). A blocked
+network, database, or browser call cannot be hard-interrupted by the
+runtime; driver and HTTP timeouts remain the backstop, and no detached
+watchdog goroutines are used.
 
 ### 8.9 `reasoning_mode`
 
@@ -522,6 +586,11 @@ agent_contract:
 
 Use contracts to communicate intent, enable policy enforcement, and give AI systems guardrails when editing agents.
 
+Runtime failure-policy mapping: `continue` and `fallback` behave as
+declared; every other value (`abort`, `fail_fast`, `retry`, `emit_event`,
+`delegate`) aborts the group on step failure. `failure_policy: fallback`
+additionally requires `fallback` steps on the failing step.
+
 ## 9. Jobs
 
 A job is an executable workflow inside an agent. Each job has a name, trigger, process mode, and step list.
@@ -534,7 +603,8 @@ jobs:
     description: "Optional human-readable description."
     process: serial
     trigger_type: event
-    trigger_name: crawler.page_indexed
+    # crawl_completed requires crawler.create_event_when_done: true.
+    trigger_name: crawl_completed
     steps:
       - action: CreateEvent
         params:
@@ -587,12 +657,17 @@ Use `serial` unless you specifically need parallel behavior and have verified ru
 
 The meaning of `trigger_name` depends on `trigger_type`.
 
-For `event`, it should match the event type:
+For `event`, it should match the event type. The only crawler-emitted
+completion event is `crawl_completed`, which requires
+`crawler.create_event_when_done: true`:
 
 ```yaml
 trigger_type: event
-trigger_name: crawler.page_indexed
+trigger_name: crawl_completed
 ```
+
+Other names (for example a deployment-local `ingest.market_news`) must come
+from a real local emitter; the shipped examples mark such cases explicitly.
 
 For `manual`, it is the manual trigger name:
 
@@ -779,6 +854,127 @@ Authoring guidance:
 * Use low temperature for control-plane decisions.
 * Keep prompts explicit about expected keys.
 * Treat AI as a bounded decision component, not an unconstrained executor.
+
+#### 11.2.1 Tool calling (inert proposals, no execution)
+
+`AIInteraction` can offer declarative function schemas to the model and read
+back structured tool-call proposals as data. At most 16 tools per request and
+64 KiB of serialized declarations are accepted.
+
+```yaml
+- action: AIInteraction
+  params:
+    url: "http://OLLAMA_LAN_IP:11434/v1/chat/completions"
+    model: "<a locally installed tool-capable model>"
+    messages:
+      - role: user
+        content: "What is the forecast dividend for Oslo?"
+    tools:
+      - type: function
+        function:
+          name: get_forecast
+          description: "Look up the weather forecast."
+          parameters:
+            type: object
+            properties:
+              city:
+                type: string
+            required:
+              - city
+    tool_choice: auto
+    output_mode: normalized
+```
+
+Rules:
+
+* `tools` entries need `type: function`, a unique non-empty `name`, and a
+  `parameters` object schema with `type: object`. Step params win over
+  `config.ai.tools`; `config.ai.tool_choice` is the lower-priority default.
+* `tool_choice` is `auto`, `none`, `required`, or
+  `{type: function, function: {name: ...}}`.
+* With tools, a legacy `prompt` becomes one explicit `user` chat message;
+  explicit `messages` take precedence. Without tools the prompt-only wire
+  payload is unchanged.
+* `stream: true` with tools is rejected; non-tool streaming is unchanged.
+
+Validation semantics (all checked before any provider HTTP call):
+
+* `tool_choice` consistency: absent choice omits the wire field; with no
+  declared tools only `none` is accepted (`auto`, `required`, and named
+  selectors are rejected); with tools, a named selector must match a
+  declared function name exactly (case-sensitive). A named choice never
+  authorizes execution.
+* `stream` accepts boolean `true`/`false` and the legacy strings `"true"`,
+  `"false"`, `"1"`, `"0"`; absent means unset. Numbers, collections,
+  explicit null, unknown strings, and unresolvable `$response` references
+  are rejected. One resolved value feeds both the tools/stream gate and
+  request serialization.
+* Parameter schemas follow JSON Schema Draft-07 (`$defs` tolerated as an
+  alias for `definitions`): `properties`/`required`/`items`/combinators are
+  recursed; every nonempty `required` entry must be a unique nonempty
+  string declared in sibling `properties`; `$ref` must be local (`#/...`)
+  and resolve inside the same document — external references are rejected
+  without any network fetch. Malformed keyword shapes are rejected at
+  compile time by the project's schema validator.
+* `output_mode: raw` (default) returns the provider response map untouched.
+  `output_mode: normalized` returns `{content, tool_calls, finish_reason,
+  model, usage, raw}`. `raw` always carries the untouched provider
+  envelope for audit. This is unrelated to OpenAI `response_format`, which
+  passes through untouched.
+* Normalized `tool_calls` preserve provider order and call IDs. Dialects
+  without IDs (or blank IDs) receive run-scoped synthetic IDs
+  (`local-r<round>-c<position>`) used identically in the assistant echo,
+  the `role:"tool"` response, summaries, and audits; any effective-ID
+  collision across the run denies the batch before anything executes.
+  Arguments arrive as objects whether the provider encoded them as JSON
+  text or objects.
+* Downstream steps read `$response.content`,
+  `$response.tool_calls[0].name`, and
+  `$response.tool_calls[0].arguments.city`. **Nothing executes a returned
+  call**: no dispatch, no database access, no plugin or command execution,
+  no follow-up model call, no tool-result feedback. A model-supplied
+  function name, arguments, URL, or SQL fragment is untrusted input.
+
+Operations:
+
+* One request yields one response over the existing `openai-compatible`
+  provider, including LAN Ollama endpoints exposing
+  `/v1/chat/completions`. Ollama's native `/api/chat` dialect is not used.
+  Auth is optional (LAN Ollama normally needs none); endpoint URLs always
+  come from operator configuration — CROWler never discovers endpoints.
+* A 30s HTTP timeout bounds in-flight I/O and an 8 MiB cap bounds retained
+  provider output; non-2xx provider statuses surface as explicit step
+  errors. Auth tokens, prompts, and full responses never appear in error
+  text or logs.
+* Identity, contract, budget, and delegation gates run before any transport.
+
+References: <https://docs.ollama.com/api/openai-compatibility>,
+<https://docs.ollama.com/capabilities/tool-calling>.
+
+#### 11.2.2 Authorized tool execution (`AgentToolLoop`)
+
+Phase 2 tool proposals are inert data. The opt-in `AgentToolLoop` action
+runs a bounded synchronous loop over vetted read-only tools
+(`get_source_status`, `search_indexed_pages`): at most 4 model rounds, 8
+tool calls, 16 KiB per observation, 64 KiB aggregate, 30 s elapsed, with the
+shorter job-group deadline always prevailing. One `AgentToolLoop` step is
+one job-group attempt; internal calls consume independent nested caps.
+
+Every proposed call passes, in order: explicit opt-in, valid identity with
+enforcement on, trusted registry membership, explicit run allowlist (the
+`all` wildcard never satisfies it), required capabilities (or `all`),
+trusted standing plus contract (`tools` / `tool:<name>` bans), Draft-07
+argument-instance validation, tool resource scope, and time/count budgets.
+Denials carry stable reason codes and stop the run after 3 consecutive
+denials; failures never print prompts, arguments, or credentials. Tool
+results are size-bounded, secret-redacted observations returned as
+`role:"tool"` messages with matching `tool_call_id`s; the run ends on final
+text, budget exhaustion, cancellation, or provider error.
+
+Policy fields (`allowlist`, `limits`, `allowed_sources`) must be statically
+declared — input references there are rejected — and `AgentToolLoop`
+requires the `tool_execution` capability plus identity enforcement (`all`
+without enforcement still refuses). See `agents/examples/tool-loop-reader.agent.yaml`.
 
 ### 11.3 `DBQuery`
 
@@ -1185,7 +1381,7 @@ A CROWler event generally contains:
 
 ```yaml
 source_id: 0
-event_type: crawler.page_indexed
+event_type: crawl_completed
 event_severity: low
 event_timestamp: "2026-05-12T10:00:00Z"
 details:
@@ -1212,7 +1408,7 @@ domain.subject.verb
 Examples:
 
 ```text
-crawler.page_indexed
+crawl_completed
 security.finding.generated
 security.incident.recommended
 marketing.competitor.digest
@@ -1470,6 +1666,18 @@ To migrate a legacy jobs-only manifest:
 9. Run lint and strict validation.
 10. Test with identity enforcement disabled first, then progressively enable enforcement.
 
+Capability migration notes:
+
+* Pre-existing runtime spellings map to canonical names: `run_command` to
+  `command_execution`, `create_event` to `emit_event`, `db_query` to
+  `db_read`/`db_write` (classified per statement), `ai_interaction` to
+  `ai_reasoning`. Old spellings keep working where previously accepted, but
+  new manifests must use canonical names.
+* Agents that delegate (`Decision` with `call_agent`/`agent_name`) need the
+  `delegate` capability, which older manifests predate.
+* An explicit v2 identity with no capabilities grants nothing under
+  enforcement; only legacy v1 jobs-only manifests derive the `all` grant.
+
 Legacy input:
 
 ```yaml
@@ -1592,7 +1800,7 @@ Fix: define both fields on every job.
 
 ```yaml
 trigger_type: event
-trigger_name: crawler.page_indexed
+trigger_name: crawl_completed
 ```
 
 ### `agent_identity.name must match jobs[0].name`
@@ -1707,6 +1915,10 @@ Check:
 
 Use case: deterministic escalation path with auditable branching.
 
+Illustrative sketch (not directly executable): `security.alert.created` is a
+hypothetical deployment-local event, and the delegation targets below stand
+in for operator-registered agents.
+
 ```yaml
 format_version: v2
 agent_identity:
@@ -1720,6 +1932,7 @@ agent_identity:
     - call_plugin
     - emit_event
     - ai_reasoning
+    - delegate
   constraints:
     max_steps: 8
     time_budget: 30s
@@ -1744,6 +1957,7 @@ jobs:
     steps:
       - action: AIInteraction
         params:
+          url: "https://api.openai.com/v1/chat/completions"
           provider: openai
           model: gpt-4o-mini
           temperature: 0.1
@@ -1774,7 +1988,7 @@ on_false:
 
 Pattern:
 
-1. Trigger on `crawler.page_indexed`.
+1. Trigger on `crawl_completed` (requires `crawler.create_event_when_done: true`).
 2. Enrich with threat intelligence through `APIRequest`.
 3. Score with `AIInteraction`.
 4. Branch with `Decision`.
@@ -1796,6 +2010,7 @@ agent_identity:
     - ai_reasoning
     - plugin_execution
     - emit_event
+    - delegate
   constraints:
     max_steps: 10
     time_budget: 45s
@@ -1815,7 +2030,7 @@ jobs:
   - name: CybersecuritySurfaceMonitor
     process: serial
     trigger_type: event
-    trigger_name: crawler.page_indexed
+    trigger_name: crawl_completed
     steps:
       - action: APIRequest
         params:
@@ -1823,6 +2038,7 @@ jobs:
           url: "https://example-threat-intel.local/lookup?url=$response.url"
       - action: AIInteraction
         params:
+          url: "https://api.openai.com/v1/chat/completions"
           provider: openai
           model: gpt-4o-mini
           temperature: 0.1

@@ -1,0 +1,39 @@
+{
+  "id": "chatcmpl-openai-1",
+  "object": "chat.completion",
+  "created": 1729000000,
+  "model": "gpt-4o-mini",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_openai_1",
+            "type": "function",
+            "function": {
+              "name": "get_forecast",
+              "arguments": "{\"city\": \"Oslo\", \"days\": 3}"
+            }
+          },
+          {
+            "id": "call_openai_2",
+            "type": "function",
+            "function": {
+              "name": "ping",
+              "arguments": "{}"
+            }
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 41,
+    "completion_tokens": 17,
+    "total_tokens": 58
+  }
+}

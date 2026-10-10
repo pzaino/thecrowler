@@ -1,0 +1,57 @@
+# Tool-calling probe: declarative function schemas travel to the model and
+# structured tool-call proposals return as INERT DATA. Nothing here executes
+# a returned call, and no follow-up model request is made.
+#
+# Operator setup: point url at an OpenAI-compatible endpoint (for example a
+# LAN Ollama host at http://OLLAMA_LAN_IP:11434/v1/chat/completions), install
+# a tool-capable model, and provide credentials only if your proxy needs them.
+format_version: v2
+agent_identity:
+  agent_id: tool-call-probe
+  name: Tool Call Probe
+  agent_type: observer
+  owner: platform
+  trust_level: trusted
+  capabilities:
+    - ai_reasoning
+    - emit_event
+  memory:
+    scope: none
+  constraints:
+    max_steps: 6
+    time_budget: 2m
+jobs:
+  - name: Tool Call Probe
+    process: serial
+    trigger_type: manual
+    trigger_name: run_tool_probe
+    steps:
+      - action: AIInteraction
+        params:
+          url: "http://OLLAMA_LAN_IP:11434/v1/chat/completions"
+          model: "tool-capable-model"
+          messages:
+            - role: user
+              content: "What is the forecast dividend for Oslo?"
+          tools:
+            - type: function
+              function:
+                name: get_forecast
+                description: "Look up the weather forecast."
+                parameters:
+                  type: object
+                  properties:
+                    city:
+                      type: string
+                  required:
+                    - city
+          tool_choice: auto
+          output_mode: normalized
+      - action: CreateEvent
+        params:
+          event_name: ai.tool.proposal
+          event_type: ai.tool.proposal
+          source: "0"
+          severity: info
+          details:
+            proposals: "$response.tool_calls"

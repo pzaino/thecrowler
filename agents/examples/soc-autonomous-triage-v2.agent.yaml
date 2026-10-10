@@ -1,20 +1,21 @@
 format_version: v2
 agent_identity:
   agent_id: soc-autonomous-triage
-  name: SOC Autonomous Triage
+  name: SOC Intake Coordinator
   version: 2.0.0
   agent_type: coordinator
   owner: team:secops
   trust_level: trusted
   reasoning_mode: reflective
   capabilities:
-    - api_requests
+    - api_request
     - ai_reasoning
     - db_read
     - db_write
     - emit_event
     - plugin_execution
     - command_execution
+    - delegate
   memory:
     scope: persistent
     namespace: soc-triage
@@ -52,7 +53,8 @@ jobs:
     description: "Entry point: gather base signal and delegate by severity confidence."
     process: serial
     trigger_type: event
-    trigger_name: crawler.page_indexed
+    # Requires crawler.create_event_when_done: true, which emits crawl_completed.
+    trigger_name: crawl_completed
     steps:
       - action: APIRequest
         params:
@@ -62,6 +64,7 @@ jobs:
             X-Correlation-ID: "{{TRACE_ID}}"
       - action: AIInteraction
         params:
+          url: "https://api.openai.com/v1/chat/completions"
           model: gpt-4o-mini
           temperature: 0.1
           max_tokens: 1200
@@ -116,7 +119,7 @@ jobs:
         params:
           event_name: security.incident.recommended
           event_type: security.incident.recommended
-          source: agent.soc-autonomous-triage
+          source: "0"
           severity: critical
           details:
             recommendation: "$response"
@@ -140,7 +143,7 @@ jobs:
         params:
           event_name: security.signal.watchlist
           event_type: security.signal.watchlist
-          source: agent.soc-autonomous-triage
+          source: "0"
           severity: info
           details:
             note: "$response"

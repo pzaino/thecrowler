@@ -1,17 +1,18 @@
 format_version: v2
 agent_identity:
   agent_id: compliance-evidence-fabric
-  name: Compliance Evidence Fabric
+  name: Evidence Intake Planner
   version: 2.1.0
   agent_type: planner
   owner: team:governance
-  trust_level: restricted
+  trust_level: trusted
   reasoning_mode: adaptive
   capabilities:
-    - api_requests
+    - api_request
     - ai_reasoning
     - db_read
     - emit_event
+    - delegate
   memory:
     scope: persistent
     namespace: compliance-fabric
@@ -49,6 +50,7 @@ jobs:
           request_type: GET
       - action: AIInteraction
         params:
+          url: "https://api.openai.com/v1/chat/completions"
           model: gpt-4o-mini
           temperature: 0
           messages:
@@ -77,6 +79,7 @@ jobs:
           query: "SELECT control_id, source_type, payload, collected_at FROM compliance_evidence WHERE collected_at > NOW() - INTERVAL '30 days'"
       - action: AIInteraction
         params:
+          url: "https://api.openai.com/v1/chat/completions"
           model: gpt-4o-mini
           temperature: 0.1
           prompt: "Validate coverage, freshness, and traceability gaps for these records: $response"
@@ -103,6 +106,7 @@ jobs:
           request_type: GET
       - action: AIInteraction
         params:
+          url: "https://api.openai.com/v1/chat/completions"
           model: gpt-4o-mini
           prompt: "Extract only attestations relevant to SOC2 controls and output normalized evidence fragments: $response"
           memory_read_key: latest_control_plan
@@ -111,7 +115,7 @@ jobs:
         params:
           event_name: governance.external_attestations.updated
           event_type: governance.external_attestations.updated
-          source: agent.compliance-evidence-fabric
+          source: "0"
           severity: info
           details:
             attestations: "$response"
@@ -123,6 +127,7 @@ jobs:
     steps:
       - action: AIInteraction
         params:
+          url: "https://api.openai.com/v1/chat/completions"
           model: gpt-4o-mini
           prompt: "Generate a prioritized remediation plan with owners, deadlines, and required evidence artifacts: $response"
           memory_read_key: internal_coverage_report
@@ -130,7 +135,7 @@ jobs:
         params:
           event_name: governance.control_gap.detected
           event_type: governance.control_gap.detected
-          source: agent.compliance-evidence-fabric
+          source: "0"
           severity: warning
           details:
             remediation_plan: "$response"
@@ -142,6 +147,7 @@ jobs:
     steps:
       - action: AIInteraction
         params:
+          url: "https://api.openai.com/v1/chat/completions"
           model: gpt-4o-mini
           messages:
             - role: system
@@ -153,7 +159,7 @@ jobs:
         params:
           event_name: governance.evidence_pack.ready
           event_type: governance.evidence_pack.ready
-          source: agent.compliance-evidence-fabric
+          source: "0"
           severity: info
           details:
             evidence_pack_summary: "$response"

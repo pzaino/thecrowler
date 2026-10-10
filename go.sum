@@ -295,6 +295,8 @@ github.com/olekukonko/tablewriter v1.1.5/go.mod h1:+kedxuyTtgoZLwif3P1Em4hARJs+m
 github.com/oschwald/maxminddb-golang v1.13.1 h1:G3wwjdN9JmIK2o/ermkHM+98oX5fS+k5MbwsmL4MRQE=
 github.com/oschwald/maxminddb-golang v1.13.1/go.mod h1:K4pgV9N/GcK694KSTmVSDTODk4IsCNThNdTmnaBZ/F8=
 github.com/pelletier/go-toml v1.2.0/go.mod h1:5z9KED0ma1S8pY6P1sdut58dfprrGBbd/94hg7ilaic=
+github.com/pganalyze/pg_query_go/v6 v6.2.5 h1:i7dvkA5167th3rXtk0jv9+r5DeJd4GqeGOVKuMTda8s=
+github.com/pganalyze/pg_query_go/v6 v6.2.5/go.mod h1:JZoURQupTV7G8lS6OzKakgvp+xpwu7+dH5kA5WrikzM=
 github.com/pierrec/lz4/v4 v4.1.31 h1:TI8ck6XSudzSzotzAmy0+kh/KpRHaVsKLPzS97gRyNg=
 github.com/pierrec/lz4/v4 v4.1.31/go.mod h1:7SE9MC2STkNtL4PIwGhjmyVwvILaGI9/COYQNBhKM/c=
 github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c h1:+mdjkGKdHQG3305AYmdv1U2eRNDiU2ErMBj1gwrq8eQ=
@@ -358,8 +360,16 @@ github.com/stretchr/testify v1.5.1/go.mod h1:5W2xD1RspED5o8YsWQXVCued0rvSQ+mT+I5
 github.com/stretchr/testify v1.7.0/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/h/Wwjteg=
 github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWDWE=
 github.com/stretchr/testify v1.12.1/go.mod h1:MDEgiDPPsNp5cuIrHPPCyornHKgEVbtFUmoNlxoYthg=
+github.com/tailscale/hujson v0.0.0-20221223112325-20486734a56a h1:SJy1Pu0eH1C29XwJucQo73FrleVK6t4kYz4NVhp34Yw=
+github.com/tailscale/hujson v0.0.0-20221223112325-20486734a56a/go.mod h1:DFSS3NAGHthKo1gTlmEcSBiZrRJXi28rLNd/1udP1c8=
+github.com/tetratelabs/wazero v1.11.0 h1:+gKemEuKCTevU4d7ZTzlsvgd1uaToIDtlQlmNbwqYhA=
+github.com/tetratelabs/wazero v1.11.0/go.mod h1:eV28rsN8Q+xwjogd7f4/Pp4xFxO7uOGbLcD/LzB1wiU=
 github.com/tmc/grpc-websocket-proxy v0.0.0-20190109142713-0ad062ec5ee5/go.mod h1:ncp9v5uamzpCO7NfCPTXjqaC+bZgJeR0sMTm6dMHP7U=
 github.com/ugorji/go v1.1.4/go.mod h1:uQMGLiO92mf5W77hV/PUCpI3pbzQx3CRekS0kk+RGrc=
+github.com/wasilibs/go-pgquery v0.0.0-20260428021157-dca720e45577 h1:CNffc7WvuGZUhzYoYiux5fqoCfh9RS3BNT9QC1Gi5oQ=
+github.com/wasilibs/go-pgquery v0.0.0-20260428021157-dca720e45577/go.mod h1:tV/3fSJxdiuRAz6BcLZ5o95nB2fT0lAm2JT7SzzPeBo=
+github.com/wasilibs/wazero-helpers v0.0.0-20250123031827-cd30c44769bb h1:gQ+ZV4wJke/EBKYciZ2MshEouEHFuinB85dY3f5s1q8=
+github.com/wasilibs/wazero-helpers v0.0.0-20250123031827-cd30c44769bb/go.mod h1:jMeV4Vpbi8osrE/pKUxRZkVaA0EX7NZN0A9/oRzgpgY=
 github.com/xdg-go/pbkdf2 v1.0.0 h1:Su7DPu48wXMwC3bs7MCNG+z4FhcyEuz5dlvchbq0B0c=
 github.com/xdg-go/pbkdf2 v1.0.0/go.mod h1:jrpuAogTd400dnrH08LKmI/xc1MbPOebTwRqcT5RDeI=
 github.com/xdg-go/scram v1.2.0 h1:bYKF2AEwG5rqd1BumT4gAnvwU/M9nBp2pTSxeZw7Wvs=

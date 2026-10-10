@@ -54,8 +54,7 @@ func (d *DBQueryAction) Execute(params map[string]interface{}) (map[string]inter
 	}
 
 	// Extract query string
-	inputRaw, err := getInput(params)
-	if err != nil {
+	if _, err := getInput(params); err != nil {
 		rval[StrStatus] = StatusError
 		rval[StrMessage] = err.Error()
 		return rval, err
@@ -68,8 +67,40 @@ func (d *DBQueryAction) Execute(params map[string]interface{}) (map[string]inter
 		return rval, fmt.Errorf("missing 'query' parameter")
 	}
 	query, _ := params["query"].(string)
-	// Check if query needs to be resolved
-	query = resolveResponseString(inputRaw, query)
+	// Resolve references against the previous step's payload.
+	// NOTE: this is string substitution, not parameterization. Interpolated
+	// values must come from trusted step payloads, never from raw model
+	// output; model-directed SQL input is unsupported (see the authorization
+	// gate below, which runs on the resolved text before the driver).
+	query, err = ResolveString(NewInputContext(params), query)
+	if err != nil {
+		rval[StrStatus] = StatusError
+		rval[StrMessage] = err.Error()
+		return rval, err
+	}
+
+	// Authorization check on the resolved SQL before reaching the driver.
+	// This is the second line of defense (the first is enforceDBQueryGate in
+	// setup.go on the raw step); it covers $response-interpolated SQL.
+	if flags := runtimeFlagsFromConfig(config); flags.IdentityEnforcement {
+		if caller, hasCaller := parseRuntimeIdentity(params); hasCaller {
+			if !dbQueryAllowed(caller, query) {
+				required, ok := dbQueryCapabilityRequired(query)
+				if !ok {
+					rval[StrStatus] = StatusError
+					rval[StrMessage] = "capability gate denied action DBQuery: SQL rejected as unsupported or ambiguous"
+					return rval, fmt.Errorf("capability gate denied action DBQuery: SQL rejected as unsupported or ambiguous")
+				}
+				rval[StrStatus] = StatusError
+				rval[StrMessage] = fmt.Sprintf("capability gate denied action DBQuery: capability %q missing", required)
+				return rval, fmt.Errorf("capability gate denied action DBQuery: capability %q missing", required)
+			}
+		} else {
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = "capability gate denied action DBQuery: missing caller identity"
+			return rval, fmt.Errorf("capability gate denied action DBQuery: missing caller identity")
+		}
+	}
 
 	// Execute the query based on type
 	var result interface{}

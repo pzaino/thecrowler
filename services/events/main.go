@@ -1988,6 +1988,64 @@ func uploadPluginHandler(w http.ResponseWriter, r *http.Request) {
 	handleErrorAndRespond(w, nil, response, "", http.StatusInternalServerError, http.StatusCreated)
 }
 
+// Agent upload hardening policy. Every upload is validated under strict
+// mode, written atomically, and registered through the same normalizer the
+// production startup loader uses. Transaction boundary: the file plus the
+// registry entry commit as one unit (register failure removes the file);
+// the new_agent announcement is best-effort afterwards and never rolls back
+// a committed upload. DB and filesystem are not one transaction.
+const (
+	maxAgentUploadBytes = 1 << 20 // 1 MiB: manifests are small declarative files
+)
+
+// agentsUploadDir is the agent directory uploads persist to. It mirrors the
+// local loader's default ("./agents/*.yaml"); tests override it.
+var agentsUploadDir = "./agents"
+
+// announceAgentUpload publishes the new_agent event. It is a seam so tests
+// can run without a database; failures are logged and never fail a
+// committed upload.
+var announceAgentUpload = func(event cdb.Event) error {
+	if dbHandler == nil {
+		return fmt.Errorf("database handler unavailable")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := cdb.CreateEvent(ctx, &dbHandler, event)
+	return err
+}
+
+// allowedAgentUploadExt reports whether the filename carries a loader-visible
+// manifest extension.
+func allowedAgentUploadExt(name string) (string, bool) {
+	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(name), "."))
+	switch ext {
+	case "yaml", "yml", "json":
+		return ext, true
+	default:
+		return "", false
+	}
+}
+
+// sanitizeAgentUploadName validates an uploaded manifest filename. It must be
+// a bare name (the Go HTTP stack already strips directories server-side, but
+// the handler must not trust that), never . or .., and must carry a
+// loader-visible extension. It returns the file type for validation.
+func sanitizeAgentUploadName(name string) (string, error) {
+	if strings.TrimSpace(name) == "" || name == "." || name == ".." {
+		return "", fmt.Errorf("invalid filename")
+	}
+	if filepath.Base(name) != name ||
+		strings.Contains(name, "/") || strings.Contains(name, "\\") {
+		return "", fmt.Errorf("invalid filename")
+	}
+	fileType, ok := allowedAgentUploadExt(name)
+	if !ok {
+		return "", fmt.Errorf("unsupported file extension")
+	}
+	return fileType, nil
+}
+
 // Handler to upload an agent
 func uploadAgentHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -1995,76 +2053,153 @@ func uploadAgentHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, maxAgentUploadBytes)
 	file, header, err := r.FormFile("agent")
 	if err != nil {
-		handleErrorAndRespond(w, err, nil, "Failed to read file", http.StatusBadRequest, http.StatusOK)
+		if strings.Contains(err.Error(), "request body too large") {
+			handleErrorAndRespond(w, err, nil, "Agent manifest exceeds size limit", http.StatusRequestEntityTooLarge, http.StatusOK)
+		} else {
+			handleErrorAndRespond(w, err, nil, "Failed to read file", http.StatusBadRequest, http.StatusOK)
+		}
 		return
 	}
 	defer file.Close() //nolint:errcheck // Don't lint for error not checked, this is a defer statement
 
-	// Check if header.Filename is empty, or if it has weird and insecure paths
-	if header.Filename == "" || strings.Contains(header.Filename, "/") || strings.Contains(header.Filename, "\\") {
-		handleErrorAndRespond(w, errors.New("Invalid filename"), nil, "Invalid filename", http.StatusBadRequest, http.StatusOK)
+	// Filename must be a bare loader-visible manifest name.
+	fileType, err := sanitizeAgentUploadName(header.Filename)
+	if err != nil {
+		if strings.Contains(err.Error(), "extension") {
+			handleErrorAndRespond(w, err, nil, "Agent manifest must use .yaml, .yml, or .json", http.StatusUnsupportedMediaType, http.StatusOK)
+		} else {
+			handleErrorAndRespond(w, err, nil, "Invalid filename", http.StatusBadRequest, http.StatusOK)
+		}
 		return
 	}
 
-	filename := filepath.Join("./agents", header.Filename)
-	data, err := io.ReadAll(file)
+	data, err := io.ReadAll(io.LimitReader(file, maxAgentUploadBytes+1))
 	if err != nil {
 		handleErrorAndRespond(w, err, nil, "Failed to read file", http.StatusInternalServerError, http.StatusOK)
 		return
 	}
+	if len(data) > maxAgentUploadBytes {
+		handleErrorAndRespond(w, errors.New("Agent manifest exceeds size limit"), nil, "Agent manifest exceeds size limit", http.StatusRequestEntityTooLarge, http.StatusOK)
+		return
+	}
 
-	if err := validateAgent(data); err != nil {
+	// Same environment interpolation the startup loader applies, before
+	// validation, so upload-time checks see what a restart will load.
+	interpolated := cmn.InterpolateEnvVars(string(data))
+
+	if agt.AgentsRegistry == nil {
+		handleErrorAndRespond(w, errors.New("Agent registry unavailable"), nil, "Failed to register agent", http.StatusInternalServerError, http.StatusOK)
+		return
+	}
+
+	// Always-strict validation, with the live registry so cross-agent
+	// Decision targets resolve exactly as they will at runtime.
+	if err := agt.ValidateAgentConfig([]byte(interpolated), fileType, agt.ValidationModeStrict, agt.AgentsRegistry.Registry()); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlWarn, "Agent upload %s rejected by strict validation: %v", header.Filename, err)
 		handleErrorAndRespond(w, err, nil, "Invalid agent configuration", http.StatusBadRequest, http.StatusOK)
 		return
 	}
 
-	if err := os.WriteFile(filename, data, 0644); err != nil { //nolint:gosec // The path here is handled by the service not an end-user
+	// Same decode plus normalization the startup loader uses. A manifest
+	// that validates but cannot normalize (e.g. identity/name mismatch) is
+	// a client error: reject before anything is written.
+	agentConfig := agt.NewJobConfig()
+	if err := yaml.Unmarshal([]byte(interpolated), agentConfig); err != nil {
+		handleErrorAndRespond(w, err, nil, "Failed to parse agent configuration", http.StatusBadRequest, http.StatusOK)
+		return
+	}
+	def, err := agentConfig.NormalizeToAgentDefinition(agt.AgentSourceMetadata{Location: "upload:" + header.Filename})
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlWarn, "Agent upload %s rejected by normalization: %v", header.Filename, err)
+		handleErrorAndRespond(w, err, nil, "Invalid agent configuration", http.StatusBadRequest, http.StatusOK)
+		return
+	}
+	cmn.DebugMsg(cmn.DbgLvlDebug, "Agent upload %s normalized as agent %s", header.Filename, def.Identity.AgentID)
+
+	// Deterministic duplicates: an already-registered id or name is a
+	// conflict before anything touches the disk, so the original file is
+	// never clobbered by a rejected re-upload.
+	if reg := agt.AgentsRegistry.Registry(); reg != nil {
+		if _, exists := reg.GetByID(def.Identity.AgentID); exists {
+			cmn.DebugMsg(cmn.DbgLvlWarn, "Agent upload %s conflicts: duplicate agent_id %s", header.Filename, def.Identity.AgentID)
+			handleErrorAndRespond(w, fmt.Errorf("duplicate agent_id: %s", def.Identity.AgentID), nil, "Agent already registered", http.StatusConflict, http.StatusOK)
+			return
+		}
+		if _, exists := reg.GetByName(def.Identity.Name); exists {
+			cmn.DebugMsg(cmn.DbgLvlWarn, "Agent upload %s conflicts: duplicate agent name %s", header.Filename, def.Identity.Name)
+			handleErrorAndRespond(w, fmt.Errorf("duplicate agent name: %s", def.Identity.Name), nil, "Agent already registered", http.StatusConflict, http.StatusOK)
+			return
+		}
+	}
+
+	// Atomic durable write: temp file in the destination directory, then
+	// rename. No partial file is ever visible under the final name.
+	if err := os.MkdirAll(agentsUploadDir, 0755); err != nil { //nolint:gosec // service-owned agents tree
+		handleErrorAndRespond(w, err, nil, "Failed to save file", http.StatusInternalServerError, http.StatusOK)
+		return
+	}
+	tmp, err := os.CreateTemp(agentsUploadDir, ".upload-*")
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Failed to save file", http.StatusInternalServerError, http.StatusOK)
+		return
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write([]byte(interpolated)); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		handleErrorAndRespond(w, err, nil, "Failed to save file", http.StatusInternalServerError, http.StatusOK)
+		return
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		handleErrorAndRespond(w, err, nil, "Failed to save file", http.StatusInternalServerError, http.StatusOK)
+		return
+	}
+	filename := filepath.Join(agentsUploadDir, header.Filename)
+	if err := os.Rename(tmpName, filename); err != nil {
+		_ = os.Remove(tmpName)
 		handleErrorAndRespond(w, err, nil, "Failed to save file", http.StatusInternalServerError, http.StatusOK)
 		return
 	}
 
-	// Register the agent
-	agentConfig := agt.NewJobConfig()
-	if err := yaml.Unmarshal(data, agentConfig); err != nil {
-		handleErrorAndRespond(w, err, nil, "Failed to parse agent configuration", http.StatusInternalServerError, http.StatusOK)
+	// Live registration through the same normalizer; on failure roll the
+	// file back so disk and registry cannot diverge. Duplicate ids/names
+	// are deterministic conflicts, not silent overwrites.
+	if err := agt.AgentsRegistry.RegisterAgentE(agentConfig); err != nil {
+		_ = os.Remove(filename)
+		if strings.Contains(strings.ToLower(err.Error()), "duplicate") {
+			cmn.DebugMsg(cmn.DbgLvlWarn, "Agent upload %s conflicts: %v", header.Filename, err)
+			handleErrorAndRespond(w, err, nil, "Agent already registered", http.StatusConflict, http.StatusOK)
+		} else {
+			handleErrorAndRespond(w, err, nil, "Failed to register agent", http.StatusInternalServerError, http.StatusOK)
+		}
 		return
 	}
-	agt.AgentsRegistry.RegisterAgent(agentConfig) // Register the agent
 
-	// Generate and broadcast event with file content in details
+	// Best-effort announcement only: the upload is committed at this point.
 	event := cdb.Event{
 		Type:      "new_agent",
 		ExpiresAt: time.Now().Add(2 * time.Minute).Format(time.RFC3339),
 		Details: map[string]interface{}{
 			"filename": header.Filename,
 			"type":     "agent",
-			"content":  escapeJSON(string(data)),
 		},
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if _, err := cdb.CreateEvent(ctx, &dbHandler, event); err != nil {
-		handleErrorAndRespond(w, err, nil, "Failed to create event", http.StatusInternalServerError, http.StatusOK)
-		return
+	if err := announceAgentUpload(event); err != nil {
+		// Filename only: never log manifest content (may carry credentials).
+		cmn.DebugMsg(cmn.DbgLvlWarn, "Agent upload %s committed but announcement failed: %v", header.Filename, err)
 	}
 
+	cmn.DebugMsg(cmn.DbgLvlInfo, "Agent upload %s accepted (%d bytes)", header.Filename, len(data))
 	response := cmn.StdAPISuccess{
 		OpCode:  201,
-		Message: "Agent uploaded and event created successfully",
+		Message: "Agent uploaded and registered successfully",
 	}
 
 	handleErrorAndRespond(w, nil, response, "", http.StatusInternalServerError, http.StatusCreated)
-}
-
-func validateAgent(data []byte) error {
-	var agent map[string]interface{}
-	if err := yaml.Unmarshal(data, &agent); err != nil {
-		return err
-	}
-	// Validate against schema if necessary
-	return nil
 }
 
 // --------------------------------------------

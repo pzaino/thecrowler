@@ -52,7 +52,7 @@ func TestExecuteAgentCapabilityDeny(t *testing.T) {
 	engine.RegisterAction(&testStepAction{name: "RunCommand"})
 
 	agentCfg := makeIdentityAgent("RunCommand")
-	agentCfg.AgentIdentity.Capabilities = []string{"create_event"}
+	agentCfg.AgentIdentity.Capabilities = []string{"emit_event"}
 
 	err := engine.ExecuteJobs(agentCfg, runtimeEnforcedCfg())
 	if err == nil || !strings.Contains(err.Error(), "capability gate denied action RunCommand") {
@@ -66,7 +66,7 @@ func TestExecuteAgentTrustLevelDeny(t *testing.T) {
 
 	agentCfg := makeIdentityAgent("DBQuery")
 	agentCfg.AgentIdentity.TrustLevel = "restricted"
-	agentCfg.AgentIdentity.Capabilities = []string{"db_query"}
+	agentCfg.AgentIdentity.Capabilities = []string{"db_read"}
 
 	err := engine.ExecuteJobs(agentCfg, runtimeEnforcedCfg())
 	if err == nil || !strings.Contains(err.Error(), "trust gate denied action DBQuery") {
@@ -79,7 +79,7 @@ func TestExecuteAgentConstraintBudgetExhaustion(t *testing.T) {
 	engine.RegisterAction(&testStepAction{name: "CreateEvent"})
 
 	agentCfg := makeIdentityAgent("CreateEvent", "CreateEvent")
-	agentCfg.AgentIdentity.Capabilities = []string{"create_event"}
+	agentCfg.AgentIdentity.Capabilities = []string{"emit_event"}
 	agentCfg.AgentIdentity.Constraints = &AgentConstraints{EventRateLimit: 1}
 
 	err := engine.ExecuteJobs(agentCfg, runtimeEnforcedCfg())

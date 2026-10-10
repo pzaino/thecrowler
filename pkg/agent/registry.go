@@ -35,25 +35,56 @@ type AgentDefinition struct {
 }
 
 // NormalizeToAgentDefinition converts an input JobConfig into a runtime AgentDefinition.
+// Normalization runs on a clone: concurrent executions sharing one manifest
+// must not race on identity defaults.
 func (jc *JobConfig) NormalizeToAgentDefinition(source AgentSourceMetadata) (*AgentDefinition, error) {
 	if jc == nil {
 		return nil, fmt.Errorf("nil job config")
 	}
-	if err := jc.normalizeAgentIdentity(); err != nil {
+	clone := *jc
+	if jc.AgentIdentity != nil {
+		clone.AgentIdentity = cloneAgentIdentity(jc.AgentIdentity)
+	}
+	if err := clone.normalizeAgentIdentity(); err != nil {
 		return nil, err
 	}
-	if jc.AgentIdentity == nil {
+	if clone.AgentIdentity == nil {
 		return nil, fmt.Errorf("missing agent identity")
 	}
 
 	out := &AgentDefinition{
-		FormatVersion: jc.FormatVersion,
-		Identity:      *jc.AgentIdentity,
+		FormatVersion: clone.FormatVersion,
+		Identity:      *clone.AgentIdentity,
 		Jobs:          make([]Job, len(jc.Jobs)),
 		Source:        source,
 	}
 	copy(out.Jobs, jc.Jobs)
 	return out, nil
+}
+
+// cloneAgentIdentity copies the identity and every sub-struct normalization
+// may default, so defaulting never writes through shared pointers.
+func cloneAgentIdentity(in *AgentIdentity) *AgentIdentity {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	if in.Capabilities != nil {
+		out.Capabilities = append([]string(nil), in.Capabilities...)
+	}
+	if in.Memory != nil {
+		memory := *in.Memory
+		out.Memory = &memory
+	}
+	if in.Contract != nil {
+		contract := *in.Contract
+		out.Contract = &contract
+	}
+	if in.Constraints != nil {
+		constraints := *in.Constraints
+		out.Constraints = &constraints
+	}
+	return &out
 }
 
 func (ad *AgentDefinition) toJobConfig() *JobConfig {

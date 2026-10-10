@@ -252,9 +252,22 @@ func (jc *JobConfig) LoadJob(j Job) {
 }
 
 func (jc *JobConfig) ensureRegistry() {
+	if jc == nil {
+		return
+	}
 	if jc.registry == nil {
 		jc.registry = NewAgentRegistry()
 	}
+}
+
+// Registry exposes the live agent index for paths that need cross-agent
+// resolution outside the package (e.g. upload-time Decision target checks).
+func (jc *JobConfig) Registry() *AgentRegistry {
+	if jc == nil {
+		return nil
+	}
+	jc.ensureRegistry()
+	return jc.registry
 }
 
 // --- helpers: parsing and normalization ---
@@ -349,8 +362,11 @@ func (jc *JobConfig) normalizeAgentIdentity() error {
 	if strings.TrimSpace(jc.AgentIdentity.TrustLevel) == "" {
 		jc.AgentIdentity.TrustLevel = "restricted"
 	}
+	// An explicit v2 identity without capabilities grants nothing: under
+	// enforcement every privileged action is denied (fail-closed). The
+	// omnipotent `all` fallback is isolated to v1-derived identities above.
 	if len(jc.AgentIdentity.Capabilities) == 0 {
-		jc.AgentIdentity.Capabilities = []string{"all"}
+		jc.AgentIdentity.Capabilities = []string{}
 	}
 	if strings.TrimSpace(jc.AgentIdentity.Reasoning) == "" {
 		jc.AgentIdentity.Reasoning = "fixed"
@@ -560,20 +576,31 @@ func (jc *JobConfig) LoadConfig(agtConfigs []cfg.AgentsConfig) error {
 
 // RegisterAgent registers an agent with the JobConfig
 func (jc *JobConfig) RegisterAgent(agent *JobConfig) {
+	if err := jc.RegisterAgentE(agent); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "failed to register agent: %v", err)
+	}
+}
+
+// RegisterAgentE normalizes and registers an agent, reporting normalization
+// and duplicate-registration failures to the caller so upload paths can roll
+// back already-written files instead of diverging from the registry.
+func (jc *JobConfig) RegisterAgentE(agent *JobConfig) error {
+	if jc == nil {
+		return fmt.Errorf("nil job config")
+	}
 	jc.ensureRegistry()
 	if agent == nil {
-		return
+		return fmt.Errorf("nil agent")
 	}
 	def, err := agent.NormalizeToAgentDefinition(AgentSourceMetadata{Location: "runtime"})
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "failed to normalize agent registration: %v", err)
-		return
+		return err
 	}
 	if err := jc.registry.Register(def); err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "failed to register agent: %v", err)
-		return
+		return err
 	}
 	jc.Jobs = append(jc.Jobs, def.Jobs...)
+	return nil
 }
 
 // GetAgentByName returns an agent by name
@@ -663,24 +690,56 @@ func (je *JobEngine) GetAgentsByTrigger(triggerType, triggerName string) ([]*Job
 
 // ExecuteAgent executes a registered agent by agent ID or, if missing, by agent name.
 func (je *JobEngine) ExecuteAgent(agentRef string, inputCtx map[string]any) error {
+	_, err := je.ExecuteAgentResult(agentRef, inputCtx)
+	return err
+}
+
+// Delegated terminal-result semantics (no autonomous execution):
+//
+//   - one job group: that group's terminal step payload;
+//   - several serial groups: the last group's terminal payload;
+//   - any parallel groups: a map keyed by stable group name holding each
+//     group's terminal payload (duplicate names gain deterministic #2, #3
+//     suffixes in definition order);
+//   - no jobs or an empty group: an empty (non-nil) map;
+//   - failure: a nil map plus the error.
+//
+// The caller's group budget is charged exactly once for the delegation step
+// itself; the callee's groups are metered by their own independent budgets.
+
+// ExecuteAgentResult executes a registered agent and returns its terminal
+// result alongside the error. Existing error-only callers keep working
+// through ExecuteAgent.
+func (je *JobEngine) ExecuteAgentResult(agentRef string, inputCtx map[string]any) (any, error) {
 	lookup := strings.TrimSpace(agentRef)
 	if lookup == "" {
-		return fmt.Errorf("missing agent reference")
+		return nil, fmt.Errorf("missing agent reference")
 	}
 	if AgentsRegistry != nil {
 		AgentsRegistry.ensureRegistry()
 		if def, ok := AgentsRegistry.registry.GetByID(lookup); ok {
-			return je.executeAgentDefinition(def, inputCtx)
+			return je.executeAgentDefinitionResult(def, inputCtx)
 		}
 		if def, ok := AgentsRegistry.registry.GetByName(lookup); ok {
-			return je.executeAgentDefinition(def, inputCtx)
+			return je.executeAgentDefinitionResult(def, inputCtx)
 		}
 	}
 
 	if agent, ok := je.GetAgentByName(lookup); ok {
-		return je.ExecuteJobs(agent, inputCtx)
+		return je.executeJobsResult(agent, inputCtx)
 	}
-	return fmt.Errorf("agent '%s' not found", lookup)
+	return nil, fmt.Errorf("agent '%s' not found", lookup)
+}
+
+// executeJobsResult runs a raw job config (legacy path included) and returns
+// its terminal result.
+func (je *JobEngine) executeJobsResult(j *JobConfig, iCfg map[string]any) (any, error) {
+	if j != nil && j.AgentIdentity != nil {
+		if def, err := j.NormalizeToAgentDefinition(AgentSourceMetadata{Location: "runtime"}); err == nil {
+			return je.executeAgentDefinitionResult(def, iCfg)
+		}
+	}
+	return je.executeJobsWithContextResult(j, iCfg, AgentExecutionContext{}, cfg.AgentRuntimeConfig{})
 }
 
 func deepCopyJob(j Job) Job {
@@ -690,12 +749,64 @@ func deepCopyJob(j Job) Job {
 	for i, step := range j.Steps {
 		m := make(map[string]any, len(step))
 		for k, v := range step {
-			m[k] = v
+			m[k] = deepCloneStepValue(v)
 		}
 		out.Steps[i] = m
 	}
 
 	return out
+}
+
+// maxCloneDepth bounds recursive cloning: configs alias previous params maps,
+// so chains stay shallow in practice; beyond the bound values are shared by
+// reference instead of risking unbounded recursion on hostile input.
+const maxCloneDepth = 64
+
+// deepCloneStepValue deterministically clones step params so repeated and
+// concurrent runs cannot mutate the stored manifest through shared nested
+// maps or slices. Scalar and foreign values (handlers, drivers, registers)
+// are shared by reference; plain JSON containers are deep-copied, with
+// map[interface{}]interface{} normalized to map[string]any.
+func deepCloneStepValue(v any) any {
+	return deepCloneStepValueDepth(v, 0)
+}
+
+func deepCloneStepValueDepth(v any, depth int) any {
+	if depth > maxCloneDepth {
+		return v
+	}
+	switch t := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for key, item := range t {
+			out[key] = deepCloneStepValueDepth(item, depth+1)
+		}
+		return out
+	case map[interface{}]interface{}:
+		converted, ok := cmn.ConvertMapIIToSI(t).(map[string]any)
+		if !ok {
+			return v
+		}
+		return deepCloneStepValueDepth(converted, depth+1)
+	case []any:
+		out := make([]any, len(t))
+		for i, item := range t {
+			out[i] = deepCloneStepValueDepth(item, depth+1)
+		}
+		return out
+	case []map[string]any:
+		out := make([]map[string]any, len(t))
+		for i, item := range t {
+			if cloned, ok := deepCloneStepValueDepth(item, depth+1).(map[string]any); ok {
+				out[i] = cloned
+			} else {
+				out[i] = item
+			}
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 // ExecuteJobs executes all jobs in the configuration
@@ -720,7 +831,51 @@ func (je *JobEngine) executeAgentDefinition(def *AgentDefinition, iCfg map[strin
 	return je.executeJobsWithContext(def.toJobConfig(), iCfg, ctx, flags)
 }
 
+func (je *JobEngine) executeAgentDefinitionResult(def *AgentDefinition, iCfg map[string]any) (any, error) {
+	if def == nil {
+		return nil, fmt.Errorf("nil agent definition")
+	}
+	flags := runtimeFlagsFromConfig(iCfg)
+	ctx := newAgentExecutionContext(def.Identity, def.Source.Location)
+	if flags.IdentityEnforcement || flags.ContractEnforcement {
+		je.startGovernanceRun()
+	}
+	return je.executeJobsWithContextResult(def.toJobConfig(), iCfg, ctx, flags)
+}
+
 func (je *JobEngine) executeJobsWithContext(j *JobConfig, iCfg map[string]any, execCtx AgentExecutionContext, flags cfg.AgentRuntimeConfig) error {
+	_, err := je.executeJobsWithContextResult(j, iCfg, execCtx, flags)
+	return err
+}
+
+// groupOutcome carries one group's terminal payload (or failure) with its
+// stable definition-order key.
+type groupOutcome struct {
+	key      string
+	terminal any
+	err      error
+}
+
+// groupResultKeys assigns stable result keys in definition order, suffixing
+// duplicate group names deterministically (#2, #3, ...).
+func groupResultKeys(jobs []Job) []string {
+	keys := make([]string, len(jobs))
+	seen := map[string]int{}
+	for i, job := range jobs {
+		name := strings.TrimSpace(job.Name)
+		if name == "" {
+			name = fmt.Sprintf("group-%d", i)
+		}
+		seen[name]++
+		if seen[name] > 1 {
+			name = fmt.Sprintf("%s#%d", name, seen[name])
+		}
+		keys[i] = name
+	}
+	return keys
+}
+
+func (je *JobEngine) executeJobsWithContextResult(j *JobConfig, iCfg map[string]any, execCtx AgentExecutionContext, flags cfg.AgentRuntimeConfig) (any, error) {
 	// Create a waiting group for parallel group processing
 	var wg sync.WaitGroup
 
@@ -730,11 +885,15 @@ func (je *JobEngine) executeJobsWithContext(j *JobConfig, iCfg map[string]any, e
 		localJobs[i] = deepCopyJob(job)
 	}
 
-	// Create a channel to collect errors from parallel execution
-	parallelErrors := make(chan error, len(localJobs))
+	// Create a channel to collect parallel group outcomes
+	parallelOutcomes := make(chan groupOutcome, len(localJobs))
+	keys := groupResultKeys(localJobs)
+
+	var serialOutcomes []groupOutcome
+	parallelCount := 0
 
 	// Iterate over job groups
-	for _, jobGroup := range localJobs {
+	for idx, jobGroup := range localJobs {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Agents] Executing Job Group: %s", jobGroup.Name)
 
 		// Add iCfg to the first step as StrConfig field
@@ -748,14 +907,30 @@ func (je *JobEngine) executeJobsWithContext(j *JobConfig, iCfg map[string]any, e
 				jobGroup.Steps[0]["params"] = cmn.ConvertMapIIToSI(params)
 			}
 
-			paramsMap := jobGroup.Steps[0]["params"].(map[string]interface{})
+			paramsMap, ok := jobGroup.Steps[0]["params"].(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("invalid params for first step of job group '%s': expected mapping", jobGroup.Name)
+			}
+
+			// Seed the first step input from the invocation context (for
+			// example delegated payloads). Manifest-explicit input wins;
+			// without either, actions see whatever their own contract
+			// requires (some tolerate missing input, some error).
+			if inputVal, ok := iCfg[StrRequest]; ok && inputVal != nil {
+				if _, present := paramsMap[StrRequest]; !present {
+					paramsMap[StrRequest] = inputVal
+				}
+			}
 
 			// Ensure "StrConfig" exists within "params" and is a map[string]interface{}
 			if _, ok := paramsMap[StrConfig]; !ok || paramsMap[StrConfig] == nil {
 				paramsMap[StrConfig] = make(map[string]interface{})
 			}
 
-			configMap := paramsMap[StrConfig].(map[string]interface{})
+			configMap, ok := paramsMap[StrConfig].(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("invalid config for first step of job group '%s': expected mapping", jobGroup.Name)
+			}
 
 			// Merge iCfg into configMap
 			for k, v := range iCfg {
@@ -776,21 +951,24 @@ func (je *JobEngine) executeJobsWithContext(j *JobConfig, iCfg map[string]any, e
 		// Check if the group should run in parallel
 		if strings.ToLower(strings.TrimSpace(jobGroup.Process)) == "parallel" {
 			wg.Add(1)
+			parallelCount++
 
 			go func(
 				groupName string,
+				resultKey string,
 				jg []map[string]any,
 				identity *AgentIdentity,
 			) {
 				defer wg.Done()
 
-				if err := executeJobGroup(
+				terminal, err := executeJobGroup(
 					je,
 					jg,
 					identity,
 					execCtx,
 					flags,
-				); err != nil {
+				)
+				if err != nil {
 					wrappedErr := fmt.Errorf(
 						"failed to execute job group '%s': %w",
 						groupName,
@@ -803,7 +981,7 @@ func (je *JobEngine) executeJobsWithContext(j *JobConfig, iCfg map[string]any, e
 						wrappedErr,
 					)
 
-					parallelErrors <- wrappedErr
+					parallelOutcomes <- groupOutcome{key: resultKey, err: wrappedErr}
 					return
 				}
 
@@ -812,42 +990,81 @@ func (je *JobEngine) executeJobsWithContext(j *JobConfig, iCfg map[string]any, e
 					"[DEBUG-Agents] Job Group '%s' completed successfully",
 					groupName,
 				)
+				parallelOutcomes <- groupOutcome{key: resultKey, terminal: terminal}
 			}(
 				jobGroup.Name,
+				keys[idx],
 				jobGroup.Steps,
 				j.AgentIdentity,
 			)
 
 		} else {
 			// Execute the group serially
-			if err := executeJobGroup(je, jobGroup.Steps, j.AgentIdentity, execCtx, flags); err != nil {
-				return fmt.Errorf("failed to execute job group '%s': %v", jobGroup.Name, err)
+			terminal, err := executeJobGroup(je, jobGroup.Steps, j.AgentIdentity, execCtx, flags)
+			if err != nil {
+				return nil, fmt.Errorf("failed to execute job group '%s': %v", jobGroup.Name, err)
 			}
+			serialOutcomes = append(serialOutcomes, groupOutcome{key: keys[idx], terminal: terminal})
 			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Agents] Job Group '%s' completed successfully", jobGroup.Name)
 		}
 	}
 
 	// Wait for all parallel groups to finish
 	wg.Wait()
-	select {
-	case err := <-parallelErrors:
-		return err
-	default:
-		return nil
+	close(parallelOutcomes)
+	parallelByKey := make(map[string]any, parallelCount)
+	parallelErrs := make(map[string]error, parallelCount)
+	for outcome := range parallelOutcomes {
+		if outcome.err != nil {
+			parallelErrs[outcome.key] = outcome.err
+			continue
+		}
+		parallelByKey[outcome.key] = outcome.terminal
 	}
+	// Deterministic failure choice: the lowest definition-order group wins.
+	for _, key := range keys {
+		if err, failed := parallelErrs[key]; failed {
+			return nil, err
+		}
+	}
+	if parallelCount == 0 {
+		if len(serialOutcomes) == 0 {
+			return map[string]any{}, nil
+		}
+		return serialOutcomes[len(serialOutcomes)-1].terminal, nil
+	}
+	combined := make(map[string]any, len(serialOutcomes)+len(parallelByKey))
+	for _, outcome := range serialOutcomes {
+		combined[outcome.key] = outcome.terminal
+	}
+	for key, terminal := range parallelByKey {
+		combined[key] = terminal
+	}
+	return combined, nil
 }
 
-// executeJobGroup runs jobs in a group serially
-func executeJobGroup(je *JobEngine, steps []map[string]any, identity *AgentIdentity, execCtx AgentExecutionContext, flags cfg.AgentRuntimeConfig) error {
-	lastResult := make(map[string]any)
+// executeJobGroup runs jobs in a group serially with a fresh per-group budget,
+// returning the terminal step payload.
+func executeJobGroup(je *JobEngine, steps []map[string]any, identity *AgentIdentity, execCtx AgentExecutionContext, flags cfg.AgentRuntimeConfig) (any, error) {
 	var budget *constraintBudgetManager
 	if flags.IdentityEnforcement && identity != nil {
 		b, err := newConstraintBudgetManager(*identity)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		budget = b
+		defer budget.release()
 	}
+	return executeJobGroupWithBudget(je, steps, identity, execCtx, flags, budget)
+}
+
+// executeJobGroupWithBudget runs jobs in a group serially against an existing
+// group budget, returning the terminal step payload. Fallback steps use this
+// variant so they are charged to the same group instead of receiving a fresh
+// budget. Only the budget owner (executeJobGroup) releases the context,
+// never a fallback invocation.
+func executeJobGroupWithBudget(je *JobEngine, steps []map[string]any, identity *AgentIdentity, execCtx AgentExecutionContext, flags cfg.AgentRuntimeConfig, budget *constraintBudgetManager) (any, error) {
+	lastResult := make(map[string]any)
 
 	if (flags.IdentityEnforcement || flags.ContractEnforcement) && identity != nil {
 		je.appendAudit(AuditEvent{
@@ -868,7 +1085,7 @@ func executeJobGroup(je *JobEngine, steps []map[string]any, identity *AgentIdent
 		// Get the action name
 		actionName, ok := (*step)["action"].(string)
 		if !ok {
-			return fmt.Errorf("missing 'action' field in job step")
+			return nil, fmt.Errorf("missing 'action' field in job step")
 		}
 		params, _ := (*step)["params"].(map[string]interface{})
 		auditAgentID, auditAgentName, auditOwner := "", "", ""
@@ -882,95 +1099,85 @@ func executeJobGroup(je *JobEngine, steps []map[string]any, identity *AgentIdent
 			(*step)["params"] = params
 		}
 		if (flags.IdentityEnforcement || flags.ContractEnforcement) && identity != nil {
-			applyExecutionContext(params, execCtx)
+			applyExecutionContext(params, execCtx, flags)
+			// Publish the group's deadline for context-aware actions.
+			propagateGroupDeadline(params, budget)
 		}
 		if flags.IdentityEnforcement && identity != nil {
 			if !capabilityAllowed(*identity, actionName) {
-				err := fmt.Errorf("capability gate denied action %s: capability %q missing", actionName, requiredCapabilityForAction(actionName))
-				je.appendAudit(AuditEvent{RunID: execCtx.RunID, TraceID: execCtx.TraceID, AgentID: auditAgentID, AgentName: auditAgentName, Owner: auditOwner, Action: actionName, RequiredCapability: requiredCapabilityForAction(actionName), Outcome: auditOutcomeDenied, Reason: err.Error()})
-				return err
+				err := fmt.Errorf("capability gate denied action %s: capability %q missing", actionName, requiredCapabilityForActionName(actionName))
+				je.appendAudit(AuditEvent{RunID: execCtx.RunID, TraceID: execCtx.TraceID, AgentID: auditAgentID, AgentName: auditAgentName, Owner: auditOwner, Action: actionName, RequiredCapability: requiredCapabilityForActionName(actionName), Outcome: auditOutcomeDenied, Reason: err.Error()})
+				return nil, err
+			}
+			if strings.TrimSpace(actionName) == "DBQuery" {
+				if err := enforceDBQueryGate(je, params, *identity, execCtx, auditAgentID, auditAgentName, auditOwner); err != nil {
+					return nil, err
+				}
 			}
 			if !trustAllowed(*identity, actionName) {
 				err := fmt.Errorf("trust gate denied action %s: trust_level %q insufficient", actionName, identity.TrustLevel)
-				je.appendAudit(AuditEvent{RunID: execCtx.RunID, TraceID: execCtx.TraceID, AgentID: auditAgentID, AgentName: auditAgentName, Owner: auditOwner, Action: actionName, RequiredCapability: requiredCapabilityForAction(actionName), Outcome: auditOutcomeDenied, Reason: err.Error()})
-				return err
+				je.appendAudit(AuditEvent{RunID: execCtx.RunID, TraceID: execCtx.TraceID, AgentID: auditAgentID, AgentName: auditAgentName, Owner: auditOwner, Action: actionName, RequiredCapability: requiredCapabilityForActionName(actionName), Outcome: auditOutcomeDenied, Reason: err.Error()})
+				return nil, err
 			}
 			if err := budget.preStepCheck(actionName); err != nil {
-				je.appendAudit(AuditEvent{RunID: execCtx.RunID, TraceID: execCtx.TraceID, AgentID: auditAgentID, AgentName: auditAgentName, Owner: auditOwner, Action: actionName, RequiredCapability: requiredCapabilityForAction(actionName), Outcome: auditOutcomeDenied, Reason: err.Error()})
-				return err
+				je.appendAudit(AuditEvent{RunID: execCtx.RunID, TraceID: execCtx.TraceID, AgentID: auditAgentID, AgentName: auditAgentName, Owner: auditOwner, Action: actionName, RequiredCapability: requiredCapabilityForActionName(actionName), Outcome: auditOutcomeDenied, Reason: err.Error()})
+				return nil, err
 			}
 		}
 		if flags.ContractEnforcement && contractForbidsAction(identity, actionName) {
 			err := fmt.Errorf("contract gate denied action %s: forbidden_actions policy", actionName)
-			je.appendAudit(AuditEvent{RunID: execCtx.RunID, TraceID: execCtx.TraceID, AgentID: auditAgentID, AgentName: auditAgentName, Owner: auditOwner, Action: actionName, RequiredCapability: requiredCapabilityForAction(actionName), Outcome: auditOutcomeDenied, Reason: err.Error()})
-			return err
+			je.appendAudit(AuditEvent{RunID: execCtx.RunID, TraceID: execCtx.TraceID, AgentID: auditAgentID, AgentName: auditAgentName, Owner: auditOwner, Action: actionName, RequiredCapability: requiredCapabilityForActionName(actionName), Outcome: auditOutcomeDenied, Reason: err.Error()})
+			return nil, err
 		}
 		if flags.MemoryRuntime && je != nil {
 			if je.memory == nil {
 				je.memory = newAgentMemoryRuntime()
 			}
 			if err := je.memory.inject(params, identity); err != nil {
-				return fmt.Errorf("memory runtime inject failed: %w", err)
+				return nil, fmt.Errorf("memory runtime inject failed: %w", err)
 			}
 		}
 
-		// If we are to a step that is not the first one, we need to transform StrResponse (from previous step) to StrRequest
+		// Wire the previous step's payload and config into this step's
+		// params. Type-safe: incompatible shapes yield descriptive errors,
+		// mappings merge into fresh maps, and stored manifests are never
+		// mutated (see the propagation contract on InputContext).
 		if i > 0 {
-			if _, ok := params[StrRequest]; !ok {
-				params[StrRequest] = lastResult[StrResponse]
-			} else {
-				// If yes, merge the two maps
-				for k, v := range lastResult[StrResponse].(map[string]interface{}) {
-					params[StrRequest].(map[string]interface{})[k] = v
-				}
+			if err := mergeStepInput(params, lastResult[StrResponse]); err != nil {
+				return nil, fmt.Errorf("invalid step input for action %s: %w", actionName, err)
 			}
 		}
-
-		// Inject previous result into current params (if needed)
 		for k, v := range lastResult {
-			// Skip key response, we have already converted it to input
-			if k == StrResponse {
+			switch k {
+			case StrResponse:
 				continue
-			}
-
-			// Check if k == config, if so, merge the two maps
-			if k == StrConfig {
-				// Check if the params field has a config field
-				if _, ok := params[StrConfig]; !ok {
-					// If not, add the config field
-					params[StrConfig] = v
-					continue
+			case StrConfig:
+				if err := mergePriorConfig(params, v); err != nil {
+					return nil, fmt.Errorf("invalid step config for action %s: %w", actionName, err)
 				}
-				// If yes, merge the two maps
-				for k, v := range v.(map[string]interface{}) {
-					params[StrConfig].(map[string]interface{})[k] = v
-				}
-				continue
-			}
-
-			// Check if the params field has a k field
-			if _, ok := params[k]; !ok {
-				// If not, add the k field
-				params[k] = v
-			} else {
-				// If yes, merge the two maps
-				for k, v := range v.(map[string]any) {
-					params[k] = v
-				}
+			default:
+				mergePriorResultKey(params, k, v)
 			}
 		}
 
 		action, exists := je.actions[actionName]
 		if !exists {
-			return fmt.Errorf("unknown action: %s", actionName)
+			return nil, fmt.Errorf("unknown action: %s", actionName)
 		}
 
+		// Centralized attempt accounting: the pre-invocation budget check
+		// ran in the gate block above; every executed attempt is charged
+		// exactly once here, success or failure. Actions rejected before
+		// invocation (capability/contract/validation) are never charged.
 		result, err := action.Execute(params)
+		if flags.IdentityEnforcement && identity != nil {
+			budget.markActionExecuted(actionName)
+		}
 		if err != nil {
 			if rawRetry, hasRetry := (*step)["retry"]; hasRetry {
 				retryConfig, enabled, retryErr := parseRetryConfig(rawRetry)
 				if retryErr != nil {
-					return fmt.Errorf(
+					return nil, fmt.Errorf(
 						"invalid retry configuration for action %s: %w",
 						actionName,
 						retryErr,
@@ -978,20 +1185,22 @@ func executeJobGroup(je *JobEngine, steps []map[string]any, identity *AgentIdent
 				}
 
 				if enabled {
-					result, err = executeWithRetry(
+					result, err = executeWithRetryBudget(
 						action,
 						params,
 						retryConfig,
+						actionName,
+						budget,
 					)
 				}
 			}
 
 			if err != nil {
 				policy := effectiveFailurePolicy(identity)
-				je.appendAudit(AuditEvent{RunID: execCtx.RunID, TraceID: execCtx.TraceID, AgentID: auditAgentID, AgentName: auditAgentName, Owner: auditOwner, Action: actionName, RequiredCapability: requiredCapabilityForAction(actionName), CapabilitiesUsed: capabilitiesUsed(identity, actionName), Outcome: auditOutcomeError, Reason: err.Error(), FailurePolicy: policy})
+				je.appendAudit(AuditEvent{RunID: execCtx.RunID, TraceID: execCtx.TraceID, AgentID: auditAgentID, AgentName: auditAgentName, Owner: auditOwner, Action: actionName, RequiredCapability: requiredCapabilityForActionName(actionName), CapabilitiesUsed: capabilitiesUsed(identity, actionName), Outcome: auditOutcomeError, Reason: err.Error(), FailurePolicy: policy})
 				if fallback, hasFallback := (*step)["fallback"].([]map[string]interface{}); hasFallback && policy != "continue" {
 					cmn.DebugMsg(cmn.DbgLvlError, "Action %s failed, executing fallback steps", actionName)
-					return executeJobGroup(je, fallback, identity, execCtx, flags)
+					return executeJobGroupWithBudget(je, fallback, identity, execCtx, flags, budget)
 				}
 				switch policy {
 				case "continue":
@@ -999,28 +1208,37 @@ func executeJobGroup(je *JobEngine, steps []map[string]any, identity *AgentIdent
 				case "fallback":
 					if fallback, hasFallback := (*step)["fallback"].([]map[string]interface{}); hasFallback {
 						cmn.DebugMsg(cmn.DbgLvlError, "Action %s failed, executing fallback steps", actionName)
-						return executeJobGroup(je, fallback, identity, execCtx, flags)
+						return executeJobGroupWithBudget(je, fallback, identity, execCtx, flags, budget)
 					}
-					return fmt.Errorf("action %s failed: %v", actionName, err)
+					return nil, fmt.Errorf("action %s failed: %v", actionName, err)
 				default:
-					return fmt.Errorf("action %s failed: %v", actionName, err)
+					return nil, fmt.Errorf("action %s failed: %v", actionName, err)
 				}
 			}
 		}
 
 		// Update the result for the next job in the group
 		lastResult = result
-		je.appendAudit(AuditEvent{RunID: execCtx.RunID, TraceID: execCtx.TraceID, AgentID: auditAgentID, AgentName: auditAgentName, Owner: auditOwner, Action: actionName, RequiredCapability: requiredCapabilityForAction(actionName), CapabilitiesUsed: capabilitiesUsed(identity, actionName), Outcome: auditOutcomeAllowed, Reason: "action_completed"})
-		if flags.IdentityEnforcement && identity != nil {
-			budget.markActionExecuted(actionName)
-		}
+		je.appendAudit(AuditEvent{RunID: execCtx.RunID, TraceID: execCtx.TraceID, AgentID: auditAgentID, AgentName: auditAgentName, Owner: auditOwner, Action: actionName, RequiredCapability: requiredCapabilityForActionName(actionName), CapabilitiesUsed: capabilitiesUsed(identity, actionName), Outcome: auditOutcomeAllowed, Reason: "action_completed"})
 		if flags.MemoryRuntime && je != nil && je.memory != nil {
 			if err := je.memory.persistStepResult(params, result, identity); err != nil {
-				return fmt.Errorf("memory runtime persist failed: %w", err)
+				return nil, fmt.Errorf("memory runtime persist failed: %w", err)
 			}
 		}
 	}
-	return nil
+	return terminalPayload(lastResult), nil
+}
+
+// terminalPayload extracts the terminal step payload from a group result
+// envelope. Groups that ran no steps yield an empty (non-nil) map.
+func terminalPayload(lastResult map[string]any) any {
+	if lastResult == nil {
+		return map[string]any{}
+	}
+	if payload, ok := lastResult[StrResponse]; ok {
+		return payload
+	}
+	return map[string]any{}
 }
 
 // executeWithRetry executes an action with retry logic
@@ -1028,6 +1246,20 @@ func executeWithRetry(
 	action Action,
 	params map[string]any,
 	retryConfig RetryConfig,
+) (map[string]interface{}, error) {
+	return executeWithRetryBudget(action, params, retryConfig, "", nil)
+}
+
+// executeWithRetryBudget executes an action with retry logic. Every retry
+// attempt is budget-checked before it runs and charged exactly once
+// afterwards, success or failure. A nil budget preserves the legacy
+// unenforced behavior.
+func executeWithRetryBudget(
+	action Action,
+	params map[string]any,
+	retryConfig RetryConfig,
+	actionName string,
+	budget *constraintBudgetManager,
 ) (map[string]interface{}, error) {
 	var (
 		lastError error
@@ -1078,7 +1310,15 @@ func executeWithRetry(
 
 		time.Sleep(delay)
 
+		if budget != nil {
+			if err := budget.preStepCheck(actionName); err != nil {
+				return nil, err
+			}
+		}
 		result, lastError = action.Execute(params)
+		if budget != nil {
+			budget.markActionExecuted(actionName)
+		}
 		if lastError == nil {
 			return result, nil
 		}
