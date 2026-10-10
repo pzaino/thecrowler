@@ -192,10 +192,25 @@ var semanticNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 _.-]{1,127}
 func validateSemanticRules(doc map[string]any, registry *AgentRegistry) *ValidationError {
 	ve := &ValidationError{}
 
+	jobs, _ := doc["jobs"].([]any)
+	firstJobName := ""
+	if len(jobs) > 0 {
+		if firstJob, ok := jobs[0].(map[string]any); ok {
+			firstJobName, _ = firstJob["name"].(string)
+		}
+	}
+
 	if aiRaw, ok := doc["agent_identity"]; ok {
 		if ai, ok := aiRaw.(map[string]any); ok {
 			if name, _ := ai["name"].(string); strings.TrimSpace(name) != "" && !semanticNamePattern.MatchString(name) {
 				ve.add("agent_identity.name", "must match ^[A-Za-z0-9][A-Za-z0-9 _.-]{1,127}$")
+			}
+			// v2 normalization requires agent_identity.name to match
+			// jobs[0].name; reject the mismatch here instead of at load.
+			if aiName, _ := ai["name"].(string); strings.TrimSpace(aiName) != "" &&
+				strings.TrimSpace(firstJobName) != "" &&
+				strings.TrimSpace(aiName) != strings.TrimSpace(firstJobName) {
+				ve.add("agent_identity.name", "must match jobs[0].name")
 			}
 			if memRaw, ok := ai["memory"].(map[string]any); ok {
 				if ttl, _ := memRaw["ttl"].(string); strings.TrimSpace(ttl) != "" {
@@ -217,7 +232,6 @@ func validateSemanticRules(doc map[string]any, registry *AgentRegistry) *Validat
 		}
 	}
 
-	jobs, _ := doc["jobs"].([]any)
 	for i, jobRaw := range jobs {
 		job, ok := jobRaw.(map[string]any)
 		if !ok {

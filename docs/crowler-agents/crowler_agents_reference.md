@@ -437,9 +437,38 @@ capabilities:
   - schedule_event
   - call_plugin
   - ai_reasoning
+  - delegate
 ```
 
 Use only these exact strings when validating against `schemas/crowler-agent-schema.json`.
+
+Action-to-capability mapping enforced with identity enforcement on:
+
+| Action | Required capability |
+|---|---|
+| `APIRequest` | `api_request` |
+| `AIInteraction` | `ai_reasoning` |
+| `DBQuery` | `db_read` for read-only statements, `db_write` for mutations (PostgreSQL AST classification; ambiguous statements are rejected) |
+| `RunCommand` | `command_execution` |
+| `PluginExecution` | `plugin_execution` (`call_plugin` accepted) |
+| `CreateEvent` | `emit_event` |
+| `Decision` local branching | none |
+| `Decision` delegation | `delegate` |
+
+Notes:
+
+* `all` remains a wildcard for known actions; it never authorizes unknown
+  actions and never masks unparseable SQL.
+* `network_access`, `file_system_access`, and `schedule_event` are
+  schema-reserved for future gates and currently grant nothing by
+  themselves.
+* Legacy runtime spellings `run_command`, `create_event`, `ai_interaction`,
+  and `db_query` are still honored where previously accepted; new manifests
+  must use the canonical names. `decision` alone never authorizes
+  delegation.
+* Trust ranks: `system` is top tier with `privileged`; `trusted` is mid;
+  `restricted`/`untrusted` are low. `DBQuery`, `RunCommand`, and
+  `PluginExecution` need rank 2 (`trusted`) or higher.
 
 ### 8.8 `constraints`
 
@@ -462,6 +491,12 @@ Use Go duration strings for time budgets:
 * `30s`,
 * `10m`,
 * `1h`.
+
+Step/time budgets apply independently to each job group, including groups
+running in parallel. Retries, fallbacks, and local steps within one group
+consume that group's budget; a delegated agent's own groups are metered
+separately (only the delegation step charges the caller). There is no global
+agent-run budget.
 
 ### 8.9 `reasoning_mode`
 
@@ -541,6 +576,11 @@ agent_contract:
 
 Use contracts to communicate intent, enable policy enforcement, and give AI systems guardrails when editing agents.
 
+Runtime failure-policy mapping: `continue` and `fallback` behave as
+declared; every other value (`abort`, `fail_fast`, `retry`, `emit_event`,
+`delegate`) aborts the group on step failure. `failure_policy: fallback`
+additionally requires `fallback` steps on the failing step.
+
 ## 9. Jobs
 
 A job is an executable workflow inside an agent. Each job has a name, trigger, process mode, and step list.
@@ -553,7 +593,8 @@ jobs:
     description: "Optional human-readable description."
     process: serial
     trigger_type: event
-    trigger_name: crawler.page_indexed
+    # crawl_completed requires crawler.create_event_when_done: true.
+    trigger_name: crawl_completed
     steps:
       - action: CreateEvent
         params:
@@ -606,12 +647,17 @@ Use `serial` unless you specifically need parallel behavior and have verified ru
 
 The meaning of `trigger_name` depends on `trigger_type`.
 
-For `event`, it should match the event type:
+For `event`, it should match the event type. The only crawler-emitted
+completion event is `crawl_completed`, which requires
+`crawler.create_event_when_done: true`:
 
 ```yaml
 trigger_type: event
-trigger_name: crawler.page_indexed
+trigger_name: crawl_completed
 ```
+
+Other names (for example a deployment-local `ingest.market_news`) must come
+from a real local emitter; the shipped examples mark such cases explicitly.
 
 For `manual`, it is the manual trigger name:
 
@@ -1204,7 +1250,7 @@ A CROWler event generally contains:
 
 ```yaml
 source_id: 0
-event_type: crawler.page_indexed
+event_type: crawl_completed
 event_severity: low
 event_timestamp: "2026-05-12T10:00:00Z"
 details:
@@ -1231,7 +1277,7 @@ domain.subject.verb
 Examples:
 
 ```text
-crawler.page_indexed
+crawl_completed
 security.finding.generated
 security.incident.recommended
 marketing.competitor.digest
@@ -1489,6 +1535,18 @@ To migrate a legacy jobs-only manifest:
 9. Run lint and strict validation.
 10. Test with identity enforcement disabled first, then progressively enable enforcement.
 
+Capability migration notes:
+
+* Pre-existing runtime spellings map to canonical names: `run_command` to
+  `command_execution`, `create_event` to `emit_event`, `db_query` to
+  `db_read`/`db_write` (classified per statement), `ai_interaction` to
+  `ai_reasoning`. Old spellings keep working where previously accepted, but
+  new manifests must use canonical names.
+* Agents that delegate (`Decision` with `call_agent`/`agent_name`) need the
+  `delegate` capability, which older manifests predate.
+* An explicit v2 identity with no capabilities grants nothing under
+  enforcement; only legacy v1 jobs-only manifests derive the `all` grant.
+
 Legacy input:
 
 ```yaml
@@ -1611,7 +1669,7 @@ Fix: define both fields on every job.
 
 ```yaml
 trigger_type: event
-trigger_name: crawler.page_indexed
+trigger_name: crawl_completed
 ```
 
 ### `agent_identity.name must match jobs[0].name`
@@ -1726,6 +1784,10 @@ Check:
 
 Use case: deterministic escalation path with auditable branching.
 
+Illustrative sketch (not directly executable): `security.alert.created` is a
+hypothetical deployment-local event, and the delegation targets below stand
+in for operator-registered agents.
+
 ```yaml
 format_version: v2
 agent_identity:
@@ -1739,6 +1801,7 @@ agent_identity:
     - call_plugin
     - emit_event
     - ai_reasoning
+    - delegate
   constraints:
     max_steps: 8
     time_budget: 30s
@@ -1763,6 +1826,7 @@ jobs:
     steps:
       - action: AIInteraction
         params:
+          url: "https://api.openai.com/v1/chat/completions"
           provider: openai
           model: gpt-4o-mini
           temperature: 0.1
@@ -1793,7 +1857,7 @@ on_false:
 
 Pattern:
 
-1. Trigger on `crawler.page_indexed`.
+1. Trigger on `crawl_completed` (requires `crawler.create_event_when_done: true`).
 2. Enrich with threat intelligence through `APIRequest`.
 3. Score with `AIInteraction`.
 4. Branch with `Decision`.
@@ -1815,6 +1879,7 @@ agent_identity:
     - ai_reasoning
     - plugin_execution
     - emit_event
+    - delegate
   constraints:
     max_steps: 10
     time_budget: 45s
@@ -1834,7 +1899,7 @@ jobs:
   - name: CybersecuritySurfaceMonitor
     process: serial
     trigger_type: event
-    trigger_name: crawler.page_indexed
+    trigger_name: crawl_completed
     steps:
       - action: APIRequest
         params:
@@ -1842,6 +1907,7 @@ jobs:
           url: "https://example-threat-intel.local/lookup?url=$response.url"
       - action: AIInteraction
         params:
+          url: "https://api.openai.com/v1/chat/completions"
           provider: openai
           model: gpt-4o-mini
           temperature: 0.1

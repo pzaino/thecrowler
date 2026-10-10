@@ -21,7 +21,8 @@ jobs:
   - name: IdentityEnabledAgent
     process: serial
     trigger_type: event
-    trigger_name: page_crawled
+    # Requires crawler.create_event_when_done: true, which emits crawl_completed.
+    trigger_name: crawl_completed
     steps:
       - action: RunCommand
         params:
@@ -30,4 +31,4 @@ jobs:
         params:
           event_name: agent_completed
           event_type: agent.completed
-          source: identity-enabled-agent
+          source: "0"

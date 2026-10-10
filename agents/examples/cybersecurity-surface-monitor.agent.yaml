@@ -6,7 +6,7 @@ agent_identity:
   owner: team:security
   trust_level: trusted
   capabilities:
-    - api_requests
+    - api_request
     - ai_reasoning
     - emit_event
   memory:
@@ -20,7 +20,8 @@ jobs:
   - name: Cyber Surface Monitor
     process: serial
     trigger_type: event
-    trigger_name: crawler.page_indexed
+    # Requires crawler.create_event_when_done: true, which emits crawl_completed.
+    trigger_name: crawl_completed
     steps:
       - action: APIRequest
         params:
@@ -35,7 +36,7 @@ jobs:
           memory_write_key: "latest_finding"
       - action: CreateEvent
         params:
-          source: "agent.cyber-surface-monitor"
+          source: "0"
           event_name: "security.finding.generated"
           event_type: "security.finding.generated"
           severity: "warning"

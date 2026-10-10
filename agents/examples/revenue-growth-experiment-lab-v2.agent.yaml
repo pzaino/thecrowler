@@ -1,19 +1,20 @@
 format_version: v2
 agent_identity:
   agent_id: revenue-growth-experiment-lab
-  name: Revenue Growth Experiment Lab
+  name: Experiment Intake Router
   version: 2.0.0
   agent_type: coordinator
   owner: team:growth
-  trust_level: restricted
+  trust_level: trusted
   reasoning_mode: reflective
   capabilities:
-    - api_requests
+    - api_request
     - ai_reasoning
     - db_read
     - db_write
     - emit_event
     - schedule_event
+    - delegate
   memory:
     scope: ephemeral
     namespace: growth-lab
@@ -51,6 +52,7 @@ jobs:
           request_type: GET
       - action: AIInteraction
         params:
+          url: "https://api.openai.com/v1/chat/completions"
           model: gpt-4o-mini
           temperature: 0.15
           prompt: "Rank proposals by expected ARR impact, implementation complexity, and confidence readiness. Output top 3 with rationale: $response"
@@ -75,6 +77,7 @@ jobs:
           query: "SELECT experiment_id, metric_name, baseline_value, sample_size, p_value FROM experiment_metrics WHERE status = 'running'"
       - action: AIInteraction
         params:
+          url: "https://api.openai.com/v1/chat/completions"
           model: gpt-4o-mini
           messages:
             - role: system
@@ -100,6 +103,7 @@ jobs:
     steps:
       - action: AIInteraction
         params:
+          url: "https://api.openai.com/v1/chat/completions"
           model: gpt-4o-mini
           temperature: 0.1
           prompt: "Produce a launch checklist with rollout phases, KPI guardrails, and rollback triggers from: $response"
@@ -108,7 +112,7 @@ jobs:
         params:
           event_name: growth.experiment.launch_ready
           event_type: growth.experiment.launch_ready
-          source: agent.revenue-growth-experiment-lab
+          source: "0"
           severity: info
           details:
             launch_plan: "$response"
@@ -116,7 +120,7 @@ jobs:
         params:
           event_name: growth.experiment.monitoring_schedule
           event_type: growth.experiment.monitoring_schedule
-          source: agent.revenue-growth-experiment-lab
+          source: "0"
           severity: info
           details:
             cadence: every 30 minutes
@@ -129,6 +133,7 @@ jobs:
     steps:
       - action: AIInteraction
         params:
+          url: "https://api.openai.com/v1/chat/completions"
           model: gpt-4o-mini
           prompt: "Reframe non-promotable proposals into backlog items with missing evidence requirements and owner suggestions: $response"
           memory_read_key: ranked_proposals
@@ -136,7 +141,7 @@ jobs:
         params:
           event_name: growth.experiment.backlog_updated
           event_type: growth.experiment.backlog_updated
-          source: agent.revenue-growth-experiment-lab
+          source: "0"
           severity: info
           details:
             backlog_recommendations: "$response"
