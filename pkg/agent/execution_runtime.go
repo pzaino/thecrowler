@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"regexp"
 	"strings"
 	"time"
 
@@ -93,6 +94,99 @@ func (bm *constraintBudgetManager) release() {
 	bm.cancel()
 }
 
+// Time-budget propagation contract.
+//
+// The budget owns a per-group deadline context, but built-in actions expose
+// Execute(params) rather than taking a context, so a blocked network or
+// database call cannot be hard-interrupted without an API-breaking change.
+// Timeout is therefore enforced at every point the runtime controls: before
+// each step, before each retry attempt, and inside context-aware actions
+// that opt into the propagated deadline. Driver-level controls (HTTP client
+// timeouts, command/plugin timeouts) remain the backstop for in-flight I/O.
+// The runtime never spawns detached watchdog goroutines to "timeout" an
+// action; cancellation flows only through bounded contexts.
+//
+// Propagation vehicle: the group's absolute deadline travels in the step
+// params runtime map (deadline_unix_nano). Actions that already take a
+// context (CreateEvent) cap their own timeout by the remaining budget and
+// fail fast — without touching drivers — when it is already exhausted.
+
+// groupDeadlineKey carries the group's absolute deadline in step params.
+const groupDeadlineKey = "deadline_unix_nano"
+
+// createEventTimeout is CreateEvent's own I/O bound.
+const createEventTimeout = 5 * time.Second
+
+// propagateGroupDeadline publishes the group's deadline for context-aware
+// actions. It is a no-op without an enforced time budget.
+func propagateGroupDeadline(params map[string]interface{}, budget *constraintBudgetManager) {
+	if params == nil || budget == nil || !budget.hasTimeBudget {
+		return
+	}
+	configMap, _ := params[StrConfig].(map[string]interface{})
+	if configMap == nil {
+		return
+	}
+	runtimeMap, _ := configMap[cfgKeyAgentRuntime].(map[string]interface{})
+	if runtimeMap == nil {
+		return
+	}
+	deadline := budget.startedAt.Add(budget.timeBudget)
+	runtimeMap[groupDeadlineKey] = deadline.UnixNano()
+}
+
+// groupDeadline reads a propagated group deadline, if present and well formed.
+func groupDeadline(params map[string]interface{}) (time.Time, bool) {
+	if params == nil {
+		return time.Time{}, false
+	}
+	configMap, _ := params[StrConfig].(map[string]interface{})
+	if configMap == nil {
+		return time.Time{}, false
+	}
+	runtimeMap, _ := configMap[cfgKeyAgentRuntime].(map[string]interface{})
+	if runtimeMap == nil {
+		return time.Time{}, false
+	}
+	raw, ok := runtimeMap[groupDeadlineKey]
+	if !ok {
+		return time.Time{}, false
+	}
+	var nanos int64
+	switch v := raw.(type) {
+	case int64:
+		nanos = v
+	case int:
+		nanos = int64(v)
+	case float64:
+		nanos = int64(v)
+	default:
+		return time.Time{}, false
+	}
+	if nanos <= 0 {
+		return time.Time{}, false
+	}
+	return time.Unix(0, nanos).UTC(), true
+}
+
+// eventActionTimeout caps CreateEvent's I/O by the remaining group budget.
+// ok=false means the deadline is already exhausted: fail fast.
+func eventActionTimeout(params map[string]interface{}) (timeout time.Duration, ok bool) {
+	timeout = createEventTimeout
+	deadline, present := groupDeadline(params)
+	if !present {
+		return timeout, true
+	}
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		return 0, false
+	}
+	if remaining < timeout {
+		timeout = remaining
+	}
+	return timeout, true
+}
+
 func (bm *constraintBudgetManager) preStepCheck(actionName string) error {
 	if bm == nil {
 		return nil
@@ -120,6 +214,11 @@ func (bm *constraintBudgetManager) preStepCheck(actionName string) error {
 	return nil
 }
 
+// markActionExecuted charges one attempt unit. It runs immediately after
+// every executed attempt, success or failure, so failures, retries, and
+// fallbacks all consume the group budget. CreateEvent attempts additionally
+// consume one event-rate unit each, so failed emissions cannot bypass the
+// rate limit either. Attempts rejected before invocation are never marked.
 func (bm *constraintBudgetManager) markActionExecuted(actionName string) {
 	if bm == nil {
 		return
@@ -261,44 +360,64 @@ func capabilityAllowed(identity AgentIdentity, actionName string) bool {
 	return false
 }
 
+// sqlTemplatePlaceholderPattern matches input references that are only
+// resolved at execution time: $response/$event tokens (bare or pathed) and
+// {{key}} KV interpolations.
+var sqlTemplatePlaceholderPattern = regexp.MustCompile(`\$(?:response|event)(?:\.[A-Za-z0-9_]+|\[[0-9]+\])+|\$response\b|\$event\b|{{[^{}]*}}`)
+
+// hasSQLTemplateMarkers reports whether SQL still carries unresolved input
+// references.
+func hasSQLTemplateMarkers(sql string) bool {
+	return sqlTemplatePlaceholderPattern.MatchString(sql)
+}
+
+// substituteSQLTemplatePlaceholders replaces unresolved references with NULL
+// literals so the template's statement SHAPE can be classified. Substitution
+// is shape-faithful (literals stay literals, identifiers stay identifiers);
+// the resolved text is always re-classified at execution before reaching
+// the driver, so a value that changes the shape is still denied there.
+func substituteSQLTemplatePlaceholders(sql string) string {
+	return sqlTemplatePlaceholderPattern.ReplaceAllString(sql, "NULL")
+}
+
 // dbQueryCapabilityRequired classifies SQL and returns the required grant.
-// It returns (capability, true) for classifiable statements and ("", false)
-// for rejected/ambiguous statements (fail-closed: deny even with db_write,
-// except for the pre-existing `all` wildcard path which is handled by the
-// caller to preserve current wildcard semantics).
+// Plain SQL is classified directly. Templated SQL is classified by shape
+// (placeholders read as NULL): a read-shaped template needs db_read, a
+// write-shaped template needs db_write, and a template whose shape cannot
+// be determined keeps the conservative writer-only rule with the resolved
+// text re-checked at execution. It returns ("", false) only for genuinely
+// rejected input, which is denied even with db_write; the pre-existing `all`
+// wildcard path is handled by the caller.
 func dbQueryCapabilityRequired(sql string) (string, bool) {
 	switch DBQueryClassifier.Classify(sql) {
 	case SQLRead:
 		return "db_read", true
 	case SQLWrite:
 		return "db_write", true
-	default:
-		return "", false
 	}
+	if hasSQLTemplateMarkers(sql) {
+		switch DBQueryClassifier.Classify(substituteSQLTemplatePlaceholders(sql)) {
+		case SQLRead:
+			return "db_read", true
+		case SQLWrite:
+			return "db_write", true
+		default:
+			// Shape unknown: writer-only at the gate; the resolved text
+			// is re-classified inside DBQueryAction.Execute.
+			return "db_write", true
+		}
+	}
+	return "", false
 }
 
 // enforceDBQueryGate enforces the SQL-aware capability gate for DBQuery steps.
-// It runs before interpolation/execution. Templated queries (containing
-// $response or {{) cannot be classified yet, so they conservatively require
-// db_write (or the pre-existing `all` wildcard); the resolved SQL is
-// re-checked inside DBQueryAction.Execute before reaching the driver.
+// It runs before interpolation/execution; the resolved SQL is re-checked
+// inside DBQueryAction.Execute before reaching the driver, so interpolation
+// can never promote an approved read into an executed write.
 func enforceDBQueryGate(je *JobEngine, params map[string]interface{}, identity AgentIdentity, execCtx AgentExecutionContext, auditAgentID, auditAgentName, auditOwner string) error {
 	raw, _ := params["query"].(string)
 	if strings.TrimSpace(raw) == "" {
 		return nil
-	}
-	if strings.Contains(raw, "$response") || strings.Contains(raw, "{{") {
-		for _, capability := range identity.Capabilities {
-			normalized := strings.ToLower(strings.TrimSpace(capability))
-			if normalized == "all" || normalized == "db_write" {
-				return nil
-			}
-		}
-		err := fmt.Errorf("capability gate denied action DBQuery: templated SQL requires capability %q", "db_write")
-		if je != nil {
-			je.appendAudit(AuditEvent{RunID: execCtx.RunID, TraceID: execCtx.TraceID, AgentID: auditAgentID, AgentName: auditAgentName, Owner: auditOwner, Action: "DBQuery", RequiredCapability: "db_write", Outcome: auditOutcomeDenied, Reason: err.Error()})
-		}
-		return err
 	}
 	if dbQueryAllowed(identity, raw) {
 		return nil

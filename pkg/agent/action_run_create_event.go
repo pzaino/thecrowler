@@ -155,7 +155,17 @@ func (e *CreateEventAction) Execute(params map[string]interface{}) (map[string]i
 		event.Details, _ = resolved.(map[string]interface{})
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// Cap I/O by the remaining group time budget when propagated; fail
+	// fast without touching the driver when it is already exhausted. The
+	// driver's own timeouts stay the backstop for in-flight calls.
+	timeout, ok := eventActionTimeout(params)
+	if !ok {
+		err := fmt.Errorf("constraint gate denied action CreateEvent: time_budget exceeded")
+		rval[StrStatus] = StatusError
+		rval[StrMessage] = err.Error()
+		return rval, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	result, err := cdb.CreateEvent(ctx, &dbHandler, event)
 	cancel()
 	if err != nil {

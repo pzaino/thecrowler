@@ -96,7 +96,7 @@ func (d *DecisionAction) Execute(params map[string]interface{}) (map[string]inte
 		}
 	}
 
-	var results map[string]interface{}
+	var results any
 	if nextStep != nil {
 		target, resolveErr := resolveDelegationTarget(nextStep, ictx)
 		if resolveErr != nil {
@@ -171,13 +171,14 @@ func (d *DecisionAction) Execute(params map[string]interface{}) (map[string]inte
 		if inputVal, ok := inputRaw[StrRequest]; ok {
 			delegationCtx[StrRequest] = inputVal
 		}
-		err = AgentsEngine.ExecuteAgent(agentRef, delegationCtx)
+		delegated, err := AgentsEngine.ExecuteAgentResult(agentRef, delegationCtx)
 		if err != nil {
 			emitDelegationAudit(params, agentRef, auditOutcomeError, err.Error())
 			rval[StrStatus] = StatusError
 			rval[StrMessage] = fmt.Sprintf("delegation failed: %v", err)
 			return rval, err
 		}
+		results = delegated
 		emitDelegationAudit(params, agentRef, auditOutcomeAllowed, "delegation_completed")
 	}
 

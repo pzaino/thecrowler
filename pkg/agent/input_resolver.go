@@ -359,6 +359,134 @@ func deepCopyScalar(v any) any {
 	}
 }
 
+// Prior-step propagation contract.
+//
+// setup.go wires step inputs before each invocation:
+//
+//   - $response always denotes the immediately preceding step's response
+//     payload (lastResult["output"]), never the whole action envelope.
+//   - $event denotes the triggering event (params["config"]["event"]) and is
+//     stable across steps.
+//   - An explicit params["input"] ("request") takes precedence as the step's
+//     input, but the previous payload is never silently mutated: mappings
+//     merge into a fresh map, scalars stand alone.
+//   - When both the explicit request and the payload are mappings they merge
+//     with the payload winning collisions (historical precedence). When
+//     either side is not a mapping, the explicit value stands alone if
+//     present, otherwise the payload passes through unchanged in shape.
+//   - Prior-step config mappings merge the same way (prior wins); a missing
+//     prior config is ignored, a non-mapping prior config is a descriptive
+//     error, never a panic.
+//
+// All merges deep-copy containers; stored manifests are never mutated.
+
+// normalizeStringMap accepts decoded-YAML and JSON object forms.
+func normalizeStringMap(v any) (map[string]any, bool) {
+	switch t := v.(type) {
+	case map[string]any:
+		return t, true
+	case map[interface{}]interface{}:
+		converted := cmn.ConvertMapIIToSI(t)
+		if out, ok := converted.(map[string]any); ok {
+			return out, true
+		}
+		return nil, false
+	default:
+		return nil, false
+	}
+}
+
+// mergeStepInput computes params["input"] from an explicit request (when the
+// step author provided one) and the previous step's payload.
+func mergeStepInput(params map[string]any, payload any) error {
+	if params == nil {
+		return fmt.Errorf("invalid step params: nil")
+	}
+	explicit, hasExplicit := params[StrRequest]
+	if !hasExplicit {
+		params[StrRequest] = deepCloneStepValue(payload)
+		return nil
+	}
+	explicitMap, explicitIsMap := normalizeStringMap(explicit)
+	payloadMap, payloadIsMap := normalizeStringMap(payload)
+	if !explicitIsMap || !payloadIsMap {
+		// Scalars and mismatched shapes stand alone: the explicit value is
+		// complete input by itself, and an absent explicit value passes the
+		// payload through untouched in shape.
+		return nil
+	}
+	merged := make(map[string]any, len(explicitMap)+len(payloadMap))
+	for k, v := range explicitMap {
+		merged[k] = deepCloneStepValue(v)
+	}
+	for k, v := range payloadMap {
+		merged[k] = deepCloneStepValue(v)
+	}
+	params[StrRequest] = merged
+	return nil
+}
+
+// mergePriorConfig folds the previous step's config into the current params
+// without mutating either side.
+func mergePriorConfig(params map[string]any, prior any) error {
+	if params == nil {
+		return fmt.Errorf("invalid step params: nil")
+	}
+	if prior == nil {
+		return nil
+	}
+	priorMap, ok := normalizeStringMap(prior)
+	if !ok {
+		return fmt.Errorf("invalid prior step config: expected mapping")
+	}
+	existing, hasExisting := params[StrConfig]
+	if !hasExisting || existing == nil {
+		params[StrConfig] = deepCloneStepValue(priorMap)
+		return nil
+	}
+	existingMap, ok := normalizeStringMap(existing)
+	if !ok {
+		return fmt.Errorf("invalid step config: expected mapping")
+	}
+	merged := make(map[string]any, len(existingMap)+len(priorMap))
+	for k, v := range existingMap {
+		merged[k] = deepCloneStepValue(v)
+	}
+	for k, v := range priorMap {
+		merged[k] = deepCloneStepValue(v)
+	}
+	params[StrConfig] = merged
+	return nil
+}
+
+// mergePriorResultKey folds one non-payload, non-config previous-result key
+// (status, message, custom keys) into params. Mappings merge with the prior
+// value winning; anything else keeps the explicitly configured value.
+// Nothing panics and neither side is mutated.
+func mergePriorResultKey(params map[string]any, key string, value any) {
+	if params == nil {
+		return
+	}
+	existing, present := params[key]
+	if !present {
+		params[key] = deepCloneStepValue(value)
+		return
+	}
+	existingMap, ok1 := normalizeStringMap(existing)
+	valueMap, ok2 := normalizeStringMap(value)
+	if !ok1 || !ok2 {
+		return
+	}
+	merged := make(map[string]any, len(existingMap)+len(valueMap))
+	for k, v := range existingMap {
+		merged[k] = deepCloneStepValue(v)
+	}
+	for k, v := range valueMap {
+		merged[k] = deepCloneStepValue(v)
+	}
+	params[key] = merged
+}
+
 // ActionResult is the typed envelope every action step returns: a status, a
 // payload, a message and the optional step config. It mirrors the existing
 // map wire format (output/status/message/config) without changing it.

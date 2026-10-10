@@ -493,10 +493,20 @@ Use Go duration strings for time budgets:
 * `1h`.
 
 Step/time budgets apply independently to each job group, including groups
-running in parallel. Retries, fallbacks, and local steps within one group
-consume that group's budget; a delegated agent's own groups are metered
-separately (only the delegation step charges the caller). There is no global
-agent-run budget.
+running in parallel. Every executed attempt counts: the initial attempt,
+each retry attempt, and every fallback step consume one unit whether they
+succeed or fail; only actions rejected before invocation (capability,
+contract, or validation denials) are uncharged. Failed `CreateEvent`
+attempts also consume event-rate units. A delegated agent's own groups are
+metered separately (only the delegation step charges the caller). There is
+no global agent-run budget.
+
+Time-budget limits: the deadline is enforced before each step, before each
+retry attempt, and inside context-aware event creation (which caps its own
+I/O by the remaining budget and fails fast once exhausted). A blocked
+network, database, or browser call cannot be hard-interrupted by the
+runtime; driver and HTTP timeouts remain the backstop, and no detached
+watchdog goroutines are used.
 
 ### 8.9 `reasoning_mode`
 

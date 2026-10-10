@@ -37,7 +37,8 @@ type stringErr string
 func (e stringErr) Error() string { return string(e) }
 
 // TestRetryAttemptsConsumeGroupBudget: retries within a group must consume
-// that group's max_steps instead of retrying without bound.
+// that group's max_steps instead of retrying without bound. The failed
+// initial attempt consumes the single unit, so no retry may even start.
 func TestRetryAttemptsConsumeGroupBudget(t *testing.T) {
 	engine := NewJobEngine()
 	flaky := &flakyAction{name: "AIInteraction", failFirst: 100}
@@ -62,9 +63,104 @@ func TestRetryAttemptsConsumeGroupBudget(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "max_steps exceeded") {
 		t.Fatalf("expected max_steps exhaustion from retries, got: %v", err)
 	}
-	// Initial attempt + exactly one retry before the budget ran out.
+	// Only the charged initial attempt ran; the budget denied every retry.
+	if flaky.calls != 1 {
+		t.Fatalf("expected 1 attempt (initial only), got %d", flaky.calls)
+	}
+}
+
+// budgetTestAgent builds a single-group enforced agent for budget tests.
+func budgetTestAgent(id, name string, caps []string, maxSteps int, contract *AgentContract, steps ...map[string]any) *JobConfig {
+	return &JobConfig{
+		FormatVersion: AgentFormatVersionV2,
+		AgentIdentity: &AgentIdentity{
+			AgentID: id, Name: name, TrustLevel: "trusted",
+			Capabilities: caps,
+			Constraints:  &AgentConstraints{MaxSteps: maxSteps},
+			Contract:     contract,
+		},
+		Jobs: []Job{{
+			Name: name, Process: "serial", TriggerType: "manual", TriggerName: "run",
+			Steps: steps,
+		}},
+	}
+}
+
+// budgetStep builds one step; extra pairs attach keys like retry/fallback.
+func budgetStep(action string, extra ...any) map[string]any {
+	step := map[string]any{"action": action, "params": map[string]any{}}
+	for i := 0; i+1 < len(extra); i += 2 {
+		if key, ok := extra[i].(string); ok {
+			step[key] = extra[i+1]
+		}
+	}
+	return step
+}
+
+// TestFailedInitialWithContinueChargesBudget: a failed initial call with
+// failure handling that continues must still consume its attempt, denying
+// the next action once max_steps is exhausted.
+func TestFailedInitialWithContinueChargesBudget(t *testing.T) {
+	engine := NewJobEngine()
+	engine.RegisterAction(&flakyAction{name: "AIInteraction", failFirst: 100})
+	engine.RegisterAction(&testStepAction{name: "APIRequest"})
+	agentCfg := budgetTestAgent("cont-agent", "Cont Agent",
+		[]string{"ai_reasoning", "api_request"}, 1,
+		&AgentContract{FailurePolicy: "continue"},
+		budgetStep("AIInteraction"), budgetStep("APIRequest"))
+	err := engine.ExecuteJobs(agentCfg, runtimeEnforcedCfg())
+	if err == nil || !strings.Contains(err.Error(), "max_steps exceeded") {
+		t.Fatalf("expected the second action to be denied, got: %v", err)
+	}
+}
+
+// TestRetryConsumesTwoUnitsThenDeniesThird: with MaxSteps=2 a failed initial
+// call plus one retry consumes both units; the next retry is denied.
+func TestRetryConsumesTwoUnitsThenDeniesThird(t *testing.T) {
+	engine := NewJobEngine()
+	flaky := &flakyAction{name: "AIInteraction", failFirst: 100}
+	engine.RegisterAction(flaky)
+	agentCfg := budgetTestAgent("retry2-agent", "Retry2 Agent",
+		[]string{"ai_reasoning"}, 2, nil,
+		budgetStep("AIInteraction", "retry", map[string]any{"max_retries": 5, "base_delay": "1ms"}))
+	err := engine.ExecuteJobs(agentCfg, runtimeEnforcedCfg())
+	if err == nil || !strings.Contains(err.Error(), "max_steps exceeded") {
+		t.Fatalf("expected max_steps exhaustion, got: %v", err)
+	}
 	if flaky.calls != 2 {
 		t.Fatalf("expected 2 attempts (initial + 1 retry), got %d", flaky.calls)
+	}
+}
+
+// TestRetrySuccessChargesEachAttempt: one failure plus one successful retry
+// consumes two units; no double charge on the successful retry.
+func TestRetrySuccessChargesEachAttempt(t *testing.T) {
+	engine := NewJobEngine()
+	flaky := &flakyAction{name: "AIInteraction", failFirst: 1}
+	engine.RegisterAction(flaky)
+	agentCfg := budgetTestAgent("ok-agent", "OK Agent",
+		[]string{"ai_reasoning"}, 2, nil,
+		budgetStep("AIInteraction", "retry", map[string]any{"max_retries": 3, "base_delay": "1ms"}))
+	if err := engine.ExecuteJobs(agentCfg, runtimeEnforcedCfg()); err != nil {
+		t.Fatalf("expected success via one retry, got %v", err)
+	}
+	if flaky.calls != 2 {
+		t.Fatalf("expected 2 attempts, got %d", flaky.calls)
+	}
+}
+
+// TestFailedCreateEventConsumesRateLimit: failed emissions count against
+// event_rate_limit so errors cannot bypass it.
+func TestFailedCreateEventConsumesRateLimit(t *testing.T) {
+	engine := NewJobEngine()
+	engine.RegisterAction(&flakyAction{name: "CreateEvent", failFirst: 100})
+	agentCfg := budgetTestAgent("ev-agent", "Ev Agent",
+		[]string{"emit_event"}, 10, &AgentContract{FailurePolicy: "continue"},
+		budgetStep("CreateEvent"), budgetStep("CreateEvent"))
+	agentCfg.AgentIdentity.Constraints.EventRateLimit = 1
+	err := engine.ExecuteJobs(agentCfg, runtimeEnforcedCfg())
+	if err == nil || !strings.Contains(err.Error(), "event_rate_limit exceeded") {
+		t.Fatalf("expected rate-limit denial after a failed emission, got: %v", err)
 	}
 }
 

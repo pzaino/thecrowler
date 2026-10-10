@@ -149,6 +149,8 @@ func TestDecisionLocalVsDelegation(t *testing.T) {
 }
 
 // TestSQLClassifierTable is the required table-driven classifier contract.
+// Reads are granted only to structurally recognized shapes; every other
+// recognized form is a write; anything unrecognized is rejected.
 func TestSQLClassifierTable(t *testing.T) {
 	cases := []struct {
 		name string
@@ -163,25 +165,53 @@ func TestSQLClassifierTable(t *testing.T) {
 		{"select into", "SELECT id, name INTO new_table FROM old_table", SQLWrite},
 		{"with select", "WITH recent AS (SELECT id FROM t WHERE x > 1) SELECT * FROM recent", SQLRead},
 		{"with modifying cte", "WITH moved AS (UPDATE t SET a = 1 RETURNING id) SELECT * FROM moved", SQLWrite},
+		{"with unknown cte body", "WITH moved AS (TABLE t) SELECT * FROM moved", SQLRead},
 		{"insert", "INSERT INTO t (a) VALUES (1)", SQLWrite},
 		{"update", "UPDATE t SET a = 1 WHERE id = 2", SQLWrite},
 		{"delete", "DELETE FROM t WHERE id = 3", SQLWrite},
+		{"merge", "MERGE INTO t USING s ON t.id = s.id WHEN MATCHED THEN UPDATE SET a = s.a", SQLWrite},
 		{"create", "CREATE TABLE foo (id INT)", SQLWrite},
 		{"alter", "ALTER TABLE foo ADD COLUMN b TEXT", SQLWrite},
 		{"drop", "DROP TABLE foo", SQLWrite},
 		{"truncate", "TRUNCATE foo", SQLWrite},
+		{"call mutating procedure", "CALL refresh_materialized_views()", SQLWrite},
+		{"do block", "DO $$ BEGIN RAISE NOTICE 'hi'; END $$", SQLWrite},
+		{"copy to stdout", "COPY t TO STDOUT", SQLWrite},
+		{"copy from stdin", "COPY t FROM STDIN", SQLWrite},
+		{"listen utility", "LISTEN my_channel", SQLWrite},
+		{"notify utility", "NOTIFY my_channel, 'ping'", SQLWrite},
+		{"show utility", "SHOW server_version", SQLWrite},
+		{"set utility", "SET search_path TO public", SQLWrite},
+		{"begin transaction", "BEGIN", SQLWrite},
+		{"prepare statement", "PREPARE foo AS SELECT 1", SQLWrite},
+		{"execute statement", "EXECUTE foo", SQLWrite},
 		{"explain select", "EXPLAIN SELECT id FROM t", SQLRead},
+		{"explain analyze select", "EXPLAIN ANALYZE SELECT id FROM t", SQLRead},
 		{"explain analyze update", "EXPLAIN ANALYZE UPDATE t SET a = 1", SQLWrite},
 		{"comment prefix select", "-- fetch users\nSELECT id FROM users", SQLRead},
 		{"block comment prefix", "/* hi */ SELECT 1", SQLRead},
+		{"trailing comment", "SELECT 1 /* done */", SQLRead},
 		{"comment only", "-- just a comment", SQLRejected},
 		{"multi statement", "SELECT 1; SELECT 2", SQLRejected},
 		{"multi with trailing", "SELECT 1; DELETE FROM t", SQLRejected},
+		{"semicolon in string literal", "SELECT ';' AS sep", SQLRead},
+		{"semicolon in quoted identifier", `SELECT "we;ird" FROM t`, SQLRead},
+		{"dollar-quoted body", "SELECT $$a;b$$ AS lit", SQLRead},
 		{"malformed", "SELECT FROM WHERE", SQLRejected},
 		{"empty", "", SQLRejected},
-		{"unsupported", "LISTEN my_channel", SQLRead}, // parses; conservative read default
-		{"select with function", "SELECT now(), count(*) FROM t", SQLRead},
+		{"select with pure functions", "SELECT now(), count(*) FROM t", SQLRead},
+		{"select with coalesce", "SELECT coalesce(name, 'anon') FROM t WHERE age > 18", SQLRead},
+		{"select with unknown function", "SELECT my_custom_fn(id) FROM t", SQLWrite},
+		{"select with pg_sleep", "SELECT pg_sleep(0.1)", SQLWrite},
+		{"select with nextval", "SELECT nextval('seq_id')", SQLWrite},
+		{"select with user-qualified function", "SELECT myschema.count_star() FROM t", SQLWrite},
+		{"select with pg_catalog qualifier", "SELECT pg_catalog.count(*) FROM t", SQLRead},
 		{"nested subselect", "SELECT * FROM (SELECT id FROM t WHERE x > 5) AS sub", SQLRead},
+		{"exists subquery", "SELECT id FROM t WHERE EXISTS (SELECT 1 FROM u WHERE u.id = t.id)", SQLRead},
+		{"case expression", "SELECT CASE WHEN a > 1 THEN 'big' ELSE 'small' END FROM t", SQLRead},
+		{"join and group", "SELECT a, count(*) FROM t JOIN u ON t.id = u.id GROUP BY a HAVING count(*) > 1 ORDER BY a LIMIT 5", SQLRead},
+		{"window function", "SELECT row_number() OVER (PARTITION BY a ORDER BY b) FROM t", SQLRead},
+		{"json operators", "SELECT payload->>'name' FROM t WHERE payload @> '{\"a\":1}'", SQLRead},
 		{"union", "SELECT a FROM t1 UNION SELECT a FROM t2", SQLRead},
 		{"select into in union branch", "SELECT a INTO t3 FROM t1 UNION SELECT a FROM t2", SQLWrite},
 	}
@@ -190,6 +220,22 @@ func TestSQLClassifierTable(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("%s: Classify(%q) = %q, want %q", tc.name, tc.sql, got, tc.want)
 		}
+	}
+}
+
+// TestCALLWasPreviouslyAuthorizedAsRead is the regression pin for the
+// review finding: CALL used to fall through to a read classification.
+func TestCALLWasPreviouslyAuthorizedAsRead(t *testing.T) {
+	if got := DBQueryClassifier.Classify("CALL refresh_materialized_views()"); got != SQLWrite {
+		t.Fatalf("CALL must classify as write, got %q", got)
+	}
+	reader := AgentIdentity{Capabilities: []string{"db_read"}, TrustLevel: "trusted"}
+	if dbQueryAllowed(reader, "CALL refresh_materialized_views()") {
+		t.Fatalf("db_read must not authorize CALL")
+	}
+	writer := AgentIdentity{Capabilities: []string{"db_write"}, TrustLevel: "trusted"}
+	if !dbQueryAllowed(writer, "CALL refresh_materialized_views()") {
+		t.Fatalf("db_write must authorize CALL")
 	}
 }
 
