@@ -252,9 +252,22 @@ func (jc *JobConfig) LoadJob(j Job) {
 }
 
 func (jc *JobConfig) ensureRegistry() {
+	if jc == nil {
+		return
+	}
 	if jc.registry == nil {
 		jc.registry = NewAgentRegistry()
 	}
+}
+
+// Registry exposes the live agent index for paths that need cross-agent
+// resolution outside the package (e.g. upload-time Decision target checks).
+func (jc *JobConfig) Registry() *AgentRegistry {
+	if jc == nil {
+		return nil
+	}
+	jc.ensureRegistry()
+	return jc.registry
 }
 
 // --- helpers: parsing and normalization ---
@@ -563,20 +576,31 @@ func (jc *JobConfig) LoadConfig(agtConfigs []cfg.AgentsConfig) error {
 
 // RegisterAgent registers an agent with the JobConfig
 func (jc *JobConfig) RegisterAgent(agent *JobConfig) {
+	if err := jc.RegisterAgentE(agent); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "failed to register agent: %v", err)
+	}
+}
+
+// RegisterAgentE normalizes and registers an agent, reporting normalization
+// and duplicate-registration failures to the caller so upload paths can roll
+// back already-written files instead of diverging from the registry.
+func (jc *JobConfig) RegisterAgentE(agent *JobConfig) error {
+	if jc == nil {
+		return fmt.Errorf("nil job config")
+	}
 	jc.ensureRegistry()
 	if agent == nil {
-		return
+		return fmt.Errorf("nil agent")
 	}
 	def, err := agent.NormalizeToAgentDefinition(AgentSourceMetadata{Location: "runtime"})
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "failed to normalize agent registration: %v", err)
-		return
+		return err
 	}
 	if err := jc.registry.Register(def); err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "failed to register agent: %v", err)
-		return
+		return err
 	}
 	jc.Jobs = append(jc.Jobs, def.Jobs...)
+	return nil
 }
 
 // GetAgentByName returns an agent by name
