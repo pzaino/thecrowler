@@ -3,8 +3,9 @@ package agent
 import "testing"
 
 func TestRequiredCapabilityForAIInteraction(t *testing.T) {
-	if got := requiredCapabilityForAction("AIInteraction"); got != "ai_reasoning" {
-		t.Fatalf("expected ai_reasoning, got %s", got)
+	got, known := requiredCapabilityForAction("AIInteraction")
+	if !known || got != "ai_reasoning" {
+		t.Fatalf("expected (ai_reasoning, true), got (%q, %v)", got, known)
 	}
 }
 

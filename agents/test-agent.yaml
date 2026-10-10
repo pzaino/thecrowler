@@ -1,0 +1,9 @@
+jobs:
+  - name: test-agent
+    process: serial
+    trigger_type: manual
+    trigger_name: test-agent
+    steps:
+      - action: RunCommand
+        params:
+          command: echo "Hello, world!"

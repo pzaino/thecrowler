@@ -75,7 +75,8 @@
                             "emit_event",
                             "schedule_event",
                             "call_plugin",
-                            "ai_reasoning"
+                            "ai_reasoning",
+                            "delegate"
                         ]
                     }
                 },

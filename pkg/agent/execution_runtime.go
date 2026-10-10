@@ -149,28 +149,58 @@ func newAgentExecutionContext(identity AgentIdentity, source string) AgentExecut
 	}
 }
 
-func requiredCapabilityForAction(actionName string) string {
-	switch strings.TrimSpace(actionName) {
-	case "RunCommand":
-		return "run_command"
-	case "DBQuery":
-		return "db_query"
-	case "AIInteraction":
-		return "ai_reasoning"
-	case "PluginExecution":
-		return "plugin_execution"
-	case "CreateEvent":
-		return "create_event"
-	case "Decision":
-		return "decision"
-	default:
-		return ""
-	}
+// actionCapability maps registered action names to their canonical
+// schema-aligned capability token.
+var actionCapability = map[string]string{
+	"RunCommand":      "command_execution",
+	"DBQuery":         "db_read",
+	"AIInteraction":   "ai_reasoning",
+	"PluginExecution": "plugin_execution",
+	"CreateEvent":     "emit_event",
+	"APIRequest":      "api_request",
 }
 
+// delegationCapabilityName is the schema capability needed to delegate.
+const delegationCapabilityName = "delegate"
+
+// requiredCapabilityForAction returns the canonical capability for a known
+// action and false for unknown/future actions (fail-closed: unknown actions
+// are never implicitly authorized under enforcement).
+func requiredCapabilityForAction(actionName string) (string, bool) {
+	trimmed := strings.TrimSpace(actionName)
+	if trimmed == "" {
+		return "", false
+	}
+	if v, ok := actionCapability[trimmed]; ok {
+		return v, true
+	}
+	if trimmed == "Decision" {
+		// Decision local branching needs no extra grant; delegation
+		// performed by Decision requires `delegate` (checked separately).
+		return "", true
+	}
+	return "", false
+}
+
+// requiredCapabilityForActionName is a compatibility helper preserving the
+// original single-return signature for callers that only need the token.
+// It returns "" for unknown actions.
+func requiredCapabilityForActionName(actionName string) string {
+	cap, _ := requiredCapabilityForAction(actionName)
+	return cap
+}
+
+// capabilityAllowed reports whether identity grants actionName.
+// Unknown actions are denied (fail-closed). Decision local branching is
+// allowed without an extra grant; delegation is checked via
+// delegationPolicyCheck (requires `delegate`).
 func capabilityAllowed(identity AgentIdentity, actionName string) bool {
-	required := requiredCapabilityForAction(actionName)
+	required, known := requiredCapabilityForAction(actionName)
+	if !known {
+		return false
+	}
 	if required == "" {
+		// Known pure-control action (Decision local branching).
 		return true
 	}
 	if len(identity.Capabilities) == 0 {
@@ -181,8 +211,113 @@ func capabilityAllowed(identity AgentIdentity, actionName string) bool {
 		if normalized == "all" || normalized == required {
 			return true
 		}
+		// backward-compatibility aliases for pre-PR-1 runtime-only spellings,
+		// honored only where previously accepted (no broadening):
+		// ai_interaction → ai_reasoning
 		if required == "ai_reasoning" && normalized == "ai_interaction" {
-			return true // backward-compatibility alias
+			return true
+		}
+		// run_command → command_execution
+		if required == "command_execution" && normalized == "run_command" {
+			return true
+		}
+		// create_event → emit_event
+		if required == "emit_event" && normalized == "create_event" {
+			return true
+		}
+		// call_plugin ↔ plugin_execution (schema carries both tokens)
+		if required == "plugin_execution" && normalized == "call_plugin" {
+			return true
+		}
+	}
+	return false
+}
+
+// dbQueryCapabilityRequired classifies SQL and returns the required grant.
+// It returns (capability, true) for classifiable statements and ("", false)
+// for rejected/ambiguous statements (fail-closed: deny even with db_write,
+// except for the pre-existing `all` wildcard path which is handled by the
+// caller to preserve current wildcard semantics).
+func dbQueryCapabilityRequired(sql string) (string, bool) {
+	switch DBQueryClassifier.Classify(sql) {
+	case SQLRead:
+		return "db_read", true
+	case SQLWrite:
+		return "db_write", true
+	default:
+		return "", false
+	}
+}
+
+// enforceDBQueryGate enforces the SQL-aware capability gate for DBQuery steps.
+// It runs before interpolation/execution. Templated queries (containing
+// $response or {{) cannot be classified yet, so they conservatively require
+// db_write (or the pre-existing `all` wildcard); the resolved SQL is
+// re-checked inside DBQueryAction.Execute before reaching the driver.
+func enforceDBQueryGate(je *JobEngine, params map[string]interface{}, identity AgentIdentity, execCtx AgentExecutionContext, auditAgentID, auditAgentName, auditOwner string) error {
+	raw, _ := params["query"].(string)
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	if strings.Contains(raw, "$response") || strings.Contains(raw, "{{") {
+		for _, capability := range identity.Capabilities {
+			normalized := strings.ToLower(strings.TrimSpace(capability))
+			if normalized == "all" || normalized == "db_write" {
+				return nil
+			}
+		}
+		err := fmt.Errorf("capability gate denied action DBQuery: templated SQL requires capability %q", "db_write")
+		if je != nil {
+			je.appendAudit(AuditEvent{RunID: execCtx.RunID, TraceID: execCtx.TraceID, AgentID: auditAgentID, AgentName: auditAgentName, Owner: auditOwner, Action: "DBQuery", RequiredCapability: "db_write", Outcome: auditOutcomeDenied, Reason: err.Error()})
+		}
+		return err
+	}
+	if dbQueryAllowed(identity, raw) {
+		return nil
+	}
+	required, ok := dbQueryCapabilityRequired(raw)
+	if !ok {
+		err := fmt.Errorf("capability gate denied action DBQuery: SQL rejected as unsupported or ambiguous")
+		if je != nil {
+			je.appendAudit(AuditEvent{RunID: execCtx.RunID, TraceID: execCtx.TraceID, AgentID: auditAgentID, AgentName: auditAgentName, Owner: auditOwner, Action: "DBQuery", RequiredCapability: "db_read/db_write", Outcome: auditOutcomeDenied, Reason: err.Error()})
+		}
+		return err
+	}
+	err := fmt.Errorf("capability gate denied action DBQuery: capability %q missing", required)
+	if je != nil {
+		je.appendAudit(AuditEvent{RunID: execCtx.RunID, TraceID: execCtx.TraceID, AgentID: auditAgentID, AgentName: auditAgentName, Owner: auditOwner, Action: "DBQuery", RequiredCapability: required, Outcome: auditOutcomeDenied, Reason: err.Error()})
+	}
+	return err
+}
+
+// dbQueryAllowed checks identity against the classified SQL.
+func dbQueryAllowed(identity AgentIdentity, sql string) bool {
+	// Preserve existing `all` wildcard semantics exactly.
+	for _, capability := range identity.Capabilities {
+		if strings.ToLower(strings.TrimSpace(capability)) == "all" {
+			// `all` bypasses capability checks per current runtime behavior,
+			// but must not mask parse errors: still reject unparseable SQL.
+			if DBQueryClassifier.Classify(sql) == SQLRejected {
+				return false
+			}
+			return true
+		}
+	}
+	required, ok := dbQueryCapabilityRequired(sql)
+	if !ok {
+		return false
+	}
+	for _, capability := range identity.Capabilities {
+		normalized := strings.ToLower(strings.TrimSpace(capability))
+		if normalized == required {
+			return true
+		}
+		// Legacy alias: pre-PR-1 `db_query` granted all DBQuery regardless
+		// of statement kind; honor it for both read and write to preserve
+		// behavior where previously accepted (schema rejects it for new v2
+		// manifests, so this only affects legacy in-memory identities).
+		if normalized == "db_query" {
+			return true
 		}
 	}
 	return false

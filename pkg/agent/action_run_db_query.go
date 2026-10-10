@@ -71,6 +71,29 @@ func (d *DBQueryAction) Execute(params map[string]interface{}) (map[string]inter
 	// Check if query needs to be resolved
 	query = resolveResponseString(inputRaw, query)
 
+	// Authorization check on the resolved SQL before reaching the driver.
+	// This is the second line of defense (the first is enforceDBQueryGate in
+	// setup.go on the raw step); it covers $response-interpolated SQL.
+	if flags := runtimeFlagsFromConfig(config); flags.IdentityEnforcement {
+		if caller, hasCaller := parseRuntimeIdentity(params); hasCaller {
+			if !dbQueryAllowed(caller, query) {
+				required, ok := dbQueryCapabilityRequired(query)
+				if !ok {
+					rval[StrStatus] = StatusError
+					rval[StrMessage] = "capability gate denied action DBQuery: SQL rejected as unsupported or ambiguous"
+					return rval, fmt.Errorf("capability gate denied action DBQuery: SQL rejected as unsupported or ambiguous")
+				}
+				rval[StrStatus] = StatusError
+				rval[StrMessage] = fmt.Sprintf("capability gate denied action DBQuery: capability %q missing", required)
+				return rval, fmt.Errorf("capability gate denied action DBQuery: capability %q missing", required)
+			}
+		} else {
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = "capability gate denied action DBQuery: missing caller identity"
+			return rval, fmt.Errorf("capability gate denied action DBQuery: missing caller identity")
+		}
+	}
+
 	// Execute the query based on type
 	var result interface{}
 	result, err = dbHandler.ExecuteQuery(query)

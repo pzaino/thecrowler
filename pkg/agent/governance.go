@@ -124,7 +124,7 @@ func capabilitiesUsed(identity *AgentIdentity, actionName string) []string {
 	if identity == nil {
 		return nil
 	}
-	req := requiredCapabilityForAction(actionName)
+	req := requiredCapabilityForActionName(actionName)
 	if req == "" {
 		return nil
 	}
@@ -150,7 +150,7 @@ func emitDelegationAudit(params map[string]interface{}, target string, outcome s
 		AgentName:          identity.Name,
 		Owner:              identity.Owner,
 		Action:             "Decision",
-		RequiredCapability: requiredCapabilityForAction("Decision"),
+		RequiredCapability: requiredCapabilityForActionName("Decision"),
 		CapabilitiesUsed:   capabilitiesUsed(&identity, "Decision"),
 		Outcome:            outcome,
 		Reason:             reason,

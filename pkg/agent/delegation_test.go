@@ -38,7 +38,9 @@ func makeMarkerAgent(agentID, name, trust string) *JobConfig {
 		AgentIdentity: &AgentIdentity{AgentID: agentID, Name: name, TrustLevel: trust, Capabilities: []string{"all"}},
 		Jobs: []Job{{
 			Name: name, Process: "serial", TriggerType: "manual", TriggerName: "run",
-			Steps: []map[string]interface{}{{"action": "Marker", "params": map[string]interface{}{}}},
+			// Use a real registered action: fictional actions are denied
+			// fail-closed under enforcement (PR-1).
+			Steps: []map[string]interface{}{{"action": "AIInteraction", "params": map[string]interface{}{}}},
 		}},
 	}
 }
@@ -51,7 +53,7 @@ func TestDecisionDelegationResolveByAgentID(t *testing.T) {
 	engine := NewJobEngine()
 	engine.RegisterAction(&DecisionAction{})
 	calls := map[string]int{}
-	engine.RegisterAction(&delegationRecorderAction{name: "Marker", fn: func(params map[string]interface{}) { calls["id-target"]++ }})
+	engine.RegisterAction(&delegationRecorderAction{name: "AIInteraction", fn: func(params map[string]interface{}) { calls["id-target"]++ }})
 
 	AgentsEngine = engine
 	AgentsRegistry = NewJobConfig()
@@ -75,7 +77,7 @@ func TestDecisionDelegationResolveByAgentName(t *testing.T) {
 	engine := NewJobEngine()
 	engine.RegisterAction(&DecisionAction{})
 	calls := map[string]int{}
-	engine.RegisterAction(&delegationRecorderAction{name: "Marker", fn: func(params map[string]interface{}) { calls["name-target"]++ }})
+	engine.RegisterAction(&delegationRecorderAction{name: "AIInteraction", fn: func(params map[string]interface{}) { calls["name-target"]++ }})
 
 	AgentsEngine = engine
 	AgentsRegistry = NewJobConfig()
@@ -100,8 +102,8 @@ func TestDecisionDelegationPrefersAgentIDWhenBothPresent(t *testing.T) {
 	engine.RegisterAction(&DecisionAction{})
 	idCalls := 0
 	nameCalls := 0
-	engine.RegisterAction(&delegationRecorderAction{name: "MarkID", fn: func(params map[string]interface{}) { idCalls++ }})
-	engine.RegisterAction(&delegationRecorderAction{name: "MarkName", fn: func(params map[string]interface{}) { nameCalls++ }})
+	engine.RegisterAction(&delegationRecorderAction{name: "AIInteraction", fn: func(params map[string]interface{}) { idCalls++ }})
+	engine.RegisterAction(&delegationRecorderAction{name: "APIRequest", fn: func(params map[string]interface{}) { nameCalls++ }})
 
 	AgentsEngine = engine
 	AgentsRegistry = NewJobConfig()
@@ -109,8 +111,8 @@ func TestDecisionDelegationPrefersAgentIDWhenBothPresent(t *testing.T) {
 	source := makeDelegatingAgent("source-id", "Source", "trusted", []string{"decision", "delegate"}, map[string]interface{}{
 		"condition_type": "if", "expression": "true", "on_true": map[string]interface{}{"agent_id": "id-target", "agent_name": "Name Target"},
 	})
-	idTarget := &JobConfig{FormatVersion: AgentFormatVersionV2, AgentIdentity: &AgentIdentity{AgentID: "id-target", Name: "ID Target", TrustLevel: "trusted", Capabilities: []string{"all"}}, Jobs: []Job{{Name: "ID Target", Process: "serial", TriggerType: "manual", TriggerName: "run", Steps: []map[string]interface{}{{"action": "MarkID", "params": map[string]interface{}{}}}}}}
-	nameTarget := &JobConfig{FormatVersion: AgentFormatVersionV2, AgentIdentity: &AgentIdentity{AgentID: "name-target", Name: "Name Target", TrustLevel: "trusted", Capabilities: []string{"all"}}, Jobs: []Job{{Name: "Name Target", Process: "serial", TriggerType: "manual", TriggerName: "run", Steps: []map[string]interface{}{{"action": "MarkName", "params": map[string]interface{}{}}}}}}
+	idTarget := &JobConfig{FormatVersion: AgentFormatVersionV2, AgentIdentity: &AgentIdentity{AgentID: "id-target", Name: "ID Target", TrustLevel: "trusted", Capabilities: []string{"all"}}, Jobs: []Job{{Name: "ID Target", Process: "serial", TriggerType: "manual", TriggerName: "run", Steps: []map[string]interface{}{{"action": "AIInteraction", "params": map[string]interface{}{}}}}}}
+	nameTarget := &JobConfig{FormatVersion: AgentFormatVersionV2, AgentIdentity: &AgentIdentity{AgentID: "name-target", Name: "Name Target", TrustLevel: "trusted", Capabilities: []string{"all"}}, Jobs: []Job{{Name: "Name Target", Process: "serial", TriggerType: "manual", TriggerName: "run", Steps: []map[string]interface{}{{"action": "APIRequest", "params": map[string]interface{}{}}}}}}
 	AgentsRegistry.RegisterAgent(source)
 	AgentsRegistry.RegisterAgent(idTarget)
 	AgentsRegistry.RegisterAgent(nameTarget)
@@ -146,7 +148,7 @@ func TestDecisionDelegationMissingTarget(t *testing.T) {
 func TestDecisionDelegationCapabilityDenial(t *testing.T) {
 	engine := NewJobEngine()
 	engine.RegisterAction(&DecisionAction{})
-	engine.RegisterAction(&delegationRecorderAction{name: "Marker"})
+	engine.RegisterAction(&delegationRecorderAction{name: "AIInteraction"})
 	AgentsEngine = engine
 	AgentsRegistry = NewJobConfig()
 
@@ -166,7 +168,7 @@ func TestDecisionDelegationCapabilityDenial(t *testing.T) {
 func TestDecisionDelegationTrustMismatchDenial(t *testing.T) {
 	engine := NewJobEngine()
 	engine.RegisterAction(&DecisionAction{})
-	engine.RegisterAction(&delegationRecorderAction{name: "Marker"})
+	engine.RegisterAction(&delegationRecorderAction{name: "AIInteraction"})
 	AgentsEngine = engine
 	AgentsRegistry = NewJobConfig()
 
@@ -186,7 +188,7 @@ func TestDecisionDelegationTrustMismatchDenial(t *testing.T) {
 func TestDecisionDelegationCycleDetection(t *testing.T) {
 	engine := NewJobEngine()
 	engine.RegisterAction(&DecisionAction{})
-	engine.RegisterAction(&delegationRecorderAction{name: "Marker"})
+	engine.RegisterAction(&delegationRecorderAction{name: "AIInteraction"})
 	AgentsEngine = engine
 	AgentsRegistry = NewJobConfig()
 
@@ -209,7 +211,7 @@ func TestDecisionDelegationIntegrationFlow(t *testing.T) {
 	engine := NewJobEngine()
 	engine.RegisterAction(&DecisionAction{})
 	calls := 0
-	engine.RegisterAction(&delegationRecorderAction{name: "Marker", fn: func(params map[string]interface{}) { calls++ }})
+	engine.RegisterAction(&delegationRecorderAction{name: "AIInteraction", fn: func(params map[string]interface{}) { calls++ }})
 	AgentsEngine = engine
 	AgentsRegistry = NewJobConfig()
 

@@ -886,23 +886,28 @@ func executeJobGroup(je *JobEngine, steps []map[string]any, identity *AgentIdent
 		}
 		if flags.IdentityEnforcement && identity != nil {
 			if !capabilityAllowed(*identity, actionName) {
-				err := fmt.Errorf("capability gate denied action %s: capability %q missing", actionName, requiredCapabilityForAction(actionName))
-				je.appendAudit(AuditEvent{RunID: execCtx.RunID, TraceID: execCtx.TraceID, AgentID: auditAgentID, AgentName: auditAgentName, Owner: auditOwner, Action: actionName, RequiredCapability: requiredCapabilityForAction(actionName), Outcome: auditOutcomeDenied, Reason: err.Error()})
+				err := fmt.Errorf("capability gate denied action %s: capability %q missing", actionName, requiredCapabilityForActionName(actionName))
+				je.appendAudit(AuditEvent{RunID: execCtx.RunID, TraceID: execCtx.TraceID, AgentID: auditAgentID, AgentName: auditAgentName, Owner: auditOwner, Action: actionName, RequiredCapability: requiredCapabilityForActionName(actionName), Outcome: auditOutcomeDenied, Reason: err.Error()})
 				return err
+			}
+			if strings.TrimSpace(actionName) == "DBQuery" {
+				if err := enforceDBQueryGate(je, params, *identity, execCtx, auditAgentID, auditAgentName, auditOwner); err != nil {
+					return err
+				}
 			}
 			if !trustAllowed(*identity, actionName) {
 				err := fmt.Errorf("trust gate denied action %s: trust_level %q insufficient", actionName, identity.TrustLevel)
-				je.appendAudit(AuditEvent{RunID: execCtx.RunID, TraceID: execCtx.TraceID, AgentID: auditAgentID, AgentName: auditAgentName, Owner: auditOwner, Action: actionName, RequiredCapability: requiredCapabilityForAction(actionName), Outcome: auditOutcomeDenied, Reason: err.Error()})
+				je.appendAudit(AuditEvent{RunID: execCtx.RunID, TraceID: execCtx.TraceID, AgentID: auditAgentID, AgentName: auditAgentName, Owner: auditOwner, Action: actionName, RequiredCapability: requiredCapabilityForActionName(actionName), Outcome: auditOutcomeDenied, Reason: err.Error()})
 				return err
 			}
 			if err := budget.preStepCheck(actionName); err != nil {
-				je.appendAudit(AuditEvent{RunID: execCtx.RunID, TraceID: execCtx.TraceID, AgentID: auditAgentID, AgentName: auditAgentName, Owner: auditOwner, Action: actionName, RequiredCapability: requiredCapabilityForAction(actionName), Outcome: auditOutcomeDenied, Reason: err.Error()})
+				je.appendAudit(AuditEvent{RunID: execCtx.RunID, TraceID: execCtx.TraceID, AgentID: auditAgentID, AgentName: auditAgentName, Owner: auditOwner, Action: actionName, RequiredCapability: requiredCapabilityForActionName(actionName), Outcome: auditOutcomeDenied, Reason: err.Error()})
 				return err
 			}
 		}
 		if flags.ContractEnforcement && contractForbidsAction(identity, actionName) {
 			err := fmt.Errorf("contract gate denied action %s: forbidden_actions policy", actionName)
-			je.appendAudit(AuditEvent{RunID: execCtx.RunID, TraceID: execCtx.TraceID, AgentID: auditAgentID, AgentName: auditAgentName, Owner: auditOwner, Action: actionName, RequiredCapability: requiredCapabilityForAction(actionName), Outcome: auditOutcomeDenied, Reason: err.Error()})
+			je.appendAudit(AuditEvent{RunID: execCtx.RunID, TraceID: execCtx.TraceID, AgentID: auditAgentID, AgentName: auditAgentName, Owner: auditOwner, Action: actionName, RequiredCapability: requiredCapabilityForActionName(actionName), Outcome: auditOutcomeDenied, Reason: err.Error()})
 			return err
 		}
 		if flags.MemoryRuntime && je != nil {
@@ -988,7 +993,7 @@ func executeJobGroup(je *JobEngine, steps []map[string]any, identity *AgentIdent
 
 			if err != nil {
 				policy := effectiveFailurePolicy(identity)
-				je.appendAudit(AuditEvent{RunID: execCtx.RunID, TraceID: execCtx.TraceID, AgentID: auditAgentID, AgentName: auditAgentName, Owner: auditOwner, Action: actionName, RequiredCapability: requiredCapabilityForAction(actionName), CapabilitiesUsed: capabilitiesUsed(identity, actionName), Outcome: auditOutcomeError, Reason: err.Error(), FailurePolicy: policy})
+				je.appendAudit(AuditEvent{RunID: execCtx.RunID, TraceID: execCtx.TraceID, AgentID: auditAgentID, AgentName: auditAgentName, Owner: auditOwner, Action: actionName, RequiredCapability: requiredCapabilityForActionName(actionName), CapabilitiesUsed: capabilitiesUsed(identity, actionName), Outcome: auditOutcomeError, Reason: err.Error(), FailurePolicy: policy})
 				if fallback, hasFallback := (*step)["fallback"].([]map[string]interface{}); hasFallback && policy != "continue" {
 					cmn.DebugMsg(cmn.DbgLvlError, "Action %s failed, executing fallback steps", actionName)
 					return executeJobGroup(je, fallback, identity, execCtx, flags)
@@ -1010,7 +1015,7 @@ func executeJobGroup(je *JobEngine, steps []map[string]any, identity *AgentIdent
 
 		// Update the result for the next job in the group
 		lastResult = result
-		je.appendAudit(AuditEvent{RunID: execCtx.RunID, TraceID: execCtx.TraceID, AgentID: auditAgentID, AgentName: auditAgentName, Owner: auditOwner, Action: actionName, RequiredCapability: requiredCapabilityForAction(actionName), CapabilitiesUsed: capabilitiesUsed(identity, actionName), Outcome: auditOutcomeAllowed, Reason: "action_completed"})
+		je.appendAudit(AuditEvent{RunID: execCtx.RunID, TraceID: execCtx.TraceID, AgentID: auditAgentID, AgentName: auditAgentName, Owner: auditOwner, Action: actionName, RequiredCapability: requiredCapabilityForActionName(actionName), CapabilitiesUsed: capabilitiesUsed(identity, actionName), Outcome: auditOutcomeAllowed, Reason: "action_completed"})
 		if flags.IdentityEnforcement && identity != nil {
 			budget.markActionExecuted(actionName)
 		}
