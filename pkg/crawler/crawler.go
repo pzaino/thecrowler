@@ -981,57 +981,58 @@ func getIndexIDForURL(db *cdb.Handler, url string) (uint64, error) {
 	return indexID, nil
 }
 
-func indexPageContext(waitCtx context.Context,
+func indexPageContext(
+	waitCtx context.Context,
 	ctx *ProcessContext,
 	url string,
-	pageInfo *PageInfo) (resultIndexID uint64, retErr error) {
+	pageInfo *PageInfo,
+) (resultIndexID uint64, retErr error) {
 	if pageInfo == nil {
 		return 0, errors.New("pageInfo cannot be nil")
 	}
-
 	if ctx == nil {
 		return 0, errors.New("process context cannot be nil")
 	}
-
-	if (url == "") || (len(strings.TrimSpace(url)) == 0) {
+	if strings.TrimSpace(url) == "" {
 		return 0, errors.New("url cannot be empty")
 	}
 
 	pageInfo.URL = url
 	EnsurePageCrowlerMeta(pageInfo, ctx.source, ctx.srcCfg)
+
 	if waitCtx == nil {
 		waitCtx = context.Background()
 	}
-	release, err := pageIndexingAdmissions.acquire(waitCtx, ctx.config.Crawler.IndexingConcurrency)
+
+	release, err := pageIndexingAdmissions.acquire(
+		waitCtx,
+		ctx.config.Crawler.IndexingConcurrency,
+	)
 	if err != nil {
 		return 0, err
 	}
 	defer release()
 
 	db := *ctx.db
-	process_cfg := ctx.GetConfig()
+	processCfg := ctx.GetConfig()
 
-	// Before updating the source state, check if the database connection is still alive
-	err = db.WaitForConnection(*process_cfg, 0)
-	if err != nil {
+	if err = db.WaitForConnection(*processCfg, 0); err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, dbConnCheckErr, err)
 		return 0, err
 	}
-	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Database ready, Indexing page: %s", url)
+
+	cmn.DebugMsg(
+		cmn.DbgLvlDebug4,
+		"[DEBUG-Indexing] Database ready, Indexing page: %s",
+		url,
+	)
 
 	var indexID uint64
 
-	// Check if we need to delete existing webObjects for this page
-	// before starting the indexing process.
+	// Refresh existing WebObjects when configured.
 	if ctx.config.Crawler.RefreshContent {
 		indexID, err = getIndexIDForURL(ctx.db, url)
 		if err != nil {
-			cmn.DebugMsg(
-				cmn.DbgLvlDebug4,
-				"[DEBUG-Indexing] Error checking existing indexID for URL %s: %v",
-				url,
-				err,
-			)
 			cmn.DebugMsg(
 				cmn.DbgLvlError,
 				"checking existing indexID for URL %s: %v",
@@ -1042,10 +1043,13 @@ func indexPageContext(waitCtx context.Context,
 		}
 
 		if indexID != 0 {
-			// We need to delete existing webObjects for this indexID
-			err = deleteWebObjects(waitCtx, ctx.db, indexID)
-			if err != nil {
-				cmn.DebugMsg(cmn.DbgLvlError,
+			if err = deleteWebObjects(
+				waitCtx,
+				ctx.db,
+				indexID,
+			); err != nil {
+				cmn.DebugMsg(
+					cmn.DbgLvlError,
 					"deleting existing WebObjects for indexID %d: %v",
 					indexID,
 					err,
@@ -1055,141 +1059,319 @@ func indexPageContext(waitCtx context.Context,
 		}
 	}
 
-	// Start a transaction bounded by database.transaction_timeout so an
-	// abandoned indexing transaction can never hold locks and its MVCC
-	// snapshot indefinitely.
-	txCtx, cancelTx := cdb.TransactionContext(waitCtx, ctx.GetConfig())
-	defer cancelTx()
-	tx, err := db.BeginTx(txCtx, nil)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Error starting transaction: %v", err)
-		cmn.DebugMsg(cmn.DbgLvlError, "starting transaction: %v", err)
-		return 0, cdb.NormalizeTransactionError(txCtx, err)
-	}
-	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Transaction started...")
-	txStarted := time.Now()
-	txCommitted := false
-	phase := "load_metric_snapshot"
-	var knownIndexID uint64
 	var sourceID uint64
 	if ctx.source != nil {
 		sourceID = ctx.source.ID
 	}
+
+	var knownIndexID uint64
+
+	// ------------------------------------------------------------
+	// Transaction 1: Main page indexing
+	// ------------------------------------------------------------
+
+	txCtx, cancelTx := cdb.TransactionContext(
+		waitCtx,
+		processCfg,
+	)
+	defer cancelTx()
+
+	tx, err := db.BeginTx(txCtx, nil)
+	if err != nil {
+		return 0, cdb.NormalizeTransactionError(txCtx, err)
+	}
+
+	txStarted := time.Now()
+	txCommitted := false
+	phase := "upsert_search_index"
+
 	defer func() {
-		// Best-effort rollback: after a successful commit this is a no-op
-		// (sql.ErrTxDone). The deferred rollback also covers panics between
-		// BEGIN and COMMIT.
 		_ = tx.Rollback()
+
 		if txCommitted {
-			// The main page transaction committed, so any remaining error comes
-			// from a post-commit phase and must not be reclassified against the
-			// (already finished) main transaction context.
-			cdb.LogTransactionOutcome("indexPage", txStarted, nil)
+			cdb.LogTransactionOutcome(
+				"indexPage",
+				txStarted,
+				nil,
+			)
 			if retErr != nil {
-				logIndexPagePhase("indexPage", phase, txStarted, sourceID, knownIndexID, retErr)
+				logIndexPagePhase(
+					"indexPage",
+					phase,
+					txStarted,
+					sourceID,
+					knownIndexID,
+					retErr,
+				)
 			}
 			return
 		}
+
 		retErr = cdb.NormalizeTransactionError(txCtx, retErr)
-		cdb.LogTransactionOutcome("indexPage", txStarted, retErr)
+
+		cdb.LogTransactionOutcome(
+			"indexPage",
+			txStarted,
+			retErr,
+		)
+
 		if retErr != nil {
-			logIndexPagePhase("indexPage", phase, txStarted, sourceID, knownIndexID, retErr)
+			logIndexPagePhase(
+				"indexPage",
+				phase,
+				txStarted,
+				sourceID,
+				knownIndexID,
+				retErr,
+			)
 		}
 	}()
-	metricEmitter := newCrawlerIndexedArtifactEmitter(tx, ctx.GetConfig())
-	metricSnapshot, err := metricEmitter.LoadEnabledMetricSnapshot()
-	if err != nil {
-		rollbackTransaction(tx)
-		return 0, err
-	}
 
-	// Insert or update the page in SearchIndex
-	phase = "upsert_search_index"
+	// SearchIndex.
 	indexID, err = insertOrUpdateSearchIndex(tx, url, pageInfo)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Error inserting or updating SearchIndex: %v", err)
-		cmn.DebugMsg(cmn.DbgLvlError, "inserting or updating SearchIndex: %v", err)
 		rollbackTransaction(tx)
 		return 0, err
 	}
+
 	knownIndexID = indexID
-	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] SearchIndex updated with indexID: %d", indexID)
 
-	// Insert or update the page in WebObjects
+	// WebObjects.
 	phase = "upsert_webobject"
-	objID, detailsJSON, objectHash, err := insertOrUpdateWebObjects(tx, indexID, pageInfo)
+
+	objID, detailsJSON, objectHash, err :=
+		insertOrUpdateWebObjects(tx, indexID, pageInfo)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Error inserting or updating WebObjects: %v", err)
-		cmn.DebugMsg(cmn.DbgLvlError, "inserting or updating WebObjects: %v", err)
-		rollbackTransaction(tx)
-		return 0, err
-	}
-	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] WebObjects updated with indexID: %d", indexID)
-
-	// Index object attributes for WebObjet
-	phase = "index_object_attributes"
-	err = indexObjectAttributes(tx, objID, "webobject", detailsJSON, ctx.GetConfig(), metricSnapshot)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Error inserting or updating Object Attributes: %v", err)
-		rollbackTransaction(tx)
-		return 0, err
-	}
-	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Object Attributes indexed for objectID: %d", objID)
-
-	phase = "emit_artifact_timeseries"
-	if err = emitPersistedArtifact(tx, ctx.GetConfig(), metricSnapshot, tse.IndexedArtifactInput{
-		SourceKind: cfg.TimeSeriesSourceWebObject, IndexID: indexID, RowID: uint64(objID),
-		ObjectType: "webobject", ObjectID: uint64(objID), SubjectKey: objectHash, Hash: objectHash,
-		RawValue: string(detailsJSON), Value: objectHash, Details: decodeArtifactDetails(detailsJSON), ObservedAt: time.Now().UTC(), SourceUpdatedAt: utcNowPointer(),
-	}); err != nil {
 		rollbackTransaction(tx)
 		return 0, err
 	}
 
-	// Insert MetaTags
+	// MetaTags: persist only, without Time Series emission.
 	phase = "insert_metatags"
+
 	if pageInfo.Config.Crawler.CollectMetaTags {
-		err = insertMetaTagsWithTimeSeries(tx, indexID, pageInfo.MetaTags, pageInfo.Config, metricSnapshot)
+		err = insertMetaTagsOnly(
+			tx,
+			indexID,
+			pageInfo.MetaTags,
+		)
 		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Error inserting meta tags for indexID: %d, error: %v", indexID, err)
-			cmn.DebugMsg(cmn.DbgLvlError, "inserting meta tags: %v", err)
 			rollbackTransaction(tx)
 			return 0, err
 		}
 	}
-	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] MetaTags inserted for indexID: %d", indexID)
 
-	// Commit the transaction
+	// Commit the main page transaction.
 	phase = "commit"
-	err = commitTransaction(tx)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Error committing transaction: %v", err)
-		cmn.DebugMsg(cmn.DbgLvlError, dbConnTransErr, err)
+
+	if err = commitTransaction(tx); err != nil {
 		rollbackTransaction(tx)
 		return 0, err
 	}
+
 	txCommitted = true
-	cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Transaction committed successfully.")
 
-	// Out of transaction operations
+	cmn.DebugMsg(
+		cmn.DbgLvlDebug4,
+		"[DEBUG-Indexing] Main transaction committed for indexID: %d",
+		indexID,
+	)
 
-	// Store keywords only after the main page transaction has committed successfully.
+	// ------------------------------------------------------------
+	// Post-commit: Keywords
+	// ------------------------------------------------------------
+
 	phase = "post_commit_keywords"
-	if pageInfo.Config.Crawler.CollectKeywords {
-		err = insertKeywordsWithTimeSeries(db, indexID, pageInfo, pageInfo.Config)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Error inserting keywords for indexID: %d, error: %v", indexID, err)
-			cmn.DebugMsg(cmn.DbgLvlError, "inserting keywords: %v", err)
 
-			// The page transaction has already committed, so it cannot and must not
-			// be rolled back here. Return the committed indexID together with the
-			// keyword indexing error.
+	if pageInfo.Config.Crawler.CollectKeywords {
+		err = insertKeywordsWithTimeSeries(
+			db,
+			indexID,
+			pageInfo,
+			pageInfo.Config,
+		)
+		if err != nil {
+			cmn.DebugMsg(
+				cmn.DbgLvlError,
+				"inserting keywords for indexID %d: %v",
+				indexID,
+				err,
+			)
+
+			// Preserve existing behavior.
 			return indexID, err
 		}
-		cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Indexing] Keywords inserted for indexID: %d", indexID)
 	}
 
-	// Return the index ID
+	// ------------------------------------------------------------
+	// Transaction 2: ObjectAttributes
+	// ------------------------------------------------------------
+
+	phase = "index_object_attributes"
+
+	tx2Ctx, cancelTx2 := cdb.TransactionContext(
+		waitCtx,
+		processCfg,
+	)
+	defer cancelTx2()
+
+	tx2, err := db.BeginTx(tx2Ctx, nil)
+	if err != nil {
+		err = cdb.NormalizeTransactionError(tx2Ctx, err)
+
+		cmn.DebugMsg(
+			cmn.DbgLvlError,
+			"starting ObjectAttributes transaction for indexID %d: %v",
+			indexID,
+			err,
+		)
+	} else {
+		tx2Started := time.Now()
+		tx2Committed := false
+
+		// indexObjectAttributes must perform persistence only.
+		// Its Time Series emission must be moved to tx3.
+		err = indexObjectAttributes(
+			tx2,
+			objID,
+			"webobject",
+			detailsJSON,
+			processCfg,
+			nil,
+		)
+
+		if err == nil {
+			err = tx2.Commit()
+			if err == nil {
+				tx2Committed = true
+			}
+		}
+
+		if !tx2Committed {
+			_ = tx2.Rollback()
+			err = cdb.NormalizeTransactionError(tx2Ctx, err)
+
+			cmn.DebugMsg(
+				cmn.DbgLvlError,
+				"ObjectAttributes indexing failed for indexID %d, objectID %d: %v",
+				indexID,
+				objID,
+				err,
+			)
+		} else {
+			cmn.DebugMsg(
+				cmn.DbgLvlDebug4,
+				"[DEBUG-Indexing] ObjectAttributes committed for objectID: %d",
+				objID,
+			)
+		}
+
+		cdb.LogTransactionOutcome(
+			"indexObjectAttributes",
+			tx2Started,
+			err,
+		)
+	}
+
+	// ------------------------------------------------------------
+	// Transaction 3: Time Series
+	// ------------------------------------------------------------
+
+	phase = "emit_artifact_timeseries"
+
+	tx3Ctx, cancelTx3 := cdb.TransactionContext(
+		waitCtx,
+		processCfg,
+	)
+	defer cancelTx3()
+
+	tx3, err := db.BeginTx(tx3Ctx, nil)
+	if err != nil {
+		err = cdb.NormalizeTransactionError(tx3Ctx, err)
+
+		cmn.DebugMsg(
+			cmn.DbgLvlError,
+			"starting Time Series transaction for indexID %d: %v",
+			indexID,
+			err,
+		)
+	} else {
+		tx3Started := time.Now()
+		tx3Committed := false
+
+		metricEmitter := newCrawlerIndexedArtifactEmitter(
+			tx3,
+			processCfg,
+		)
+
+		metricSnapshot, tsErr :=
+			metricEmitter.LoadEnabledMetricSnapshot()
+
+		if tsErr == nil {
+			tsErr = emitPersistedArtifact(
+				tx3,
+				processCfg,
+				metricSnapshot,
+				tse.IndexedArtifactInput{
+					SourceKind: cfg.TimeSeriesSourceWebObject,
+					IndexID:    indexID,
+					RowID:      uint64(objID),
+
+					ObjectType: "webobject",
+					ObjectID:   uint64(objID),
+
+					SubjectKey: objectHash,
+					Hash:       objectHash,
+
+					RawValue: string(detailsJSON),
+					Value:    objectHash,
+
+					Details: decodeArtifactDetails(detailsJSON),
+
+					ObservedAt:      time.Now().UTC(),
+					SourceUpdatedAt: utcNowPointer(),
+				},
+			)
+		}
+
+		if tsErr == nil {
+			tsErr = tx3.Commit()
+			if tsErr == nil {
+				tx3Committed = true
+			}
+		}
+
+		if !tx3Committed {
+			_ = tx3.Rollback()
+			tsErr = cdb.NormalizeTransactionError(
+				tx3Ctx,
+				tsErr,
+			)
+
+			cmn.DebugMsg(
+				cmn.DbgLvlError,
+				"Time Series emission failed for indexID %d, objectID %d: %v",
+				indexID,
+				objID,
+				tsErr,
+			)
+		} else {
+			cmn.DebugMsg(
+				cmn.DbgLvlDebug4,
+				"[DEBUG-Indexing] Time Series committed for objectID: %d",
+				objID,
+			)
+		}
+
+		cdb.LogTransactionOutcome(
+			"emitArtifactTimeSeries",
+			tx3Started,
+			tsErr,
+		)
+	}
+
+	// Main page indexing succeeded regardless of post-commit
+	// ObjectAttributes or Time Series failures.
 	return indexID, nil
 }
 
@@ -1206,6 +1388,29 @@ func formatIndexPagePhase(operation, phase string, elapsed time.Duration, source
 
 func logIndexPagePhase(operation, phase string, started time.Time, sourceID, indexID uint64, err error) {
 	cmn.DebugMsg(cmn.DbgLvlError, "%s", formatIndexPagePhase(operation, phase, time.Since(started), sourceID, indexID, err))
+}
+
+func insertMetaTagsOnly(
+	tx *sql.Tx,
+	indexID uint64,
+	metaTags []MetaTag,
+) error {
+	prepared := prepareMetaTags(metaTags)
+
+	for start := 0; start < len(prepared); start += postgresMetaTagBatchSize {
+		end := min(start+postgresMetaTagBatchSize, len(prepared))
+
+		_, err := persistPostgresMetaTagBatch(
+			tx,
+			indexID,
+			prepared[start:end],
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func indexObjectAttributes(
