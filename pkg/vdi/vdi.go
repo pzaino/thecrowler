@@ -731,6 +731,224 @@ func waitForVDIRetry(ctx ProcessContextInterface, delay time.Duration) error {
 	}
 }
 
+// baseBrowserArgs returns the launch arguments derived from
+// browserSettingsMap for the given Selenium browser type.
+//
+// Preservation note (PR1, VDI-010): the map key is lowercase "windowSize".
+// The previous lookup used "WindowSize", which never matched, so
+// --window-size=1920,1080 was silently dropped for Chrome/Chromium. Only the
+// key spelling is corrected; the map contents and selection semantics are
+// unchanged.
+func baseBrowserArgs(selType string) []string {
+	var args []string
+	keys := []string{"windowSize", "initialWindow", "gpu", "headless", "javascript", "incognito"}
+	for _, key := range keys {
+		if value, ok := browserSettingsMap[selType][key]; ok && value != "" {
+			args = append(args, value)
+		}
+	}
+	return args
+}
+
+// chromeDisabledFeaturesValue returns the single comma-joined value for the
+// Chromium --disable-features switch, preserving every feature the
+// configuration intends to disable.
+//
+// Preservation note (PR1, VDI-010): the previous code appended up to four
+// separate --disable-features flags (UserAgentClientHint, Battery,
+// IsolateOrigins/site-per-process, SameSiteByDefaultCookies). Chromium honors
+// a single value per switch, so only the last flag took effect and the rest
+// were silently lost. The union of intended features is unchanged; only the
+// encoding is corrected to one flag.
+func chromeDisabledFeaturesValue(resetCookiesPolicy string, noThirdPartyCookies bool) string {
+	features := []string{"UserAgentClientHint", "Battery"}
+	if resetCookiesPolicy != "" && resetCookiesPolicy != "none" {
+		features = append(features, "IsolateOrigins", "site-per-process")
+		if noThirdPartyCookies {
+			features = append(features, "SameSiteByDefaultCookies")
+		}
+	}
+	return strings.Join(features, ",")
+}
+
+// chromeBlinkSettingsValue returns the single comma-joined value for the
+// Chromium --blink-settings switch, preserving all four resource policies.
+//
+// Preservation note (PR1, VDI-010): the previous code appended four separate
+// --blink-settings flags, so only the last one (PluginsEnabled) took effect.
+// Key spellings are kept exactly as configured; validity of individual keys
+// against the pinned Chromium is covered by real-browser integration
+// validation (VDI-021), not asserted here.
+func chromeBlinkSettingsValue(requestImages, requestCSS, requestScripts, requestPlugins bool) string {
+	return fmt.Sprintf("imagesEnabled=%t,CSSImagesEnabled=%t,JavaScriptEnabled=%t,PluginsEnabled=%t",
+		requestImages, requestCSS, requestScripts, requestPlugins)
+}
+
+// resolveEffectiveProxyURL applies the existing source-vs-VDI proxy
+// precedence without changing its semantics: an absent source key (ok=false,
+// including source-JSON unmarshal failure at the caller) or an empty source
+// value inherits the VDI default; the exact sentinel "no_proxy" forces a
+// direct connection; otherwise the trimmed source value wins.
+func resolveEffectiveProxyURL(sourceProxy string, ok bool, vdiProxy string) string {
+	if !ok {
+		return vdiProxy
+	}
+	trimmed := strings.TrimSpace(sourceProxy)
+	if trimmed == "" {
+		return vdiProxy
+	}
+	if trimmed == "no_proxy" {
+		return ""
+	}
+	return trimmed
+}
+
+// buildChromeCapabilities assembles goog:chromeOptions with ExcludeSwitches
+// at the capability level, where ChromeDriver reads it.
+//
+// Preservation note (PR1, VDI-007): "excludeSwitches" was previously placed
+// inside the prefs dictionary, where ChromeDriver ignores it, so
+// --enable-automation was never excluded. "useAutomationExtension" has no
+// supported equivalent in this Selenium binding (go-auxiliaries/selenium
+// v0.9.10 chrome.Capabilities exposes only ExcludeSwitches) or in modern
+// ChromeDriver, so it is dropped from prefs where it was inert. The
+// automation-hiding intent is preserved through ExcludeSwitches together
+// with the existing --disable-blink-features=AutomationControlled flag.
+func buildChromeCapabilities(args []string, prefs map[string]interface{}) chrome.Capabilities {
+	return chrome.Capabilities{
+		Args:            args,
+		ExcludeSwitches: []string{"enable-automation"},
+		W3C:             true,
+		Prefs:           prefs,
+	}
+}
+
+// buildLaunchArgs assembles the browser command-line arguments for a VDI
+// session. It is a pure function of its inputs (apart from the local-network
+// probe used for the proxy bypass list) so launch-argument defects can be
+// covered by unit tests without a live Selenium server.
+//
+// Preservation notes (PR1, VDI-007/VDI-010): every previously emitted
+// capability is still emitted. Changed encodings only:
+//   - window size now resolves via baseBrowserArgs (case fix);
+//   - one --disable-features flag (union preserved);
+//   - one --blink-settings flag (all four policies preserved);
+//   - the --proxy-server flag uses the resolved effective proxy;
+//   - exact-duplicate flags (--disable-webrtc, --disable-plugins,
+//     --disable-extensions) appear once;
+//   - the two --host-resolver-rules flags are removed (MAP * <ip> rewrites
+//     every hostname to a fixed destination instead of selecting a resolver,
+//     and the second entry was malformed); --dns-prefetch-disable is retained
+//     and proxy egress still carries DNS when configured.
+func buildLaunchArgs(browser, selType, userAgent string, crawler cfg.Crawler, effectiveProxy string) []string {
+	var args []string
+
+	// Base map entries (window size, maximized, gpu, headless, javascript,
+	// incognito).
+	args = append(args, baseBrowserArgs(selType)...)
+
+	// User agent.
+	args = append(args, "--user-agent="+userAgent)
+
+	if browser == BrowserChrome || browser == BrowserChromium {
+		args = append(args, "--incognito")                              // Run in incognito mode
+		args = append(args, "--disable-client-side-phishing-detection") // Disable client-side phishing detection
+		args = append(args, "--disable-component-update")               // Disable component updates
+		args = append(args, "--no-first-run")
+	}
+
+	// Proxy settings use the resolved effective proxy (VDI-009 P0 portion:
+	// the previous code resolved the per-source value but then emitted the
+	// VDI-global string in the flag).
+	if effectiveProxy != "" {
+		args = append(args, "--proxy-server="+effectiveProxy)
+		args = append(args, "--force-proxy-for-all")
+		// Get local network:
+		localNet, err := cmn.DetectLocalNetwork()
+		if err == nil {
+			args = append(args, "--proxy-bypass-list=localhost,"+localNet)
+		} else {
+			args = append(args, "--proxy-bypass-list=localhost")
+		}
+	}
+
+	// General settings
+	if browser == BrowserChrome || browser == BrowserChromium {
+		args = append(args, "--disable-software-rasterizer")
+		args = append(args, "--use-fake-ui-for-media-stream")
+	}
+
+	// Avoid funny localizations/detections
+	if browser == BrowserChrome || browser == BrowserChromium {
+		// DNS privacy: prefetch disabling is retained. The previous pair of
+		// --host-resolver-rules flags is intentionally not emitted (see the
+		// function documentation). Proxy egress carries DNS when a proxy is
+		// configured, system DNS otherwise.
+		args = append(args, "--dns-prefetch-disable")
+
+		// Reduce geolocation leaks
+		args = append(args, "--disable-geolocation")
+		args = append(args, "--disable-notifications")
+		args = append(args, "--disable-quic")
+		args = append(args, "--disable-blink-features=AutomationControlled")
+
+		// Reduce Hardware fingerprinting
+		args = append(args, "--override-hardware-concurrency=4")
+		args = append(args, "--override-device-memory=4")
+
+		// Reduce Browser fingerprinting
+		args = append(args, "--disable-infobars")
+		args = append(args, "--disable-extensions")
+		args = append(args, "--disable-plugins")
+		args = append(args, "--disable-plugins-discovery")
+		args = append(args, "--disable-peer-to-peer")
+
+		// Disable WebRTC
+		args = append(args, "--disable-rtc-smoothness-algorithm")
+		args = append(args, "--disable-webrtc")
+		args = append(args, "--force-webrtc-ip-handling-policy=disable_non_proxied_udp")
+		args = append(args, "--webrtc-ip-handling-policy=default_public_interface_only")
+		args = append(args, "--webrtc-max-cpu-consumption-percentage=1")
+		args = append(args, "--disable-webrtc-multiple-routes")
+		args = append(args, "--disable-webrtc-hw-encoding")
+		args = append(args, "--disable-webrtc-hw-decoding")
+		args = append(args, "--disable-webrtc-encryption")
+
+		// Disable WebUSB
+		args = append(args, "--disable-webusb")
+
+		// Disable WebBluetooth
+		args = append(args, "--disable-web-bluetooth")
+
+		args = append(args, "--disable-popup-blocking")
+
+		// Ensure Screen Resolution is correct
+		args = append(args, "--force-device-scale-factor=1")
+
+		// Enable/Disable JavaScript, Images, CSS, and Plugins requests
+		// based on user's configuration (single flag; all four preserved).
+		args = append(args, "--blink-settings="+chromeBlinkSettingsValue(
+			crawler.RequestImages, crawler.RequestCSS, crawler.RequestScripts, crawler.RequestPlugins))
+
+		// Reduce Cookie based tracking
+		if crawler.ResetCookiesPolicy != "" && crawler.ResetCookiesPolicy != "none" {
+			args = append(args, "--disable-site-isolation-trials")
+		}
+		// Single --disable-features flag (union of intended disables).
+		args = append(args, "--disable-features="+chromeDisabledFeaturesValue(
+			crawler.ResetCookiesPolicy, crawler.NoThirdPartyCookies))
+
+		// Disable video auto-play:
+		//args = append(args, "--autoplay-policy=user-required") // this option does't work and cause chrome/chromium to crash
+	}
+
+	// Append logging settings if available
+	args = append(args, "--enable-logging")
+	args = append(args, "--v=1")
+
+	return args
+}
+
 // ConnectVDI is responsible for connecting to the Selenium server instance
 func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType int) (WebDriver, error) {
 	if ctx == nil {
@@ -808,30 +1026,30 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 		}
 	}
 
-	var args []string
-
-	// Populate the args slice based on the browser type
-	keys := []string{"WindowSize", "initialWindow", "gpu", "headless", "javascript", "incognito"}
-	for _, key := range keys {
-		if value, ok := browserSettingsMap[sel.Config.Type][key]; ok && value != "" {
-			args = append(args, value)
+	// Resolve the effective proxy preserving the existing source-vs-VDI
+	// precedence (absent/empty inherits the VDI default; "no_proxy" forces a
+	// direct connection; otherwise the trimmed source value wins).
+	var sourceProxy string
+	var sourceProxyOK bool
+	if rawSource := ctx.GetSource(); rawSource != nil && rawSource.Config != nil {
+		var sourceConfig map[string]interface{}
+		if err := json.Unmarshal(*rawSource.Config, &sourceConfig); err == nil {
+			if val, ok := sourceConfig["proxy_url"].(string); ok {
+				sourceProxy, sourceProxyOK = val, true
+			}
 		}
 	}
+	effectiveProxy := resolveEffectiveProxyURL(sourceProxy, sourceProxyOK, sel.Config.ProxyURL)
 
-	// Append user-agent separately as it's a constant value
-	args = append(args, "--user-agent="+userAgent)
-
-	if browser == BrowserChrome || browser == BrowserChromium {
-		args = append(args, "--incognito")                              // Run in incognito mode
-		args = append(args, "--disable-client-side-phishing-detection") // Disable client-side phishing detection
-		args = append(args, "--disable-component-update")               // Disable component updates
-		args = append(args, "--disable-features=UserAgentClientHint")   // Disable background networking
-	}
+	// Assemble the browser launch arguments with the shared builder so
+	// multi-value switches stay coherent (single --disable-features and
+	// --blink-settings values) and every fix is unit-testable without a live
+	// Selenium server.
+	args := buildLaunchArgs(browser, sel.Config.Type, userAgent, pConfig.Crawler, effectiveProxy)
 
 	// CDP Config for Chrome/Chromium
 	var cdpActive bool
 	if browser == BrowserChrome || browser == BrowserChromium {
-		args = append(args, "--no-first-run")
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ConnectVDI] Setting up Chrome DevTools Protocol (CDP) for '%s'...", sel.Config.Name)
 		// Set the CDP port
 		//args = append(args, "--remote-debugging-port=9222")
@@ -842,41 +1060,16 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 		cdpActive = true
 	}
 
-	proxy := ProxySettings{}
-	rawSource := ctx.GetSource()
-	if rawSource != nil {
-		if rawSource.Config != nil {
-			var sourceConfig map[string]interface{}
-			err := json.Unmarshal(*rawSource.Config, &sourceConfig)
-			if err != nil {
-				proxy.ProxyURL = strings.TrimSpace(sel.Config.ProxyURL)
-			} else {
-				if val, ok := sourceConfig["proxy_url"].(string); ok {
-					proxy.ProxyURL = strings.TrimSpace(val)
-				}
-			}
-		}
-	}
-	if proxy.ProxyURL == "" {
-		proxy.ProxyURL = sel.Config.ProxyURL
-	} else if proxy.ProxyURL == "no_proxy" {
-		proxy.ProxyURL = ""
-	}
-
-	// Append proxy settings if available
-	if proxy.ProxyURL != "" {
+	// Proxy observability for the resolved effective value (same shape as before).
+	if effectiveProxy != "" {
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ConnectVDI] Setting up Proxy for '%s'...", sel.Config.Name)
-		args = append(args, "--proxy-server="+sel.Config.ProxyURL)
-		args = append(args, "--force-proxy-for-all")
 		// Get local network:
 		localNet, err := cmn.DetectLocalNetwork()
 		if err == nil {
-			args = append(args, "--proxy-bypass-list=localhost,"+localNet)
+			cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ConnectVDI] Proxy settings: URL '%s', Exclusions: '%s' for '%s'", effectiveProxy, "localhost,"+localNet, sel.Config.Name)
 		} else {
-			args = append(args, "--proxy-bypass-list=localhost")
+			cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ConnectVDI] Proxy settings: URL '%s', Exclusions: '%s' for '%s'", effectiveProxy, "localhost", sel.Config.Name)
 		}
-
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ConnectVDI] Proxy settings: URL '%s', Exclusions: '%s' for '%s'", sel.Config.ProxyURL, "localhost,"+localNet, sel.Config.Name)
 
 		/*
 			proxyURL, err := url.Parse(sel.Config.ProxyURL)
@@ -922,111 +1115,6 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ConnectVDI] No proxy settings for '%s'", sel.Config.Name)
 	}
 
-	// General settings
-	if browser == BrowserChrome || browser == BrowserChromium {
-		args = append(args, "--disable-software-rasterizer")
-		args = append(args, "--use-fake-ui-for-media-stream")
-	}
-
-	// Avoid funny localizations/detections
-	if browser == BrowserChrome || browser == BrowserChromium {
-		// DNS over HTTPS (DoH) settings
-		args = append(args, "--dns-prefetch-disable")
-		//args = append(args, "--host-resolver-rules=MAP * 8.8.8.8")
-		args = append(args, "--host-resolver-rules=MAP * 1.1.1.1")
-		args = append(args, "--host-resolver-rules=MAP *:443")
-
-		// Reduce geolocation leaks
-		args = append(args, "--disable-geolocation")
-		args = append(args, "--disable-notifications")
-		args = append(args, "--disable-quic")
-		args = append(args, "--disable-blink-features=AutomationControlled")
-
-		// Reduce Hardware fingerprinting
-		args = append(args, "--override-hardware-concurrency=4")
-		args = append(args, "--override-device-memory=4")
-		args = append(args, "--disable-features=Battery")
-
-		// Reduce Browser fingerprinting
-		args = append(args, "--disable-infobars")
-		args = append(args, "--disable-extensions")
-		args = append(args, "--disable-plugins")
-		args = append(args, "--disable-plugins-discovery")
-		args = append(args, "--disable-peer-to-peer")
-
-		// Disable WebRTC
-		args = append(args, "--disable-rtc-smoothness-algorithm")
-		args = append(args, "--disable-webrtc")
-		args = append(args, "--force-webrtc-ip-handling-policy=disable_non_proxied_udp")
-		args = append(args, "--webrtc-ip-handling-policy=default_public_interface_only")
-		args = append(args, "--webrtc-max-cpu-consumption-percentage=1")
-		args = append(args, "--disable-webrtc-multiple-routes")
-		args = append(args, "--disable-webrtc-hw-encoding")
-		args = append(args, "--disable-webrtc-hw-decoding")
-		args = append(args, "--disable-webrtc-encryption")
-		args = append(args, "--disable-webrtc")
-
-		// Disable WebUSB
-		args = append(args, "--disable-webusb")
-
-		// Disable WebBluetooth
-		args = append(args, "--disable-web-bluetooth")
-
-		// Disable Plugins
-		args = append(args, "--disable-plugins")
-		args = append(args, "--disable-extensions")
-
-		// Disable Sandboxing
-		/*
-			args = append(args, "--no-sandbox")
-			args = append(args, "--disable-dev-shm-usage")
-		*/
-
-		args = append(args, "--disable-popup-blocking")
-
-		// Ensure Screen Resolution is correct
-		args = append(args, "--force-device-scale-factor=1")
-
-		// Enable/Disable JavaScript, Images, CSS, and Plugins requests
-		// based on user's configuration
-		if pConfig.Crawler.RequestImages {
-			args = append(args, "--blink-settings=imagesEnabled=true")
-		} else {
-			args = append(args, "--blink-settings=imagesEnabled=false")
-		}
-		if pConfig.Crawler.RequestCSS {
-			args = append(args, "--blink-settings=CSSImagesEnabled=true")
-		} else {
-			args = append(args, "--blink-settings=CSSImagesEnabled=false")
-		}
-		if pConfig.Crawler.RequestScripts {
-			args = append(args, "--blink-settings=JavaScriptEnabled=true")
-		} else {
-			args = append(args, "--blink-settings=JavaScriptEnabled=false")
-		}
-		if pConfig.Crawler.RequestPlugins {
-			args = append(args, "--blink-settings=PluginsEnabled=true")
-		} else {
-			args = append(args, "--blink-settings=PluginsEnabled=false")
-		}
-
-		// Reduce Cookie based tracking
-		if pConfig.Crawler.ResetCookiesPolicy != "" && pConfig.Crawler.ResetCookiesPolicy != "none" {
-			args = append(args, "--disable-site-isolation-trials")
-			args = append(args, "--disable-features=IsolateOrigins,site-per-process")
-			if pConfig.Crawler.NoThirdPartyCookies {
-				args = append(args, "--disable-features=SameSiteByDefaultCookies")
-			}
-		}
-
-		// Disable video auto-play:
-		//args = append(args, "--autoplay-policy=user-required") // this option does't work and cause chrome/chromium to crash
-	}
-
-	// Append logging settings if available
-	args = append(args, "--enable-logging")
-	args = append(args, "--v=1")
-
 	// Configure the download directory
 	downloadDir := strings.TrimSpace(sel.Config.DownloadDir)
 	if downloadDir == "" {
@@ -1044,8 +1132,6 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 			"safebrowsing.disable_download_protection": false,
 			"safebrowsing.disable_extension_blacklist": false,
 			"safebrowsing.disable_automatic_downloads": false,
-			"useAutomationExtension":                   false,
-			"excludeSwitches":                          []string{"enable-automation"},
 		}
 
 		// Configure user content capabilities:
@@ -1078,12 +1164,10 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 			chromePrefs["profile.managed_default_content_settings.plugins"] = 1
 		}
 
-		// Finalize the capabilities
-		caps.AddChrome(chrome.Capabilities{
-			Args:  args,
-			W3C:   true,
-			Prefs: chromePrefs,
-		})
+		// Finalize the capabilities (ExcludeSwitches lives at the
+		// goog:chromeOptions level via buildChromeCapabilities, where
+		// ChromeDriver reads it, not inside prefs).
+		caps.AddChrome(buildChromeCapabilities(args, chromePrefs))
 		cmn.DebugMsg(cmn.DbgLvlDebug5, "[DEBUG-ConnectVDI] Chrome capabilities: %v\n", caps)
 	} else if browser == "firefox" {
 		firefoxCaps := map[string]interface{}{
