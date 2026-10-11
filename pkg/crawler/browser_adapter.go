@@ -47,8 +47,9 @@ func setupBrowser(wd vdi.WebDriver, ctx *ProcessContext) {
 	}
 
 	var err error
-	// Change the User Agent (if needed)
-	if ctx.config.Crawler.ResetCookiesPolicy == "always" {
+	// Change the User Agent (if needed; historical coupling to the cookie
+	// policy is preserved, see refreshUserAgentOnSetup).
+	if refreshUserAgentOnSetup(ctx.config.Crawler.ResetCookiesPolicy) {
 		err = changeUserAgent(&(ctx.wd), ctx)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "changing UserAgent: %v", err)

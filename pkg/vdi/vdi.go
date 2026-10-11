@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -997,34 +996,19 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 		}
 	}
 
-	// Define the user agent string for a desktop Google Chrome browser
-	var userAgent string
-
-	// Get the user agent string from the UserAgentsDB
-	userAgent = cmn.UADB.GetAgentByTypeAndOSAndBRG(pConfig.Crawler.Platform, pConfig.Crawler.BrowserPlatform, browser)
-
-	// Parse the User Agent string for {random_int1}
-	if strings.Contains(userAgent, "{random_int1}") {
-		// Generates a random integer in the range [0, 999)
-		randInt := rand.IntN(8000) // nolint:gosec // We are using "math/rand/v2" here
-		userAgent = strings.ReplaceAll(userAgent, "{random_int1}", strconv.Itoa(randInt))
+	// Select the User-Agent for this session event: shared mechanic for
+	// connection-time and request-time paths (VDI-003/VDI-004). Family
+	// mapping (chromium shares chrome's group), template expansion, and
+	// profile-aware fallback are centralized in common; rotation policy
+	// (when selection runs) is unchanged. resolvedOS is the single
+	// advertised-OS key every surface in this event derives from.
+	userAgent, resolvedOS, fallbackUsed := cmn.UADB.SelectUserAgent(
+		pConfig.Crawler.Platform, pConfig.Crawler.BrowserPlatform, browser, browseType == 1, rand.IntN)
+	if note := cmn.UserAgentCompatibilityNote(userAgent, browser, fallbackUsed); note != "" {
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ConnectVDI] User-Agent note on '%s': %s", sel.Config.Name, note)
 	}
-
-	// Parse the User Agent string for {random_int2}
-	if strings.Contains(userAgent, "{random_int2}") {
-		// Generates a random integer in the range [0, 999)
-		randInt := rand.IntN(999) // nolint:gosec // We are using "math/rand/v2" here
-		userAgent = strings.ReplaceAll(userAgent, "{random_int2}", strconv.Itoa(randInt))
-	}
-
-	// Fallback in case the user agent is not found in the UserAgentsDB
-	if userAgent == "" {
-		if browseType == 0 {
-			userAgent = cmn.UsrAgentStrMap[browser+"-desktop01"]
-		} else if browseType == 1 {
-			userAgent = cmn.UsrAgentStrMap[browser+"-mobile01"]
-		}
-	}
+	ident := MapAdvertisedOSIdentity(resolvedOS, browseType == 1)
+	chromeMajor, _ := ChromeMajorVersion(userAgent)
 
 	// Resolve the effective proxy preserving the existing source-vs-VDI
 	// precedence (absent/empty inherits the VDI default; "no_proxy" forces a
@@ -1281,8 +1265,11 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	}
 	// Sleep a few milliseconds to give time for the session to be fully established before we start sending commands to it
 	time.Sleep(500 * time.Millisecond)
-	// Inject anti-detection patch
-	err = InjectAntiDetectionPatches(wd, userAgent, pConfig.Crawler.Platform)
+	// Inject anti-detection patch for the identity selected for this event.
+	// ident/chromeMajor derive from the same selection so UA, Client Hints,
+	// and navigator surfaces agree; rotation-time replacement is owned by
+	// VDI-014 (see antiDetectionScript lifecycle note).
+	err = InjectAntiDetectionPatches(wd, userAgent, ident, chromeMajor)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ConnectVDI] Patch injection failed on '%s': %v", sel.Config.Name, err)
 		// Check if we have lost the session
@@ -1294,7 +1281,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 
 	// Post-connection settings
 	if !(*ctx.GetVDIReturnedFlag()) {
-		setNavigatorProperties(wd, sel.Config.Language, userAgent)
+		setNavigatorProperties(wd, sel.Config.Language, userAgent, ident)
 	}
 
 	// Retrieve Browser Configuration and display it for debugging purposes:
@@ -1608,7 +1595,7 @@ func getBrowserConfiguration(wd WebDriver) (map[string]interface{}, error) {
 	return config, nil
 }
 
-func setNavigatorProperties(wd WebDriver, lang, userAgent string) {
+func setNavigatorProperties(wd WebDriver, lang, userAgent string, ident OSIdentity) {
 	lang = strings.ToLower(strings.TrimSpace(lang))
 	selectedLanguage := ""
 
@@ -1653,9 +1640,11 @@ func setNavigatorProperties(wd WebDriver, lang, userAgent string) {
 		// Mock `navigator.doNotTrack`
 		"Object.defineProperty(navigator, 'doNotTrack', {get: () => '1'})", // User enables Do Not Track
 
-		// Mock `navigator.vendor` and `navigator.platform`
+		// Mock `navigator.vendor` and `navigator.platform` from the selected
+		// advertised OS (VDI-005); the previous hardcoded 'Linux' ignored the
+		// user's browser_platform choice.
 		"Object.defineProperty(navigator, 'vendor', {get: () => 'Google Inc.'})",
-		"Object.defineProperty(navigator, 'platform', {get: () => 'Linux'})", // Mimic Linux platform
+		"Object.defineProperty(navigator, 'platform', {get: () => " + cmn.JSStringLiteral(ident.NavigatorPlatform) + "})",
 
 		// Spoof `navigator.deviceMemory`
 		//"Object.defineProperty(navigator, 'deviceMemory', {get: () => 4})", // 4 GB memory
@@ -1675,9 +1664,11 @@ func setNavigatorProperties(wd WebDriver, lang, userAgent string) {
 		"Object.defineProperty(window, 'outerWidth', {get: () => 1920})",
 		"Object.defineProperty(window, 'outerHeight', {get: () => 1080})",
 
-		// Mock `navigator.appVersion` and `navigator.userAgent`
-		fmt.Sprintf("Object.defineProperty(navigator, 'appVersion', {get: () => '%s'})", userAgent),
-		fmt.Sprintf("Object.defineProperty(navigator, 'userAgent', {get: () => '%s'})", userAgent),
+		// Mock `navigator.appVersion` and `navigator.userAgent` with safe
+		// string encoding (VDI-006: raw interpolation broke on quotes,
+		// backslashes, or non-ASCII text in the UA).
+		"Object.defineProperty(navigator, 'appVersion', {get: () => " + cmn.JSStringLiteral(userAgent) + "})",
+		"Object.defineProperty(navigator, 'userAgent', {get: () => " + cmn.JSStringLiteral(userAgent) + "})",
 
 		"Object.defineProperty(navigator, 'getBattery', {get: () => undefined})", // Disable battery API
 
@@ -1697,72 +1688,16 @@ func setNavigatorProperties(wd WebDriver, lang, userAgent string) {
 }
 
 // InjectAntiDetectionPatches injects JavaScript anti-fingerprinting logic
-func InjectAntiDetectionPatches(driver WebDriver, uaString string, platform string) error {
-
-	script := fmt.Sprintf(`
-Object.defineProperty(navigator, 'webdriver', {
-    get: () => undefined
-});
-
-Object.defineProperty(navigator, 'userAgent', {
-    get: () => "%s"
-});
-
-Object.defineProperty(navigator, 'platform', {
-    get: () => "%s"
-});
-
-if (navigator.userAgentData) {
-    Object.defineProperty(navigator.userAgentData, 'platform', { value: "%s" });
-    Object.defineProperty(navigator.userAgentData, 'mobile', { value: false });
-    Object.defineProperty(navigator.userAgentData, 'brands', {
-        value: [
-            { brand: "Chromium", version: "132" },
-            { brand: "Not-A.Brand", version: "8" }
-        ]
-    });
-}
-
-Object.defineProperty(navigator, 'plugins', {
-    get: () => [
-        { name: "Chrome PDF Viewer" },
-        { name: "Chromium PDF Plugin" }
-    ]
-});
-
-Object.defineProperty(navigator, 'mimeTypes', {
-    get: () => [
-        { type: "application/pdf", suffixes: "pdf", description: "PDF" }
-    ]
-});
-
-delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
-delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
-delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
-
-(function() {
-    const getParameter = WebGLRenderingContext.prototype.getParameter;
-    WebGLRenderingContext.prototype.getParameter = function(param) {
-        if (param === 37445) return "Intel Inc.";
-        if (param === 37446) return "Mesa Intel(R) UHD Graphics";
-        return getParameter.call(this, param);
-    };
-})();
-
-(function() {
-    const original = AudioBuffer.prototype.getChannelData;
-    AudioBuffer.prototype.getChannelData = function() {
-        const data = original.apply(this, arguments);
-        for (let i = 0; i < data.length; i += 100) {
-            data[i] = data[i] + (Math.random() * 0.0000001);
-        }
-        return data;
-    };
-})();
-
-// Debug
-console.log("loaded");
-`, uaString, platform, platform)
+// for one selection event. ident and chromeMajor must derive from the same
+// User-Agent selection (see ConnectVDI) so navigator, Client Hints, and CDP
+// surfaces agree. The script body is built by antiDetectionScript: identity
+// derivation, safe string encoding, and removal of the debug trace changed;
+// WebGL, Audio, plugin, MIME, and marker behavior is preserved.
+//
+// Custom (including synthetic) identities are preserved: values are derived
+// from the selection, never forced to host-native ones.
+func InjectAntiDetectionPatches(driver WebDriver, uaString string, ident OSIdentity, chromeMajor string) error {
+	script := antiDetectionScript(uaString, ident, chromeMajor)
 
 	err := AddScriptToEvaluateOnNewDocument(driver, 0, script)
 	if err != nil {
