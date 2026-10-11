@@ -1044,8 +1044,8 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	// Assemble the browser launch arguments with the shared builder so
 	// multi-value switches stay coherent (single --disable-features and
 	// --blink-settings values) and every fix is unit-testable without a live
-	// Selenium server.
-	args := buildLaunchArgs(browser, sel.Config.Type, userAgent, pConfig.Crawler, effectiveProxy)
+	// Selenium server. (before I used sel.Config.Type for the 2nd parameter here, but I think using browser is a better idea)
+	args := buildLaunchArgs(browser, browser, userAgent, pConfig.Crawler, effectiveProxy)
 
 	// CDP Config for Chrome/Chromium
 	var cdpActive bool
