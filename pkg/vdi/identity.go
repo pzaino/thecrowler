@@ -15,6 +15,7 @@
 package vdi
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -293,13 +294,30 @@ func forgetIdentityScript(sessionID string) {
 	delete(identityScripts.bySession, sessionID)
 }
 
+// ErrIdentityScriptUntracked reports a registration the driver acknowledged
+// without a CDP identifier: the script is active for future documents but
+// cannot be selectively removed, so a later rotation cannot replace it.
+var ErrIdentityScriptUntracked = errors.New("identity script registered without a CDP identifier")
+
 // ReplaceIdentityScript registers source as the session's new-document
 // identity script, removing the previously registered one first (review
 // finding 2). Without replacement, a request-level UA rotation would leave
 // the connection-time script (UA A) active alongside UA-B CDP overrides for
-// every subsequent navigation. Removal failure is best-effort (logged by the
-// caller pattern) and never blocks registration of the current identity;
-// session-reset and rotation policies are unchanged.
+// every subsequent navigation.
+//
+// Failure semantics (follow-up finding 1) are strict by design:
+//   - If removing the previous script fails, its identifier is RETAINED
+//     (never forgotten) and the new script is NOT registered: stacking UA B
+//     over an irremovable UA A is useless, because the non-configurable
+//     property definitions make the first script win every redefinition.
+//     The error propagates so the caller handles it explicitly; a dead
+//     session surfaces as "invalid session id" to the existing recovery
+//     paths, and the next rotation retries the removal.
+//   - If registration succeeds but reports no identifier, the script is
+//     active but untracked: ErrIdentityScriptUntracked propagates so the
+//     caller knows replacement is impossible without a session reset.
+//
+// Session-reset and rotation policies are unchanged.
 func ReplaceIdentityScript(wd WebDriver, delayMs int, source string) error {
 	if wd == nil {
 		return fmt.Errorf("webdriver is nil")
@@ -312,7 +330,7 @@ func ReplaceIdentityScript(wd WebDriver, delayMs int, source string) error {
 
 	if previous != "" {
 		if err := RemoveScriptToEvaluateOnNewDocument(wd, delayMs, previous); err != nil {
-			cmn.DebugMsg(cmn.DbgLvlDebug2, "[CDP] removing superseded identity script: %v", err)
+			return fmt.Errorf("removing superseded identity script: %w", err)
 		}
 		forgetIdentityScript(sessionID)
 	}
@@ -321,11 +339,12 @@ func ReplaceIdentityScript(wd WebDriver, delayMs int, source string) error {
 	if err != nil {
 		return err
 	}
-	if sessionID != "" && identifier != "" {
-		identityScripts.Lock()
-		identityScripts.bySession[sessionID] = identifier
-		identityScripts.Unlock()
+	if sessionID == "" || identifier == "" {
+		return fmt.Errorf("registering identity script: %w", ErrIdentityScriptUntracked)
 	}
+	identityScripts.Lock()
+	identityScripts.bySession[sessionID] = identifier
+	identityScripts.Unlock()
 	return nil
 }
 

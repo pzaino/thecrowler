@@ -312,3 +312,40 @@ func TestJSStringLiteral(t *testing.T) {
 		t.Errorf("round-trip = %q, want %q", decoded, hostile)
 	}
 }
+
+func TestFindEntryRejectsEmptyTemplates(t *testing.T) {
+	// Follow-up finding 3 (P2): an empty template must never be selected,
+	// even when it shares a group with valid entries.
+	db := &UserAgentsDB{UserAgentsGroups: []UserAgentGroup{
+		{OS: "linux", BRG: "chrome", Type: "desktop", UserAgents: []UserAgent{
+			{BR: "chrome", UA: "", PCT: 90},
+			{BR: "chrome", UA: "   ", PCT: 5},
+			{BR: "chrome", UA: "VALID-UA", PCT: 5},
+		}},
+	}}
+	for i := 0; i < 25; i++ {
+		template, _, ok := db.findEntry("desktop", "linux", "chrome")
+		if !ok {
+			t.Fatal("findEntry reported miss despite a valid candidate")
+		}
+		if template != "VALID-UA" {
+			t.Fatalf("findEntry = %q, want the only valid candidate", template)
+		}
+	}
+
+	// An all-empty group misses, driving the fallback chain instead of an
+	// empty UA.
+	emptyDB := &UserAgentsDB{UserAgentsGroups: []UserAgentGroup{
+		{OS: "linux", BRG: "chrome", Type: "desktop", UserAgents: []UserAgent{{BR: "chrome", UA: ""}}},
+	}}
+	if _, _, ok := emptyDB.findEntry("desktop", "linux", "chrome"); ok {
+		t.Error("all-empty group must miss")
+	}
+	sel := emptyDB.SelectUserAgent("desktop", "linux", "chrome", false, stubIntN)
+	if !sel.FallbackUsed || sel.UserAgent == "" {
+		t.Errorf("all-empty group selection = %#v, want non-empty fallback", sel)
+	}
+	if sel.ResolvedOS != "linux" {
+		t.Errorf("fallback resolvedOS = %q, want linux", sel.ResolvedOS)
+	}
+}

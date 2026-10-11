@@ -1,8 +1,11 @@
 package vdi
 
 import (
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/go-auxiliaries/selenium"
 )
 
 func TestMapAdvertisedOSIdentity(t *testing.T) {
@@ -222,4 +225,161 @@ func TestForgetIdentityScript(t *testing.T) {
 	}
 	// Empty session IDs are no-ops and must not panic.
 	forgetIdentityScript("")
+}
+
+func TestWebdriverBrowserName(t *testing.T) {
+	// Follow-up finding 2 (P1): Chromium registers as "chrome" so the
+	// binding's CDP gate (== "chrome") and ChromeDriver accept it, while
+	// identity selection keeps the configured type.
+	if got := webdriverBrowserName(BrowserChromium); got != BrowserChrome {
+		t.Errorf("chromium capability = %q, want chrome", got)
+	}
+	for _, tc := range []struct{ in, want string }{
+		{BrowserChrome, BrowserChrome},
+		{BrowserFirefox, BrowserFirefox},
+		{"", ""},
+		{"safari", "safari"},
+	} {
+		if got := webdriverBrowserName(tc.in); got != tc.want {
+			t.Errorf("webdriverBrowserName(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// fakeCDPDriver fakes only the WebDriver surface ReplaceIdentityScript
+// exercises; every other method comes from the embedded (nil) interface and
+// panics if called, which fails the test by design.
+type fakeCDPDriver struct {
+	selenium.WebDriver
+	sessionID string
+	cdp       func(cmd string, params map[string]interface{}) (interface{}, error)
+}
+
+func (f *fakeCDPDriver) SessionID() string { return f.sessionID }
+
+func (f *fakeCDPDriver) ExecuteChromeDPCommand(cmd string, params map[string]interface{}) (interface{}, error) {
+	return f.cdp(cmd, params)
+}
+
+func trackedID(t *testing.T, session string) (string, bool) {
+	t.Helper()
+	identityScripts.Lock()
+	defer identityScripts.Unlock()
+	id, ok := identityScripts.bySession[session]
+	return id, ok
+}
+
+func TestReplaceIdentityScriptRegisters(t *testing.T) {
+	const session = "sess-test-replace-register"
+	defer forgetIdentityScript(session)
+	var cmds []string
+	wd := &fakeCDPDriver{
+		sessionID: session,
+		cdp: func(cmd string, params map[string]interface{}) (interface{}, error) {
+			cmds = append(cmds, cmd)
+			if cmd != "Page.addScriptToEvaluateOnNewDocument" {
+				t.Errorf("unexpected CDP command %q", cmd)
+			}
+			return map[string]interface{}{"identifier": "id-A"}, nil
+		},
+	}
+	if err := ReplaceIdentityScript(wd, 0, "source-A"); err != nil {
+		t.Fatalf("ReplaceIdentityScript: %v", err)
+	}
+	if id, ok := trackedID(t, session); !ok || id != "id-A" {
+		t.Errorf("tracked = (%q, %t), want (id-A, true)", id, ok)
+	}
+}
+
+func TestReplaceIdentityScriptReplacesPrevious(t *testing.T) {
+	const session = "sess-test-replace-previous"
+	defer forgetIdentityScript(session)
+	identityScripts.Lock()
+	identityScripts.bySession[session] = "id-A"
+	identityScripts.Unlock()
+	var removed, added []string
+	wd := &fakeCDPDriver{
+		sessionID: session,
+		cdp: func(cmd string, params map[string]interface{}) (interface{}, error) {
+			switch cmd {
+			case "Page.removeScriptToEvaluateOnNewDocument":
+				removed = append(removed, params["identifier"].(string))
+				return map[string]interface{}{}, nil
+			case "Page.addScriptToEvaluateOnNewDocument":
+				added = append(added, params["source"].(string))
+				return map[string]interface{}{"identifier": "id-B"}, nil
+			default:
+				t.Errorf("unexpected CDP command %q", cmd)
+				return nil, nil
+			}
+		},
+	}
+	if err := ReplaceIdentityScript(wd, 0, "source-B"); err != nil {
+		t.Fatalf("ReplaceIdentityScript: %v", err)
+	}
+	if len(removed) != 1 || removed[0] != "id-A" {
+		t.Errorf("removed = %v, want [id-A] first", removed)
+	}
+	if len(added) != 1 || added[0] != "source-B" {
+		t.Errorf("added = %v, want [source-B]", added)
+	}
+	if id, _ := trackedID(t, session); id != "id-B" {
+		t.Errorf("tracked = %q, want id-B", id)
+	}
+}
+
+func TestReplaceIdentityScriptRemovalFailureRetains(t *testing.T) {
+	const session = "sess-test-replace-failure"
+	defer forgetIdentityScript(session)
+	identityScripts.Lock()
+	identityScripts.bySession[session] = "id-A"
+	identityScripts.Unlock()
+	addCalls := 0
+	wd := &fakeCDPDriver{
+		sessionID: session,
+		cdp: func(cmd string, params map[string]interface{}) (interface{}, error) {
+			if cmd == "Page.removeScriptToEvaluateOnNewDocument" {
+				return nil, errors.New("invalid session id")
+			}
+			addCalls++
+			return map[string]interface{}{"identifier": "id-B"}, nil
+		},
+	}
+	// Follow-up finding 1 (P1): the failure must propagate, the old
+	// identifier must be retained for a later retry, and no second script
+	// may be stacked.
+	err := ReplaceIdentityScript(wd, 0, "source-B")
+	if err == nil || !strings.Contains(err.Error(), "removing superseded") {
+		t.Fatalf("err = %v, want removal failure", err)
+	}
+	if addCalls != 0 {
+		t.Errorf("new script registered despite removal failure (%d adds)", addCalls)
+	}
+	if id, _ := trackedID(t, session); id != "id-A" {
+		t.Errorf("tracked = %q, want retained id-A", id)
+	}
+}
+
+func TestReplaceIdentityScriptUntracked(t *testing.T) {
+	const session = "sess-test-replace-untracked"
+	defer forgetIdentityScript(session)
+	wd := &fakeCDPDriver{
+		sessionID: session,
+		cdp: func(cmd string, params map[string]interface{}) (interface{}, error) {
+			return map[string]interface{}{}, nil // success, no identifier
+		},
+	}
+	err := ReplaceIdentityScript(wd, 0, "source")
+	if !errors.Is(err, ErrIdentityScriptUntracked) {
+		t.Fatalf("err = %v, want ErrIdentityScriptUntracked", err)
+	}
+	if _, ok := trackedID(t, session); ok {
+		t.Error("untracked registration must not be stored")
+	}
+}
+
+func TestReplaceIdentityScriptNilDriver(t *testing.T) {
+	if err := ReplaceIdentityScript(nil, 0, "source"); err == nil {
+		t.Error("nil driver must fail")
+	}
 }

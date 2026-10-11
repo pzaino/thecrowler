@@ -951,6 +951,25 @@ func buildLaunchArgs(browser, selType, userAgent string, crawler cfg.Crawler, ef
 	return args
 }
 
+// webdriverBrowserName normalizes the browserName WebDriver capability for
+// session registration (follow-up finding 2, P1).
+//
+// ChromeDriver serves Chromium under browserName "chrome", and the pinned
+// Selenium binding (go-auxiliaries/selenium v0.9.10) records wd.browser from
+// the requested browserName and gates ExecuteChromeDPCommand — the transport
+// for every CDP call in this package — on exactly "chrome". Registering a
+// Chromium VDI as "chromium" therefore disables the entire CDP layer,
+// including the identity-script replacement mechanism. Normalizing here
+// restores CDP for Chromium VDIs. Product identity, UA selection, launch
+// arguments, and camouflage selection keep using the configured "chromium"
+// type and are unchanged by this transport-level normalization.
+func webdriverBrowserName(browser string) string {
+	if browser == BrowserChromium {
+		return BrowserChrome
+	}
+	return browser
+}
+
 // ConnectVDI is responsible for connecting to the Selenium server instance
 func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType int) (WebDriver, error) {
 	if ctx == nil {
@@ -982,7 +1001,9 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	}
 
 	// Connect to the WebDriver instance running locally.
-	caps := selenium.Capabilities{"browserName": browser}
+	// The capability carries the normalized name (chromium registers as
+	// chrome); selection and camouflage keep the configured browser type.
+	caps := selenium.Capabilities{"browserName": webdriverBrowserName(browser)}
 
 	// Get process configuration
 	pConfig := ctx.GetConfig()

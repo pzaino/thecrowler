@@ -778,10 +778,18 @@ func changeUserAgent(wd *vdi.WebDriver, ctx *ProcessContext) error {
 	// Replace the session's new-document identity script with the current
 	// selection (review finding 2): changeUserAgent runs before navigation,
 	// so the upcoming documents must evaluate UA B, not the connection-time
-	// script. Best-effort (Firefox has no CDP bridge); rotation policy and
-	// navigation flow are unchanged.
+	// script. On CDP-capable browsers a replacement failure propagates
+	// (follow-up finding 1): setupBrowser logs it explicitly, the tracked
+	// previous script stays registered for a later retry, and a dead session
+	// reaches the existing invalid-session recovery. Firefox has no CDP
+	// bridge (and therefore no registered script to go stale), so the
+	// refresh stays best-effort there. Rotation policy and navigation flow
+	// are otherwise unchanged.
 	if rerr := vdi.RefreshIdentityScript(*wd, getCDPDelay(ctx.config), userAgent, ident, brands); rerr != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "[CDP] refreshing identity script: %v", rerr)
+		if ctx.config.Selenium[ctx.SelID].Type == "chrome" || ctx.config.Selenium[ctx.SelID].Type == "chromium" {
+			return fmt.Errorf("refreshing identity script: %w", rerr)
+		}
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[CDP] refreshing identity script (best-effort): %v", rerr)
 	}
 
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "UserAgent changed via JavaScript to: %s", userAgent)

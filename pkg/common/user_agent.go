@@ -231,8 +231,21 @@ func (uaDB *UserAgentsDB) findEntry(uaType, os, brg string) (template, br string
 		return "", "", false
 	}
 
-	// Pick a random user agent string from the group UA slice
-	idxRaw, err := rand.Int(rand.Reader, big.NewInt(int64(len(group.UserAgents))))
+	// Entries with empty templates are not candidates: accepting one
+	// previously bypassed fallback with an empty UA (follow-up finding 3,
+	// P2). Distribution over the valid entries is unchanged.
+	var candidates []UserAgent
+	for _, u := range group.UserAgents {
+		if strings.TrimSpace(u.UA) != "" {
+			candidates = append(candidates, u)
+		}
+	}
+	if len(candidates) == 0 {
+		return "", "", false
+	}
+
+	// Pick a random user agent string from the valid UA slice
+	idxRaw, err := rand.Int(rand.Reader, big.NewInt(int64(len(candidates))))
 	if err != nil {
 		return "", "", false
 	}
@@ -240,7 +253,7 @@ func (uaDB *UserAgentsDB) findEntry(uaType, os, brg string) (template, br string
 	// convert idxRaw to int
 	idx := int(idxRaw.Int64())
 
-	return group.UserAgents[idx].UA, group.UserAgents[idx].BR, true
+	return candidates[idx].UA, candidates[idx].BR, true
 }
 
 // GetAgentByTypeAndOSAndBRG returns a random user agent string from the database based on the type, OS, and BRG.
@@ -258,7 +271,7 @@ func (uaDB *UserAgentsDB) fallbackGroupFor(family, deviceClass, preferredOS stri
 	var first, linuxGroup UserAgentGroup
 	foundFirst, foundLinux := false, false
 	for _, g := range uaDB.UserAgentsGroups {
-		if g.Type != deviceClass || g.BRG != family || len(g.UserAgents) == 0 {
+		if g.Type != deviceClass || g.BRG != family || !groupHasValidEntry(g) {
 			continue
 		}
 		if !foundFirst {
@@ -275,6 +288,17 @@ func (uaDB *UserAgentsDB) fallbackGroupFor(family, deviceClass, preferredOS stri
 		return linuxGroup, true
 	}
 	return first, foundFirst
+}
+
+// groupHasValidEntry reports whether the group holds at least one
+// non-empty UA template (see findEntry's empty-template rejection).
+func groupHasValidEntry(g UserAgentGroup) bool {
+	for _, u := range g.UserAgents {
+		if strings.TrimSpace(u.UA) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // staticFallbackUA returns the static-map fallback for family+device class.

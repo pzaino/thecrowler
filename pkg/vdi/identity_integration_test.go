@@ -1,0 +1,257 @@
+//go:build integration
+
+package vdi
+
+// Controlled Client Hints consistency test (review finding 4 / VDI-021).
+//
+// It drives a live Chromium through the PR1 launch-argument builder and the
+// PR2 identity stack, then compares three surfaces for one selection event:
+// the main-document HTTP request headers observed by httptest, page-side
+// navigator values, and navigator.userAgentData (low-entropy + high-entropy
+// where the driver supports async scripts).
+//
+// Run: THECROWLER_E2E_WEBDRIVER=1 go test -tags integration ./pkg/vdi/ -run TestIdentityClientHintsIntegration -v
+// Optional: THECROWLER_E2E_WEBDRIVER_URL (default http://127.0.0.1:4444/wd/hub).
+// Without the env var (or without a reachable Selenium) the test skips.
+//
+// Deliberately non-committal on the open question: Sec-CH-UA* request
+// headers are recorded and reported, and contradictions with the selected
+// identity fail the test, but mere absence (e.g. while
+// --disable-features=UserAgentClientHint is configured) is informational.
+// The launch flag and metadata implementation must change only if this test
+// demonstrates a problem.
+
+import (
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/go-auxiliaries/selenium"
+
+	cfg "github.com/pzaino/thecrowler/pkg/config"
+)
+
+type recordedRequest struct {
+	userAgent     string
+	secCHUA       string
+	secCHMobile   string
+	secCHPlatform string
+}
+
+type headerRecorder struct {
+	mu       sync.Mutex
+	requests []recordedRequest
+}
+
+func (h *headerRecorder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.mu.Lock()
+	h.requests = append(h.requests, recordedRequest{
+		userAgent:     r.Header.Get("User-Agent"),
+		secCHUA:       r.Header.Get("Sec-CH-UA"),
+		secCHMobile:   r.Header.Get("Sec-CH-UA-Mobile"),
+		secCHPlatform: r.Header.Get("Sec-CH-UA-Platform"),
+	})
+	h.mu.Unlock()
+	w.Header().Set("Content-Type", "text/html")
+	fmt.Fprint(w, "<html><head><title>identity-fixture</title></head><body>ok</body></html>")
+}
+
+func (h *headerRecorder) last() (recordedRequest, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.requests) == 0 {
+		return recordedRequest{}, false
+	}
+	return h.requests[len(h.requests)-1], true
+}
+
+func TestIdentityClientHintsIntegration(t *testing.T) {
+	if os.Getenv("THECROWLER_E2E_WEBDRIVER") != "1" {
+		t.Skip("set THECROWLER_E2E_WEBDRIVER=1 to run the identity/Client-Hints integration test")
+	}
+	webdriverURL := strings.TrimSpace(os.Getenv("THECROWLER_E2E_WEBDRIVER_URL"))
+	if webdriverURL == "" {
+		webdriverURL = "http://127.0.0.1:4444/wd/hub"
+	}
+
+	recorder := &headerRecorder{}
+	server := httptest.NewServer(recorder)
+	defer server.Close()
+
+	// Fixed selection: windows/chrome identity at the runtime major so the
+	// derived brands can agree with every surface at once.
+	const selectedUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36"
+	const rotatedUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
+	newDriver := func(t *testing.T, ua string) selenium.WebDriver {
+		t.Helper()
+		args := buildLaunchArgs(BrowserChrome, BrowserChrome, ua, cfg.Crawler{
+			RequestImages:  true,
+			RequestCSS:     true,
+			RequestScripts: true,
+			RequestPlugins: true,
+		}, "")
+		capabilities := selenium.Capabilities{"browserName": "chrome"}
+		capabilities.AddChrome(buildChromeCapabilities(append(args,
+			"--headless=new",
+			"--no-sandbox",
+			"--disable-dev-shm-usage",
+		), map[string]interface{}{}))
+		wd, err := selenium.NewRemote(capabilities, webdriverURL)
+		if err != nil {
+			t.Skipf("Selenium/Chrome unavailable at %s: %v", webdriverURL, err)
+		}
+		return wd
+	}
+
+	wd := newDriver(t, selectedUA)
+	defer func() { _ = wd.Quit() }()
+
+	mustScript := func(t *testing.T, script string) interface{} {
+		t.Helper()
+		value, err := wd.ExecuteScript(script, nil)
+		if err != nil {
+			t.Fatalf("ExecuteScript(%q): %v", script, err)
+		}
+		return value
+	}
+
+	ident := MapAdvertisedOSIdentity("windows", false)
+	major, ok := ChromeMajorVersion(selectedUA)
+	if !ok || major != "132" {
+		t.Fatalf("fixture UA major = %q, %t", major, ok)
+	}
+	brands := ClientHintBrandsFor("chrome", major, "")
+
+	// Phase 0 — initial ConnectVDI flow (launch-args UA only; no script, no
+	// CDP override yet). Documents the baseline the crawler's first
+	// navigation actually uses. The HTTP UA must already equal the launch
+	// argument; page-side identity is still native here by construction.
+	if err := wd.Get(server.URL + "/phase0"); err != nil {
+		t.Fatalf("Get(phase0 fixture): %v", err)
+	}
+	observed, ok := recorder.last()
+	if !ok {
+		t.Fatal("fixture server observed no request")
+	}
+	if observed.userAgent != selectedUA {
+		t.Errorf("phase0 HTTP User-Agent = %q, want launch-args %q", observed.userAgent, selectedUA)
+	}
+	t.Logf("phase0 (launch args only): HTTP-UA=%q native-JS-UA=%q Sec-CH-UA=%q Mobile=%q Platform=%q",
+		observed.userAgent,
+		fmt.Sprint(mustScript(t, "return navigator.userAgent")),
+		observed.secCHUA, observed.secCHMobile, observed.secCHPlatform)
+
+	// Phase 1 — new-document script only (still no CDP override): this is the
+	// initial-flow observation the validation note asks for. JS identity must
+	// equal the selection; HTTP Client Hints (if the browser sends any while
+	// --disable-features=UserAgentClientHint is configured) are recorded and
+	// reported, not asserted.
+	if err := ReplaceIdentityScript(wd, 0, antiDetectionScript(selectedUA, ident, brands)); err != nil {
+		t.Fatalf("ReplaceIdentityScript: %v", err)
+	}
+	if err := wd.Get(server.URL + "/phase1"); err != nil {
+		t.Fatalf("Get(phase1 fixture): %v", err)
+	}
+	observed, ok = recorder.last()
+	if !ok {
+		t.Fatal("fixture server observed no phase1 request")
+	}
+	if observed.userAgent != selectedUA {
+		t.Errorf("phase1 HTTP User-Agent = %q, want %q", observed.userAgent, selectedUA)
+	}
+	if got := fmt.Sprint(mustScript(t, "return navigator.userAgent")); got != selectedUA {
+		t.Errorf("phase1 navigator.userAgent = %q, want %q", got, selectedUA)
+	}
+	t.Logf("phase1 (script, no CDP override): HTTP-UA=%q Sec-CH-UA=%q Mobile=%q Platform=%q JS-brands=%s",
+		observed.userAgent, observed.secCHUA, observed.secCHMobile, observed.secCHPlatform,
+		fmt.Sprint(mustScript(t, "return JSON.stringify((navigator.userAgentData && navigator.userAgentData.brands) || [])")))
+
+	// Phase 2 — full identity (CDP override + script): every surface must
+	// agree with the selection.
+	if err := EnableNetwork(wd, 0, nil); err != nil {
+		t.Fatalf("EnableNetwork: %v", err)
+	}
+	if err := SetUserAgentOverrideWithMetadata(wd, 0, selectedUA, ident, brands); err != nil {
+		t.Fatalf("SetUserAgentOverrideWithMetadata: %v", err)
+	}
+
+	if err := wd.Get(server.URL); err != nil {
+		t.Fatalf("Get(fixture): %v", err)
+	}
+
+	// 1. HTTP surface: the main-document request must carry the selected UA.
+	observed, ok = recorder.last()
+	if !ok {
+		t.Fatal("fixture server observed no request")
+	}
+	if observed.userAgent != selectedUA {
+		t.Errorf("HTTP User-Agent = %q, want %q", observed.userAgent, selectedUA)
+	}
+
+	// 2. JavaScript surface: navigator values must equal the selection.
+	if got := fmt.Sprint(mustScript(t, "return navigator.userAgent")); got != selectedUA {
+		t.Errorf("navigator.userAgent = %q, want %q", got, selectedUA)
+	}
+	if got := fmt.Sprint(mustScript(t, "return navigator.platform")); got != "Win32" {
+		t.Errorf("navigator.platform = %q, want Win32", got)
+	}
+	if got := fmt.Sprint(mustScript(t, "return (navigator.userAgentData && navigator.userAgentData.platform) || ''")); got != "Windows" {
+		t.Errorf("userAgentData.platform = %q, want Windows", got)
+	}
+	if got := fmt.Sprint(mustScript(t, "return (navigator.userAgentData && String(navigator.userAgentData.mobile)) || ''")); got != "false" {
+		t.Errorf("userAgentData.mobile = %q, want false", got)
+	}
+	brandsJSON := fmt.Sprint(mustScript(t, "return JSON.stringify((navigator.userAgentData && navigator.userAgentData.brands) || [])"))
+	if !strings.Contains(brandsJSON, `"Chromium"`) || !strings.Contains(brandsJSON, `"132"`) {
+		t.Errorf("userAgentData.brands = %s, want Chromium at 132", brandsJSON)
+	}
+
+	// 3. Client Hints request headers: recorded and cross-checked when the
+	// browser sends them; absence is informational (open question: interaction
+	// with --disable-features=UserAgentClientHint), contradiction is fatal.
+	t.Logf("observed request headers: UA=%q Sec-CH-UA=%q Mobile=%q Platform=%q",
+		observed.userAgent, observed.secCHUA, observed.secCHMobile, observed.secCHPlatform)
+	if observed.secCHUA != "" && !strings.Contains(observed.secCHUA, `"Chromium"`) {
+		t.Errorf("Sec-CH-UA = %q contradicts the selected Chromium identity", observed.secCHUA)
+	}
+	if observed.secCHPlatform != "" && !strings.Contains(observed.secCHPlatform, "Windows") {
+		t.Errorf("Sec-CH-UA-Platform = %q contradicts the selected Windows identity", observed.secCHPlatform)
+	}
+
+	// 4. High-entropy values are observable (informational baseline).
+	if highEntropy, err := wd.ExecuteScriptAsync(`const done = arguments[0];
+		if (!navigator.userAgentData || !navigator.userAgentData.getHighEntropyValues) { done("unavailable"); return; }
+		navigator.userAgentData.getHighEntropyValues(["platformVersion", "architecture", "model", "bitness"]).then(
+			v => done(JSON.stringify(v)), e => done("error:" + e));`, nil); err != nil {
+		t.Logf("high-entropy values unavailable: %v", err)
+	} else {
+		t.Logf("high-entropy values: %v", highEntropy)
+	}
+
+	// 5. Rotation (finding 2, end-to-end): replacing the registration must
+	// move later navigations to the new identity in the same session.
+	rotMajor, _ := ChromeMajorVersion(rotatedUA)
+	rotBrands := ClientHintBrandsFor("chrome", rotMajor, "")
+	rotIdent := MapAdvertisedOSIdentity("windows", false)
+	if err := SetUserAgentOverrideWithMetadata(wd, 0, rotatedUA, rotIdent, rotBrands); err != nil {
+		t.Fatalf("rotation CDP override: %v", err)
+	}
+	if err := RefreshIdentityScript(wd, 0, rotatedUA, rotIdent, rotBrands); err != nil {
+		t.Fatalf("RefreshIdentityScript: %v", err)
+	}
+	if err := wd.Get(server.URL + "/rotated"); err != nil {
+		t.Fatalf("Get(rotated fixture): %v", err)
+	}
+	if got := fmt.Sprint(mustScript(t, "return navigator.userAgent")); got != rotatedUA {
+		t.Errorf("post-rotation navigator.userAgent = %q, want %q (stale script)", got, rotatedUA)
+	}
+	observed, ok = recorder.last()
+	if !ok || observed.userAgent != rotatedUA {
+		t.Errorf("post-rotation HTTP User-Agent = %+v, want %q", observed, rotatedUA)
+	}
+}
