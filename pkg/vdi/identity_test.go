@@ -50,10 +50,39 @@ func TestChromeMajorVersion(t *testing.T) {
 	}
 }
 
+func TestClientHintBrandsFor(t *testing.T) {
+	chrome := ClientHintBrandsFor("chrome", "131", "")
+	if len(chrome) != 2 || chrome[0] != (ClientHintBrand{Brand: "Chromium", Version: "131"}) {
+		t.Errorf("chrome brands = %+v, want two-brand Chromium shape at 131", chrome)
+	}
+	edge := ClientHintBrandsFor("edge", "131", "131")
+	if len(edge) != 3 || edge[2] != (ClientHintBrand{Brand: "Microsoft Edge", Version: "131"}) {
+		t.Errorf("edge brands = %+v, want Chromium + Not-A.Brand + Microsoft Edge", edge)
+	}
+	opera := ClientHintBrandsFor("opera", "130", "115")
+	if len(opera) != 3 || opera[2] != (ClientHintBrand{Brand: "Opera", Version: "115"}) {
+		t.Errorf("opera brands = %+v, want Chromium + Not-A.Brand + Opera 115", opera)
+	}
+	// Legacy EdgeHTML (no Edg/ major) and non-Chromium products yield none.
+	if got := ClientHintBrandsFor("edge", "70", ""); got != nil {
+		t.Errorf("legacy edge brands = %+v, want nil", got)
+	}
+	if got := ClientHintBrandsFor("firefox", "", ""); got != nil {
+		t.Errorf("firefox brands = %+v, want nil", got)
+	}
+	if got := ClientHintBrandsFor("safari", "", ""); got != nil {
+		t.Errorf("safari brands = %+v, want nil", got)
+	}
+	if got := ClientHintBrandsFor("chrome", "", ""); got != nil {
+		t.Errorf("versionless chrome brands = %+v, want nil", got)
+	}
+}
+
 func TestAntiDetectionScriptIdentity(t *testing.T) {
 	ua := `Test UA "with quotes" and \ backslash ✓`
 	ident := MapAdvertisedOSIdentity("windows", false)
-	script := antiDetectionScript(ua, ident, "131")
+	brands := ClientHintBrandsFor("chrome", "131", "")
+	script := antiDetectionScript(ua, ident, brands)
 
 	// Safe encoding: the hostile UA appears only as a JSON literal.
 	if !strings.Contains(script, `"Test UA \"with quotes\" and \\ backslash ✓"`) {
@@ -99,9 +128,18 @@ func TestAntiDetectionScriptIdentity(t *testing.T) {
 	}
 }
 
+func TestAntiDetectionScriptEdgeIdentity(t *testing.T) {
+	ua := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0"
+	ident := MapAdvertisedOSIdentity("windows", false)
+	script := antiDetectionScript(ua, ident, ClientHintBrandsFor("edge", "131", "131"))
+	if !strings.Contains(script, `"Microsoft Edge"`) || !strings.Contains(script, `"131"`) {
+		t.Errorf("edge script lacks Microsoft Edge brand:\n%s", script)
+	}
+}
+
 func TestAntiDetectionScriptNonChromeIdentity(t *testing.T) {
 	ident := MapAdvertisedOSIdentity("linux", false)
-	script := antiDetectionScript("Mozilla/5.0 Firefox/133.0", ident, "")
+	script := antiDetectionScript("Mozilla/5.0 Firefox/133.0", ident, nil)
 	if strings.Contains(script, `"brands"`) || strings.Contains(script, "Not-A.Brand") {
 		t.Error("non-Chrome identity must not advertise fabricated Client Hints brands")
 	}
@@ -112,7 +150,7 @@ func TestAntiDetectionScriptNonChromeIdentity(t *testing.T) {
 
 func TestUserAgentOverrideParams(t *testing.T) {
 	ident := MapAdvertisedOSIdentity("darwin", false)
-	params := userAgentOverrideParams("test-ua", ident.NavigatorPlatform, ident, "132")
+	params := userAgentOverrideParams("test-ua", ident.NavigatorPlatform, ident, ClientHintBrandsFor("chrome", "132", ""))
 
 	if params["userAgent"] != "test-ua" {
 		t.Errorf("userAgent = %v", params["userAgent"])
@@ -139,11 +177,49 @@ func TestUserAgentOverrideParams(t *testing.T) {
 	}
 
 	// Non-Chrome identity: no fabricated metadata.
-	params = userAgentOverrideParams("firefox-ua", "Linux x86_64", MapAdvertisedOSIdentity("linux", false), "")
+	params = userAgentOverrideParams("firefox-ua", "Linux x86_64", MapAdvertisedOSIdentity("linux", false), nil)
 	if _, ok := params["userAgentMetadata"]; ok {
 		t.Errorf("non-Chrome params must omit userAgentMetadata: %v", params)
 	}
 	if params["platform"] != "Linux x86_64" {
 		t.Errorf("platform = %v", params["platform"])
 	}
+
+	// Edge identity: product brand present with its own major.
+	edgeParams := userAgentOverrideParams("edge-ua", "Win32", MapAdvertisedOSIdentity("windows", false),
+		ClientHintBrandsFor("edge", "131", "131"))
+	edgeMeta, ok := edgeParams["userAgentMetadata"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("edge params missing metadata: %v", edgeParams)
+	}
+	edgeBrands, ok := edgeMeta["brands"].([]map[string]interface{})
+	if !ok || len(edgeBrands) != 3 || edgeBrands[2]["brand"] != "Microsoft Edge" {
+		t.Errorf("edge metadata brands = %v", edgeMeta["brands"])
+	}
+}
+
+func TestParseScriptIdentifier(t *testing.T) {
+	if got := parseScriptIdentifier(map[string]interface{}{"identifier": "abc-123"}); got != "abc-123" {
+		t.Errorf("identifier = %q, want abc-123", got)
+	}
+	for _, bad := range []interface{}{nil, "abc", map[string]interface{}{}, map[string]interface{}{"identifier": 42}} {
+		if got := parseScriptIdentifier(bad); got != "" {
+			t.Errorf("parseScriptIdentifier(%v) = %q, want empty", bad, got)
+		}
+	}
+}
+
+func TestForgetIdentityScript(t *testing.T) {
+	identityScripts.Lock()
+	identityScripts.bySession["sess-test-forget"] = "id-1"
+	identityScripts.Unlock()
+	forgetIdentityScript("sess-test-forget")
+	identityScripts.Lock()
+	_, stillThere := identityScripts.bySession["sess-test-forget"]
+	identityScripts.Unlock()
+	if stillThere {
+		t.Error("forgetIdentityScript did not drop the registration")
+	}
+	// Empty session IDs are no-ops and must not panic.
+	forgetIdentityScript("")
 }

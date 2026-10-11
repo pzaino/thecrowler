@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math/big"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -95,8 +96,10 @@ func (uaDB *UserAgentsDB) InitUserAgentsDB() error {
 				}
 
 				uaStr, _ := uaMap["ua"].(string)
+				br, _ := uaMap["br"].(string)
 				pct, _ := uaMap["pct"].(float64)
 				userAgents = append(userAgents, UserAgent{
+					BR:  br,
 					UA:  uaStr,
 					PCT: pct,
 				})
@@ -188,10 +191,14 @@ func (uaDB *UserAgentsDB) GetAgentByTypeAndOS(uaType, os string) string {
 	return group.UserAgents[idx].UA
 }
 
-// GetAgentByTypeAndOSAndBRG returns a random user agent string from the database based on the type, OS, and BRG.
-func (uaDB *UserAgentsDB) GetAgentByTypeAndOSAndBRG(uaType, os, brg string) string {
+// findEntry locates the group matching type/OS/BRG and picks one entry
+// uniformly at random (crypto/rand), mirroring the long-standing selection
+// distribution. It returns the raw template, the entry's browser-product
+// metadata (BR field; may be empty in older data), and whether a pick was
+// made. GetAgentByTypeAndOSAndBRG delegates to it, preserving behavior.
+func (uaDB *UserAgentsDB) findEntry(uaType, os, brg string) (template, br string, ok bool) {
 	if uaDB.IsEmpty() {
-		return ""
+		return "", "", false
 	}
 
 	// Check if brg is set to "random"
@@ -221,19 +228,92 @@ func (uaDB *UserAgentsDB) GetAgentByTypeAndOSAndBRG(uaType, os, brg string) stri
 
 	// Pick a random user agent string
 	if len(group.UserAgents) == 0 {
-		return ""
+		return "", "", false
 	}
 
 	// Pick a random user agent string from the group UA slice
 	idxRaw, err := rand.Int(rand.Reader, big.NewInt(int64(len(group.UserAgents))))
 	if err != nil {
-		return ""
+		return "", "", false
 	}
 
 	// convert idxRaw to int
 	idx := int(idxRaw.Int64())
 
-	return group.UserAgents[idx].UA
+	return group.UserAgents[idx].UA, group.UserAgents[idx].BR, true
+}
+
+// GetAgentByTypeAndOSAndBRG returns a random user agent string from the database based on the type, OS, and BRG.
+func (uaDB *UserAgentsDB) GetAgentByTypeAndOSAndBRG(uaType, os, brg string) string {
+	template, _, _ := uaDB.findEntry(uaType, os, brg)
+	return template
+}
+
+// fallbackGroupFor returns the best available group for family+device class
+// when the exact OS group is missing: it prefers the requested OS (relevant
+// on the product-degradation path, where another family may serve it),
+// then the linux OS group (the global default platform), else the first
+// match in database order. The boolean reports whether any group matched.
+func (uaDB *UserAgentsDB) fallbackGroupFor(family, deviceClass, preferredOS string) (UserAgentGroup, bool) {
+	var first, linuxGroup UserAgentGroup
+	foundFirst, foundLinux := false, false
+	for _, g := range uaDB.UserAgentsGroups {
+		if g.Type != deviceClass || g.BRG != family || len(g.UserAgents) == 0 {
+			continue
+		}
+		if !foundFirst {
+			first, foundFirst = g, true
+		}
+		if g.OS == preferredOS {
+			return g, true
+		}
+		if g.OS == "linux" && !foundLinux {
+			linuxGroup, foundLinux = g, true
+		}
+	}
+	if foundLinux {
+		return linuxGroup, true
+	}
+	return first, foundFirst
+}
+
+// staticFallbackUA returns the static-map fallback for family+device class.
+// Chromium shares chrome's (newer, compatible) entry; families without a
+// static entry report false.
+func staticFallbackUA(family string, mobile bool) (string, bool) {
+	key := family
+	if key == "chromium" {
+		key = "chrome"
+	}
+	suffix := "-desktop01"
+	if mobile {
+		suffix = "-mobile01"
+	}
+	ua, ok := UsrAgentStrMap[key+suffix]
+	if !ok || strings.TrimSpace(ua) == "" {
+		return "", false
+	}
+	return ua, true
+}
+
+// osOfStaticUA derives the advertised-OS key from a fallback UA's OS token
+// so a fallback never advertises a contradictory platform. Unknown tokens
+// keep the previously resolved key.
+func osOfStaticUA(userAgent, resolvedOS string) string {
+	switch {
+	case strings.Contains(userAgent, "Windows"):
+		return "windows"
+	case strings.Contains(userAgent, "Macintosh"):
+		return "darwin"
+	case strings.Contains(userAgent, "Android"):
+		return "android"
+	case strings.Contains(userAgent, "iPhone"), strings.Contains(userAgent, "iPad"):
+		return "ios"
+	case strings.Contains(userAgent, "X11"), strings.Contains(userAgent, "Linux"):
+		return "linux"
+	default:
+		return resolvedOS
+	}
 }
 
 // GetAgentByTypeAndOSAndBRGAndPCT returns a random user agent string from the database based on the type, OS, BRG, and PCT.
@@ -372,55 +452,203 @@ func ResolveAdvertisedOS(browserPlatform, deviceClass string, intN func(int) int
 	return pool[intN(len(pool))%len(pool)]
 }
 
+// UASelection is the resolved browser identity for one selection event.
+// Every consumer in the event (launch flags, JavaScript patches, CDP
+// overrides) derives from these values together, so surfaces agree.
+type UASelection struct {
+	// UserAgent is the expanded, ready-to-advertise string (may be empty
+	// only when no source at all produced one; see FallbackUsed).
+	UserAgent string
+	// ResolvedOS is the advertised-OS key. The fallback chain may adjust it
+	// to the OS of the selected UA so metadata never contradicts the UA.
+	ResolvedOS string
+	// Family is the mapped database family (chromium shares chrome's).
+	Family string
+	// Product is the browser-product identity (edge, opera, chrome,
+	// chromium, firefox, safari, herring, atcontent, or ""): the DB BR
+	// field on a hit, else derived from UA tokens.
+	Product string
+	// FallbackUsed reports database-miss fallback (diagnostic only).
+	FallbackUsed bool
+	// DegradedProduct reports product degradation (e.g. edge requested but
+	// no Edge UA available, chrome advertised instead) for diagnostics.
+	DegradedProduct bool
+}
+
 // SelectUserAgent is the single shared mechanic for User-Agent selection at
 // connection time (ConnectVDI) and request time (changeUserAgent). It
 // performs family mapping (VDI-003), database lookup by device class and
 // resolved advertised OS, template expansion with the caller-provided random
-// source (VDI-004), and profile-aware fallback to the static map for the
-// same family and device class when the database misses.
+// source (VDI-004), product resolution (review finding 1), and
+// identity-aware fallback when the database misses (review finding 3).
 //
 // mobile selects the fallback device class when the database misses; callers
 // pass their historical rule unchanged (ConnectVDI: browseType == 1;
 // changeUserAgent: Platform != "desktop"). Rotation policy (when selection
 // runs: on_start/always/never) is untouched and stays with the callers.
 //
-// It returns the selected UA, the resolved advertised-OS key (so JavaScript
-// and CDP surfaces in the same selection event use identical labels), and
-// whether the static fallback was used (diagnostic only: callers log it,
-// never rewrite the selection).
-func (uaDB *UserAgentsDB) SelectUserAgent(deviceClass, advertisedOS, browserType string, mobile bool, intN func(int) int) (userAgent, resolvedOS string, fallbackUsed bool) {
+// Fallback chain (first hit wins; FallbackUsed set for every step past the
+// direct lookup):
+//  1. exact group (device class, resolved OS, family);
+//  2. same family+class group (requested OS, then linux, then first in DB
+//     order), with ResolvedOS adjusted to the group's OS;
+//  3. static map for the same family+class, with ResolvedOS derived from the
+//     fallback UA's OS token;
+//  4. product degradation to chrome (same class, steps 2-3), keeping OS
+//     consistent and setting DegradedProduct.
+func (uaDB *UserAgentsDB) SelectUserAgent(deviceClass, advertisedOS, browserType string, mobile bool, intN func(int) int) UASelection {
 	family := UAFamilyForBrowser(browserType)
-	resolvedOS = ResolveAdvertisedOS(advertisedOS, deviceClass, intN)
+	resolvedOS := ResolveAdvertisedOS(advertisedOS, deviceClass, intN)
 
-	selected := uaDB.GetAgentByTypeAndOSAndBRG(deviceClass, resolvedOS, family)
-	if selected == "" {
-		fallbackUsed = true
-		suffix := "-desktop01"
-		if mobile {
-			suffix = "-mobile01"
+	if template, br, ok := uaDB.findEntry(deviceClass, resolvedOS, family); ok {
+		expanded := ExpandUserAgentTemplate(template, intN)
+		return UASelection{
+			UserAgent:  expanded,
+			ResolvedOS: resolvedOS,
+			Family:     family,
+			Product:    BrowserProduct(expanded, br),
 		}
-		selected = UsrAgentStrMap[family+suffix]
 	}
-	return ExpandUserAgentTemplate(selected, intN), resolvedOS, fallbackUsed
+
+	if sel, ok := uaDB.fallbackFromGroup(deviceClass, family, resolvedOS, intN); ok {
+		return sel
+	}
+	if sel, ok := staticFallbackSelection(family, mobile, resolvedOS, intN); ok {
+		return sel
+	}
+	if family != "chrome" {
+		if sel, ok := uaDB.fallbackFromGroup(deviceClass, "chrome", resolvedOS, intN); ok {
+			sel.DegradedProduct = true
+			return sel
+		}
+		if sel, ok := staticFallbackSelection("chrome", mobile, resolvedOS, intN); ok {
+			sel.DegradedProduct = true
+			return sel
+		}
+	}
+	return UASelection{
+		Family:          family,
+		ResolvedOS:      resolvedOS,
+		FallbackUsed:    true,
+		DegradedProduct: family != "chrome",
+	}
 }
 
-// UserAgentCompatibilityNote diagnoses a selected UA against the requested
-// browser family without rejecting it. It returns "" when nothing is worth
-// reporting, otherwise a short human-readable note for debug logging. A
-// natively different version or an intentional custom identity is not an
-// error; only likely misconfigurations are reported.
-func UserAgentCompatibilityNote(selectedUA, browserFamily string, fallbackUsed bool) string {
-	if selectedUA == "" {
+// fallbackFromGroup builds a selection from the best available group for
+// family+class (requested OS, then linux, then first in DB order). The
+// advertised OS follows the group's OS so the UA and metadata always agree.
+func (uaDB *UserAgentsDB) fallbackFromGroup(deviceClass, family, resolvedOS string, intN func(int) int) (UASelection, bool) {
+	group, ok := uaDB.fallbackGroupFor(family, deviceClass, resolvedOS)
+	if !ok {
+		return UASelection{}, false
+	}
+	template, br, ok := uaDB.findEntry(deviceClass, group.OS, family)
+	if !ok {
+		return UASelection{}, false
+	}
+	expanded := ExpandUserAgentTemplate(template, intN)
+	return UASelection{
+		UserAgent:    expanded,
+		ResolvedOS:   group.OS,
+		Family:       family,
+		Product:      BrowserProduct(expanded, br),
+		FallbackUsed: true,
+	}, true
+}
+
+// staticFallbackSelection builds a selection from the static map for
+// family+class, deriving the advertised OS from the fallback UA's own OS
+// token so a Linux static UA is never advertised as Windows (or vice versa).
+func staticFallbackSelection(family string, mobile bool, resolvedOS string, intN func(int) int) (UASelection, bool) {
+	template, ok := staticFallbackUA(family, mobile)
+	if !ok {
+		return UASelection{}, false
+	}
+	expanded := ExpandUserAgentTemplate(template, intN)
+	return UASelection{
+		UserAgent:    expanded,
+		ResolvedOS:   osOfStaticUA(expanded, resolvedOS),
+		Family:       UAFamilyForBrowser(family),
+		Product:      BrowserProduct(expanded, UAFamilyForBrowser(family)),
+		FallbackUsed: true,
+	}, true
+}
+
+var (
+	operaTokenPattern   = regexp.MustCompile(`OPR/(\d+)`)
+	edgeTokenPattern    = regexp.MustCompile(`Edg/(\d+)`)
+	chromeTokenPattern  = regexp.MustCompile(`Chrome/(\d+)`)
+	firefoxTokenPattern = regexp.MustCompile(`Firefox/`)
+)
+
+// BrowserProduct resolves the browser-product identity for a selected UA.
+// UA tokens win over database metadata (tokens are what the UA advertises):
+// OPR/ means opera, modern Edg/ means edge (legacy Edge/ without Edg/ is
+// EdgeHTML, reported as edge but carrying no Chromium brand surface).
+// Otherwise a Chrome/ token with database metadata preserves that product
+// (chrome, chromium, herring, atcontent); without metadata it is chrome.
+// Firefox/ and (Chromeless) Safari/ map to firefox and safari; anything else
+// keeps the database product or reports "".
+func BrowserProduct(userAgent, dbBR string) string {
+	switch {
+	case operaTokenPattern.MatchString(userAgent):
+		return "opera"
+	case edgeTokenPattern.MatchString(userAgent):
+		return "edge"
+	case chromeTokenPattern.MatchString(userAgent):
+		if dbBR != "" {
+			return strings.ToLower(strings.TrimSpace(dbBR))
+		}
+		return "chrome"
+	case firefoxTokenPattern.MatchString(userAgent):
+		return "firefox"
+	case strings.Contains(userAgent, "Safari/"):
+		return "safari"
+	default:
+		return strings.ToLower(strings.TrimSpace(dbBR))
+	}
+}
+
+// ProductMajorVersion extracts the product's own major version from UA
+// tokens (Edg/ for edge, OPR/ for opera). It returns "" when the product
+// carries no distinct version token.
+func ProductMajorVersion(userAgent, product string) string {
+	var pattern *regexp.Regexp
+	switch product {
+	case "edge":
+		pattern = edgeTokenPattern
+	case "opera":
+		pattern = operaTokenPattern
+	default:
+		return ""
+	}
+	m := pattern.FindStringSubmatch(userAgent)
+	if len(m) != 2 {
+		return ""
+	}
+	return m[1]
+}
+
+// UserAgentCompatibilityNote diagnoses a selection without rejecting it.
+// It returns "" when nothing is worth reporting, otherwise a short
+// human-readable note for debug logging. A natively different version or an
+// intentional custom identity is not an error; only likely misconfigurations
+// (empty result, fallback use, product degradation, token mismatch) are
+// reported.
+func UserAgentCompatibilityNote(sel UASelection) string {
+	if sel.UserAgent == "" {
 		return "user-agent selection produced an empty string"
 	}
-	if fallbackUsed {
-		return "user-agent database lookup missed; static fallback in use for family " + UAFamilyForBrowser(browserFamily)
+	if sel.DegradedProduct {
+		return "no " + sel.Family + " identity available; advertising chrome instead (requested OS kept consistent)"
 	}
-	family := UAFamilyForBrowser(browserFamily)
-	if (family == "chrome" || family == "chromium") && !strings.Contains(selectedUA, "Chrome/") && !strings.Contains(selectedUA, "Chromium") {
+	if sel.FallbackUsed {
+		return "user-agent database lookup missed; fallback in use for family " + sel.Family
+	}
+	if (sel.Family == "chrome" || sel.Family == "chromium") && !strings.Contains(sel.UserAgent, "Chrome/") && !strings.Contains(sel.UserAgent, "Chromium") {
 		return "chrome-family selection does not contain a Chrome/Chromium token"
 	}
-	if family == "firefox" && !strings.Contains(selectedUA, "Firefox/") {
+	if sel.Family == "firefox" && !strings.Contains(sel.UserAgent, "Firefox/") {
 		return "firefox-family selection does not contain a Firefox token"
 	}
 	return ""

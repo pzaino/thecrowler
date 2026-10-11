@@ -98,65 +98,188 @@ func TestResolveAdvertisedOS(t *testing.T) {
 // syntheticUA returns a minimal in-memory database for selection tests.
 func syntheticUA() *UserAgentsDB {
 	return &UserAgentsDB{UserAgentsGroups: []UserAgentGroup{
-		{OS: "linux", BRG: "chrome", Type: "desktop", UserAgents: []UserAgent{{UA: "UA-linux-chrome-{random_int2}", PCT: 50}}},
-		{OS: "windows", BRG: "chrome", Type: "desktop", UserAgents: []UserAgent{{UA: "UA-win-chrome", PCT: 25}}},
-		{OS: "android", BRG: "chrome", Type: "mobile", UserAgents: []UserAgent{{UA: "UA-android-chrome-mobile", PCT: 48}}},
-		{OS: "linux", BRG: "firefox", Type: "desktop", UserAgents: []UserAgent{{UA: "UA-linux-firefox", PCT: 7}}},
+		{OS: "linux", BRG: "chrome", Type: "desktop", UserAgents: []UserAgent{{BR: "chrome", UA: "UA-linux-chrome-{random_int2}", PCT: 50}}},
+		{OS: "windows", BRG: "chrome", Type: "desktop", UserAgents: []UserAgent{{BR: "edge", UA: "UA-win-edge Edg/131", PCT: 25}}},
+		{OS: "android", BRG: "chrome", Type: "mobile", UserAgents: []UserAgent{{BR: "chrome", UA: "UA-android-chrome-mobile", PCT: 48}}},
+		{OS: "linux", BRG: "firefox", Type: "desktop", UserAgents: []UserAgent{{BR: "firefox", UA: "UA-linux-firefox", PCT: 7}}},
 	}}
 }
 
 func TestSelectUserAgentChromiumSharesChromeGroup(t *testing.T) {
 	db := syntheticUA()
 	// VDI-003: "chromium" must hit the chrome group, not the static fallback.
-	ua, resolvedOS, fallback := db.SelectUserAgent("desktop", "linux", "chromium", false, func(int) int { return 3 })
-	if fallback {
-		t.Errorf("chromium selection unexpectedly used fallback: %q", ua)
+	sel := db.SelectUserAgent("desktop", "linux", "chromium", false, func(int) int { return 3 })
+	if sel.FallbackUsed {
+		t.Errorf("chromium selection unexpectedly used fallback: %q", sel.UserAgent)
 	}
-	if resolvedOS != "linux" {
-		t.Errorf("resolvedOS = %q, want linux", resolvedOS)
+	if sel.ResolvedOS != "linux" {
+		t.Errorf("resolvedOS = %q, want linux", sel.ResolvedOS)
 	}
-	if want := "UA-linux-chrome-3"; ua != want {
-		t.Errorf("ua = %q, want %q", ua, want)
+	if want := "UA-linux-chrome-3"; sel.UserAgent != want {
+		t.Errorf("ua = %q, want %q", sel.UserAgent, want)
+	}
+	if sel.Family != "chrome" || sel.Product != "chrome" {
+		t.Errorf("family/product = %q/%q, want chrome/chrome", sel.Family, sel.Product)
+	}
+}
+
+func TestSelectUserAgentPreservesProductMetadata(t *testing.T) {
+	db := syntheticUA()
+	// Review finding 1: the entry BR field must survive selection.
+	sel := db.SelectUserAgent("desktop", "windows", "chrome", false, stubIntN)
+	if sel.FallbackUsed {
+		t.Fatalf("expected DB hit, got fallback: %q", sel.UserAgent)
+	}
+	if sel.Product != "edge" {
+		t.Errorf("product = %q, want edge (entry BR preserved)", sel.Product)
 	}
 }
 
 func TestSelectUserAgentFallbackIsProfileAware(t *testing.T) {
 	db := &UserAgentsDB{} // empty: every lookup misses
 	// Chromium falls back to the chrome family, same device class.
-	ua, _, fallback := db.SelectUserAgent("desktop", "linux", "chromium", false, stubIntN)
-	if !fallback {
+	sel := db.SelectUserAgent("desktop", "linux", "chromium", false, stubIntN)
+	if !sel.FallbackUsed {
 		t.Error("empty DB must report fallbackUsed")
 	}
-	if want := UsrAgentStrMap["chrome-desktop01"]; ua != want {
-		t.Errorf("chromium desktop fallback = %q, want chrome-desktop01 %q", ua, want)
+	if want := UsrAgentStrMap["chrome-desktop01"]; sel.UserAgent != want {
+		t.Errorf("chromium desktop fallback = %q, want chrome-desktop01 %q", sel.UserAgent, want)
 	}
-	ua, _, _ = db.SelectUserAgent("mobile", "android", "firefox", true, stubIntN)
-	if want := UsrAgentStrMap["firefox-mobile01"]; ua != want {
-		t.Errorf("firefox mobile fallback = %q, want %q", ua, want)
+	// Static chrome-desktop01 UA carries a Linux token: advertised OS follows.
+	if sel.ResolvedOS != "linux" {
+		t.Errorf("fallback resolvedOS = %q, want linux (from UA token)", sel.ResolvedOS)
+	}
+	sel = db.SelectUserAgent("mobile", "android", "firefox", true, stubIntN)
+	if want := UsrAgentStrMap["firefox-mobile01"]; sel.UserAgent != want {
+		t.Errorf("firefox mobile fallback = %q, want %q", sel.UserAgent, want)
+	}
+	if sel.ResolvedOS != "android" {
+		t.Errorf("firefox mobile resolvedOS = %q, want android", sel.ResolvedOS)
+	}
+}
+
+func TestSelectUserAgentFallbackAdjustsMissingOS(t *testing.T) {
+	db := syntheticUA()
+	// Review finding 3: no mobile/ios/chrome group exists. The fallback must
+	// not pair an Android UA with iOS metadata: ResolvedOS follows the UA.
+	sel := db.SelectUserAgent("mobile", "ios", "chrome", true, stubIntN)
+	if !sel.FallbackUsed {
+		t.Error("ios/chrome must miss and fall back")
+	}
+	if want := "UA-android-chrome-mobile"; sel.UserAgent != want {
+		t.Errorf("ua = %q, want %q", sel.UserAgent, want)
+	}
+	if sel.ResolvedOS != "android" {
+		t.Errorf("resolvedOS = %q, want android (matching the UA, never ios)", sel.ResolvedOS)
+	}
+
+	// Same for a missing desktop combination: darwin/firefox has no group;
+	// linux is preferred over windows.
+	sel = db.SelectUserAgent("desktop", "darwin", "firefox", false, stubIntN)
+	if !sel.FallbackUsed {
+		t.Error("darwin/firefox must miss and fall back")
+	}
+	if sel.UserAgent != "UA-linux-firefox" || sel.ResolvedOS != "linux" {
+		t.Errorf("got (%q, %q), want (UA-linux-firefox, linux)", sel.UserAgent, sel.ResolvedOS)
+	}
+}
+
+func TestSelectUserAgentDegradesUnknownProduct(t *testing.T) {
+	db := syntheticUA()
+	// No edge group exists anywhere: degrade to chrome, keep OS consistent.
+	sel := db.SelectUserAgent("desktop", "windows", "edge", false, stubIntN)
+	if !sel.FallbackUsed || !sel.DegradedProduct {
+		t.Errorf("edge selection must degrade (fallback=%t degraded=%t): %#v", sel.FallbackUsed, sel.DegradedProduct, sel)
+	}
+	if sel.UserAgent != "UA-win-edge Edg/131" {
+		t.Errorf("degraded ua = %q, want windows chrome-group entry", sel.UserAgent)
+	}
+	if sel.ResolvedOS != "windows" {
+		t.Errorf("degraded resolvedOS = %q, want windows", sel.ResolvedOS)
+	}
+	// Fully unknown family on empty DB: empty UA, still consistent + diagnosed.
+	// (The static chrome fallback UA carries a Linux token, so linux is
+	// advertised rather than the requested windows: never contradict the UA.)
+	sel = (&UserAgentsDB{}).SelectUserAgent("desktop", "windows", "edge", false, stubIntN)
+	if sel.UserAgent == "" || !sel.DegradedProduct {
+		t.Errorf("empty-DB edge selection = %#v, want degraded chrome fallback", sel)
+	}
+	if sel.ResolvedOS != "linux" {
+		t.Errorf("empty-DB resolvedOS = %q, want linux (from fallback UA token)", sel.ResolvedOS)
 	}
 }
 
 func TestSelectUserAgentRandomOSConsistency(t *testing.T) {
 	db := syntheticUA()
 	// One selection event resolves a single OS key used for every surface.
-	ua, resolvedOS, fallback := db.SelectUserAgent("desktop", "random", "chrome", false, func(int) int { return 0 })
-	if fallback || resolvedOS != "windows" || ua != "UA-win-chrome" {
-		t.Errorf("random selection = (%q, %q, %t), want (UA-win-chrome, windows, false)", ua, resolvedOS, fallback)
+	sel := db.SelectUserAgent("desktop", "random", "chrome", false, func(int) int { return 0 })
+	if sel.FallbackUsed || sel.ResolvedOS != "windows" || sel.UserAgent != "UA-win-edge Edg/131" {
+		t.Errorf("random selection = (%q, %q, %t), want (UA-win-edge Edg/131, windows, false)",
+			sel.UserAgent, sel.ResolvedOS, sel.FallbackUsed)
+	}
+	if sel.Product != "edge" {
+		t.Errorf("random selection product = %q, want edge", sel.Product)
+	}
+}
+
+func TestBrowserProduct(t *testing.T) {
+	edgeUA := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0"
+	legacyEdgeUA := "Mozilla/5.0 (Windows NT 10.0) Chrome/70.0.3538.0 Safari/537.36 Edge/18.1958"
+	operaUA := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130.0.0.0 Safari/537.36 OPR/115.0.0.0"
+	chromeUA := "Mozilla/5.0 (X11; Linux x86_64) Chrome/124.0.6367.78 Safari/537.36"
+	firefoxUA := "Mozilla/5.0 (X11; Linux x86_64; rv:85.0) Gecko/20100101 Firefox/85.0"
+	for _, tc := range []struct {
+		ua, br, want string
+	}{
+		{edgeUA, "edge", "edge"},
+		{edgeUA, "", "edge"},           // tokens win over missing metadata
+		{legacyEdgeUA, "edge", "edge"}, // EdgeHTML keeps its product label (no CH brands downstream)
+		{operaUA, "opera", "opera"},
+		{chromeUA, "herring", "herring"}, // database product preserved on Chrome-token UAs
+		{chromeUA, "", "chrome"},
+		{firefoxUA, "firefox", "firefox"},
+		{"Mozilla/5.0 (Macintosh) Safari/605.1.15", "safari", "safari"},
+		{"custom-thing/1.0", "", ""},
+		{"custom-thing/1.0", "chrome", "chrome"},
+	} {
+		if got := BrowserProduct(tc.ua, tc.br); got != tc.want {
+			t.Errorf("BrowserProduct(%q, %q) = %q, want %q", tc.ua, tc.br, got, tc.want)
+		}
+	}
+}
+
+func TestProductMajorVersion(t *testing.T) {
+	edgeUA := "Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0"
+	operaUA := "Chrome/130.0.0.0 Safari/537.36 OPR/115.0.0.0"
+	if got := ProductMajorVersion(edgeUA, "edge"); got != "131" {
+		t.Errorf("edge major = %q, want 131", got)
+	}
+	if got := ProductMajorVersion(operaUA, "opera"); got != "115" {
+		t.Errorf("opera major = %q, want 115", got)
+	}
+	if got := ProductMajorVersion("Chrome/124.0.0.0", "chrome"); got != "" {
+		t.Errorf("chrome product major = %q, want empty", got)
+	}
+	if got := ProductMajorVersion("Edge/18.1958", "edge"); got != "" {
+		t.Errorf("legacy edge product major = %q, want empty", got)
 	}
 }
 
 func TestUserAgentCompatibilityNote(t *testing.T) {
-	if got := UserAgentCompatibilityNote("Mozilla/5.0 Chrome/131.0.0.0", "chrome", false); got != "" {
+	if got := UserAgentCompatibilityNote(UASelection{UserAgent: "Mozilla/5.0 Chrome/131.0.0.0", Family: "chrome"}); got != "" {
 		t.Errorf("clean selection note = %q, want empty", got)
 	}
-	if got := UserAgentCompatibilityNote("", "chrome", false); got == "" {
+	if got := UserAgentCompatibilityNote(UASelection{Family: "chrome"}); got == "" {
 		t.Error("empty UA must produce a note")
 	}
-	if got := UserAgentCompatibilityNote("x", "chromium", true); !strings.Contains(got, "fallback") {
+	if got := UserAgentCompatibilityNote(UASelection{UserAgent: "x", Family: "chromium", FallbackUsed: true}); !strings.Contains(got, "fallback") {
 		t.Errorf("fallback note = %q, want mention of fallback", got)
 	}
-	if got := UserAgentCompatibilityNote("Mozilla/5.0 Firefox/85.0", "chrome", false); got == "" {
+	if got := UserAgentCompatibilityNote(UASelection{UserAgent: "Mozilla/5.0 Firefox/85.0", Family: "chrome"}); got == "" {
 		t.Error("chrome family with Firefox UA must produce a note")
+	}
+	if got := UserAgentCompatibilityNote(UASelection{UserAgent: "x", Family: "edge", FallbackUsed: true, DegradedProduct: true}); !strings.Contains(got, "chrome instead") {
+		t.Errorf("degraded note = %q, want mention of chrome degradation", got)
 	}
 }
 

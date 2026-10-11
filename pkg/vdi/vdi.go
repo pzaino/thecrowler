@@ -635,6 +635,9 @@ func ResetVDI(ctx ProcessContextInterface, browserType int) error {
 	vdi := ctx.GetWebDriver()
 
 	if vdi != nil && *vdi != nil {
+		// Drop the tracked identity-script registration for the outgoing
+		// session (bookkeeping only; the session itself is ending).
+		forgetIdentityScript((*vdi).SessionID())
 		// Quit current session
 		_ = (*vdi).Close()
 		_ = (*vdi).Quit()
@@ -998,17 +1001,20 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 
 	// Select the User-Agent for this session event: shared mechanic for
 	// connection-time and request-time paths (VDI-003/VDI-004). Family
-	// mapping (chromium shares chrome's group), template expansion, and
-	// profile-aware fallback are centralized in common; rotation policy
-	// (when selection runs) is unchanged. resolvedOS is the single
-	// advertised-OS key every surface in this event derives from.
-	userAgent, resolvedOS, fallbackUsed := cmn.UADB.SelectUserAgent(
+	// mapping (chromium shares chrome's group), template expansion, product
+	// resolution, and identity-aware fallback are centralized in common;
+	// rotation policy (when selection runs) is unchanged. The returned
+	// selection carries the single advertised-OS key and product every
+	// surface in this event derives from.
+	selection := cmn.UADB.SelectUserAgent(
 		pConfig.Crawler.Platform, pConfig.Crawler.BrowserPlatform, browser, browseType == 1, rand.IntN)
-	if note := cmn.UserAgentCompatibilityNote(userAgent, browser, fallbackUsed); note != "" {
+	userAgent := selection.UserAgent
+	if note := cmn.UserAgentCompatibilityNote(selection); note != "" {
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ConnectVDI] User-Agent note on '%s': %s", sel.Config.Name, note)
 	}
-	ident := MapAdvertisedOSIdentity(resolvedOS, browseType == 1)
+	ident := MapAdvertisedOSIdentity(selection.ResolvedOS, browseType == 1)
 	chromeMajor, _ := ChromeMajorVersion(userAgent)
+	brands := ClientHintBrandsFor(selection.Product, chromeMajor, cmn.ProductMajorVersion(userAgent, selection.Product))
 
 	// Resolve the effective proxy preserving the existing source-vs-VDI
 	// precedence (absent/empty inherits the VDI default; "no_proxy" forces a
@@ -1266,10 +1272,10 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	// Sleep a few milliseconds to give time for the session to be fully established before we start sending commands to it
 	time.Sleep(500 * time.Millisecond)
 	// Inject anti-detection patch for the identity selected for this event.
-	// ident/chromeMajor derive from the same selection so UA, Client Hints,
+	// ident/brands derive from the same selection so UA, Client Hints,
 	// and navigator surfaces agree; rotation-time replacement is owned by
-	// VDI-014 (see antiDetectionScript lifecycle note).
-	err = InjectAntiDetectionPatches(wd, userAgent, ident, chromeMajor)
+	// ReplaceIdentityScript (review finding 2).
+	err = InjectAntiDetectionPatches(wd, userAgent, ident, brands)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ConnectVDI] Patch injection failed on '%s': %v", sel.Config.Name, err)
 		// Check if we have lost the session
@@ -1688,19 +1694,18 @@ func setNavigatorProperties(wd WebDriver, lang, userAgent string, ident OSIdenti
 }
 
 // InjectAntiDetectionPatches injects JavaScript anti-fingerprinting logic
-// for one selection event. ident and chromeMajor must derive from the same
+// for one selection event. ident and brands must derive from the same
 // User-Agent selection (see ConnectVDI) so navigator, Client Hints, and CDP
 // surfaces agree. The script body is built by antiDetectionScript: identity
 // derivation, safe string encoding, and removal of the debug trace changed;
 // WebGL, Audio, plugin, MIME, and marker behavior is preserved.
 //
+// Registration replaces any previous identity script for the session
+// (ReplaceIdentityScript), so rotation never stacks stale identities.
 // Custom (including synthetic) identities are preserved: values are derived
 // from the selection, never forced to host-native ones.
-func InjectAntiDetectionPatches(driver WebDriver, uaString string, ident OSIdentity, chromeMajor string) error {
-	script := antiDetectionScript(uaString, ident, chromeMajor)
-
-	err := AddScriptToEvaluateOnNewDocument(driver, 0, script)
-	if err != nil {
+func InjectAntiDetectionPatches(driver WebDriver, uaString string, ident OSIdentity, brands []ClientHintBrand) error {
+	if err := ReplaceIdentityScript(driver, 0, antiDetectionScript(uaString, ident, brands)); err != nil {
 		return fmt.Errorf("failed to inject stealth patches: %w", err)
 	}
 
@@ -1826,4 +1831,7 @@ func QuitSelenium(ctx ProcessContextInterface) {
 			cmn.DebugMsg(cmn.DbgLvlInfo, "WebDriver quitted successfully.")
 		}
 	}
+	// Drop the tracked identity-script registration for the ended session.
+	// Best-effort bookkeeping; it changes nothing about the quit path.
+	forgetIdentityScript((*wd).SessionID())
 }

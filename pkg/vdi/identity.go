@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 )
@@ -78,31 +79,84 @@ func ChromeMajorVersion(userAgent string) (major string, ok bool) {
 	return m[1], true
 }
 
-// clientHintBrands renders the navigator.userAgentData.brands entries for a
-// Chrome major version. The two-brand Chromium shape is preserved
-// deliberately (open-source Chromium sends Chromium + Not-A.Brand, unlike
-// branded Google Chrome which adds a third Google Chrome entry); only the
-// previously hardcoded "132" becomes derived from the selected UA.
-func clientHintBrands(major string) string {
-	return fmt.Sprintf("{ brand: %s, version: %s },\n            { brand: %s, version: %s }",
-		cmn.JSStringLiteral("Chromium"), cmn.JSStringLiteral(major),
-		cmn.JSStringLiteral("Not-A.Brand"), cmn.JSStringLiteral("8"))
+// ClientHintBrand is one navigator.userAgentData.brands / Sec-CH-UA entry.
+type ClientHintBrand struct {
+	Brand   string
+	Version string
+}
+
+// notABrandVersion is the GREASE brand version pinned by the long-standing
+// script body; it is preserved, not derived.
+const notABrandVersion = "8"
+
+// ClientHintBrandsFor builds the brand list appropriate to the selected
+// browser product (review finding 1). Chromium-family products keep the
+// two-brand Chromium shape, with the product brand appended for Edge and
+// Opera using each product's own major version; non-Chromium products (and
+// legacy EdgeHTML, which predates Client Hints) yield nil so brand surfaces
+// stay native instead of fabricated. Camouflage is not restricted to the
+// installed browser product: any configured identity keeps its own brands.
+func ClientHintBrandsFor(product, chromeMajor, productMajor string) []ClientHintBrand {
+	switch strings.ToLower(strings.TrimSpace(product)) {
+	case "edge":
+		if chromeMajor == "" || productMajor == "" {
+			return nil
+		}
+		return []ClientHintBrand{
+			{Brand: "Chromium", Version: chromeMajor},
+			{Brand: "Not-A.Brand", Version: notABrandVersion},
+			{Brand: "Microsoft Edge", Version: productMajor},
+		}
+	case "opera":
+		if chromeMajor == "" || productMajor == "" {
+			return nil
+		}
+		return []ClientHintBrand{
+			{Brand: "Chromium", Version: chromeMajor},
+			{Brand: "Not-A.Brand", Version: notABrandVersion},
+			{Brand: "Opera", Version: productMajor},
+		}
+	case "chrome", "chromium", "herring", "atcontent":
+		if chromeMajor == "" {
+			return nil
+		}
+		return []ClientHintBrand{
+			{Brand: "Chromium", Version: chromeMajor},
+			{Brand: "Not-A.Brand", Version: notABrandVersion},
+		}
+	default:
+		return nil
+	}
+}
+
+// renderBrandsLiteral renders brands as a JavaScript array literal with safe
+// string encoding.
+func renderBrandsLiteral(brands []ClientHintBrand) string {
+	parts := make([]string, 0, len(brands))
+	for _, b := range brands {
+		parts = append(parts, fmt.Sprintf("{ brand: %s, version: %s }",
+			cmn.JSStringLiteral(b.Brand), cmn.JSStringLiteral(b.Version)))
+	}
+	return strings.Join(parts, ",\n            ")
 }
 
 // antiDetectionScript builds the new-document camouflage script from explicit
-// identity inputs. All free-text values (UA, platforms) are embedded via
-// JSON string literals so quotes, backslashes, or non-ASCII text cannot
-// break the script. The WebGL, Audio, plugin, and marker behavior is
-// byte-for-byte the long-standing script body; only identity derivation,
-// safe encoding, and removal of the "loaded" debug trace changed.
+// identity inputs. All free-text values (UA, platforms, brand names) are
+// embedded via JSON string literals so quotes, backslashes, or non-ASCII
+// text cannot break the script. The WebGL, Audio, plugin, and marker
+// behavior is byte-for-byte the long-standing script body; only identity
+// derivation, safe encoding, and removal of the "loaded" debug trace
+// changed.
 //
-// Lifecycle note (VDI-006 task 9 / VDI-014): this script captures the UA and
-// OS selected for one event. A later request-level UA rotation under
-// change_useragent registers CDP/window-level overrides but does not replace
-// this registration; versioned replacement is owned by VDI-014.
-func antiDetectionScript(userAgent string, ident OSIdentity, chromeMajor string) string {
-	var userAgentDataBlock string
-	if chromeMajor != "" {
+// Lifecycle note (VDI-006/VDI-014): this script captures one selection
+// event. Rotation replaces the registration via ReplaceIdentityScript; a
+// superseded registration is removed first so no stale UA-A script survives
+// alongside UA-B overrides.
+func antiDetectionScript(userAgent string, ident OSIdentity, brands []ClientHintBrand) string {
+	userAgentDataBlock := `// No Chromium brand surface for the selected identity:
+// Client Hints brand values are left at native values.
+`
+	if len(brands) > 0 {
 		userAgentDataBlock = fmt.Sprintf(`if (navigator.userAgentData) {
     Object.defineProperty(navigator.userAgentData, 'platform', { value: %s });
     Object.defineProperty(navigator.userAgentData, 'mobile', { value: %t });
@@ -112,11 +166,7 @@ func antiDetectionScript(userAgent string, ident OSIdentity, chromeMajor string)
         ]
     });
 }
-`, cmn.JSStringLiteral(ident.UserAgentDataPlatform), ident.Mobile, clientHintBrands(chromeMajor))
-	} else {
-		userAgentDataBlock = `// No Chrome token in the selected identity: Client Hints brand
-// surfaces are left at native values.
-`
+`, cmn.JSStringLiteral(ident.UserAgentDataPlatform), ident.Mobile, renderBrandsLiteral(brands))
 	}
 
 	return fmt.Sprintf(`Object.defineProperty(navigator, 'webdriver', {
@@ -172,25 +222,29 @@ delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
 }
 
 // userAgentOverrideParams builds the Network.setUserAgentOverride parameters
-// for the selected identity. userAgentMetadata carries the derived Client
-// Hints brands, platform, and device-class mobile flag when the selected UA
-// is a Chrome identity; for other families only userAgent and platform are
-// sent and brand surfaces stay native. First-document HTTP observation
-// versus page-side JavaScript comparison requires a live observer and is
-// integration-pending (VDI-021).
-func userAgentOverrideParams(userAgent, cdpPlatform string, ident OSIdentity, chromeMajor string) map[string]interface{} {
+// for the selected identity. userAgentMetadata carries the product's Client
+// Hints brands, platform, and device-class mobile flag when the selection
+// yields brands; otherwise only userAgent and platform are sent and brand
+// surfaces stay native. First-document HTTP observation versus page-side
+// JavaScript comparison requires a live observer and is integration-pending
+// (VDI-021 / review finding 4).
+func userAgentOverrideParams(userAgent, cdpPlatform string, ident OSIdentity, brands []ClientHintBrand) map[string]interface{} {
 	params := map[string]interface{}{
 		"userAgent": userAgent,
 	}
 	if cdpPlatform != "" {
 		params["platform"] = cdpPlatform
 	}
-	if chromeMajor != "" {
+	if len(brands) > 0 {
+		entries := make([]map[string]interface{}, 0, len(brands))
+		for _, b := range brands {
+			entries = append(entries, map[string]interface{}{
+				"brand":   b.Brand,
+				"version": b.Version,
+			})
+		}
 		params["userAgentMetadata"] = map[string]interface{}{
-			"brands": []map[string]interface{}{
-				{"brand": "Chromium", "version": chromeMajor},
-				{"brand": "Not-A.Brand", "version": "8"},
-			},
+			"brands":   entries,
 			"platform": ident.UserAgentDataPlatform,
 			"mobile":   ident.Mobile,
 		}
@@ -204,8 +258,81 @@ func userAgentOverrideParams(userAgent, cdpPlatform string, ident OSIdentity, ch
 // navigator.userAgentData agree per the selected (possibly synthetic)
 // profile. Custom identities are preserved: values are derived from the
 // selected UA, never forced to host-native ones.
-func SetUserAgentOverrideWithMetadata(wd WebDriver, delayMs int, userAgent string, ident OSIdentity, chromeMajor string) error {
+func SetUserAgentOverrideWithMetadata(wd WebDriver, delayMs int, userAgent string, ident OSIdentity, brands []ClientHintBrand) error {
 	_, err := ExecuteCDPCommand(wd, delayMs, "Network.setUserAgentOverride",
-		userAgentOverrideParams(userAgent, ident.NavigatorPlatform, ident, chromeMajor))
+		userAgentOverrideParams(userAgent, ident.NavigatorPlatform, ident, brands))
 	return err
+}
+
+// identityScripts tracks the new-document identity script registered per
+// WebDriver session so rotation can replace (not duplicate) it.
+var identityScripts = struct {
+	sync.Mutex
+	bySession map[string]string
+}{bySession: make(map[string]string)}
+
+// parseScriptIdentifier extracts the CDP script identifier from an
+// addScriptToEvaluateOnNewDocument result, returning "" when absent.
+func parseScriptIdentifier(result interface{}) string {
+	payload, ok := result.(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	id, _ := payload["identifier"].(string)
+	return id
+}
+
+// forgetIdentityScript drops the tracked registration for a session.
+// Best-effort bookkeeping only; it never fails and never touches the browser.
+func forgetIdentityScript(sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	identityScripts.Lock()
+	defer identityScripts.Unlock()
+	delete(identityScripts.bySession, sessionID)
+}
+
+// ReplaceIdentityScript registers source as the session's new-document
+// identity script, removing the previously registered one first (review
+// finding 2). Without replacement, a request-level UA rotation would leave
+// the connection-time script (UA A) active alongside UA-B CDP overrides for
+// every subsequent navigation. Removal failure is best-effort (logged by the
+// caller pattern) and never blocks registration of the current identity;
+// session-reset and rotation policies are unchanged.
+func ReplaceIdentityScript(wd WebDriver, delayMs int, source string) error {
+	if wd == nil {
+		return fmt.Errorf("webdriver is nil")
+	}
+	sessionID := wd.SessionID()
+
+	identityScripts.Lock()
+	previous := identityScripts.bySession[sessionID]
+	identityScripts.Unlock()
+
+	if previous != "" {
+		if err := RemoveScriptToEvaluateOnNewDocument(wd, delayMs, previous); err != nil {
+			cmn.DebugMsg(cmn.DbgLvlDebug2, "[CDP] removing superseded identity script: %v", err)
+		}
+		forgetIdentityScript(sessionID)
+	}
+
+	identifier, err := AddScriptWithIdentifier(wd, delayMs, source)
+	if err != nil {
+		return err
+	}
+	if sessionID != "" && identifier != "" {
+		identityScripts.Lock()
+		identityScripts.bySession[sessionID] = identifier
+		identityScripts.Unlock()
+	}
+	return nil
+}
+
+// RefreshIdentityScript builds the identity script for the current selection
+// and replaces the session registration with it. changeUserAgent calls it
+// after selecting UA B so later navigations in the same session evaluate the
+// current identity, not the connection-time one.
+func RefreshIdentityScript(wd WebDriver, delayMs int, userAgent string, ident OSIdentity, brands []ClientHintBrand) error {
+	return ReplaceIdentityScript(wd, delayMs, antiDetectionScript(userAgent, ident, brands))
 }

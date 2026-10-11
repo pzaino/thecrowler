@@ -732,24 +732,26 @@ func changeUserAgent(wd *vdi.WebDriver, ctx *ProcessContext) error {
 	// verbatim: only the "desktop" device class selects the desktop
 	// fallback, anything else selects the mobile one. Rotation policy (when
 	// this runs) is unchanged.
-	userAgent, resolvedOS, fallbackUsed := cmn.UADB.SelectUserAgent(
+	selection := cmn.UADB.SelectUserAgent(
 		ctx.config.Crawler.Platform, ctx.config.Crawler.BrowserPlatform,
 		ctx.config.Selenium[ctx.SelID].Type, ctx.config.Crawler.Platform != "desktop", rand.IntN)
-	if note := cmn.UserAgentCompatibilityNote(userAgent, ctx.config.Selenium[ctx.SelID].Type, fallbackUsed); note != "" {
+	userAgent := selection.UserAgent
+	if note := cmn.UserAgentCompatibilityNote(selection); note != "" {
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "[CDP] User-Agent note: %s", note)
 	}
-	ident := vdi.MapAdvertisedOSIdentity(resolvedOS, ctx.config.Crawler.Platform == "mobile")
+	ident := vdi.MapAdvertisedOSIdentity(selection.ResolvedOS, ctx.config.Crawler.Platform == "mobile")
 	chromeMajor, _ := vdi.ChromeMajorVersion(userAgent)
+	brands := vdi.ClientHintBrandsFor(selection.Product, chromeMajor, cmn.ProductMajorVersion(userAgent, selection.Product))
 
 	// Check if the browser is Chrome and CDP is available
 	if ctx.config.Selenium[ctx.SelID].Type == "chrome" || ctx.config.Selenium[ctx.SelID].Type == "chromium" {
 		// Try with changeUserAgentCDP
-		err := changeUserAgentCDP(ctx, userAgent, ident, chromeMajor)
+		err := changeUserAgentCDP(ctx, userAgent, ident, brands)
 		if err != nil {
 			// Enable the Network domain
 			_ = vdi.EnableNetwork(*wd, getCDPDelay(ctx.config), nil)
 			// Set the User-Agent using CDP
-			err = vdi.SetUserAgentOverrideWithMetadata(*wd, getCDPDelay(ctx.config), userAgent, ident, chromeMajor)
+			err = vdi.SetUserAgentOverrideWithMetadata(*wd, getCDPDelay(ctx.config), userAgent, ident, brands)
 			if err == nil {
 				cmn.DebugMsg(cmn.DbgLvlDebug3, "[CDP] UserAgent changed via CDP to: %s", userAgent)
 				//return nil
@@ -773,14 +775,24 @@ func changeUserAgent(wd *vdi.WebDriver, ctx *ProcessContext) error {
 		return fmt.Errorf("failed to dynamically change User-Agent: %v", err)
 	}
 
+	// Replace the session's new-document identity script with the current
+	// selection (review finding 2): changeUserAgent runs before navigation,
+	// so the upcoming documents must evaluate UA B, not the connection-time
+	// script. Best-effort (Firefox has no CDP bridge); rotation policy and
+	// navigation flow are unchanged.
+	if rerr := vdi.RefreshIdentityScript(*wd, getCDPDelay(ctx.config), userAgent, ident, brands); rerr != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[CDP] refreshing identity script: %v", rerr)
+	}
+
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "UserAgent changed via JavaScript to: %s", userAgent)
 	return nil
 }
 
 // changeUserAgentCDP modifies the User-Agent using CDP via Selenium bridge.
-// ident/chromeMajor derive from the same selection event as userAgent so
-// protocol metadata agrees with the advertised identity (VDI-005/VDI-006).
-func changeUserAgentCDP(pctx *ProcessContext, userAgent string, ident vdi.OSIdentity, chromeMajor string) error {
+// ident/brands derive from the same selection event as userAgent so
+// protocol metadata agrees with the advertised identity (VDI-005/VDI-006,
+// review finding 1).
+func changeUserAgentCDP(pctx *ProcessContext, userAgent string, ident vdi.OSIdentity, brands []vdi.ClientHintBrand) error {
 	if pctx == nil || pctx.wd == nil {
 		return fmt.Errorf("invalid process context or webdriver")
 	}
@@ -791,7 +803,7 @@ func changeUserAgentCDP(pctx *ProcessContext, userAgent string, ident vdi.OSIden
 		return err
 	}
 
-	err = vdi.SetUserAgentOverrideWithMetadata(pctx.wd, getCDPDelay(pctx.config), userAgent, ident, chromeMajor)
+	err = vdi.SetUserAgentOverrideWithMetadata(pctx.wd, getCDPDelay(pctx.config), userAgent, ident, brands)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "[CDP] failed to change User-Agent using Selenium CDP bridge: %v", err)
 		return err
