@@ -283,6 +283,14 @@ func parseScriptIdentifier(result interface{}) string {
 	return id
 }
 
+// ForgetIdentityScript drops the tracked registration for a session.
+// Best-effort bookkeeping only; it never fails and never touches the
+// browser. Exported for session-teardown paths outside this package (e.g.
+// browser.Cleanup with Close, which bypasses QuitSelenium).
+func ForgetIdentityScript(sessionID string) {
+	forgetIdentityScript(sessionID)
+}
+
 // forgetIdentityScript drops the tracked registration for a session.
 // Best-effort bookkeeping only; it never fails and never touches the browser.
 func forgetIdentityScript(sessionID string) {

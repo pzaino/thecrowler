@@ -1311,8 +1311,20 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 			}
 		}
 
-		// Setup the Browser before requesting a page
-		setupBrowser(wd, ctx)
+		// Setup the Browser before requesting a page. A setup failure means
+		// the camouflage identity is not safely configured: never navigate
+		// on this attempt. Retry through the existing loop (which recreates
+		// dead sessions via the paths above); on exhaustion return an
+		// explicit error instead of falling through to post-navigation
+		// processing with a partially configured identity.
+		if serr := setupBrowser(wd, ctx); serr != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "[DEBUG-Worker] %s: browser setup failed for %s: %v", id, url, serr)
+			if retries >= maxRetries {
+				return nil, "", fmt.Errorf("failed browser setup for %s after %d retries: %w", url, maxRetries, serr)
+			}
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Retrying browser setup for %s (%d/%d)", id, url, retries+1, maxRetries)
+			continue
+		}
 
 		// Set the HTTP referer if we are on the first URL
 		if level == -1 {
@@ -1352,8 +1364,12 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 					_, _ = cdb.CreateEventWithRetries(ctx.db, e)
 					return nil, "", fmt.Errorf("[critical] failed to create a new WebDriver session: %v", err)
 				}
-				// Setup the Browser before requesting a page
-				setupBrowser(wd, ctx)
+				// Setup the Browser before requesting a page. A setup failure
+				// after session recreation is terminal for this attempt:
+				// never navigate on a partially configured identity.
+				if serr := setupBrowser(wd, ctx); serr != nil {
+					return nil, "", fmt.Errorf("[critical] failed browser setup for %s after session recreation: %w", url, serr)
+				}
 				// Set the HTTP referer if we are on the first URL
 				if level == -1 {
 					setReferrerHeader(&wd, ctx)

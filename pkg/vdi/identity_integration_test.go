@@ -12,7 +12,13 @@ package vdi
 //
 // Run: THECROWLER_E2E_WEBDRIVER=1 go test -tags integration ./pkg/vdi/ -run TestIdentityClientHintsIntegration -v
 // Optional: THECROWLER_E2E_WEBDRIVER_URL (default http://127.0.0.1:4444/wd/hub).
-// Without the env var (or without a reachable Selenium) the test skips.
+// Without the env var the test skips (a skip is not validation). With the
+// env var set but Selenium unreachable, the test fails loudly.
+//
+// Portability note (minor follow-up 2): the fixture binds to the test
+// process's loopback interface, so a Selenium server in another container
+// cannot reach it; run Selenium on the same host or extend this test with an
+// externally reachable fixture URL before interpreting results.
 //
 // Deliberately non-committal on the open question: Sec-CH-UA* request
 // headers are recorded and reported, and contradictions with the selected
@@ -103,7 +109,10 @@ func TestIdentityClientHintsIntegration(t *testing.T) {
 		), map[string]interface{}{}))
 		wd, err := selenium.NewRemote(capabilities, webdriverURL)
 		if err != nil {
-			t.Skipf("Selenium/Chrome unavailable at %s: %v", webdriverURL, err)
+			// Explicitly enabled validation must fail loudly when Selenium
+			// is unreachable: a skip here would masquerade as success
+			// (minor follow-up 2). Only the unset env var skips.
+			t.Fatalf("Selenium/Chrome unavailable at %s: %v", webdriverURL, err)
 		}
 		return wd
 	}

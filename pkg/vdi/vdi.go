@@ -1304,6 +1304,14 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 			// We lost the session (this is a Selenium bug sometimes)
 			return nil, err
 		}
+		// Identity-script registration is critical on CDP-capable browsers:
+		// a session without it would navigate with a partially configured
+		// identity, so establishment fails here and the caller retries via
+		// the existing session-recovery paths. Firefox has no CDP bridge,
+		// so injection stays best-effort there (unchanged behavior).
+		if browser == BrowserChrome || browser == BrowserChromium {
+			return nil, fmt.Errorf("injecting identity patches on '%s': %w", sel.Config.Name, err)
+		}
 	}
 
 	// Post-connection settings
