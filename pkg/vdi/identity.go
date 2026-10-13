@@ -27,7 +27,7 @@ import (
 // OSIdentity carries the per-API representations of one advertised browser
 // OS for a single selection event.
 //
-// Preservation note (PR2, VDI-005): the host OS (e.g. Linux in the VDI
+// Preservation note: the host OS (e.g. Linux in the VDI
 // container) and the advertised browser OS (crawler.browser_platform) are
 // different concepts. A user-selected identity is preserved across every
 // surface CROWler configures; surfaces it cannot configure keep native
@@ -142,7 +142,7 @@ func renderBrandsLiteral(brands []ClientHintBrand) string {
 }
 
 // ClientHintsDetails carries the high-entropy Client Hints values derived
-// for one selection event (Instagram/VDI-006 completion).
+// for one selection event.
 //
 // Provenance rule: every field is either parsed from the selected UA string,
 // frozen by platform convention, or taken from the documented per-OS table
@@ -412,7 +412,7 @@ func quotedAll(names []string) []string {
 // derivation, safe encoding, and removal of the "loaded" debug trace
 // changed.
 //
-// Lifecycle note (VDI-006/VDI-014): this script captures one selection
+// Lifecycle note: this script captures one selection
 // event. Rotation replaces the registration via ReplaceIdentityScript; a
 // superseded registration is removed first so no stale UA-A script survives
 // alongside UA-B overrides.
@@ -494,7 +494,7 @@ delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
 // when derivable) when the selection yields brands; otherwise only userAgent
 // and platform are sent and brand surfaces stay native.
 //
-// Schema basis (Instagram/VDI-006 completion): per the DevTools protocol,
+// Schema basis: per the DevTools protocol,
 // userAgentMetadata.platform/platformVersion/architecture/model/mobile are
 // REQUIRED — omitting them risks the whole command being rejected, which
 // would silently drop even the userAgent override. Values come from

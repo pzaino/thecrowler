@@ -84,25 +84,99 @@ func TestProxyBypassList(t *testing.T) {
 }
 
 func TestFirefoxProxyCapability(t *testing.T) {
-	if got := firefoxProxyCapability(""); got != nil {
-		t.Errorf("direct = %+v, want nil (no proxy key emitted)", got)
+	tests := []struct {
+		name      string
+		input     string
+		wantHTTP  string
+		wantSSL   string
+		wantSOCKS string
+		wantVer   int
+		wantErr   bool
+	}{
+		{
+			name:  "direct",
+			input: "",
+		},
+		{
+			name:  "whitespace",
+			input: "   ",
+		},
+		{
+			name:     "HTTP MicroProxy",
+			input:    "http://127.0.0.1:8082",
+			wantHTTP: "127.0.0.1:8082",
+			wantSSL:  "127.0.0.1:8082",
+		},
+		{
+			name:      "SOCKS5 MicroProxy",
+			input:     "socks5://127.0.0.1:1080",
+			wantSOCKS: "127.0.0.1:1080",
+			wantVer:   5,
+		},
+		{
+			name:     "IPv6 listener",
+			input:    "http://[::1]:8082",
+			wantHTTP: "[::1]:8082",
+			wantSSL:  "[::1]:8082",
+		},
+		{
+			name:    "invalid port",
+			input:   "http://127.0.0.1:99999",
+			wantErr: true,
+		},
+		{
+			name:    "missing port",
+			input:   "http://127.0.0.1",
+			wantErr: true,
+		},
+		{
+			name:    "browser authentication prohibited",
+			input:   "http://user:password@127.0.0.1:8082",
+			wantErr: true,
+		},
+		{
+			name:    "HTTPS downstream unsupported",
+			input:   "https://127.0.0.1:8443",
+			wantErr: true,
+		},
 	}
-	if got := firefoxProxyCapability("   "); got != nil {
-		t.Errorf("blank = %+v, want nil", got)
-	}
-	const proxy = "http://proxy:8080"
-	got := firefoxProxyCapability(proxy)
-	if got == nil {
-		t.Fatal("configured proxy yielded nil capability")
-	}
-	if got.Type != selenium.Manual {
-		t.Errorf("type = %q, want manual", got.Type)
-	}
-	if got.HTTP != proxy || got.SSL != proxy {
-		t.Errorf("http/ssl = %q/%q, want %q", got.HTTP, got.SSL, proxy)
-	}
-	if len(got.NoProxy) == 0 || got.NoProxy[0] != "localhost" {
-		t.Errorf("noProxy = %v, want localhost-led bypass list", got.NoProxy)
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := firefoxProxyCapability(tc.input)
+
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("error = %v, wantErr = %t", err, tc.wantErr)
+			}
+			if tc.wantErr {
+				return
+			}
+
+			if tc.wantHTTP == "" && tc.wantSOCKS == "" {
+				if got != nil {
+					t.Fatalf("expected nil proxy, got %+v", got)
+				}
+				return
+			}
+
+			if got == nil {
+				t.Fatal("expected proxy capability")
+			}
+
+			if got.Type != selenium.Manual {
+				t.Errorf("type = %q, want manual", got.Type)
+			}
+			if got.HTTP != tc.wantHTTP || got.SSL != tc.wantSSL {
+				t.Errorf("HTTP/SSL = %q/%q, want %q/%q",
+					got.HTTP, got.SSL, tc.wantHTTP, tc.wantSSL)
+			}
+			if got.SOCKS != tc.wantSOCKS ||
+				got.SOCKSVersion != tc.wantVer {
+				t.Errorf("SOCKS/version = %q/%d, want %q/%d",
+					got.SOCKS, got.SOCKSVersion,
+					tc.wantSOCKS, tc.wantVer)
+			}
+		})
 	}
 }
 

@@ -12,7 +12,7 @@ func TestUAFamilyForBrowser(t *testing.T) {
 		want string
 	}{
 		{"chrome", "chrome"},
-		{" Chromium ", "chrome"}, // VDI-003: chromium shares chrome's UA group
+		{" Chromium ", "chrome"}, // chromium shares chrome's UA group
 		{"CHROMIUM", "chrome"},
 		{"firefox", "firefox"},
 		{" Firefox ", "firefox"},
@@ -107,7 +107,7 @@ func syntheticUA() *UserAgentsDB {
 
 func TestSelectUserAgentChromiumSharesChromeGroup(t *testing.T) {
 	db := syntheticUA()
-	// VDI-003: "chromium" must hit the chrome group, not the static fallback.
+	// "chromium" must hit the chrome group, not the static fallback.
 	sel := db.SelectUserAgent("desktop", "linux", "chromium", false, func(int) int { return 3 })
 	if sel.FallbackUsed {
 		t.Errorf("chromium selection unexpectedly used fallback: %q", sel.UserAgent)

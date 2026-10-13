@@ -4,8 +4,8 @@ import (
 	"testing"
 )
 
-// Characterization matrix for the historical policy coupling (VDI-004,
-// VDI-018). These tests pin existing behavior; they do not endorse it.
+// Characterization matrix for the historical policy coupling.
+// These tests pin existing behavior; they do not endorse it.
 // Changing any row requires explicit owner approval.
 func TestLifecyclePolicyMatrix(t *testing.T) {
 	policies := []string{"always", "never", "on_start", "", "none", "Always", " ALWAYS "}

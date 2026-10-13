@@ -2,7 +2,7 @@
 
 package vdi
 
-// Controlled proxy isolation/integration test (VDI-009).
+// Controlled proxy isolation/integration test.
 //
 // It drives live Chromium sessions through the production proxy path
 // (resolveEffectiveProxyURL/effectiveSessionProxy + buildLaunchArgs) against

@@ -20,12 +20,12 @@ import (
 
 // Lifecycle policy decisions for User-Agent rotation and session reset.
 //
-// Preservation note (PR2, VDI-004/VDI-018): these helpers name the two
+// Preservation note: these helpers name the two
 // historical conditions without changing them. In particular, setupBrowser
 // refreshes the User-Agent when ResetCookiesPolicy == "always" (not when
 // ChangeUserAgent == "always"), while the per-request full VDI reset is
 // gated on ChangeUserAgent == "always". Whether that coupling is intended is
-// an owner decision (backlog VDI-004/VDI-018); the characterization tests
+// an owner decision; the characterization tests
 // pin the current behavior so any future change is reviewable.
 const (
 	// policyAlways is the policy value enabling per-request identity work.

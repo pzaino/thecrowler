@@ -190,7 +190,7 @@ func TestUserAgentOverrideParams(t *testing.T) {
 	if brands[0]["brand"] != "Chromium" || brands[0]["version"] != "132" {
 		t.Errorf("first brand = %v", brands[0])
 	}
-	// Required high-entropy metadata fields (Instagram/VDI-006): the payload
+	// Required high-entropy metadata fields: the payload
 	// must be schema-complete or Chromium may reject the whole override.
 	if meta["platformVersion"] != "14.0.0" {
 		t.Errorf("metadata platformVersion = %v, want 14.0.0", meta["platformVersion"])

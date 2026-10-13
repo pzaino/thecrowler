@@ -2,8 +2,7 @@
 
 package vdi
 
-// Controlled Client Hints consistency test (review finding 4 / VDI-021,
-// Instagram/VDI-006 completion).
+// Controlled Client Hints consistency test.
 //
 // It drives a live Chromium through the PR1 launch-argument builder and the
 // identity stack, then compares three surfaces for one selection event:

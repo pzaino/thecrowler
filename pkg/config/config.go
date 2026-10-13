@@ -2430,8 +2430,8 @@ func combineCrawlerCollectSettings(dstCfg *Crawler, srcCfg map[string]interface{
 // combineVDICfg merges per-source custom.vdi overrides into the VDI
 // list positionally. Malformed entries (non-list source, non-object
 // elements) and indexes beyond the configured VDI list are ignored instead
-// of panicking: source-supplied data must never crash the engine (VDI-009
-// hardening). Valid entries merge exactly as before.
+// of panicking: source-supplied data must never crash the engine.
+// Valid entries merge exactly as before.
 func combineVDICfg(dstCfg *[]Selenium, srcCfgIface interface{}) {
 	if dstCfg == nil {
 		return

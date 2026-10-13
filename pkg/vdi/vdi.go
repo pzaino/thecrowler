@@ -7,7 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"net"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -736,7 +739,7 @@ func waitForVDIRetry(ctx ProcessContextInterface, delay time.Duration) error {
 // baseBrowserArgs returns the launch arguments derived from
 // browserSettingsMap for the given Selenium browser type.
 //
-// Preservation note (PR1, VDI-010): the map key is lowercase "windowSize".
+// Preservation note: the map key is lowercase "windowSize".
 // The previous lookup used "WindowSize", which never matched, so
 // --window-size=1920,1080 was silently dropped for Chrome/Chromium. Only the
 // key spelling is corrected; the map contents and selection semantics are
@@ -756,7 +759,7 @@ func baseBrowserArgs(selType string) []string {
 // Chromium --disable-features switch, preserving every feature the
 // configuration intends to disable.
 //
-// Preservation note (PR1, VDI-010): the previous code appended up to four
+// Preservation note: the previous code appended up to four
 // separate --disable-features flags (UserAgentClientHint, Battery,
 // IsolateOrigins/site-per-process, SameSiteByDefaultCookies). Chromium honors
 // a single value per switch, so only the last flag took effect and the rest
@@ -776,11 +779,11 @@ func chromeDisabledFeaturesValue(resetCookiesPolicy string, noThirdPartyCookies 
 // chromeBlinkSettingsValue returns the single comma-joined value for the
 // Chromium --blink-settings switch, preserving all four resource policies.
 //
-// Preservation note (PR1, VDI-010): the previous code appended four separate
+// Preservation note: the previous code appended four separate
 // --blink-settings flags, so only the last one (PluginsEnabled) took effect.
 // Key spellings are kept exactly as configured; validity of individual keys
 // against the pinned Chromium is covered by real-browser integration
-// validation (VDI-021), not asserted here.
+// validation, not asserted here.
 func chromeBlinkSettingsValue(requestImages, requestCSS, requestScripts, requestPlugins bool) string {
 	return fmt.Sprintf("imagesEnabled=%t,CSSImagesEnabled=%t,JavaScriptEnabled=%t,PluginsEnabled=%t",
 		requestImages, requestCSS, requestScripts, requestPlugins)
@@ -816,24 +819,75 @@ func proxyBypassList() []string {
 	return bypass
 }
 
-// firefoxProxyCapability translates the effective proxy into the standard
-// W3C proxy capability geckodriver honors (VDI-009). It returns nil for
-// direct connections so no proxy key is emitted at all, preserving existing
-// direct behavior.
-func firefoxProxyCapability(effectiveProxy string) *selenium.Proxy {
-	if strings.TrimSpace(effectiveProxy) == "" {
-		return nil
+// firefoxProxyCapability converts a downstream proxy listener URL into
+// the W3C WebDriver proxy capability expected by Firefox/geckodriver.
+//
+// MicroProxy handles upstream authentication and routing. The browser
+// connects only to the configured downstream listener.
+//
+// A nil capability means direct browsing; invalid proxy configurations
+// return an error instead of silently falling back to a direct connection.
+func firefoxProxyCapability(effectiveProxy string) (*selenium.Proxy, error) {
+	effectiveProxy = strings.TrimSpace(effectiveProxy)
+	if effectiveProxy == "" {
+		return nil, nil
 	}
-	return &selenium.Proxy{
+
+	parsed, err := url.Parse(effectiveProxy)
+	if err != nil {
+		return nil, fmt.Errorf("invalid Firefox proxy URL")
+	}
+
+	// No browser-side proxy authentication.
+	if parsed.User != nil {
+		return nil, fmt.Errorf("Firefox proxy listener must not require authentication")
+	}
+
+	// The proxy configuration must identify a listener, not an HTTP resource.
+	if parsed.Hostname() == "" ||
+		parsed.Path != "" ||
+		parsed.RawQuery != "" ||
+		parsed.Fragment != "" {
+		return nil, fmt.Errorf("invalid Firefox proxy listener endpoint")
+	}
+
+	port, err := strconv.Atoi(parsed.Port())
+	if err != nil || port < 1 || port > 65535 {
+		return nil, fmt.Errorf("invalid Firefox proxy listener port")
+	}
+
+	// W3C WebDriver expects host:port, not scheme://host:port.
+	// JoinHostPort also handles IPv6 addresses correctly.
+	address := net.JoinHostPort(parsed.Hostname(), strconv.Itoa(port))
+
+	proxy := &selenium.Proxy{
 		Type:    selenium.Manual,
-		HTTP:    effectiveProxy,
-		SSL:     effectiveProxy,
 		NoProxy: proxyBypassList(),
 	}
+
+	switch strings.ToLower(parsed.Scheme) {
+	case "http":
+		// An HTTP forward proxy can handle both HTTP requests
+		// and HTTPS destinations through CONNECT.
+		proxy.HTTP = address
+		proxy.SSL = address
+
+	case "socks5":
+		proxy.SOCKS = address
+		proxy.SOCKSVersion = 5
+
+	default:
+		return nil, fmt.Errorf(
+			"unsupported Firefox proxy listener scheme %q",
+			parsed.Scheme,
+		)
+	}
+
+	return proxy, nil
 }
 
 // customSeleniumProxyURL returns the per-source proxy override merged from
-// custom.vdi for the VDI with the given name, or "" when absent (VDI-009).
+// custom.vdi for the VDI with the given name, or "" when absent.
 // The merge is positional, so the leased instance is matched by name against
 // the current process configuration; a missing name (or empty process list)
 // safely yields no override. Callers treat "" as "no override".
@@ -851,7 +905,7 @@ func customSeleniumProxyURL(processCfg cfg.Config, vdiName string) string {
 }
 
 // effectiveSessionProxy composes the three proxy layers without changing
-// their individual semantics (VDI-009): the top-level source proxy_url
+// their individual semantics: the top-level source proxy_url
 // wins when present (value or no_proxy sentinel); otherwise the merged
 // custom.vdi override applies; otherwise the VDI default. An
 // unparseable source document behaves like an absent top-level key.
@@ -868,7 +922,7 @@ func effectiveSessionProxy(sourceProxy string, sourceOK bool, customProxy, vdiPr
 }
 
 // redactProxyURL removes authentication secrets from a proxy URL for
-// diagnostics (VDI-009): "http://user:pass@host:port" becomes
+// diagnostics: "http://user:pass@host:port" becomes
 // "http://***@host:port". Scheme, host, port, and path are preserved so logs
 // stay useful, including for misconfigured values (an operator must see a
 // malformed value to fix it). Only userinfo-shaped credentials are scrubbed;
@@ -910,7 +964,7 @@ func redactProxyArgs(args []string) []string {
 }
 
 // redactedCapabilities returns a copy of caps with proxy credentials
-// scrubbed from browser arguments, for debug logging (VDI-009). The input
+// scrubbed from browser arguments, for debug logging. The input
 // map and nested option structs are never mutated.
 func redactedCapabilities(caps selenium.Capabilities) selenium.Capabilities {
 	if caps == nil {
@@ -938,7 +992,7 @@ func redactedCapabilities(caps selenium.Capabilities) selenium.Capabilities {
 // buildChromeCapabilities assembles goog:chromeOptions with ExcludeSwitches
 // at the capability level, where ChromeDriver reads it.
 //
-// Preservation note (PR1, VDI-007): "excludeSwitches" was previously placed
+// Preservation note: "excludeSwitches" was previously placed
 // inside the prefs dictionary, where ChromeDriver ignores it, so
 // --enable-automation was never excluded. "useAutomationExtension" has no
 // supported equivalent in this Selenium binding (go-auxiliaries/selenium
@@ -960,7 +1014,7 @@ func buildChromeCapabilities(args []string, prefs map[string]interface{}) chrome
 // probe used for the proxy bypass list) so launch-argument defects can be
 // covered by unit tests without a live Selenium server.
 //
-// Preservation notes (PR1, VDI-007/VDI-010): every previously emitted
+// Preservation notes: every previously emitted
 // capability is still emitted. Changed encodings only:
 //   - window size now resolves via baseBrowserArgs (case fix);
 //   - one --disable-features flag (union preserved);
@@ -989,9 +1043,9 @@ func buildLaunchArgs(browser, selType, userAgent string, crawler cfg.Crawler, ef
 		args = append(args, "--no-first-run")
 	}
 
-	// Proxy settings use the resolved effective proxy (VDI-009 P0 portion:
-	// the previous code resolved the per-source value but then emitted the
-	// VDI-global string in the flag). Chromium-family browsers take it as
+	// Proxy settings use the resolved effective proxy (the previous code
+	// resolved the per-source value but then emitted the VDI-global string
+	// in the flag). Chromium-family browsers take it as
 	// CLI flags; Firefox has no --proxy-server switch, so it receives the
 	// standard W3C proxy capability instead (see the firefox branch and
 	// firefoxProxyCapability).
@@ -1148,7 +1202,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	}
 
 	// Select the User-Agent for this session event: shared mechanic for
-	// connection-time and request-time paths (VDI-003/VDI-004). Family
+	// connection-time and request-time paths. Family
 	// mapping (chromium shares chrome's group), template expansion, product
 	// resolution, and identity-aware fallback are centralized in common;
 	// rotation policy (when selection runs) is unchanged. The returned
@@ -1179,7 +1233,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 			}
 		}
 	}
-	// Middle layer (VDI-009): the merged custom.vdi override for this
+	// Middle layer: the merged custom.vdi override for this
 	// VDI, if any. The top-level source key keeps precedence via
 	// effectiveSessionProxy; each layer retains its existing meaning.
 	customProxy := customSeleniumProxyURL(*pConfig, sel.Config.Name)
@@ -1356,7 +1410,15 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 		// (geckodriver translates it into network.proxy.* preferences); the
 		// binary has no --proxy-server switch. A nil capability preserves
 		// existing direct behavior.
-		if proxyCaps := firefoxProxyCapability(effectiveProxy); proxyCaps != nil {
+		proxyCaps, proxyErr := firefoxProxyCapability(effectiveProxy)
+		if proxyErr != nil {
+			return nil, fmt.Errorf(
+				"configuring Firefox proxy for VDI %q: %w",
+				sel.Config.Name,
+				proxyErr,
+			)
+		}
+		if proxyCaps != nil {
 			caps.AddProxy(*proxyCaps)
 		}
 		caps.AddFirefox(firefox.Capabilities{
@@ -1457,7 +1519,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	}
 
 	// Apply the selected identity to the network layer before the first
-	// navigation (Instagram/VDI-006 completion): launch arguments cover the
+	// navigation: launch arguments cover the
 	// User-Agent header, but without this override Sec-CH-UA* would carry
 	// native runtime values on every document until a request-level UA
 	// change happens — which default policies never trigger. Firefox has no
@@ -1835,7 +1897,7 @@ func setNavigatorProperties(wd WebDriver, lang, userAgent string, ident OSIdenti
 		"Object.defineProperty(navigator, 'doNotTrack', {get: () => '1'})", // User enables Do Not Track
 
 		// Mock `navigator.vendor` and `navigator.platform` from the selected
-		// advertised OS (VDI-005); the previous hardcoded 'Linux' ignored the
+		// advertised OS; the previous hardcoded 'Linux' ignored the
 		// user's browser_platform choice.
 		"Object.defineProperty(navigator, 'vendor', {get: () => 'Google Inc.'})",
 		"Object.defineProperty(navigator, 'platform', {get: () => " + cmn.JSStringLiteral(ident.NavigatorPlatform) + "})",
@@ -1859,7 +1921,7 @@ func setNavigatorProperties(wd WebDriver, lang, userAgent string, ident OSIdenti
 		"Object.defineProperty(window, 'outerHeight', {get: () => 1080})",
 
 		// Mock `navigator.appVersion` and `navigator.userAgent` with safe
-		// string encoding (VDI-006: raw interpolation broke on quotes,
+		// string encoding (raw interpolation broke on quotes,
 		// backslashes, or non-ASCII text in the UA).
 		"Object.defineProperty(navigator, 'appVersion', {get: () => " + cmn.JSStringLiteral(userAgent) + "})",
 		"Object.defineProperty(navigator, 'userAgent', {get: () => " + cmn.JSStringLiteral(userAgent) + "})",

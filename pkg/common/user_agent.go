@@ -423,7 +423,7 @@ const (
 // UAFamilyForBrowser maps a Selenium browser executable type to the
 // User-Agent database family used for template selection.
 //
-// Preservation note (VDI-003): the database carries a "chrome" group but no
+// Preservation note: the database carries a "chrome" group but no
 // "chromium" group, so passing "chromium" through verbatim always missed and
 // fell back to a static older UA. Chromium shares Chrome's UA family, hence
 // the adaptation. All other values pass through lower-cased and trimmed, so
@@ -501,9 +501,9 @@ type UASelection struct {
 
 // SelectUserAgent is the single shared mechanic for User-Agent selection at
 // connection time (ConnectVDI) and request time (changeUserAgent). It
-// performs family mapping (VDI-003), database lookup by device class and
+// performs family mapping, database lookup by device class and
 // resolved advertised OS, template expansion with the caller-provided random
-// source (VDI-004), product resolution (review finding 1), and
+// source, product resolution (review finding 1), and
 // identity-aware fallback when the database misses (review finding 3).
 //
 // mobile selects the fallback device class when the database misses; callers

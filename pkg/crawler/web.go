@@ -727,8 +727,8 @@ func setReferrerHeader(wd *vdi.WebDriver, ctx *ProcessContext) {
 func changeUserAgent(wd *vdi.WebDriver, ctx *ProcessContext) error {
 	var err error
 
-	// Shared selection mechanic with the connection-time path (VDI-003,
-	// VDI-004). The historical fallback rule of this path is preserved
+	// Shared selection mechanic with the connection-time path.
+	// The historical fallback rule of this path is preserved
 	// verbatim: only the "desktop" device class selects the desktop
 	// fallback, anything else selects the mobile one. Rotation policy (when
 	// this runs) is unchanged.
@@ -763,7 +763,7 @@ func changeUserAgent(wd *vdi.WebDriver, ctx *ProcessContext) error {
 	}
 
 	// Fallback: Override userAgent using JavaScript injection, with safe
-	// string encoding (VDI-006: raw single-quote interpolation broke on UA
+	// string encoding (raw single-quote interpolation broke on UA
 	// text containing quotes, backslashes, or non-ASCII).
 	js := fmt.Sprintf(`
 		Object.defineProperty(navigator, 'userAgent', {
@@ -799,8 +799,7 @@ func changeUserAgent(wd *vdi.WebDriver, ctx *ProcessContext) error {
 
 // changeUserAgentCDP modifies the User-Agent using CDP via Selenium bridge.
 // ident/brands derive from the same selection event as userAgent so
-// protocol metadata agrees with the advertised identity (VDI-005/VDI-006,
-// review finding 1).
+// protocol metadata agrees with the advertised identity.
 func changeUserAgentCDP(pctx *ProcessContext, userAgent string, ident vdi.OSIdentity, brands []vdi.ClientHintBrand, details vdi.ClientHintsDetails) error {
 	if pctx == nil || pctx.wd == nil {
 		return fmt.Errorf("invalid process context or webdriver")
