@@ -805,6 +805,136 @@ func resolveEffectiveProxyURL(sourceProxy string, ok bool, vdiProxy string) stri
 	return trimmed
 }
 
+// proxyBypassList returns the hosts that bypass the proxy: always
+// localhost, plus the detected local network when available. Shared by the
+// Chromium CLI bypass flag and the Firefox proxy capability so both agree.
+func proxyBypassList() []string {
+	bypass := []string{"localhost"}
+	if localNet, err := cmn.DetectLocalNetwork(); err == nil && strings.TrimSpace(localNet) != "" {
+		bypass = append(bypass, localNet)
+	}
+	return bypass
+}
+
+// firefoxProxyCapability translates the effective proxy into the standard
+// W3C proxy capability geckodriver honors (VDI-009). It returns nil for
+// direct connections so no proxy key is emitted at all, preserving existing
+// direct behavior.
+func firefoxProxyCapability(effectiveProxy string) *selenium.Proxy {
+	if strings.TrimSpace(effectiveProxy) == "" {
+		return nil
+	}
+	return &selenium.Proxy{
+		Type:    selenium.Manual,
+		HTTP:    effectiveProxy,
+		SSL:     effectiveProxy,
+		NoProxy: proxyBypassList(),
+	}
+}
+
+// customSeleniumProxyURL returns the per-source proxy override merged from
+// custom.selenium for the VDI with the given name, or "" when absent (VDI-009).
+// The merge is positional, so the leased instance is matched by name against
+// the current process configuration; a missing name (or empty process list)
+// safely yields no override. Callers treat "" as "no override".
+func customSeleniumProxyURL(processCfg cfg.Config, vdiName string) string {
+	vdiName = strings.TrimSpace(vdiName)
+	if vdiName == "" {
+		return ""
+	}
+	for _, sel := range processCfg.Selenium {
+		if strings.TrimSpace(sel.Name) == vdiName {
+			return strings.TrimSpace(sel.ProxyURL)
+		}
+	}
+	return ""
+}
+
+// effectiveSessionProxy composes the three proxy layers without changing
+// their individual semantics (VDI-009): the top-level source proxy_url
+// wins when present (value or no_proxy sentinel); otherwise the merged
+// custom.selenium override applies; otherwise the VDI default. An
+// unparseable source document behaves like an absent top-level key.
+func effectiveSessionProxy(sourceProxy string, sourceOK bool, customProxy, vdiProxy string) string {
+	base := vdiProxy
+	if customProxy = strings.TrimSpace(customProxy); customProxy != "" {
+		if customProxy == "no_proxy" {
+			base = ""
+		} else {
+			base = customProxy
+		}
+	}
+	return resolveEffectiveProxyURL(sourceProxy, sourceOK, base)
+}
+
+// redactProxyURL removes authentication secrets from a proxy URL for
+// diagnostics (VDI-009): "http://user:pass@host:port" becomes
+// "http://***@host:port". Scheme, host, port, and path are preserved so logs
+// stay useful, including for misconfigured values (an operator must see a
+// malformed value to fix it). Only userinfo-shaped credentials are scrubbed;
+// values with "@" but no usable host yield a fixed placeholder (never the
+// secret).
+func redactProxyURL(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	if at := strings.LastIndex(trimmed, "@"); at >= 0 {
+		host := trimmed[at+1:]
+		if host == "" || strings.ContainsAny(host, " \t") {
+			return "redacted-invalid-proxy"
+		}
+		if scheme := strings.Index(trimmed, "://"); scheme >= 0 && scheme < at {
+			return trimmed[:scheme+3] + "***@" + host
+		}
+		return "***@" + host
+	}
+	return trimmed
+}
+
+// redactProxyArgs copies args with --proxy-server values redacted.
+func redactProxyArgs(args []string) []string {
+	if args == nil {
+		return nil
+	}
+	const prefix = "--proxy-server="
+	out := make([]string, len(args))
+	for i, a := range args {
+		if strings.HasPrefix(a, prefix) {
+			out[i] = prefix + redactProxyURL(strings.TrimPrefix(a, prefix))
+		} else {
+			out[i] = a
+		}
+	}
+	return out
+}
+
+// redactedCapabilities returns a copy of caps with proxy credentials
+// scrubbed from browser arguments, for debug logging (VDI-009). The input
+// map and nested option structs are never mutated.
+func redactedCapabilities(caps selenium.Capabilities) selenium.Capabilities {
+	if caps == nil {
+		return nil
+	}
+	out := make(selenium.Capabilities, len(caps))
+	for k, v := range caps {
+		out[k] = v
+	}
+	if cc, ok := out[chrome.CapabilitiesKey].(chrome.Capabilities); ok {
+		cc.Args = redactProxyArgs(cc.Args)
+		out[chrome.CapabilitiesKey] = cc
+	}
+	if cc, ok := out[chrome.DeprecatedCapabilitiesKey].(chrome.Capabilities); ok {
+		cc.Args = redactProxyArgs(cc.Args)
+		out[chrome.DeprecatedCapabilitiesKey] = cc
+	}
+	if fc, ok := out[firefox.CapabilitiesKey].(firefox.Capabilities); ok {
+		fc.Args = redactProxyArgs(fc.Args)
+		out[firefox.CapabilitiesKey] = fc
+	}
+	return out
+}
+
 // buildChromeCapabilities assembles goog:chromeOptions with ExcludeSwitches
 // at the capability level, where ChromeDriver reads it.
 //
@@ -861,17 +991,14 @@ func buildLaunchArgs(browser, selType, userAgent string, crawler cfg.Crawler, ef
 
 	// Proxy settings use the resolved effective proxy (VDI-009 P0 portion:
 	// the previous code resolved the per-source value but then emitted the
-	// VDI-global string in the flag).
-	if effectiveProxy != "" {
+	// VDI-global string in the flag). Chromium-family browsers take it as
+	// CLI flags; Firefox has no --proxy-server switch, so it receives the
+	// standard W3C proxy capability instead (see the firefox branch and
+	// firefoxProxyCapability).
+	if effectiveProxy != "" && browser != BrowserFirefox {
 		args = append(args, "--proxy-server="+effectiveProxy)
 		args = append(args, "--force-proxy-for-all")
-		// Get local network:
-		localNet, err := cmn.DetectLocalNetwork()
-		if err == nil {
-			args = append(args, "--proxy-bypass-list=localhost,"+localNet)
-		} else {
-			args = append(args, "--proxy-bypass-list=localhost")
-		}
+		args = append(args, "--proxy-bypass-list="+strings.Join(proxyBypassList(), ","))
 	}
 
 	// General settings
@@ -1052,7 +1179,11 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 			}
 		}
 	}
-	effectiveProxy := resolveEffectiveProxyURL(sourceProxy, sourceProxyOK, sel.Config.ProxyURL)
+	// Middle layer (VDI-009): the merged custom.selenium override for this
+	// VDI, if any. The top-level source key keeps precedence via
+	// effectiveSessionProxy; each layer retains its existing meaning.
+	customProxy := customSeleniumProxyURL(*pConfig, sel.Config.Name)
+	effectiveProxy := effectiveSessionProxy(sourceProxy, sourceProxyOK, customProxy, sel.Config.ProxyURL)
 
 	// Assemble the browser launch arguments with the shared builder so
 	// multi-value switches stay coherent (single --disable-features and
@@ -1079,9 +1210,9 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 		// Get local network:
 		localNet, err := cmn.DetectLocalNetwork()
 		if err == nil {
-			cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ConnectVDI] Proxy settings: URL '%s', Exclusions: '%s' for '%s'", effectiveProxy, "localhost,"+localNet, sel.Config.Name)
+			cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ConnectVDI] Proxy settings: URL '%s', Exclusions: '%s' for '%s'", redactProxyURL(effectiveProxy), "localhost,"+localNet, sel.Config.Name)
 		} else {
-			cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ConnectVDI] Proxy settings: URL '%s', Exclusions: '%s' for '%s'", effectiveProxy, "localhost", sel.Config.Name)
+			cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ConnectVDI] Proxy settings: URL '%s', Exclusions: '%s' for '%s'", redactProxyURL(effectiveProxy), "localhost", sel.Config.Name)
 		}
 
 		/*
@@ -1181,7 +1312,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 		// goog:chromeOptions level via buildChromeCapabilities, where
 		// ChromeDriver reads it, not inside prefs).
 		caps.AddChrome(buildChromeCapabilities(args, chromePrefs))
-		cmn.DebugMsg(cmn.DbgLvlDebug5, "[DEBUG-ConnectVDI] Chrome capabilities: %v\n", caps)
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "[DEBUG-ConnectVDI] Chrome capabilities: %v\n", redactedCapabilities(caps))
 	} else if browser == "firefox" {
 		firefoxCaps := map[string]interface{}{
 			"browser.download.folderList":               2,
@@ -1221,11 +1352,18 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 		}
 
 		// Finalize the capabilities
+		// Proxying for Firefox goes through the standard W3C proxy capability
+		// (geckodriver translates it into network.proxy.* preferences); the
+		// binary has no --proxy-server switch. A nil capability preserves
+		// existing direct behavior.
+		if proxyCaps := firefoxProxyCapability(effectiveProxy); proxyCaps != nil {
+			caps.AddProxy(*proxyCaps)
+		}
 		caps.AddFirefox(firefox.Capabilities{
 			Args:  args,
 			Prefs: firefoxCaps,
 		})
-		cmn.DebugMsg(cmn.DbgLvlDebug5, "[DEBUG-ConnectVDI] Firefox capabilities: %v\n", caps)
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "[DEBUG-ConnectVDI] Firefox capabilities: %v\n", redactedCapabilities(caps))
 	}
 
 	// Enable logging

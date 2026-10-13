@@ -2427,11 +2427,27 @@ func combineCrawlerCollectSettings(dstCfg *Crawler, srcCfg map[string]interface{
 	}
 }
 
-// TODO: Selenium customization is not yet implemented
+// combineVDICfg merges per-source custom.selenium overrides into the VDI
+// list positionally. Malformed entries (non-list source, non-object
+// elements) and indexes beyond the configured VDI list are ignored instead
+// of panicking: source-supplied data must never crash the engine (VDI-009
+// hardening). Valid entries merge exactly as before.
 func combineVDICfg(dstCfg *[]Selenium, srcCfgIface interface{}) {
-	srcCfgSlice := srcCfgIface.([]interface{})
+	if dstCfg == nil {
+		return
+	}
+	srcCfgSlice, ok := srcCfgIface.([]interface{})
+	if !ok {
+		return
+	}
 	for i, v := range srcCfgSlice {
-		srcCfg := v.(map[string]interface{})
+		if i >= len(*dstCfg) {
+			break
+		}
+		srcCfg, ok := v.(map[string]interface{})
+		if !ok {
+			continue
+		}
 		if srcCfg["type"] != nil {
 			if val, ok := srcCfg["type"].(string); ok {
 				(*dstCfg)[i].Type = val
