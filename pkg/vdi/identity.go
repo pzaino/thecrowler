@@ -157,8 +157,9 @@ type ClientHintsDetails struct {
 	FullVersion string
 	// PlatformVersion is the advertised OS version: Windows is frozen to
 	// "10.0.0" by UA-reduction for every release; Android majors parse from
-	// the UA ("Android 10" -> "10.0.0"); darwin/linux/ios use the
-	// conventional table values below.
+	// the UA ("Android 10" -> "10.0.0"); Linux is "" (verified: native
+	// Chromium-on-Linux reports empty); darwin/ios use the conventional
+	// table values below.
 	PlatformVersion string
 	// Architecture is the advertised CPU architecture ("x86"/"arm").
 	Architecture string
@@ -321,7 +322,12 @@ func NewClientHintsDetails(userAgent, product string, ident OSIdentity) ClientHi
 		details.PlatformVersion = "17.0.0"
 		details.Architecture = "arm"
 	default: // linux and unknown keys (linux is the global default)
-		details.PlatformVersion = "6.1.0"
+		// Verified against Chromium source
+		// (components/embedder_support/user_agent_utils.cc GetPlatformVersion):
+		// native Linux reports an EMPTY platform version, so the advertised
+		// Linux identity does the same. A hardcoded kernel number would
+		// mismatch real Chromium-on-Linux behavior.
+		details.PlatformVersion = ""
 		details.Architecture = "x86"
 	}
 	return details
@@ -339,15 +345,15 @@ var highEntropyHintNames = []string{
 // keeps page-side high-entropy reads consistent with the CDP metadata and
 // the advertised UA.
 //
-// Contract restoration (follow-up review): the override always delegates to
-// the native implementation first and overlays only requested, valid,
-// high-entropy keys with selection values. This preserves the complete
-// native contract at once — result shape, unknown-token handling, and, most
-// importantly, Permissions Policy behavior (a disallowed hint rejects via
-// the native call instead of being bypassed by an unconditional resolve).
-// Low-entropy names are never synthesized into results. When userAgentData
-// (or the API) is absent — notably native Firefox identities — the block
-// no-ops.
+// Contract (follow-up review): the override always delegates to the native
+// implementation first, preserving result shape, unknown-token handling,
+// omitted-argument defaulting, and Permissions Policy behavior (a disallowed
+// hint rejects via the native call instead of being bypassed). A spoofed
+// value replaces a field ONLY when the native result actually exposed it:
+// fields the native response withheld (e.g. under Permissions Policy) stay
+// withheld rather than being synthesized. Low-entropy names are never
+// synthesized into results. When userAgentData (or the API) is absent —
+// notably native Firefox identities — the block no-ops.
 func highEntropySpoofBlock(details ClientHintsDetails) string {
 	allowlist := "[" + strings.Join(quotedAll(highEntropyHintNames), ",") + "]"
 	listFragment := ""
@@ -374,7 +380,7 @@ func highEntropySpoofBlock(details ClientHintsDetails) string {
                 const result = (native && typeof native === 'object') ? Object.assign({}, native) : {};
                 const wanted = Array.isArray(hints) ? hints : highEntropy;
                 wanted.forEach(h => {
-                    if (highEntropy.indexOf(h) !== -1 && Object.prototype.hasOwnProperty.call(spoofed, h)) {
+                    if (highEntropy.indexOf(h) !== -1 && Object.prototype.hasOwnProperty.call(spoofed, h) && Object.prototype.hasOwnProperty.call(result, h)) {
                         result[h] = spoofed[h];
                     }
                 });
@@ -655,15 +661,18 @@ func RefreshIdentityScript(wd WebDriver, delayMs int, userAgent string, ident OS
 // ConnectVDI refuses to hand out (follow-up finding 3): it quits the driver
 // (a dead session simply reports an error, which is ignored) and drops any
 // tracked identity-script registration, so neither a server-side session
-// nor registry state leaks. It never returns an error; call sites invoke it
+// nor registry state leaks. The session ID is captured BEFORE teardown:
+// drivers may clear it during Close/Quit, which would otherwise orphan the
+// registry entry. It never returns an error; call sites invoke it
 // immediately before returning their own classified failure.
 func abortFailedSession(wd WebDriver) {
 	if wd == nil {
 		return
 	}
+	sessionID := wd.SessionID()
 	_ = wd.Close()
 	_ = wd.Quit()
-	forgetIdentityScript(wd.SessionID())
+	forgetIdentityScript(sessionID)
 }
 
 // establishInitialIdentity applies the selected identity to a fresh session

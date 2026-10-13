@@ -433,7 +433,7 @@ func TestNewClientHintsDetails(t *testing.T) {
 			ClientHintsDetails{FullVersion: "132.0.0.0", PlatformVersion: "14.0.0", Architecture: "arm", Model: "", Bitness: "64",
 				FullVersionList: []ClientHintBrand{{Brand: "Chromium", Version: "132.0.0.0"}, {Brand: "Not-A.Brand", Version: "8.0.0.0"}}}},
 		{"linux chrome", linuxUA, "chrome", MapAdvertisedOSIdentity("linux", false),
-			ClientHintsDetails{FullVersion: "124.0.6367.78", PlatformVersion: "6.1.0", Architecture: "x86", Model: "", Bitness: "64",
+			ClientHintsDetails{FullVersion: "124.0.6367.78", PlatformVersion: "", Architecture: "x86", Model: "", Bitness: "64",
 				FullVersionList: []ClientHintBrand{{Brand: "Chromium", Version: "124.0.6367.78"}, {Brand: "Not-A.Brand", Version: "8.0.0.0"}}}},
 		{"android chrome", androidUA, "chrome", MapAdvertisedOSIdentity("android", true),
 			ClientHintsDetails{FullVersion: "122.0.6261.112", PlatformVersion: "10.0.0", Architecture: "arm", Model: "SM-G960F", Bitness: "32",
@@ -527,6 +527,11 @@ func TestHighEntropySpoofBlockContract(t *testing.T) {
 	// Omitted argument defaults to the full vocabulary (native parity).
 	if !strings.Contains(script, "Array.isArray(hints) ? hints : highEntropy") {
 		t.Error("wrapper must default omitted hints to the full vocabulary")
+	}
+	// Native-exposure gating (Permissions Policy): spoofed values replace
+	// only fields the native result actually exposed.
+	if !strings.Contains(script, "Object.prototype.hasOwnProperty.call(result, h)") {
+		t.Error("wrapper must only replace fields exposed by the native response")
 	}
 	// Full-version list travels when resolvable.
 	if !strings.Contains(script, `"fullVersionList"`) || !strings.Contains(script, `"132.0.0.0"`) {
@@ -647,5 +652,58 @@ func TestEstablishInitialIdentityFailure(t *testing.T) {
 		NewClientHintsDetails("Chrome/132.0.0.0", "chrome", ident))
 	if err == nil || !strings.Contains(err.Error(), "enabling CDP network domain") {
 		t.Errorf("err = %v, want network-domain failure", err)
+	}
+}
+
+func TestLinuxPlatformVersionIsEmpty(t *testing.T) {
+	// Verified against Chromium source
+	// (components/embedder_support/user_agent_utils.cc GetPlatformVersion):
+	// native Linux reports an EMPTY platform version, so a hardcoded kernel
+	// number would mismatch real Chromium-on-Linux behavior.
+	linuxUA := "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.78 Safari/537.36"
+	details := NewClientHintsDetails(linuxUA, "chrome", MapAdvertisedOSIdentity("linux", false))
+	if details.PlatformVersion != "" {
+		t.Errorf("linux platformVersion = %q, want empty (native Chromium-on-Linux behavior)", details.PlatformVersion)
+	}
+	// The empty value still travels in CDP metadata (schema-required key).
+	params := userAgentOverrideParams(linuxUA, "Linux x86_64", MapAdvertisedOSIdentity("linux", false),
+		ClientHintBrandsFor("chrome", "124", ""), details)
+	meta, ok := params["userAgentMetadata"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("missing userAgentMetadata in %v", params)
+	}
+	if pv, ok := meta["platformVersion"]; !ok || pv != "" {
+		t.Errorf("metadata platformVersion = %v (present=%t), want present-but-empty", pv, ok)
+	}
+}
+
+// lossySessionDriver simulates a driver that clears its session ID during
+// teardown: after Quit, SessionID reports "".
+type lossySessionDriver struct {
+	selenium.WebDriver
+	id    string
+	quits int
+}
+
+func (f *lossySessionDriver) SessionID() string {
+	if f.quits > 0 {
+		return ""
+	}
+	return f.id
+}
+
+func (f *lossySessionDriver) Close() error { return nil }
+func (f *lossySessionDriver) Quit() error  { f.quits++; return nil }
+
+func TestAbortFailedSessionCapturesIDBeforeTeardown(t *testing.T) {
+	const session = "sess-test-abort-ordering"
+	identityScripts.Lock()
+	identityScripts.bySession[session] = "stale-id"
+	identityScripts.Unlock()
+	// abortFailedSession must capture the ID before Close/Quit so the
+	// registry entry is cleared even when teardown wipes it.
+	abortFailedSession(&lossySessionDriver{id: session})
+	if _, ok := trackedID(t, session); ok {
+		t.Error("registry entry survived teardown that cleared the session ID")
 	}
 }

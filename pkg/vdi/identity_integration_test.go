@@ -290,11 +290,13 @@ func TestIdentityClientHintsIntegration(t *testing.T) {
 			t.Errorf("Sec-CH-UA-Full-Version-List = %q leaks the runtime Chromium build", observed.secCHFullList)
 		}
 	}
-	if observed.secCHPlatVersion != "" && observed.secCHPlatVersion != "14.0.0" {
-		t.Errorf("Sec-CH-UA-Platform-Version = %q, want 14.0.0", observed.secCHPlatVersion)
+	// Structured Headers strings arrive quoted (e.g. `"14.0.0"`); an unquoted
+	// comparison would false-fail against a correct browser.
+	if observed.secCHPlatVersion != "" && observed.secCHPlatVersion != `"14.0.0"` {
+		t.Errorf("Sec-CH-UA-Platform-Version = %q, want %q", observed.secCHPlatVersion, `"14.0.0"`)
 	}
-	if observed.secCHArch != "" && observed.secCHArch != `"arm"` && observed.secCHArch != "arm" {
-		t.Errorf("Sec-CH-UA-Arch = %q, want arm", observed.secCHArch)
+	if observed.secCHArch != "" && observed.secCHArch != `"arm"` {
+		t.Errorf("Sec-CH-UA-Arch = %q, want %q", observed.secCHArch, `"arm"`)
 	}
 
 	// 4. Rotation (finding 2, end-to-end, cross-OS): replacing the
