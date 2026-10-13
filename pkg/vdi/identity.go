@@ -447,30 +447,18 @@ Object.defineProperty(navigator, 'platform', {
 
 %s
 Object.defineProperty(navigator, 'plugins', {
-    get: () => [
-        { name: "Chrome PDF Viewer" },
-        { name: "Chromium PDF Plugin" }
-    ]
+    get: () => %s
 });
 
 Object.defineProperty(navigator, 'mimeTypes', {
-    get: () => [
-        { type: "application/pdf", suffixes: "pdf", description: "PDF" }
-    ]
+    get: () => %s
 });
 
 delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
 delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
 delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
 
-(function() {
-    const getParameter = WebGLRenderingContext.prototype.getParameter;
-    WebGLRenderingContext.prototype.getParameter = function(param) {
-        if (param === 37445) return "Intel Inc.";
-        if (param === 37446) return "Mesa Intel(R) UHD Graphics";
-        return getParameter.call(this, param);
-    };
-})();
+%s
 
 (function() {
     const original = AudioBuffer.prototype.getChannelData;
@@ -484,6 +472,7 @@ delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
 })();
 
 %s`, cmn.JSStringLiteral(userAgent), cmn.JSStringLiteral(ident.NavigatorPlatform), userAgentDataBlock,
+		pluginArrayLiteral(), mimeArrayLiteral(), webglSpoofScript(),
 		highEntropySpoofBlock(details))
 }
 

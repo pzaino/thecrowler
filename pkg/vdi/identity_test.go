@@ -119,7 +119,7 @@ func TestAntiDetectionScriptIdentity(t *testing.T) {
 	// Preserved script body.
 	for _, want := range []string{
 		"delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array",
-		"getParameter.call(this, param)",
+		"getParameter.call(this, parameter)",
 		"getChannelData",
 		"Chrome PDF Viewer",
 	} {

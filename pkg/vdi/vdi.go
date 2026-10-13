@@ -1602,21 +1602,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 }
 
 func addLoadListener(wd WebDriver) error {
-	script := `
-        window.addEventListener('load', () => {
-            try {
-                Object.defineProperty(window, 'RTCPeerConnection', {value: undefined});
-                Object.defineProperty(window, 'RTCDataChannel', {value: undefined});
-                Object.defineProperty(navigator, 'mediaDevices', {value: undefined});
-                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-                Object.defineProperty(navigator, 'deviceMemory', {get: () => 8});
-                Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 4});
-                Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
-            } catch (err) {
-                console.error('Error applying browser settings on page load:', err);
-            }
-        });
-    `
+	script := loadListenerScript()
 
 	_, err := wd.ExecuteScript(script, nil)
 	if err != nil {
@@ -1626,182 +1612,30 @@ func addLoadListener(wd WebDriver) error {
 	return nil
 }
 
-// GPUPatch sets default GPU for session
+// GPUPatch sets default GPU for session. The patch itself is optional and
+// gated by crawler.set_vdi_gpu_patch at the call site; this function only
+// applies it. (A long dead commented-out alternative was removed here.)
 func GPUPatch(wd WebDriver) error {
-	script := `
-	HTMLCanvasElement.prototype.getContext = (function(orig) {
-	return function(type, attribs) {
-		const ctx = orig.call(this, type, attribs);
-		if (type === 'webgl' || type === 'webgl2') {
-		const ext = ctx.getExtension('WEBGL_debug_renderer_info');
-		if (ext) {
-			const getParamOrig = ctx.getParameter.bind(ctx);
-			ctx.getParameter = function(param) {
-			if (param === ext.UNMASKED_RENDERER_WEBGL) return 'Intel(R) UHD Graphics 620';
-			if (param === ext.UNMASKED_VENDOR_WEBGL) return 'Intel Inc.';
-			return getParamOrig(param);
-			};
-		}
-		}
-		return ctx;
-	};
-	})(HTMLCanvasElement.prototype.getContext);
-	`
+	script := gpuPatchScript()
 
 	_, err := wd.ExecuteScript(script, nil)
 	if err != nil {
 		return fmt.Errorf("error reinforcing browser GPU settings: %v", err)
 	}
 
-	/* Old patch:
-		script = `
-	await page.evaluateOnNewDocument(() => {
-	const canvasProto = HTMLCanvasElement.prototype;
-	const getContextOrig = canvasProto.getContext;
-
-	canvasProto.getContext = function(type, attribs) {
-		const ctx = getContextOrig.call(this, type, attribs);
-
-		if (type === 'webgl' || type === 'webgl2') {
-		const getExtOrig = ctx.getExtension;
-		ctx.getExtension = function(ext) {
-			if (ext === 'WEBGL_debug_renderer_info') {
-			return getExtOrig.call(this, ext); // Keep it available
-			}
-			return getExtOrig.call(this, ext);
-		};
-
-		const getParamOrig = ctx.getParameter;
-		ctx.getParameter = function(param) {
-			const debugInfo = getExtOrig.call(this, 'WEBGL_debug_renderer_info');
-			if (debugInfo) {
-			if (param === debugInfo.UNMASKED_RENDERER_WEBGL) {
-				return 'Intel(R) UHD Graphics 620';
-			}
-			if (param === debugInfo.UNMASKED_VENDOR_WEBGL) {
-				return 'Intel Inc.';
-			}
-			}
-			return getParamOrig.call(this, param);
-		};
-		}
-
-		return ctx;
-	};
-	});
-	`
-
-	_, err = wd.ExecuteScript(script, nil)
-	if err != nil {
-		return fmt.Errorf("error reinforcing browser GPU settings: %v", err)
-	}
-	*/
-
 	return nil
 }
 
-// ReinforceBrowserSettings applies additional settings to the WebDriver instance
+// ReinforceBrowserSettings applies additional settings to the WebDriver instance.
+// One-shot scope: it runs on the current (blank) document and does not
+// survive navigation; persistence belongs to the new-document registration.
+// See reinforceScript for the repaired stages.
 func ReinforceBrowserSettings(wd WebDriver) error {
 	if wd == nil {
 		return fmt.Errorf("WebDriver is nil")
 	}
 
-	// Reapply WebRTC and navigator spoofing settings
-	script := `
-        try {
-			Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-			delete window._Selenium_IDE_Recorder;
-			delete navigator.webdriver;
-			delete navigator.webdriver.chrome;
-			delete navigator.__proto__.webdriver;
-		} catch (err) {
-            console.error('Error reinforcing browser settings stage 1:', err);
-        }
-
-		try {
-            Object.defineProperty(window, 'RTCPeerConnection', {value: undefined});
-            Object.defineProperty(window, 'RTCDataChannel', {value: undefined});
-            Object.defineProperty(navigator, 'mediaDevices', {value: undefined});
-            Object.defineProperty(navigator, 'deviceMemory', {get: () => 8});
-            Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 4});
-            Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
-			Object.defineProperty(navigator, 'getUserMedia', {value: undefined});
-			Object.defineProperty(window, 'webkitRTCPeerConnection', {value: undefined});
-		} catch (err) {
-            console.error('Error reinforcing browser settings stage 2:', err);
-        }
-
-		try {
-			HTMLCanvasElement.prototype.toDataURL = function() { return 'data:image/png;base64,fakemockdata'; };
-		} catch (err) {
-            console.error('Error reinforcing browser settings stage 3:', err);
-        }
-
-		try {
-			const getParameter = WebGLRenderingContext.prototype.getParameter;
-			WebGLRenderingContext.prototype.getParameter = function(parameter) {
-				if (parameter === 37445) return 'Intel Inc.'; // Mock Vendor
-				if (parameter === 37446) return 'Intel Iris OpenGL'; // Mock Renderer
-				return getParameter(parameter);
-			};
-		} catch (err) {
-			console.error('Error reinforcing browser settings stage 4:', err);
-		}
-
-		try {
-			Object.defineProperty(window, 'devicePixelRatio', {
-				get: function() { return 1; }
-			});
-		} catch (err) {
-			console.error('Error reinforcing browser settings stage 5:', err);
-		}
-
-		try {
-			Element.prototype.attachShadow = function() {
-    			return null; // Disable shadow DOM if necessary
-			};
-		} catch (err) {
-			console.error('Error reinforcing browser settings stage 5:', err);
-		}
-
-		try {
-			const originalQuery = navigator.permissions.query;
-			navigator.permissions.query = (parameters) => (
-    			parameters.name === 'notifications'
-        		? Promise.resolve({ state: 'denied' })
-        		: originalQuery(parameters)
-			);
-		} catch (err) {
-			console.error('Error reinforcing browser settings stage 6:', err);
-		}
-
-		try {
-			Object.defineProperty(navigator, 'webdriver', {
-    			get: () => undefined,
-    			configurable: true,
-			});
-
-			Object.defineProperty(document, 'selenium-evaluate', { value: undefined });
-			Error.stackTraceLimit = 0; // Limit error stack traces
-        } catch (err) {
-            console.error('Error reinforcing browser settings stage 7:', err);
-        }
-
-		try {
-			Object.defineProperty(navigator, 'doNotTrack', {get: () => '1'}); // User enables Do Not Track
-		} catch (err) {
-			console.error('Error reinforcing browser settings stage 8:', err);
-		}
-
-		try {
-			// Clean IndexedDB
-            indexedDB.deleteDatabase('webdriver');
-		} catch (err) {
-			console.error('Error reinforcing browser settings stage 9:', err);
-		}
-    `
-
-	_, err := wd.ExecuteScript(script, nil)
+	_, err := wd.ExecuteScript(reinforceScript(), nil)
 	if err != nil {
 		return fmt.Errorf("error reinforcing browser settings: %v", err)
 	}
@@ -1852,90 +1686,7 @@ func getBrowserConfiguration(wd WebDriver) (map[string]interface{}, error) {
 }
 
 func setNavigatorProperties(wd WebDriver, lang, userAgent string, ident OSIdentity) {
-	lang = strings.ToLower(strings.TrimSpace(lang))
-	selectedLanguage := ""
-
-	switch lang {
-	case "en-gb":
-		selectedLanguage = "['en-GB', 'en']"
-	case "fr-fr":
-		selectedLanguage = "['fr-FR', 'fr']"
-	case "de-de":
-		selectedLanguage = "['de-DE', 'de']"
-	case "es-es":
-		selectedLanguage = "['es-ES', 'es']"
-	case "it-it":
-		selectedLanguage = "['it-IT', 'it']"
-	case "pt-pt":
-		selectedLanguage = "['pt-PT', 'pt']"
-	case "pt-br":
-		selectedLanguage = "['pt-BR', 'pt']"
-	case "ja-jp":
-		selectedLanguage = "['ja-JP', 'ja']"
-	case "ko-kr":
-		selectedLanguage = "['ko-KR', 'ko']"
-	case "zh-cn":
-		selectedLanguage = "['zh-CN', 'zh']"
-	case "zh-tw":
-		selectedLanguage = "['zh-TW', 'zh']"
-	default:
-		selectedLanguage = "['en-US', 'en']"
-	}
-
-	// Set the navigator properties
-	scripts := []string{
-		"Object.defineProperty(navigator, 'webdriver', {get: () => undefined})",
-		"window.navigator.chrome = {runtime: {}}",
-		"Object.defineProperty(navigator, 'languages', {get: () => " + selectedLanguage + "})",
-		"Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]})",
-		"Object.defineProperty(navigator, 'deviceMemory', {get: () => 8})",        // Example device memory spoof
-		"Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 4})", // Example cores
-		// Disable geolocation API
-		"Object.defineProperty(navigator, 'geolocation', {get: () => null})",
-
-		// Mock `navigator.doNotTrack`
-		"Object.defineProperty(navigator, 'doNotTrack', {get: () => '1'})", // User enables Do Not Track
-
-		// Mock `navigator.vendor` and `navigator.platform` from the selected
-		// advertised OS; the previous hardcoded 'Linux' ignored the
-		// user's browser_platform choice.
-		"Object.defineProperty(navigator, 'vendor', {get: () => 'Google Inc.'})",
-		"Object.defineProperty(navigator, 'platform', {get: () => " + cmn.JSStringLiteral(ident.NavigatorPlatform) + "})",
-
-		// Spoof `navigator.deviceMemory`
-		//"Object.defineProperty(navigator, 'deviceMemory', {get: () => 4})", // 4 GB memory
-
-		// Spoof `navigator.hardwareConcurrency`
-		//"Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 4})", // 4 CPU cores
-
-		//"Object.defineProperty(navigator, 'getBattery', {get: () => undefined})", // Disable battery API
-
-		// Override screen width and height
-		"Object.defineProperty(screen, 'width', {get: () => 1920})",
-		"Object.defineProperty(screen, 'height', {get: () => 1080})",
-
-		// Override window inner and outer dimensions
-		"Object.defineProperty(window, 'innerWidth', {get: () => 1920})",
-		"Object.defineProperty(window, 'innerHeight', {get: () => 1080})",
-		"Object.defineProperty(window, 'outerWidth', {get: () => 1920})",
-		"Object.defineProperty(window, 'outerHeight', {get: () => 1080})",
-
-		// Mock `navigator.appVersion` and `navigator.userAgent` with safe
-		// string encoding (raw interpolation broke on quotes,
-		// backslashes, or non-ASCII text in the UA).
-		"Object.defineProperty(navigator, 'appVersion', {get: () => " + cmn.JSStringLiteral(userAgent) + "})",
-		"Object.defineProperty(navigator, 'userAgent', {get: () => " + cmn.JSStringLiteral(userAgent) + "})",
-
-		"Object.defineProperty(navigator, 'getBattery', {get: () => undefined})", // Disable battery API
-
-		// Mock `navigator.connection`
-		"Object.defineProperty(navigator, 'connection', {get: () => ({type: 'wifi', downlink: 10.0})})", // Mimic WiFi connection
-
-		// Disable WebRTC APIs to prevent IP leakage
-		"Object.defineProperty(window, 'RTCPeerConnection', {value: undefined});",
-		"Object.defineProperty(window, 'RTCDataChannel', {value: undefined});",
-	}
-	for _, script := range scripts {
+	for _, script := range navigatorPropertyScripts(lang, userAgent, ident) {
 		_, err := wd.ExecuteScript(script, nil)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "setting navigator properties: %v", err)
