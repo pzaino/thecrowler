@@ -742,16 +742,17 @@ func changeUserAgent(wd *vdi.WebDriver, ctx *ProcessContext) error {
 	ident := vdi.MapAdvertisedOSIdentity(selection.ResolvedOS, ctx.config.Crawler.Platform == "mobile")
 	chromeMajor, _ := vdi.ChromeMajorVersion(userAgent)
 	brands := vdi.ClientHintBrandsFor(selection.Product, chromeMajor, cmn.ProductMajorVersion(userAgent, selection.Product))
+	details := vdi.NewClientHintsDetails(userAgent, selection.Product, ident)
 
 	// Check if the browser is Chrome and CDP is available
 	if ctx.config.Selenium[ctx.SelID].Type == "chrome" || ctx.config.Selenium[ctx.SelID].Type == "chromium" {
 		// Try with changeUserAgentCDP
-		err := changeUserAgentCDP(ctx, userAgent, ident, brands)
+		err := changeUserAgentCDP(ctx, userAgent, ident, brands, details)
 		if err != nil {
 			// Enable the Network domain
 			_ = vdi.EnableNetwork(*wd, getCDPDelay(ctx.config), nil)
 			// Set the User-Agent using CDP
-			err = vdi.SetUserAgentOverrideWithMetadata(*wd, getCDPDelay(ctx.config), userAgent, ident, brands)
+			err = vdi.SetUserAgentOverrideWithMetadata(*wd, getCDPDelay(ctx.config), userAgent, ident, brands, details)
 			if err == nil {
 				cmn.DebugMsg(cmn.DbgLvlDebug3, "[CDP] UserAgent changed via CDP to: %s", userAgent)
 				//return nil
@@ -785,7 +786,7 @@ func changeUserAgent(wd *vdi.WebDriver, ctx *ProcessContext) error {
 	// bridge (and therefore no registered script to go stale), so the
 	// refresh stays best-effort there. Rotation policy and navigation flow
 	// are otherwise unchanged.
-	if rerr := vdi.RefreshIdentityScript(*wd, getCDPDelay(ctx.config), userAgent, ident, brands); rerr != nil {
+	if rerr := vdi.RefreshIdentityScript(*wd, getCDPDelay(ctx.config), userAgent, ident, brands, details); rerr != nil {
 		if ctx.config.Selenium[ctx.SelID].Type == "chrome" || ctx.config.Selenium[ctx.SelID].Type == "chromium" {
 			return fmt.Errorf("refreshing identity script: %w", rerr)
 		}
@@ -800,7 +801,7 @@ func changeUserAgent(wd *vdi.WebDriver, ctx *ProcessContext) error {
 // ident/brands derive from the same selection event as userAgent so
 // protocol metadata agrees with the advertised identity (VDI-005/VDI-006,
 // review finding 1).
-func changeUserAgentCDP(pctx *ProcessContext, userAgent string, ident vdi.OSIdentity, brands []vdi.ClientHintBrand) error {
+func changeUserAgentCDP(pctx *ProcessContext, userAgent string, ident vdi.OSIdentity, brands []vdi.ClientHintBrand, details vdi.ClientHintsDetails) error {
 	if pctx == nil || pctx.wd == nil {
 		return fmt.Errorf("invalid process context or webdriver")
 	}
@@ -811,7 +812,7 @@ func changeUserAgentCDP(pctx *ProcessContext, userAgent string, ident vdi.OSIden
 		return err
 	}
 
-	err = vdi.SetUserAgentOverrideWithMetadata(pctx.wd, getCDPDelay(pctx.config), userAgent, ident, brands)
+	err = vdi.SetUserAgentOverrideWithMetadata(pctx.wd, getCDPDelay(pctx.config), userAgent, ident, brands, details)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "[CDP] failed to change User-Agent using Selenium CDP bridge: %v", err)
 		return err

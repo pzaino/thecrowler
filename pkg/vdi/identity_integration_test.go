@@ -2,13 +2,15 @@
 
 package vdi
 
-// Controlled Client Hints consistency test (review finding 4 / VDI-021).
+// Controlled Client Hints consistency test (review finding 4 / VDI-021,
+// Instagram/VDI-006 completion).
 //
 // It drives a live Chromium through the PR1 launch-argument builder and the
-// PR2 identity stack, then compares three surfaces for one selection event:
+// identity stack, then compares three surfaces for one selection event:
 // the main-document HTTP request headers observed by httptest, page-side
-// navigator values, and navigator.userAgentData (low-entropy + high-entropy
-// where the driver supports async scripts).
+// navigator values, and navigator.userAgentData (low-entropy + high-entropy).
+// The fixture identity reproduces the reported Instagram case (advertised
+// macOS/Chrome 132 on a Linux host); rotation then crosses to Windows.
 //
 // Run: THECROWLER_E2E_WEBDRIVER=1 go test -tags integration ./pkg/vdi/ -run TestIdentityClientHintsIntegration -v
 // Optional: THECROWLER_E2E_WEBDRIVER_URL (default http://127.0.0.1:4444/wd/hub).
@@ -88,9 +90,10 @@ func TestIdentityClientHintsIntegration(t *testing.T) {
 	server := httptest.NewServer(recorder)
 	defer server.Close()
 
-	// Fixed selection: windows/chrome identity at the runtime major so the
-	// derived brands can agree with every surface at once.
-	const selectedUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36"
+	// Fixed selection: the Instagram case — advertised macOS/Chrome 132 while
+	// the host is Linux. The derived brands agree with every surface at
+	// once; rotation then crosses to a Windows identity.
+	const selectedUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36"
 	const rotatedUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
 	newDriver := func(t *testing.T, ua string) selenium.WebDriver {
@@ -129,12 +132,13 @@ func TestIdentityClientHintsIntegration(t *testing.T) {
 		return value
 	}
 
-	ident := MapAdvertisedOSIdentity("windows", false)
+	ident := MapAdvertisedOSIdentity("darwin", false)
 	major, ok := ChromeMajorVersion(selectedUA)
 	if !ok || major != "132" {
 		t.Fatalf("fixture UA major = %q, %t", major, ok)
 	}
 	brands := ClientHintBrandsFor("chrome", major, "")
+	details := NewClientHintsDetails(selectedUA, "chrome", ident)
 
 	// Phase 0 — initial ConnectVDI flow (launch-args UA only; no script, no
 	// CDP override yet). Documents the baseline the crawler's first
@@ -160,7 +164,7 @@ func TestIdentityClientHintsIntegration(t *testing.T) {
 	// equal the selection; HTTP Client Hints (if the browser sends any while
 	// --disable-features=UserAgentClientHint is configured) are recorded and
 	// reported, not asserted.
-	if err := ReplaceIdentityScript(wd, 0, antiDetectionScript(selectedUA, ident, brands)); err != nil {
+	if err := ReplaceIdentityScript(wd, 0, antiDetectionScript(selectedUA, ident, brands, details)); err != nil {
 		t.Fatalf("ReplaceIdentityScript: %v", err)
 	}
 	if err := wd.Get(server.URL + "/phase1"); err != nil {
@@ -180,13 +184,11 @@ func TestIdentityClientHintsIntegration(t *testing.T) {
 		observed.userAgent, observed.secCHUA, observed.secCHMobile, observed.secCHPlatform,
 		fmt.Sprint(mustScript(t, "return JSON.stringify((navigator.userAgentData && navigator.userAgentData.brands) || [])")))
 
-	// Phase 2 — full identity (CDP override + script): every surface must
+	// Phase 2 — full initial identity via the production path
+	// (establishInitialIdentity mirrors ConnectVDI): every surface must
 	// agree with the selection.
-	if err := EnableNetwork(wd, 0, nil); err != nil {
-		t.Fatalf("EnableNetwork: %v", err)
-	}
-	if err := SetUserAgentOverrideWithMetadata(wd, 0, selectedUA, ident, brands); err != nil {
-		t.Fatalf("SetUserAgentOverrideWithMetadata: %v", err)
+	if err := establishInitialIdentity(wd, 0, selectedUA, ident, brands, details); err != nil {
+		t.Fatalf("establishInitialIdentity: %v", err)
 	}
 
 	if err := wd.Get(server.URL); err != nil {
@@ -206,11 +208,11 @@ func TestIdentityClientHintsIntegration(t *testing.T) {
 	if got := fmt.Sprint(mustScript(t, "return navigator.userAgent")); got != selectedUA {
 		t.Errorf("navigator.userAgent = %q, want %q", got, selectedUA)
 	}
-	if got := fmt.Sprint(mustScript(t, "return navigator.platform")); got != "Win32" {
-		t.Errorf("navigator.platform = %q, want Win32", got)
+	if got := fmt.Sprint(mustScript(t, "return navigator.platform")); got != "MacIntel" {
+		t.Errorf("navigator.platform = %q, want MacIntel", got)
 	}
-	if got := fmt.Sprint(mustScript(t, "return (navigator.userAgentData && navigator.userAgentData.platform) || ''")); got != "Windows" {
-		t.Errorf("userAgentData.platform = %q, want Windows", got)
+	if got := fmt.Sprint(mustScript(t, "return (navigator.userAgentData && navigator.userAgentData.platform) || ''")); got != "macOS" {
+		t.Errorf("userAgentData.platform = %q, want macOS", got)
 	}
 	if got := fmt.Sprint(mustScript(t, "return (navigator.userAgentData && String(navigator.userAgentData.mobile)) || ''")); got != "false" {
 		t.Errorf("userAgentData.mobile = %q, want false", got)
@@ -218,6 +220,19 @@ func TestIdentityClientHintsIntegration(t *testing.T) {
 	brandsJSON := fmt.Sprint(mustScript(t, "return JSON.stringify((navigator.userAgentData && navigator.userAgentData.brands) || [])"))
 	if !strings.Contains(brandsJSON, `"Chromium"`) || !strings.Contains(brandsJSON, `"132"`) {
 		t.Errorf("userAgentData.brands = %s, want Chromium at 132", brandsJSON)
+	}
+	// High-entropy reads must match the advertised identity, not the host.
+	highEntropy, err := wd.ExecuteScriptAsync(`const done = arguments[0];
+		if (!navigator.userAgentData || !navigator.userAgentData.getHighEntropyValues) { done("unavailable"); return; }
+		navigator.userAgentData.getHighEntropyValues(["platformVersion", "architecture", "model", "bitness"]).then(
+			v => done(JSON.stringify(v)), e => done("error:" + e));`, nil)
+	if err != nil {
+		t.Fatalf("high-entropy read: %v", err)
+	}
+	for _, want := range []string{`"platformVersion":"14.0.0"`, `"architecture":"arm"`, `"model":""`, `"bitness":"64"`} {
+		if !strings.Contains(fmt.Sprint(highEntropy), want) {
+			t.Errorf("high-entropy values = %v, want %s", highEntropy, want)
+		}
 	}
 
 	// 3. Client Hints request headers: recorded and cross-checked when the
@@ -228,29 +243,23 @@ func TestIdentityClientHintsIntegration(t *testing.T) {
 	if observed.secCHUA != "" && !strings.Contains(observed.secCHUA, `"Chromium"`) {
 		t.Errorf("Sec-CH-UA = %q contradicts the selected Chromium identity", observed.secCHUA)
 	}
-	if observed.secCHPlatform != "" && !strings.Contains(observed.secCHPlatform, "Windows") {
-		t.Errorf("Sec-CH-UA-Platform = %q contradicts the selected Windows identity", observed.secCHPlatform)
+	// Instagram case: the advertised platform must be macOS, never the
+	// host's Linux value.
+	if observed.secCHPlatform != "" && !strings.Contains(observed.secCHPlatform, "macOS") {
+		t.Errorf("Sec-CH-UA-Platform = %q contradicts the selected macOS identity", observed.secCHPlatform)
 	}
 
-	// 4. High-entropy values are observable (informational baseline).
-	if highEntropy, err := wd.ExecuteScriptAsync(`const done = arguments[0];
-		if (!navigator.userAgentData || !navigator.userAgentData.getHighEntropyValues) { done("unavailable"); return; }
-		navigator.userAgentData.getHighEntropyValues(["platformVersion", "architecture", "model", "bitness"]).then(
-			v => done(JSON.stringify(v)), e => done("error:" + e));`, nil); err != nil {
-		t.Logf("high-entropy values unavailable: %v", err)
-	} else {
-		t.Logf("high-entropy values: %v", highEntropy)
-	}
-
-	// 5. Rotation (finding 2, end-to-end): replacing the registration must
-	// move later navigations to the new identity in the same session.
+	// 4. Rotation (finding 2, end-to-end, cross-OS): replacing the
+	// registration must move later navigations to the new identity in the
+	// same session.
 	rotMajor, _ := ChromeMajorVersion(rotatedUA)
 	rotBrands := ClientHintBrandsFor("chrome", rotMajor, "")
 	rotIdent := MapAdvertisedOSIdentity("windows", false)
-	if err := SetUserAgentOverrideWithMetadata(wd, 0, rotatedUA, rotIdent, rotBrands); err != nil {
+	rotDetails := NewClientHintsDetails(rotatedUA, "chrome", rotIdent)
+	if err := SetUserAgentOverrideWithMetadata(wd, 0, rotatedUA, rotIdent, rotBrands, rotDetails); err != nil {
 		t.Fatalf("rotation CDP override: %v", err)
 	}
-	if err := RefreshIdentityScript(wd, 0, rotatedUA, rotIdent, rotBrands); err != nil {
+	if err := RefreshIdentityScript(wd, 0, rotatedUA, rotIdent, rotBrands, rotDetails); err != nil {
 		t.Fatalf("RefreshIdentityScript: %v", err)
 	}
 	if err := wd.Get(server.URL + "/rotated"); err != nil {
@@ -259,8 +268,14 @@ func TestIdentityClientHintsIntegration(t *testing.T) {
 	if got := fmt.Sprint(mustScript(t, "return navigator.userAgent")); got != rotatedUA {
 		t.Errorf("post-rotation navigator.userAgent = %q, want %q (stale script)", got, rotatedUA)
 	}
+	if got := fmt.Sprint(mustScript(t, "return navigator.platform")); got != "Win32" {
+		t.Errorf("post-rotation navigator.platform = %q, want Win32", got)
+	}
 	observed, ok = recorder.last()
 	if !ok || observed.userAgent != rotatedUA {
 		t.Errorf("post-rotation HTTP User-Agent = %+v, want %q", observed, rotatedUA)
+	}
+	if observed.secCHPlatform != "" && !strings.Contains(observed.secCHPlatform, "Windows") {
+		t.Errorf("post-rotation Sec-CH-UA-Platform = %q contradicts the rotated Windows identity", observed.secCHPlatform)
 	}
 }

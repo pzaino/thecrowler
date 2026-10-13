@@ -85,7 +85,8 @@ func TestAntiDetectionScriptIdentity(t *testing.T) {
 	ua := `Test UA "with quotes" and \ backslash ✓`
 	ident := MapAdvertisedOSIdentity("windows", false)
 	brands := ClientHintBrandsFor("chrome", "131", "")
-	script := antiDetectionScript(ua, ident, brands)
+	details := NewClientHintsDetails(ua, "chrome", ident)
+	script := antiDetectionScript(ua, ident, brands, details)
 
 	// Safe encoding: the hostile UA appears only as a JSON literal.
 	if !strings.Contains(script, `"Test UA \"with quotes\" and \\ backslash ✓"`) {
@@ -129,12 +130,19 @@ func TestAntiDetectionScriptIdentity(t *testing.T) {
 	if strings.Contains(script, `console.log("loaded")`) {
 		t.Error("script still contains the debug console.log trace")
 	}
+	// High-entropy override carries the selection-consistent values.
+	for _, want := range []string{"getHighEntropyValues", `"10.0.0"`, `"x86"`, `"64"`} {
+		if !strings.Contains(script, want) {
+			t.Errorf("script lacks high-entropy override %q", want)
+		}
+	}
 }
 
 func TestAntiDetectionScriptEdgeIdentity(t *testing.T) {
 	ua := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0"
 	ident := MapAdvertisedOSIdentity("windows", false)
-	script := antiDetectionScript(ua, ident, ClientHintBrandsFor("edge", "131", "131"))
+	script := antiDetectionScript(ua, ident, ClientHintBrandsFor("edge", "131", "131"),
+		NewClientHintsDetails(ua, "edge", ident))
 	if !strings.Contains(script, `"Microsoft Edge"`) || !strings.Contains(script, `"131"`) {
 		t.Errorf("edge script lacks Microsoft Edge brand:\n%s", script)
 	}
@@ -142,7 +150,8 @@ func TestAntiDetectionScriptEdgeIdentity(t *testing.T) {
 
 func TestAntiDetectionScriptNonChromeIdentity(t *testing.T) {
 	ident := MapAdvertisedOSIdentity("linux", false)
-	script := antiDetectionScript("Mozilla/5.0 Firefox/133.0", ident, nil)
+	firefoxUA := "Mozilla/5.0 Firefox/133.0"
+	script := antiDetectionScript(firefoxUA, ident, nil, NewClientHintsDetails(firefoxUA, "firefox", ident))
 	if strings.Contains(script, `"brands"`) || strings.Contains(script, "Not-A.Brand") {
 		t.Error("non-Chrome identity must not advertise fabricated Client Hints brands")
 	}
@@ -153,7 +162,9 @@ func TestAntiDetectionScriptNonChromeIdentity(t *testing.T) {
 
 func TestUserAgentOverrideParams(t *testing.T) {
 	ident := MapAdvertisedOSIdentity("darwin", false)
-	params := userAgentOverrideParams("test-ua", ident.NavigatorPlatform, ident, ClientHintBrandsFor("chrome", "132", ""))
+	darwinUA := "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36"
+	details := NewClientHintsDetails(darwinUA, "chrome", ident)
+	params := userAgentOverrideParams("test-ua", ident.NavigatorPlatform, ident, ClientHintBrandsFor("chrome", "132", ""), details)
 
 	if params["userAgent"] != "test-ua" {
 		t.Errorf("userAgent = %v", params["userAgent"])
@@ -178,9 +189,25 @@ func TestUserAgentOverrideParams(t *testing.T) {
 	if brands[0]["brand"] != "Chromium" || brands[0]["version"] != "132" {
 		t.Errorf("first brand = %v", brands[0])
 	}
+	// Required high-entropy metadata fields (Instagram/VDI-006): the payload
+	// must be schema-complete or Chromium may reject the whole override.
+	if meta["platformVersion"] != "14.0.0" {
+		t.Errorf("metadata platformVersion = %v, want 14.0.0", meta["platformVersion"])
+	}
+	if meta["architecture"] != "arm" {
+		t.Errorf("metadata architecture = %v, want arm", meta["architecture"])
+	}
+	if meta["model"] != "" {
+		t.Errorf("metadata model = %v, want empty on desktop", meta["model"])
+	}
+	if meta["fullVersion"] != "132.0.0.0" {
+		t.Errorf("metadata fullVersion = %v, want 132.0.0.0", meta["fullVersion"])
+	}
 
 	// Non-Chrome identity: no fabricated metadata.
-	params = userAgentOverrideParams("firefox-ua", "Linux x86_64", MapAdvertisedOSIdentity("linux", false), nil)
+	ffIdent := MapAdvertisedOSIdentity("linux", false)
+	params = userAgentOverrideParams("firefox-ua", "Linux x86_64", ffIdent, nil,
+		NewClientHintsDetails("firefox-ua", "firefox", ffIdent))
 	if _, ok := params["userAgentMetadata"]; ok {
 		t.Errorf("non-Chrome params must omit userAgentMetadata: %v", params)
 	}
@@ -189,8 +216,10 @@ func TestUserAgentOverrideParams(t *testing.T) {
 	}
 
 	// Edge identity: product brand present with its own major.
-	edgeParams := userAgentOverrideParams("edge-ua", "Win32", MapAdvertisedOSIdentity("windows", false),
-		ClientHintBrandsFor("edge", "131", "131"))
+	edgeIdent := MapAdvertisedOSIdentity("windows", false)
+	edgeUA := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0"
+	edgeParams := userAgentOverrideParams("edge-ua", "Win32", edgeIdent,
+		ClientHintBrandsFor("edge", "131", "131"), NewClientHintsDetails(edgeUA, "edge", edgeIdent))
 	edgeMeta, ok := edgeParams["userAgentMetadata"].(map[string]interface{})
 	if !ok {
 		t.Fatalf("edge params missing metadata: %v", edgeParams)
@@ -381,5 +410,129 @@ func TestReplaceIdentityScriptUntracked(t *testing.T) {
 func TestReplaceIdentityScriptNilDriver(t *testing.T) {
 	if err := ReplaceIdentityScript(nil, 0, "source"); err == nil {
 		t.Error("nil driver must fail")
+	}
+}
+
+func TestNewClientHintsDetails(t *testing.T) {
+	windowsUA := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.6834.159 Safari/537.36"
+	darwinUA := "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36"
+	androidUA := "Mozilla/5.0 (Linux; Android 10; SM-G960F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6261.112 Mobile Safari/537.36"
+	linuxUA := "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.78 Safari/537.36"
+	tests := []struct {
+		name    string
+		ua      string
+		product string
+		ident   OSIdentity
+		want    ClientHintsDetails
+	}{
+		{"windows chrome", windowsUA, "chrome", MapAdvertisedOSIdentity("windows", false),
+			ClientHintsDetails{FullVersion: "132.0.6834.159", PlatformVersion: "10.0.0", Architecture: "x86", Model: "", Bitness: "64"}},
+		{"darwin chrome (Instagram case)", darwinUA, "chrome", MapAdvertisedOSIdentity("darwin", false),
+			ClientHintsDetails{FullVersion: "132.0.0.0", PlatformVersion: "14.0.0", Architecture: "arm", Model: "", Bitness: "64"}},
+		{"linux chrome", linuxUA, "chrome", MapAdvertisedOSIdentity("linux", false),
+			ClientHintsDetails{FullVersion: "124.0.6367.78", PlatformVersion: "6.1.0", Architecture: "x86", Model: "", Bitness: "64"}},
+		{"android chrome", androidUA, "chrome", MapAdvertisedOSIdentity("android", true),
+			ClientHintsDetails{FullVersion: "122.0.6261.112", PlatformVersion: "10.0.0", Architecture: "arm", Model: "SM-G960F", Bitness: "32"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := NewClientHintsDetails(tc.ua, tc.product, tc.ident); got != tc.want {
+				t.Errorf("details = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestFullVersionFor(t *testing.T) {
+	for _, tc := range []struct {
+		ua, product, want string
+	}{
+		{"Chrome/132.0.6834.159 Safari/537.36", "chrome", "132.0.6834.159"},
+		{"Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0", "edge", "131.0.0.0"},
+		{"Chrome/130.0.0.0 Safari/537.36 OPR/115.0.0.0", "opera", "115.0.0.0"},
+		{"Firefox/133.0", "firefox", ""},
+		{"no-version-here", "chrome", ""},
+	} {
+		if got := FullVersionFor(tc.ua, tc.product); got != tc.want {
+			t.Errorf("FullVersionFor(%q, %q) = %q, want %q", tc.ua, tc.product, got, tc.want)
+		}
+	}
+}
+
+func TestDeviceModelForUA(t *testing.T) {
+	if got := deviceModelForUA("Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/132.0.0.0", false); got != "" {
+		t.Errorf("desktop model = %q, want empty", got)
+	}
+	if got := deviceModelForUA("Mozilla/5.0 (Linux; Android 10; SM-G960F) Chrome/122.0.6261.112 Mobile", true); got != "SM-G960F" {
+		t.Errorf("android model = %q, want SM-G960F", got)
+	}
+	if got := deviceModelForUA("Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X)", true); got != "iPhone" {
+		t.Errorf("ios model = %q, want iPhone", got)
+	}
+	if got := deviceModelForUA("no-parens-here", true); got != "" {
+		t.Errorf("parens-less model = %q, want empty", got)
+	}
+}
+
+func TestEstablishInitialIdentityOrder(t *testing.T) {
+	// The pre-navigation contract: Network.enable first, then the UA +
+	// metadata override carrying the complete required payload.
+	const session = "sess-test-initial-identity"
+	defer forgetIdentityScript(session)
+	var cmds []string
+	var overrideParams map[string]interface{}
+	wd := &fakeCDPDriver{
+		sessionID: session,
+		cdp: func(cmd string, params map[string]interface{}) (interface{}, error) {
+			cmds = append(cmds, cmd)
+			if cmd == "Network.setUserAgentOverride" {
+				overrideParams = params
+			}
+			return map[string]interface{}{}, nil
+		},
+	}
+	ua := "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36"
+	ident := MapAdvertisedOSIdentity("darwin", false)
+	brands := ClientHintBrandsFor("chrome", "132", "")
+	details := NewClientHintsDetails(ua, "chrome", ident)
+	if err := establishInitialIdentity(wd, 0, ua, ident, brands, details); err != nil {
+		t.Fatalf("establishInitialIdentity: %v", err)
+	}
+	if len(cmds) != 2 || cmds[0] != "Network.enable" || cmds[1] != "Network.setUserAgentOverride" {
+		t.Fatalf("CDP order = %v, want [Network.enable Network.setUserAgentOverride]", cmds)
+	}
+	if overrideParams["userAgent"] != ua {
+		t.Errorf("override userAgent = %v", overrideParams["userAgent"])
+	}
+	if overrideParams["platform"] != "MacIntel" {
+		t.Errorf("override platform = %v, want MacIntel", overrideParams["platform"])
+	}
+	meta, ok := overrideParams["userAgentMetadata"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("missing userAgentMetadata in %v", overrideParams)
+	}
+	// Schema-complete payload: every required metadata field present.
+	for field, want := range map[string]interface{}{
+		"platform": "macOS", "platformVersion": "14.0.0", "architecture": "arm",
+		"model": "", "mobile": false, "fullVersion": "132.0.0.0",
+	} {
+		if meta[field] != want {
+			t.Errorf("metadata[%q] = %v, want %v (full payload: %v)", field, meta[field], want, meta)
+		}
+	}
+}
+
+func TestEstablishInitialIdentityFailure(t *testing.T) {
+	wd := &fakeCDPDriver{
+		sessionID: "sess-test-initial-failure",
+		cdp: func(cmd string, params map[string]interface{}) (interface{}, error) {
+			return nil, errors.New("boom")
+		},
+	}
+	ident := MapAdvertisedOSIdentity("windows", false)
+	err := establishInitialIdentity(wd, 0, "ua", ident, ClientHintBrandsFor("chrome", "132", ""),
+		NewClientHintsDetails("Chrome/132.0.0.0", "chrome", ident))
+	if err == nil || !strings.Contains(err.Error(), "enabling CDP network domain") {
+		t.Errorf("err = %v, want network-domain failure", err)
 	}
 }

@@ -141,6 +141,170 @@ func renderBrandsLiteral(brands []ClientHintBrand) string {
 	return strings.Join(parts, ",\n            ")
 }
 
+// ClientHintsDetails carries the high-entropy Client Hints values derived
+// for one selection event (Instagram/VDI-006 completion).
+//
+// Provenance rule: every field is either parsed from the selected UA string,
+// frozen by platform convention, or taken from the documented per-OS table
+// below — never from the host. Fields Chromium requires in
+// Network.setUserAgentOverride.userAgentMetadata but CROWler cannot derive
+// (notably a per-release OS build number) use conventional values disclosed
+// in the implementation report; they are data, tunable without structural
+// change, and must not be mistaken for measured host values.
+type ClientHintsDetails struct {
+	// FullVersion is the complete browser version parsed from the selected
+	// UA (product-aware: Edg/ for Edge, OPR/ for Opera, else Chrome/).
+	FullVersion string
+	// PlatformVersion is the advertised OS version: Windows is frozen to
+	// "10.0.0" by UA-reduction for every release; Android majors parse from
+	// the UA ("Android 10" -> "10.0.0"); darwin/linux/ios use the
+	// conventional table values below.
+	PlatformVersion string
+	// Architecture is the advertised CPU architecture ("x86"/"arm").
+	Architecture string
+	// Model is the device model ("" on desktop, matching real Chrome;
+	// parsed from mobile UAs, "" when absent).
+	Model string
+	// Bitness is "64", except 32-bit ARM Android identities ("32",
+	// matching the advertised "Linux armv8l" platform string).
+	Bitness string
+}
+
+var (
+	chromeFullPattern     = regexp.MustCompile(`Chrome/(\d+\.\d+\.\d+\.\d+)`)
+	edgeFullPattern       = regexp.MustCompile(`Edg/(\d+\.\d+\.\d+\.\d+)`)
+	operaFullPattern      = regexp.MustCompile(`OPR/(\d+\.\d+\.\d+\.\d+)`)
+	androidVersionPattern = regexp.MustCompile(`Android (\d+)`)
+)
+
+// FullVersionFor extracts the product's full dotted version from UA tokens:
+// the Edg/ value for Edge, the OPR/ value for Opera, else the Chrome/ value.
+// It returns "" when no usable token exists (callers then omit fullVersion).
+func FullVersionFor(userAgent, product string) string {
+	switch strings.ToLower(strings.TrimSpace(product)) {
+	case "edge":
+		if m := edgeFullPattern.FindStringSubmatch(userAgent); len(m) == 2 {
+			return m[1]
+		}
+		return ""
+	case "opera":
+		if m := operaFullPattern.FindStringSubmatch(userAgent); len(m) == 2 {
+			return m[1]
+		}
+		return ""
+	default:
+		if m := chromeFullPattern.FindStringSubmatch(userAgent); len(m) == 2 {
+			return m[1]
+		}
+		return ""
+	}
+}
+
+// deviceModelForUA derives the advertised device model: "" on desktop (real
+// Chrome sends an empty model there); on mobile the last "; "-separated
+// token of the first UA parenthetical (e.g. "SM-G960F"), "iPhone"/"iPad" for
+// iOS, or "" when nothing parseable is present.
+func deviceModelForUA(userAgent string, mobile bool) string {
+	if !mobile {
+		return ""
+	}
+	if strings.Contains(userAgent, "iPhone") {
+		return "iPhone"
+	}
+	if strings.Contains(userAgent, "iPad") {
+		return "iPad"
+	}
+	open := strings.Index(userAgent, "(")
+	close := strings.Index(userAgent, ")")
+	if open < 0 || close <= open {
+		return ""
+	}
+	parts := strings.Split(userAgent[open+1:close], ";")
+	candidate := strings.TrimSpace(parts[len(parts)-1])
+	if candidate == "" || strings.HasPrefix(candidate, "Android") || strings.EqualFold(candidate, "Mobile") || strings.EqualFold(candidate, "Linux") {
+		return ""
+	}
+	return candidate
+}
+
+// NewClientHintsDetails derives the high-entropy values for one selection
+// event from the selected UA, product, and advertised OS identity.
+func NewClientHintsDetails(userAgent, product string, ident OSIdentity) ClientHintsDetails {
+	details := ClientHintsDetails{
+		FullVersion: FullVersionFor(userAgent, product),
+		Bitness:     "64",
+		Model:       deviceModelForUA(userAgent, ident.Mobile),
+	}
+	switch ident.Key {
+	case "windows":
+		// Frozen by UA-reduction: every Windows release reports 10.0.0.
+		details.PlatformVersion = "10.0.0"
+		details.Architecture = "x86"
+	case "darwin":
+		// Conventional value (approval-tunable): the UA-frozen 10_15_7
+		// would contradict Chrome>=120 requirements, so a plausible
+		// release is advertised instead. See the implementation report.
+		details.PlatformVersion = "14.0.0"
+		details.Architecture = "arm"
+	case "android":
+		if m := androidVersionPattern.FindStringSubmatch(userAgent); len(m) == 2 {
+			details.PlatformVersion = m[1] + ".0.0"
+		} else {
+			details.PlatformVersion = "13.0.0"
+		}
+		details.Architecture = "arm"
+		details.Bitness = "32"
+	case "ios":
+		details.PlatformVersion = "17.0.0"
+		details.Architecture = "arm"
+	default: // linux and unknown keys (linux is the global default)
+		details.PlatformVersion = "6.1.0"
+		details.Architecture = "x86"
+	}
+	return details
+}
+
+// highEntropySpoofBlock returns the getHighEntropyValues override IIFE that
+// keeps page-side high-entropy reads consistent with the CDP metadata and
+// the advertised UA. Requested keys covered by details resolve from the
+// selection; any other key delegates to the native implementation so the
+// promise contract holds. When userAgentData (or the API) is absent —
+// notably native Firefox identities — the block no-ops.
+func highEntropySpoofBlock(platform string, details ClientHintsDetails) string {
+	return fmt.Sprintf(`(function() {
+    try {
+        if (!navigator.userAgentData || !navigator.userAgentData.getHighEntropyValues) return;
+        const nativeHints = navigator.userAgentData.getHighEntropyValues.bind(navigator.userAgentData);
+        const spoofed = {
+            "platform": %s,
+            "platformVersion": %s,
+            "architecture": %s,
+            "model": %s,
+            "bitness": %s,
+            "uaFullVersion": %s
+        };        navigator.userAgentData.getHighEntropyValues = function(hints) {
+            const wanted = Array.isArray(hints) ? hints : [];
+            const out = {};
+            const unknown = [];
+            wanted.forEach(h => {
+                if (Object.prototype.hasOwnProperty.call(spoofed, h)) {
+                    out[h] = spoofed[h];
+                } else {
+                    unknown.push(h);
+                }
+            });
+            if (unknown.length === 0) return Promise.resolve(out);
+            return nativeHints(unknown).then(native => Object.assign(out, native));
+        };
+    } catch (e) {
+        console.error('Error installing high-entropy hints override:', e);
+    }
+})();
+`, cmn.JSStringLiteral(platform), cmn.JSStringLiteral(details.PlatformVersion),
+		cmn.JSStringLiteral(details.Architecture), cmn.JSStringLiteral(details.Model),
+		cmn.JSStringLiteral(details.Bitness), cmn.JSStringLiteral(details.FullVersion))
+}
+
 // antiDetectionScript builds the new-document camouflage script from explicit
 // identity inputs. All free-text values (UA, platforms, brand names) are
 // embedded via JSON string literals so quotes, backslashes, or non-ASCII
@@ -153,7 +317,7 @@ func renderBrandsLiteral(brands []ClientHintBrand) string {
 // event. Rotation replaces the registration via ReplaceIdentityScript; a
 // superseded registration is removed first so no stale UA-A script survives
 // alongside UA-B overrides.
-func antiDetectionScript(userAgent string, ident OSIdentity, brands []ClientHintBrand) string {
+func antiDetectionScript(userAgent string, ident OSIdentity, brands []ClientHintBrand, details ClientHintsDetails) string {
 	userAgentDataBlock := `// No Chromium brand surface for the selected identity:
 // Client Hints brand values are left at native values.
 `
@@ -219,17 +383,26 @@ delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
         return data;
     };
 })();
-`, cmn.JSStringLiteral(userAgent), cmn.JSStringLiteral(ident.NavigatorPlatform), userAgentDataBlock)
+
+%s`, cmn.JSStringLiteral(userAgent), cmn.JSStringLiteral(ident.NavigatorPlatform), userAgentDataBlock,
+		highEntropySpoofBlock(ident.UserAgentDataPlatform, details))
 }
 
 // userAgentOverrideParams builds the Network.setUserAgentOverride parameters
 // for the selected identity. userAgentMetadata carries the product's Client
-// Hints brands, platform, and device-class mobile flag when the selection
-// yields brands; otherwise only userAgent and platform are sent and brand
-// surfaces stay native. First-document HTTP observation versus page-side
-// JavaScript comparison requires a live observer and is integration-pending
-// (VDI-021 / review finding 4).
-func userAgentOverrideParams(userAgent, cdpPlatform string, ident OSIdentity, brands []ClientHintBrand) map[string]interface{} {
+// Hints brands, platform, device-class mobile flag, and the required
+// high-entropy fields (platformVersion, architecture, model; fullVersion
+// when derivable) when the selection yields brands; otherwise only userAgent
+// and platform are sent and brand surfaces stay native.
+//
+// Schema basis (Instagram/VDI-006 completion): per the DevTools protocol,
+// userAgentMetadata.platform/platformVersion/architecture/model/mobile are
+// REQUIRED — omitting them risks the whole command being rejected, which
+// would silently drop even the userAgent override. Values come from
+// NewClientHintsDetails (UA-derived, frozen, or conventional table values),
+// never from the host. First-document HTTP observation versus page-side
+// JavaScript comparison is covered by the Client Hints integration test.
+func userAgentOverrideParams(userAgent, cdpPlatform string, ident OSIdentity, brands []ClientHintBrand, details ClientHintsDetails) map[string]interface{} {
 	params := map[string]interface{}{
 		"userAgent": userAgent,
 	}
@@ -244,11 +417,18 @@ func userAgentOverrideParams(userAgent, cdpPlatform string, ident OSIdentity, br
 				"version": b.Version,
 			})
 		}
-		params["userAgentMetadata"] = map[string]interface{}{
-			"brands":   entries,
-			"platform": ident.UserAgentDataPlatform,
-			"mobile":   ident.Mobile,
+		metadata := map[string]interface{}{
+			"brands":          entries,
+			"platform":        ident.UserAgentDataPlatform,
+			"platformVersion": details.PlatformVersion,
+			"architecture":    details.Architecture,
+			"model":           details.Model,
+			"mobile":          ident.Mobile,
 		}
+		if details.FullVersion != "" {
+			metadata["fullVersion"] = details.FullVersion
+		}
+		params["userAgentMetadata"] = metadata
 	}
 	return params
 }
@@ -259,9 +439,9 @@ func userAgentOverrideParams(userAgent, cdpPlatform string, ident OSIdentity, br
 // navigator.userAgentData agree per the selected (possibly synthetic)
 // profile. Custom identities are preserved: values are derived from the
 // selected UA, never forced to host-native ones.
-func SetUserAgentOverrideWithMetadata(wd WebDriver, delayMs int, userAgent string, ident OSIdentity, brands []ClientHintBrand) error {
+func SetUserAgentOverrideWithMetadata(wd WebDriver, delayMs int, userAgent string, ident OSIdentity, brands []ClientHintBrand, details ClientHintsDetails) error {
 	_, err := ExecuteCDPCommand(wd, delayMs, "Network.setUserAgentOverride",
-		userAgentOverrideParams(userAgent, ident.NavigatorPlatform, ident, brands))
+		userAgentOverrideParams(userAgent, ident.NavigatorPlatform, ident, brands, details))
 	return err
 }
 
@@ -360,6 +540,22 @@ func ReplaceIdentityScript(wd WebDriver, delayMs int, source string) error {
 // and replaces the session registration with it. changeUserAgent calls it
 // after selecting UA B so later navigations in the same session evaluate the
 // current identity, not the connection-time one.
-func RefreshIdentityScript(wd WebDriver, delayMs int, userAgent string, ident OSIdentity, brands []ClientHintBrand) error {
-	return ReplaceIdentityScript(wd, delayMs, antiDetectionScript(userAgent, ident, brands))
+func RefreshIdentityScript(wd WebDriver, delayMs int, userAgent string, ident OSIdentity, brands []ClientHintBrand, details ClientHintsDetails) error {
+	return ReplaceIdentityScript(wd, delayMs, antiDetectionScript(userAgent, ident, brands, details))
+}
+
+// establishInitialIdentity applies the selected identity to a fresh session
+// before any navigation: CDP network domain first, then the UA + Client
+// Hints metadata override (order matters and is pinned by tests). Script
+// registration stays in InjectAntiDetectionPatches (Replace registry); the
+// caller classifies failures (fatal on CDP-capable browsers, best-effort on
+// Firefox, which has no CDP bridge).
+func establishInitialIdentity(wd WebDriver, delayMs int, userAgent string, ident OSIdentity, brands []ClientHintBrand, details ClientHintsDetails) error {
+	if err := EnableNetwork(wd, delayMs, nil); err != nil {
+		return fmt.Errorf("enabling CDP network domain: %w", err)
+	}
+	if err := SetUserAgentOverrideWithMetadata(wd, delayMs, userAgent, ident, brands, details); err != nil {
+		return fmt.Errorf("overriding user agent: %w", err)
+	}
+	return nil
 }

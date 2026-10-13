@@ -1035,7 +1035,9 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	}
 	ident := MapAdvertisedOSIdentity(selection.ResolvedOS, browseType == 1)
 	chromeMajor, _ := ChromeMajorVersion(userAgent)
-	brands := ClientHintBrandsFor(selection.Product, chromeMajor, cmn.ProductMajorVersion(userAgent, selection.Product))
+	productMajor := cmn.ProductMajorVersion(userAgent, selection.Product)
+	brands := ClientHintBrandsFor(selection.Product, chromeMajor, productMajor)
+	details := NewClientHintsDetails(userAgent, selection.Product, ident)
 
 	// Resolve the effective proxy preserving the existing source-vs-VDI
 	// precedence (absent/empty inherits the VDI default; "no_proxy" forces a
@@ -1293,10 +1295,10 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	// Sleep a few milliseconds to give time for the session to be fully established before we start sending commands to it
 	time.Sleep(500 * time.Millisecond)
 	// Inject anti-detection patch for the identity selected for this event.
-	// ident/brands derive from the same selection so UA, Client Hints,
-	// and navigator surfaces agree; rotation-time replacement is owned by
-	// ReplaceIdentityScript (review finding 2).
-	err = InjectAntiDetectionPatches(wd, userAgent, ident, brands)
+	// ident/brands/details derive from the same selection so UA, Client
+	// Hints, and navigator surfaces agree; rotation-time replacement is
+	// owned by ReplaceIdentityScript (review finding 2).
+	err = InjectAntiDetectionPatches(wd, userAgent, ident, brands, details)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ConnectVDI] Patch injection failed on '%s': %v", sel.Config.Name, err)
 		// Check if we have lost the session
@@ -1311,6 +1313,22 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 		// so injection stays best-effort there (unchanged behavior).
 		if browser == BrowserChrome || browser == BrowserChromium {
 			return nil, fmt.Errorf("injecting identity patches on '%s': %w", sel.Config.Name, err)
+		}
+	}
+
+	// Apply the selected identity to the network layer before the first
+	// navigation (Instagram/VDI-006 completion): launch arguments cover the
+	// User-Agent header, but without this override Sec-CH-UA* would carry
+	// native runtime values on every document until a request-level UA
+	// change happens — which default policies never trigger. Firefox has no
+	// CDP bridge and keeps the previous best-effort behavior (skipped).
+	if cdpActive {
+		if err := establishInitialIdentity(wd, ctx.GetConfig().Crawler.CDPDelay, userAgent, ident, brands, details); err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "establishing initial browser identity on '%s': %v", sel.Config.Name, err)
+			if strings.Contains(strings.ToLower(err.Error()), "invalid session id") {
+				return nil, err
+			}
+			return nil, fmt.Errorf("establishing initial browser identity on '%s': %w", sel.Config.Name, err)
 		}
 	}
 
@@ -1723,18 +1741,18 @@ func setNavigatorProperties(wd WebDriver, lang, userAgent string, ident OSIdenti
 }
 
 // InjectAntiDetectionPatches injects JavaScript anti-fingerprinting logic
-// for one selection event. ident and brands must derive from the same
-// User-Agent selection (see ConnectVDI) so navigator, Client Hints, and CDP
-// surfaces agree. The script body is built by antiDetectionScript: identity
-// derivation, safe string encoding, and removal of the debug trace changed;
-// WebGL, Audio, plugin, MIME, and marker behavior is preserved.
+// for one selection event. ident, brands, and details must derive from the
+// same User-Agent selection (see ConnectVDI) so navigator, Client Hints,
+// and CDP surfaces agree. The script body is built by antiDetectionScript:
+// identity derivation, safe string encoding, and removal of the debug trace
+// changed; WebGL, Audio, plugin, MIME, and marker behavior is preserved.
 //
 // Registration replaces any previous identity script for the session
 // (ReplaceIdentityScript), so rotation never stacks stale identities.
 // Custom (including synthetic) identities are preserved: values are derived
 // from the selection, never forced to host-native ones.
-func InjectAntiDetectionPatches(driver WebDriver, uaString string, ident OSIdentity, brands []ClientHintBrand) error {
-	if err := ReplaceIdentityScript(driver, 0, antiDetectionScript(uaString, ident, brands)); err != nil {
+func InjectAntiDetectionPatches(driver WebDriver, uaString string, ident OSIdentity, brands []ClientHintBrand, details ClientHintsDetails) error {
+	if err := ReplaceIdentityScript(driver, 0, antiDetectionScript(uaString, ident, brands, details)); err != nil {
 		return fmt.Errorf("failed to inject stealth patches: %w", err)
 	}
 
