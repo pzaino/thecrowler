@@ -44,10 +44,15 @@ import (
 )
 
 type recordedRequest struct {
-	userAgent     string
-	secCHUA       string
-	secCHMobile   string
-	secCHPlatform string
+	path             string
+	userAgent        string
+	secCHUA          string
+	secCHMobile      string
+	secCHPlatform    string
+	secCHFullList    string
+	secCHPlatVersion string
+	secCHArch        string
+	secCHModel       string
 }
 
 type headerRecorder struct {
@@ -58,23 +63,41 @@ type headerRecorder struct {
 func (h *headerRecorder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.mu.Lock()
 	h.requests = append(h.requests, recordedRequest{
-		userAgent:     r.Header.Get("User-Agent"),
-		secCHUA:       r.Header.Get("Sec-CH-UA"),
-		secCHMobile:   r.Header.Get("Sec-CH-UA-Mobile"),
-		secCHPlatform: r.Header.Get("Sec-CH-UA-Platform"),
+		path:             r.URL.Path,
+		userAgent:        r.Header.Get("User-Agent"),
+		secCHUA:          r.Header.Get("Sec-CH-UA"),
+		secCHMobile:      r.Header.Get("Sec-CH-UA-Mobile"),
+		secCHPlatform:    r.Header.Get("Sec-CH-UA-Platform"),
+		secCHFullList:    r.Header.Get("Sec-CH-UA-Full-Version-List"),
+		secCHPlatVersion: r.Header.Get("Sec-CH-UA-Platform-Version"),
+		secCHArch:        r.Header.Get("Sec-CH-UA-Arch"),
+		secCHModel:       r.Header.Get("Sec-CH-UA-Model"),
 	})
 	h.mu.Unlock()
+	// Opt the origin into high-entropy hints so later same-origin requests
+	// carry them (localhost is a secure context). Without opt-in the
+	// high-entropy headers are legitimately absent.
+	w.Header().Set("Accept-CH", "Sec-CH-UA-Full-Version-List, Sec-CH-UA-Platform-Version, Sec-CH-UA-Arch, Sec-CH-UA-Model, Sec-CH-UA-Bitness")
+	w.Header().Set("Accept-CH-Lifetime", "86400")
 	w.Header().Set("Content-Type", "text/html")
 	fmt.Fprint(w, "<html><head><title>identity-fixture</title></head><body>ok</body></html>")
 }
 
 func (h *headerRecorder) last() (recordedRequest, bool) {
+	return h.lastDocument()
+}
+
+// lastDocument returns the most recent non-favicon request: Chromium fetches
+// /favicon.ico automatically and must not shadow the navigated document.
+func (h *headerRecorder) lastDocument() (recordedRequest, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if len(h.requests) == 0 {
-		return recordedRequest{}, false
+	for i := len(h.requests) - 1; i >= 0; i-- {
+		if h.requests[i].path != "/favicon.ico" {
+			return h.requests[i], true
+		}
 	}
-	return h.requests[len(h.requests)-1], true
+	return recordedRequest{}, false
 }
 
 func TestIdentityClientHintsIntegration(t *testing.T) {
@@ -224,7 +247,7 @@ func TestIdentityClientHintsIntegration(t *testing.T) {
 	// High-entropy reads must match the advertised identity, not the host.
 	highEntropy, err := wd.ExecuteScriptAsync(`const done = arguments[0];
 		if (!navigator.userAgentData || !navigator.userAgentData.getHighEntropyValues) { done("unavailable"); return; }
-		navigator.userAgentData.getHighEntropyValues(["platformVersion", "architecture", "model", "bitness"]).then(
+		navigator.userAgentData.getHighEntropyValues(["platformVersion", "architecture", "model", "bitness", "fullVersionList"]).then(
 			v => done(JSON.stringify(v)), e => done("error:" + e));`, nil)
 	if err != nil {
 		t.Fatalf("high-entropy read: %v", err)
@@ -233,6 +256,13 @@ func TestIdentityClientHintsIntegration(t *testing.T) {
 		if !strings.Contains(fmt.Sprint(highEntropy), want) {
 			t.Errorf("high-entropy values = %v, want %s", highEntropy, want)
 		}
+	}
+	// The full-version list must mirror the advertised brands, never the
+	// runtime build.
+	if fullList := fmt.Sprint(highEntropy); !strings.Contains(fullList, `"132.0.0.0"`) || !strings.Contains(fullList, `"Chromium"`) {
+		t.Errorf("high-entropy fullVersionList = %s, want Chromium at 132.0.0.0", fullList)
+	} else if strings.Contains(fullList, "6834") {
+		t.Errorf("high-entropy fullVersionList = %s leaks the runtime Chromium build", fullList)
 	}
 
 	// 3. Client Hints request headers: recorded and cross-checked when the
@@ -247,6 +277,24 @@ func TestIdentityClientHintsIntegration(t *testing.T) {
 	// host's Linux value.
 	if observed.secCHPlatform != "" && !strings.Contains(observed.secCHPlatform, "macOS") {
 		t.Errorf("Sec-CH-UA-Platform = %q contradicts the selected macOS identity", observed.secCHPlatform)
+	}
+	// High-entropy headers (opted in via Accept-CH on the previous
+	// response): contradiction fatal, absence informational.
+	t.Logf("high-entropy request headers: FullList=%q PlatVersion=%q Arch=%q Model=%q",
+		observed.secCHFullList, observed.secCHPlatVersion, observed.secCHArch, observed.secCHModel)
+	if observed.secCHFullList != "" {
+		if !strings.Contains(observed.secCHFullList, `"Chromium"`) || !strings.Contains(observed.secCHFullList, "132.0.0.0") {
+			t.Errorf("Sec-CH-UA-Full-Version-List = %q contradicts the selected identity", observed.secCHFullList)
+		}
+		if strings.Contains(observed.secCHFullList, "6834") {
+			t.Errorf("Sec-CH-UA-Full-Version-List = %q leaks the runtime Chromium build", observed.secCHFullList)
+		}
+	}
+	if observed.secCHPlatVersion != "" && observed.secCHPlatVersion != "14.0.0" {
+		t.Errorf("Sec-CH-UA-Platform-Version = %q, want 14.0.0", observed.secCHPlatVersion)
+	}
+	if observed.secCHArch != "" && observed.secCHArch != `"arm"` && observed.secCHArch != "arm" {
+		t.Errorf("Sec-CH-UA-Arch = %q, want arm", observed.secCHArch)
 	}
 
 	// 4. Rotation (finding 2, end-to-end, cross-OS): replacing the

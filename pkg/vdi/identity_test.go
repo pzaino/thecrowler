@@ -2,6 +2,7 @@ package vdi
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -426,17 +427,21 @@ func TestNewClientHintsDetails(t *testing.T) {
 		want    ClientHintsDetails
 	}{
 		{"windows chrome", windowsUA, "chrome", MapAdvertisedOSIdentity("windows", false),
-			ClientHintsDetails{FullVersion: "132.0.6834.159", PlatformVersion: "10.0.0", Architecture: "x86", Model: "", Bitness: "64"}},
+			ClientHintsDetails{FullVersion: "132.0.6834.159", PlatformVersion: "10.0.0", Architecture: "x86", Model: "", Bitness: "64",
+				FullVersionList: []ClientHintBrand{{Brand: "Chromium", Version: "132.0.6834.159"}, {Brand: "Not-A.Brand", Version: "8.0.0.0"}}}},
 		{"darwin chrome (Instagram case)", darwinUA, "chrome", MapAdvertisedOSIdentity("darwin", false),
-			ClientHintsDetails{FullVersion: "132.0.0.0", PlatformVersion: "14.0.0", Architecture: "arm", Model: "", Bitness: "64"}},
+			ClientHintsDetails{FullVersion: "132.0.0.0", PlatformVersion: "14.0.0", Architecture: "arm", Model: "", Bitness: "64",
+				FullVersionList: []ClientHintBrand{{Brand: "Chromium", Version: "132.0.0.0"}, {Brand: "Not-A.Brand", Version: "8.0.0.0"}}}},
 		{"linux chrome", linuxUA, "chrome", MapAdvertisedOSIdentity("linux", false),
-			ClientHintsDetails{FullVersion: "124.0.6367.78", PlatformVersion: "6.1.0", Architecture: "x86", Model: "", Bitness: "64"}},
+			ClientHintsDetails{FullVersion: "124.0.6367.78", PlatformVersion: "6.1.0", Architecture: "x86", Model: "", Bitness: "64",
+				FullVersionList: []ClientHintBrand{{Brand: "Chromium", Version: "124.0.6367.78"}, {Brand: "Not-A.Brand", Version: "8.0.0.0"}}}},
 		{"android chrome", androidUA, "chrome", MapAdvertisedOSIdentity("android", true),
-			ClientHintsDetails{FullVersion: "122.0.6261.112", PlatformVersion: "10.0.0", Architecture: "arm", Model: "SM-G960F", Bitness: "32"}},
+			ClientHintsDetails{FullVersion: "122.0.6261.112", PlatformVersion: "10.0.0", Architecture: "arm", Model: "SM-G960F", Bitness: "32",
+				FullVersionList: []ClientHintBrand{{Brand: "Chromium", Version: "122.0.6261.112"}, {Brand: "Not-A.Brand", Version: "8.0.0.0"}}}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := NewClientHintsDetails(tc.ua, tc.product, tc.ident); got != tc.want {
+			if got := NewClientHintsDetails(tc.ua, tc.product, tc.ident); !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("details = %+v, want %+v", got, tc.want)
 			}
 		})
@@ -459,6 +464,111 @@ func TestFullVersionFor(t *testing.T) {
 	}
 }
 
+func TestFullVersionListFor(t *testing.T) {
+	chrome := []ClientHintBrand{{Brand: "Chromium", Version: "132"}, {Brand: "Not-A.Brand", Version: "8"}}
+	got := FullVersionListFor(chrome, "132.0.0.0", "chrome", "")
+	want := []ClientHintBrand{{Brand: "Chromium", Version: "132.0.0.0"}, {Brand: "Not-A.Brand", Version: "8.0.0.0"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("chrome list = %+v, want %+v", got, want)
+	}
+	// Edge list mirrors the short-brand set with full versions.
+	edge := append(append([]ClientHintBrand{}, chrome...), ClientHintBrand{Brand: "Microsoft Edge", Version: "131"})
+	got = FullVersionListFor(edge, "131.0.0.0", "edge", "131.0.0.0")
+	if len(got) != 3 || got[2] != (ClientHintBrand{Brand: "Microsoft Edge", Version: "131.0.0.0"}) {
+		t.Errorf("edge list = %+v, want 3 entries ending in Edge 131.0.0.0", got)
+	}
+	// Incomplete inputs yield no list rather than a host-mixed one.
+	if got := FullVersionListFor(chrome, "", "chrome", ""); got != nil {
+		t.Errorf("versionless list = %+v, want nil", got)
+	}
+	if got := FullVersionListFor(nil, "132.0.0.0", "chrome", ""); got != nil {
+		t.Errorf("brandless list = %+v, want nil", got)
+	}
+	if got := FullVersionListFor(edge, "132.0.0.0", "edge", ""); got == nil || got[2] != (ClientHintBrand{Brand: "Microsoft Edge", Version: "132.0.0.0"}) {
+		t.Errorf("edge list without product full = %+v, want engine-build fallback (never host-mixed)", got)
+	}
+}
+
+func TestFullVersionForTruncatedTokens(t *testing.T) {
+	// The shipped database truncates product tokens ("Edg/131.0.0."); the
+	// major reconstruction keeps the value shape-valid and consistent.
+	if got := FullVersionFor("Chrome/131.0.0.1 Safari/537.36 Edg/131.0.0.", "edge"); got != "131.0.0.0" {
+		t.Errorf("truncated Edg full = %q, want 131.0.0.0", got)
+	}
+	if got := FullVersionFor("Chrome/130.0.0.1 Safari/537.36 OPR/115.0.0.", "opera"); got != "115.0.0.0" {
+		t.Errorf("truncated OPR full = %q, want 115.0.0.0", got)
+	}
+}
+
+func TestHighEntropySpoofBlockContract(t *testing.T) {
+	details := ClientHintsDetails{
+		FullVersion: "132.0.0.0", PlatformVersion: "14.0.0", Architecture: "arm",
+		Model: "", Bitness: "64",
+		FullVersionList: []ClientHintBrand{{Brand: "Chromium", Version: "132.0.0.0"}},
+	}
+	script := highEntropySpoofBlock(details)
+	// Native delegation first: permission behavior and result shape come
+	// from the native call, never from an unconditional resolve.
+	if !strings.Contains(script, "return nativeHints(hints).then(native => {") {
+		t.Error("wrapper must delegate to native first")
+	}
+	if strings.Contains(script, "Promise.resolve(out)") {
+		t.Error("wrapper must not bypass native with an unconditional resolve")
+	}
+	// Allowlist-gated overlay only; low-entropy names never synthesized.
+	for _, token := range []string{`"platformVersion"`, `"architecture"`, `"model"`, `"bitness"`, `"uaFullVersion"`, `"fullVersionList"`, `"wow64"`, `"formFactors"`} {
+		if !strings.Contains(script, token) {
+			t.Errorf("wrapper lacks allowlisted hint %s", token)
+		}
+	}
+	if strings.Contains(script, `"platform":`) {
+		t.Error("wrapper must not synthesize the low-entropy platform field")
+	}
+	// Omitted argument defaults to the full vocabulary (native parity).
+	if !strings.Contains(script, "Array.isArray(hints) ? hints : highEntropy") {
+		t.Error("wrapper must default omitted hints to the full vocabulary")
+	}
+	// Full-version list travels when resolvable.
+	if !strings.Contains(script, `"fullVersionList"`) || !strings.Contains(script, `"132.0.0.0"`) {
+		t.Error("wrapper lacks the resolvable fullVersionList")
+	}
+}
+
+func TestAbortFailedSession(t *testing.T) {
+	const session = "sess-test-abort"
+	identityScripts.Lock()
+	identityScripts.bySession[session] = "stale-id"
+	identityScripts.Unlock()
+	wd := &fakeCDPDriver{
+		sessionID: session,
+		cdp:       func(cmd string, params map[string]interface{}) (interface{}, error) { return nil, nil },
+	}
+	// Close/Quit need tracking: wrap via counters below.
+	closer := &closeQuitCounter{WebDriver: wd}
+	abortFailedSession(closer)
+	if closer.closes != 1 || closer.quits != 1 {
+		t.Errorf("closes=%d quits=%d, want exactly one teardown each", closer.closes, closer.quits)
+	}
+	if _, ok := trackedID(t, session); ok {
+		t.Error("aborted session registration must be forgotten")
+	}
+	// Nil driver is a safe no-op.
+	abortFailedSession(nil)
+}
+
+type closeQuitCounter struct {
+	selenium.WebDriver
+	closes, quits int
+}
+
+func (f *closeQuitCounter) Close() error { f.closes++; return nil }
+func (f *closeQuitCounter) Quit() error  { f.quits++; return nil }
+func (f *closeQuitCounter) SessionID() string {
+	if d, ok := f.WebDriver.(interface{ SessionID() string }); ok {
+		return d.SessionID()
+	}
+	return ""
+}
 func TestDeviceModelForUA(t *testing.T) {
 	if got := deviceModelForUA("Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/132.0.0.0", false); got != "" {
 		t.Errorf("desktop model = %q, want empty", got)
@@ -471,6 +581,9 @@ func TestDeviceModelForUA(t *testing.T) {
 	}
 	if got := deviceModelForUA("no-parens-here", true); got != "" {
 		t.Errorf("parens-less model = %q, want empty", got)
+	}
+	if got := deviceModelForUA("Mozilla/5.0 (Linux; Android 10; K) Chrome/130.0.1.2 Mobile", true); got != "" {
+		t.Errorf("truncated single-char model = %q, want empty (data artifact, see report)", got)
 	}
 }
 

@@ -1304,6 +1304,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 		// Check if we have lost the session
 		if strings.Contains(strings.ToLower(err.Error()), "invalid session id") {
 			// We lost the session (this is a Selenium bug sometimes)
+			abortFailedSession(wd)
 			return nil, err
 		}
 		// Identity-script registration is critical on CDP-capable browsers:
@@ -1312,6 +1313,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 		// the existing session-recovery paths. Firefox has no CDP bridge,
 		// so injection stays best-effort there (unchanged behavior).
 		if browser == BrowserChrome || browser == BrowserChromium {
+			abortFailedSession(wd)
 			return nil, fmt.Errorf("injecting identity patches on '%s': %w", sel.Config.Name, err)
 		}
 	}
@@ -1325,6 +1327,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	if cdpActive {
 		if err := establishInitialIdentity(wd, ctx.GetConfig().Crawler.CDPDelay, userAgent, ident, brands, details); err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "establishing initial browser identity on '%s': %v", sel.Config.Name, err)
+			abortFailedSession(wd)
 			if strings.Contains(strings.ToLower(err.Error()), "invalid session id") {
 				return nil, err
 			}

@@ -168,6 +168,13 @@ type ClientHintsDetails struct {
 	// Bitness is "64", except 32-bit ARM Android identities ("32",
 	// matching the advertised "Linux armv8l" platform string).
 	Bitness string
+	// FullVersionList mirrors Brands with full dotted versions for the
+	// Sec-CH-UA-Full-Version-List surface: Chromium/product entries carry
+	// their full versions, Not-A.Brand mirrors the pinned short "8" as
+	// "8.0.0.0". Nil when no honest list is buildable (non-Chromium
+	// identities, or unresolvable versions) — callers then omit the field
+	// instead of leaking host values.
+	FullVersionList []ClientHintBrand
 }
 
 var (
@@ -179,25 +186,70 @@ var (
 
 // FullVersionFor extracts the product's full dotted version from UA tokens:
 // the Edg/ value for Edge, the OPR/ value for Opera, else the Chrome/ value.
-// It returns "" when no usable token exists (callers then omit fullVersion).
+// Tokens in the shipped database are sometimes truncated ("Edg/131.0.0.");
+// when no quad is present but the major is known, major+".0.0.0" is used so
+// the value stays shape-valid and major-consistent. It returns "" only when
+// no usable token exists (callers then omit fullVersion).
 func FullVersionFor(userAgent, product string) string {
-	switch strings.ToLower(strings.TrimSpace(product)) {
-	case "edge":
-		if m := edgeFullPattern.FindStringSubmatch(userAgent); len(m) == 2 {
-			return m[1]
-		}
-		return ""
-	case "opera":
-		if m := operaFullPattern.FindStringSubmatch(userAgent); len(m) == 2 {
-			return m[1]
-		}
-		return ""
-	default:
-		if m := chromeFullPattern.FindStringSubmatch(userAgent); len(m) == 2 {
+	chromeMajor, _ := ChromeMajorVersion(userAgent)
+	productMajor := cmn.ProductMajorVersion(userAgent, product)
+	quadFor := func(re *regexp.Regexp) string {
+		if m := re.FindStringSubmatch(userAgent); len(m) == 2 {
 			return m[1]
 		}
 		return ""
 	}
+	completed := func(quad, major string) string {
+		if quad != "" {
+			return quad
+		}
+		if major != "" {
+			return major + ".0.0.0"
+		}
+		return ""
+	}
+	switch strings.ToLower(strings.TrimSpace(product)) {
+	case "edge":
+		return completed(quadFor(edgeFullPattern), productMajor)
+	case "opera":
+		return completed(quadFor(operaFullPattern), productMajor)
+	default:
+		return completed(quadFor(chromeFullPattern), chromeMajor)
+	}
+}
+
+// FullVersionListFor builds the full-version brand list mirroring brands:
+// Chromium/product entries carry full dotted versions, Not-A.Brand mirrors
+// the pinned short version as "8.0.0.0" (self-consistent pair; the 8-vs-99
+// staleness question is a separate tunable, not changed here). A product
+// brand without a resolvable product build falls back to the engine build
+// rather than mixing in host values (finding 2). It returns nil unless a
+// complete list is buildable, so callers omit the surface instead of
+// emitting a partial one.
+func FullVersionListFor(brands []ClientHintBrand, chromeFull, product, productFull string) []ClientHintBrand {
+	if len(brands) == 0 || chromeFull == "" {
+		return nil
+	}
+	if productFull == "" {
+		productFull = chromeFull
+	}
+	out := make([]ClientHintBrand, 0, len(brands))
+	for _, b := range brands {
+		switch b.Brand {
+		case "Chromium":
+			out = append(out, ClientHintBrand{Brand: b.Brand, Version: chromeFull})
+		case "Microsoft Edge", "Opera":
+			if productFull == "" {
+				return nil
+			}
+			out = append(out, ClientHintBrand{Brand: b.Brand, Version: productFull})
+		case "Not-A.Brand":
+			out = append(out, ClientHintBrand{Brand: b.Brand, Version: notABrandVersion + ".0.0.0"})
+		default:
+			return nil
+		}
+	}
+	return out
 }
 
 // deviceModelForUA derives the advertised device model: "" on desktop (real
@@ -221,7 +273,10 @@ func deviceModelForUA(userAgent string, mobile bool) string {
 	}
 	parts := strings.Split(userAgent[open+1:close], ";")
 	candidate := strings.TrimSpace(parts[len(parts)-1])
-	if candidate == "" || strings.HasPrefix(candidate, "Android") || strings.EqualFold(candidate, "Mobile") || strings.EqualFold(candidate, "Linux") {
+	// Reject empty, OS/family tokens, and implausible fragments: the shipped
+	// database contains a truncated "(Linux; Android 10; K)" model token,
+	// and no legitimate device model is a single character.
+	if candidate == "" || len(candidate) < 2 || strings.HasPrefix(candidate, "Android") || strings.EqualFold(candidate, "Mobile") || strings.EqualFold(candidate, "Linux") {
 		return ""
 	}
 	return candidate
@@ -230,10 +285,18 @@ func deviceModelForUA(userAgent string, mobile bool) string {
 // NewClientHintsDetails derives the high-entropy values for one selection
 // event from the selected UA, product, and advertised OS identity.
 func NewClientHintsDetails(userAgent, product string, ident OSIdentity) ClientHintsDetails {
+	chromeMajor, _ := ChromeMajorVersion(userAgent)
+	brands := ClientHintBrandsFor(product, chromeMajor, cmn.ProductMajorVersion(userAgent, product))
+	chromeFull := FullVersionFor(userAgent, "chrome")
+	productFull := FullVersionFor(userAgent, product)
 	details := ClientHintsDetails{
-		FullVersion: FullVersionFor(userAgent, product),
-		Bitness:     "64",
-		Model:       deviceModelForUA(userAgent, ident.Mobile),
+		FullVersion:     productFull,
+		Bitness:         "64",
+		Model:           deviceModelForUA(userAgent, ident.Mobile),
+		FullVersionList: FullVersionListFor(brands, chromeFull, product, productFull),
+	}
+	if details.FullVersion == "" {
+		details.FullVersion = chromeFull
 	}
 	switch ident.Key {
 	case "windows":
@@ -264,45 +327,75 @@ func NewClientHintsDetails(userAgent, product string, ident OSIdentity) ClientHi
 	return details
 }
 
+// highEntropyHintNames is the valid high-entropy hint vocabulary. Unknown
+// tokens (including low-entropy names such as platform/mobile/brands, which
+// are direct properties, not hint results) must never appear in results.
+var highEntropyHintNames = []string{
+	"architecture", "bitness", "formFactors", "fullVersionList",
+	"model", "platformVersion", "uaFullVersion", "wow64",
+}
+
 // highEntropySpoofBlock returns the getHighEntropyValues override IIFE that
 // keeps page-side high-entropy reads consistent with the CDP metadata and
-// the advertised UA. Requested keys covered by details resolve from the
-// selection; any other key delegates to the native implementation so the
-// promise contract holds. When userAgentData (or the API) is absent —
-// notably native Firefox identities — the block no-ops.
-func highEntropySpoofBlock(platform string, details ClientHintsDetails) string {
+// the advertised UA.
+//
+// Contract restoration (follow-up review): the override always delegates to
+// the native implementation first and overlays only requested, valid,
+// high-entropy keys with selection values. This preserves the complete
+// native contract at once — result shape, unknown-token handling, and, most
+// importantly, Permissions Policy behavior (a disallowed hint rejects via
+// the native call instead of being bypassed by an unconditional resolve).
+// Low-entropy names are never synthesized into results. When userAgentData
+// (or the API) is absent — notably native Firefox identities — the block
+// no-ops.
+func highEntropySpoofBlock(details ClientHintsDetails) string {
+	allowlist := "[" + strings.Join(quotedAll(highEntropyHintNames), ",") + "]"
+	listFragment := ""
+	if len(details.FullVersionList) > 0 {
+		listFragment = `,
+            "fullVersionList": [
+                ` + renderBrandsLiteral(details.FullVersionList) + `
+            ]`
+	}
 	return fmt.Sprintf(`(function() {
     try {
         if (!navigator.userAgentData || !navigator.userAgentData.getHighEntropyValues) return;
         const nativeHints = navigator.userAgentData.getHighEntropyValues.bind(navigator.userAgentData);
+        const highEntropy = %s;
         const spoofed = {
-            "platform": %s,
             "platformVersion": %s,
             "architecture": %s,
             "model": %s,
             "bitness": %s,
-            "uaFullVersion": %s
-        };        navigator.userAgentData.getHighEntropyValues = function(hints) {
-            const wanted = Array.isArray(hints) ? hints : [];
-            const out = {};
-            const unknown = [];
-            wanted.forEach(h => {
-                if (Object.prototype.hasOwnProperty.call(spoofed, h)) {
-                    out[h] = spoofed[h];
-                } else {
-                    unknown.push(h);
-                }
+            "uaFullVersion": %s%s
+        };
+        navigator.userAgentData.getHighEntropyValues = function(hints) {
+            return nativeHints(hints).then(native => {
+                const result = (native && typeof native === 'object') ? Object.assign({}, native) : {};
+                const wanted = Array.isArray(hints) ? hints : highEntropy;
+                wanted.forEach(h => {
+                    if (highEntropy.indexOf(h) !== -1 && Object.prototype.hasOwnProperty.call(spoofed, h)) {
+                        result[h] = spoofed[h];
+                    }
+                });
+                return result;
             });
-            if (unknown.length === 0) return Promise.resolve(out);
-            return nativeHints(unknown).then(native => Object.assign(out, native));
         };
     } catch (e) {
         console.error('Error installing high-entropy hints override:', e);
     }
 })();
-`, cmn.JSStringLiteral(platform), cmn.JSStringLiteral(details.PlatformVersion),
+`, allowlist, cmn.JSStringLiteral(details.PlatformVersion),
 		cmn.JSStringLiteral(details.Architecture), cmn.JSStringLiteral(details.Model),
-		cmn.JSStringLiteral(details.Bitness), cmn.JSStringLiteral(details.FullVersion))
+		cmn.JSStringLiteral(details.Bitness), cmn.JSStringLiteral(details.FullVersion), listFragment)
+}
+
+func quotedAll(names []string) []string {
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		out = append(out, cmn.JSStringLiteral(n))
+	}
+	return out
 }
 
 // antiDetectionScript builds the new-document camouflage script from explicit
@@ -385,7 +478,7 @@ delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
 })();
 
 %s`, cmn.JSStringLiteral(userAgent), cmn.JSStringLiteral(ident.NavigatorPlatform), userAgentDataBlock,
-		highEntropySpoofBlock(ident.UserAgentDataPlatform, details))
+		highEntropySpoofBlock(details))
 }
 
 // userAgentOverrideParams builds the Network.setUserAgentOverride parameters
@@ -424,9 +517,23 @@ func userAgentOverrideParams(userAgent, cdpPlatform string, ident OSIdentity, br
 			"architecture":    details.Architecture,
 			"model":           details.Model,
 			"mobile":          ident.Mobile,
+			"bitness":         details.Bitness,
 		}
 		if details.FullVersion != "" {
 			metadata["fullVersion"] = details.FullVersion
+		}
+		// The full-version brand list travels only when completely
+		// resolvable; otherwise the key is omitted rather than leaking
+		// host build numbers (finding 2).
+		if len(details.FullVersionList) > 0 {
+			listEntries := make([]map[string]interface{}, 0, len(details.FullVersionList))
+			for _, b := range details.FullVersionList {
+				listEntries = append(listEntries, map[string]interface{}{
+					"brand":   b.Brand,
+					"version": b.Version,
+				})
+			}
+			metadata["fullVersionList"] = listEntries
 		}
 		params["userAgentMetadata"] = metadata
 	}
@@ -542,6 +649,21 @@ func ReplaceIdentityScript(wd WebDriver, delayMs int, source string) error {
 // current identity, not the connection-time one.
 func RefreshIdentityScript(wd WebDriver, delayMs int, userAgent string, ident OSIdentity, brands []ClientHintBrand, details ClientHintsDetails) error {
 	return ReplaceIdentityScript(wd, delayMs, antiDetectionScript(userAgent, ident, brands, details))
+}
+
+// abortFailedSession best-effort tears down a newly created session that
+// ConnectVDI refuses to hand out (follow-up finding 3): it quits the driver
+// (a dead session simply reports an error, which is ignored) and drops any
+// tracked identity-script registration, so neither a server-side session
+// nor registry state leaks. It never returns an error; call sites invoke it
+// immediately before returning their own classified failure.
+func abortFailedSession(wd WebDriver) {
+	if wd == nil {
+		return
+	}
+	_ = wd.Close()
+	_ = wd.Quit()
+	forgetIdentityScript(wd.SessionID())
 }
 
 // establishInitialIdentity applies the selected identity to a fresh session
