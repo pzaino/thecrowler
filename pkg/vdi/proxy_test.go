@@ -207,6 +207,34 @@ func TestRedactedCapabilities(t *testing.T) {
 	}
 }
 
+func TestCustomVDIMergeFeedsSessionResolution(t *testing.T) {
+	// End-to-end across the merge/resolve seam using the documented source
+	// shape {"custom": {"vdi": [{"proxy_url": ...}]}}: the merged process
+	// config feeds the name-matched lookup, which feeds session resolution.
+	base := cfg.Config{Selenium: []cfg.Selenium{
+		{Name: "vdi-1", Type: "chrome", Host: "h1", Port: 4444, ProxyURL: "http://global:1"},
+	}}
+	merged := cfg.CombineConfigs(base, cfg.SourceConfig{Custom: map[string]interface{}{
+		"vdi": []interface{}{map[string]interface{}{"proxy_url": "http://127.0.0.1:8082"}},
+	}})
+	if merged.Selenium[0].ProxyURL != "http://127.0.0.1:8082" {
+		t.Fatalf("merged proxy = %q", merged.Selenium[0].ProxyURL)
+	}
+	custom := customSeleniumProxyURL(merged, "vdi-1")
+	if custom != "http://127.0.0.1:8082" {
+		t.Fatalf("lookup = %q", custom)
+	}
+	// Leased instance still carries the global default; the session
+	// composition prefers the merged per-source override.
+	if got := effectiveSessionProxy("", false, custom, "http://global:1"); got != "http://127.0.0.1:8082" {
+		t.Errorf("effective = %q", got)
+	}
+	// And the top-level source key still wins over custom.vdi.
+	if got := effectiveSessionProxy("http://top:9", true, custom, "http://global:1"); got != "http://top:9" {
+		t.Errorf("effective with top-level = %q", got)
+	}
+}
+
 func TestPoolProxyIsolation(t *testing.T) {
 	pool := NewPool(2)
 	for _, tc := range []struct {

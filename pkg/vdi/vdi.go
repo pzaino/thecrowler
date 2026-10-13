@@ -833,7 +833,7 @@ func firefoxProxyCapability(effectiveProxy string) *selenium.Proxy {
 }
 
 // customSeleniumProxyURL returns the per-source proxy override merged from
-// custom.selenium for the VDI with the given name, or "" when absent (VDI-009).
+// custom.vdi for the VDI with the given name, or "" when absent (VDI-009).
 // The merge is positional, so the leased instance is matched by name against
 // the current process configuration; a missing name (or empty process list)
 // safely yields no override. Callers treat "" as "no override".
@@ -853,7 +853,7 @@ func customSeleniumProxyURL(processCfg cfg.Config, vdiName string) string {
 // effectiveSessionProxy composes the three proxy layers without changing
 // their individual semantics (VDI-009): the top-level source proxy_url
 // wins when present (value or no_proxy sentinel); otherwise the merged
-// custom.selenium override applies; otherwise the VDI default. An
+// custom.vdi override applies; otherwise the VDI default. An
 // unparseable source document behaves like an absent top-level key.
 func effectiveSessionProxy(sourceProxy string, sourceOK bool, customProxy, vdiProxy string) string {
 	base := vdiProxy
@@ -1179,7 +1179,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 			}
 		}
 	}
-	// Middle layer (VDI-009): the merged custom.selenium override for this
+	// Middle layer (VDI-009): the merged custom.vdi override for this
 	// VDI, if any. The top-level source key keeps precedence via
 	// effectiveSessionProxy; each layer retains its existing meaning.
 	customProxy := customSeleniumProxyURL(*pConfig, sel.Config.Name)

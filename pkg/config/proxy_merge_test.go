@@ -16,7 +16,7 @@ func mergeTestBase() Config {
 func TestCombineVDICfgMergesProxyPerIndex(t *testing.T) {
 	dst := mergeTestBase()
 	src := SourceConfig{Custom: map[string]interface{}{
-		"selenium": []interface{}{
+		"vdi": []interface{}{
 			map[string]interface{}{"proxy_url": "http://custom-1:1111"},
 			map[string]interface{}{},
 		},
@@ -37,7 +37,7 @@ func TestCombineVDICfgMergesProxyPerIndex(t *testing.T) {
 func TestCombineVDICfgIgnoresExcessEntries(t *testing.T) {
 	dst := mergeTestBase()
 	src := SourceConfig{Custom: map[string]interface{}{
-		"selenium": []interface{}{
+		"vdi": []interface{}{
 			map[string]interface{}{"proxy_url": "http://custom-1:1111"},
 			map[string]interface{}{"proxy_url": "http://custom-2:2222"},
 			map[string]interface{}{"proxy_url": "http://custom-3:3333"},
@@ -76,7 +76,7 @@ func TestCombineVDICfgIgnoresMalformedEntries(t *testing.T) {
 					t.Fatalf("panicked on %s: %v", tc.name, r)
 				}
 			}()
-			got := CombineConfigs(dst, SourceConfig{Custom: map[string]interface{}{"selenium": tc.custom}})
+			got := CombineConfigs(dst, SourceConfig{Custom: map[string]interface{}{"vdi": tc.custom}})
 			if len(got.Selenium) != 2 {
 				t.Fatalf("VDI list length = %d", len(got.Selenium))
 			}
@@ -84,9 +84,24 @@ func TestCombineVDICfgIgnoresMalformedEntries(t *testing.T) {
 	}
 	// The non-object element case must still merge the valid sibling.
 	got := CombineConfigs(dst, SourceConfig{Custom: map[string]interface{}{
-		"selenium": []interface{}{"http://x:1", map[string]interface{}{"proxy_url": "http://custom-2:2222"}},
+		"vdi": []interface{}{"http://x:1", map[string]interface{}{"proxy_url": "http://custom-2:2222"}},
 	}})
 	if got.Selenium[1].ProxyURL != "http://custom-2:2222" {
 		t.Errorf("[1].ProxyURL = %q", got.Selenium[1].ProxyURL)
+	}
+}
+
+func TestCombineVDICfgLegacySeleniumKeyIgnored(t *testing.T) {
+	// The source override key is custom.vdi (consistent with the global vdi
+	// section since release 2.0.0). The legacy custom.selenium key is not
+	// honored: no supported configuration depends on it (it never drove
+	// launch behavior), so it was removed rather than aliased.
+	dst := mergeTestBase()
+	got := CombineConfigs(dst, SourceConfig{Custom: map[string]interface{}{
+		"selenium": []interface{}{map[string]interface{}{"proxy_url": "http://legacy:9999"}},
+		"vdi":      []interface{}{map[string]interface{}{"proxy_url": "http://canonical:1111"}},
+	}})
+	if got.Selenium[0].ProxyURL != "http://canonical:1111" {
+		t.Errorf("[0].ProxyURL = %q, want the canonical custom.vdi value", got.Selenium[0].ProxyURL)
 	}
 }

@@ -2231,8 +2231,8 @@ func CombineConfigs(dstConfig Config, srcConfig SourceConfig) Config {
 		combineCrawlerCfg(&dstConfig.Crawler, srcConfig.Custom["crawler"])
 	}
 
-	if srcConfig.Custom["selenium"] != nil {
-		combineVDICfg(&dstConfig.Selenium, srcConfig.Custom["selenium"])
+	if srcConfig.Custom["vdi"] != nil {
+		combineVDICfg(&dstConfig.Selenium, srcConfig.Custom["vdi"])
 	}
 
 	if srcConfig.Custom["image_storage"] != nil {
@@ -2427,7 +2427,7 @@ func combineCrawlerCollectSettings(dstCfg *Crawler, srcCfg map[string]interface{
 	}
 }
 
-// combineVDICfg merges per-source custom.selenium overrides into the VDI
+// combineVDICfg merges per-source custom.vdi overrides into the VDI
 // list positionally. Malformed entries (non-list source, non-object
 // elements) and indexes beyond the configured VDI list are ignored instead
 // of panicking: source-supplied data must never crash the engine (VDI-009
