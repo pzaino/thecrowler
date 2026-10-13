@@ -1284,7 +1284,12 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 				}
 			}
 
-			err = vdi.ResetVDI(ctx, ctx.SelID) // 0 = desktop; use 1 for mobile if needed
+			browserType := 0
+			if ctx.config.Crawler.Platform == optBrowsingMobile {
+				browserType = 1
+			}
+
+			err = vdi.ResetVDI(ctx, browserType) // 0 = desktop; use 1 for mobile if needed
 			if ctx.RefreshCrawlingTimer != nil {
 				ctx.RefreshCrawlingTimer()
 			}
