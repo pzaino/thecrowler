@@ -17,6 +17,7 @@ package vdi
 import (
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"regexp"
 	"strings"
 	"sync"
@@ -643,7 +644,8 @@ func ReplaceIdentityScript(wd WebDriver, delayMs int, source string) error {
 // after selecting UA B so later navigations in the same session evaluate the
 // current identity, not the connection-time one.
 func RefreshIdentityScript(wd WebDriver, delayMs int, userAgent string, ident OSIdentity, brands []ClientHintBrand, details ClientHintsDetails) error {
-	return ReplaceIdentityScript(wd, delayMs, antiDetectionScript(userAgent, ident, brands, details))
+	return ReplaceIdentityScript(wd, delayMs,
+		sessionCamouflageScript(wd, userAgent, ident, brands, details))
 }
 
 // abortFailedSession best-effort tears down a newly created session that
@@ -678,4 +680,20 @@ func establishInitialIdentity(wd WebDriver, delayMs int, userAgent string, ident
 		return fmt.Errorf("overriding user agent: %w", err)
 	}
 	return nil
+}
+
+func sessionCamouflageScript(
+	wd WebDriver,
+	userAgent string,
+	ident OSIdentity,
+	brands []ClientHintBrand,
+	details ClientHintsDetails,
+) string {
+	// Same seed for the entire WebDriver session,
+	// including navigations and User-Agent rotation.
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(wd.SessionID()))
+
+	return canvasExportScript(h.Sum32()) + "\n" +
+		antiDetectionScript(userAgent, ident, brands, details)
 }

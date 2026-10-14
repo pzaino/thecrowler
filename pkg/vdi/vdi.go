@@ -1714,7 +1714,10 @@ func setNavigatorProperties(wd WebDriver, lang, userAgent string, ident OSIdenti
 // Custom (including synthetic) identities are preserved: values are derived
 // from the selection, never forced to host-native ones.
 func InjectAntiDetectionPatches(driver WebDriver, uaString string, ident OSIdentity, brands []ClientHintBrand, details ClientHintsDetails) error {
-	if err := ReplaceIdentityScript(driver, 0, antiDetectionScript(uaString, ident, brands, details)); err != nil {
+	if err := ReplaceIdentityScript(
+		driver, 0,
+		sessionCamouflageScript(driver, uaString, ident, brands, details),
+	); err != nil {
 		return fmt.Errorf("failed to inject stealth patches: %w", err)
 	}
 

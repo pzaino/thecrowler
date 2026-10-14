@@ -1,7 +1,6 @@
 package vdi
 
 import (
-	"encoding/base64"
 	"strings"
 	"testing"
 )
@@ -9,21 +8,6 @@ import (
 // Pure-Go camouflage assertions.
 // These run everywhere (no node required); node-executed contract tests live
 // in camouflage_node_test.go.
-
-func TestCanvasSpoofDataURLIsValidPNG(t *testing.T) {
-	const prefix = "data:image/png;base64,"
-	if !strings.HasPrefix(canvasSpoofDataURL, prefix) {
-		t.Fatalf("not a PNG data URL: %q", canvasSpoofDataURL)
-	}
-	raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(canvasSpoofDataURL, prefix))
-	if err != nil {
-		t.Fatalf("body is not valid base64: %v", err)
-	}
-	magic := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}
-	if len(raw) < 8 || string(raw[:8]) != string(magic) {
-		t.Errorf("constant does not decode to a PNG image (%d bytes)", len(raw))
-	}
-}
 
 func TestSharedMockBuilders(t *testing.T) {
 	plugins := pluginArrayLiteral()
@@ -62,12 +46,11 @@ func TestReinforceScriptRepairs(t *testing.T) {
 	if strings.Contains(script, "delete navigator.webdriver.chrome;\n") && !strings.Contains(script, "navigator.webdriver !== undefined") {
 		t.Error("unconditional delete navigator.webdriver.chrome still present")
 	}
-	// Canvas must emit a decodable image, not the invalid constant.
-	if strings.Contains(script, "fakemockdata") {
-		t.Error("invalid canvas constant still present")
-	}
-	if !strings.Contains(script, canvasSpoofDataURL) {
-		t.Error("canvas must use the valid PNG constant")
+	// Canvas camouflage is now installed by the persistent
+	// identity script, not by one-shot browser reinforcement.
+	if strings.Contains(script, "HTMLCanvasElement.prototype.toDataURL") ||
+		strings.Contains(script, "HTMLCanvasElement.prototype.toBlob") {
+		t.Error("reinforceScript must not override Canvas exports")
 	}
 	// attachShadow override removed: it broke every web-component page.
 	if strings.Contains(script, "attachShadow") {

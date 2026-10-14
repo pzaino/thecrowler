@@ -16,6 +16,7 @@ package vdi
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	cmn "github.com/pzaino/thecrowler/pkg/common"
@@ -42,13 +43,6 @@ const (
 	// conventional data, tunable without structural change.
 	gpuVendorSpoof   = "Intel Inc."
 	gpuRendererSpoof = "Mesa Intel(R) UHD Graphics"
-
-	// canvasSpoofDataURL is a decodable 1x1 transparent PNG. The previous
-	// constant ("fakemockdata") was not a valid PNG and broke every page
-	// reading canvas output, while remaining trivially detectable. A
-	// constant output is still recognizable across canvases, but pages keep
-	// working; per-call variation is a separate, owner-gated decision.
-	canvasSpoofDataURL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 )
 
 // pluginArrayLiteral returns the canonical PluginArray-shaped JavaScript
@@ -221,12 +215,6 @@ func reinforceScript() string {
         }
 
 		try {
-			HTMLCanvasElement.prototype.toDataURL = function() { return '%s'; };
-		} catch (err) {
-            console.error('Error reinforcing browser settings stage 4:', err);
-        }
-
-		try {
 			%s
 		} catch (err) {
             console.error('Error reinforcing browser settings stage 5:', err);
@@ -275,7 +263,7 @@ func reinforceScript() string {
 		} catch (err) {
             console.error('Error reinforcing browser settings stage 10:', err);
         }
-    `, pluginArrayLiteral(), canvasSpoofDataURL, webglSpoofScript())
+    `, pluginArrayLiteral(), webglSpoofScript())
 }
 
 // navigatorPropertyScripts builds the one-shot navigator-property scripts
@@ -368,4 +356,97 @@ func navigatorPropertyScripts(lang, userAgent string, ident OSIdentity) []string
 		"Object.defineProperty(window, 'RTCPeerConnection', {value: undefined});",
 		"Object.defineProperty(window, 'RTCDataChannel', {value: undefined});",
 	}
+}
+
+func canvasExportScript(seed uint32) string {
+	script := `(function(seed) {
+    "use strict";
+
+    if (typeof HTMLCanvasElement === "undefined") return;
+
+    const proto = HTMLCanvasElement.prototype;
+    const nativeURL = proto.toDataURL;
+    const nativeBlob = proto.toBlob;
+
+    function prepare(source) {
+        const w = source.width;
+        const h = source.height;
+
+        // Preserve native behavior for empty or exceptionally large canvases.
+        if (!w || !h || w * h > 4000000) return source;
+
+        const copy = document.createElement("canvas");
+        copy.width = w;
+        copy.height = h;
+
+        const ctx = copy.getContext("2d");
+        if (!ctx) return source;
+
+        // Copy actual rendered pixels, not a fabricated image.
+        ctx.drawImage(source, 0, 0);
+
+        const image = ctx.getImageData(0, 0, w, h);
+        const pixels = image.data;
+
+        // Stable for the same seed, dimensions and pixel content.
+        let state = (seed ^ Math.imul(w, 2654435761) ^ h) >>> 0;
+        if (state === 0) state = 1;
+
+        const count = Math.min(16, w * h);
+
+        for (let i = 0; i < count; i++) {
+            state ^= state << 13;
+            state ^= state >>> 17;
+            state ^= state << 5;
+            state >>>= 0;
+
+            const index = (state % (w * h)) * 4;
+
+            // Preserve transparent pixels.
+            if (pixels[index + 3] >= 128) {
+                pixels[index] ^= 1;
+            }
+        }
+
+        ctx.putImageData(image, 0, 0);
+        return copy;
+    }
+
+    proto.toDataURL = function(type, quality) {
+        if (!(this instanceof HTMLCanvasElement)) {
+            return nativeURL.apply(this, arguments);
+        }
+
+        let source;
+        try {
+            source = prepare(this);
+        } catch (err) {
+            if (err && err.name === "SecurityError") throw err;
+            return nativeURL.apply(this, arguments);
+        }
+        return nativeURL.apply(source, arguments);
+    };
+
+    proto.toBlob = function(callback, type, quality) {
+        if (!(this instanceof HTMLCanvasElement) ||
+            typeof callback !== "function") {
+            return nativeBlob.apply(this, arguments);
+        }
+
+        let source;
+        try {
+            source = prepare(this);
+        } catch (err) {
+            if (err && err.name === "SecurityError") throw err;
+            return nativeBlob.apply(this, arguments);
+        }
+        return nativeBlob.apply(source, arguments);
+    };
+})(__SEED__);`
+
+	return strings.ReplaceAll(
+		script,
+		"__SEED__",
+		strconv.FormatUint(uint64(seed), 10),
+	)
 }
