@@ -13,12 +13,11 @@ import (
 	"time"
 )
 
-// Node-executed camouflage contract tests (VDI-008/VDI-011/VDI-012/VDI-014,
-// PR5). Patch scripts built by the Go builders run in a stub DOM where
-// native methods enforce receiver contracts, so unbound calls, descriptor
-// conflicts, and invalid API shapes fail exactly as a real browser would
-// surface them. Tests skip when node is unavailable; pure-Go assertions in
-// camouflage_test.go always run.
+// Node-executed camouflage contract tests. Patch scripts built by the Go
+// builders run in a stub DOM where native methods enforce receiver contracts,
+// so unbound calls, descriptor conflicts, and invalid API shapes fail exactly
+// as a real browser would surface them. Tests skip when node is unavailable;
+// pure-Go assertions in camouflage_test.go always run.
 
 func nodeAvailable() bool {
 	_, err := exec.LookPath("node")
@@ -48,6 +47,10 @@ func runCamouflageNodeLines(t *testing.T, scripts []string) harnessResult {
 }
 
 func runCamouflageNodePayload(t *testing.T, phase string, payload []byte) harnessResult {
+	return runCamouflageNodePayloadEnv(t, phase, payload, nil)
+}
+
+func runCamouflageNodePayloadEnv(t *testing.T, phase string, payload []byte, extraEnv []string) harnessResult {
 	t.Helper()
 	if !nodeAvailable() {
 		t.Skip("node binary not available for patch-execution tests")
@@ -60,6 +63,7 @@ func runCamouflageNodePayload(t *testing.T, phase string, payload []byte) harnes
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "node", filepath.Join("testdata", "camouflage_harness.js"), phase, scriptPath)
+	cmd.Env = append(os.Environ(), extraEnv...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -282,6 +286,41 @@ func TestInjectExecution(t *testing.T) {
 		if he[k] != want {
 			t.Errorf("highEntropy[%q] = %v, want %v (full: %v)", k, he[k], want, he)
 		}
+	}
+}
+
+func TestHighEntropyWithheldStaysWithheld(t *testing.T) {
+	// Finding 1 behavioral coverage: fields the native result withholds
+	// (simulated Permissions Policy denial via HARNESS_WITHHOLD) must stay
+	// withheld instead of being synthesized, while exposed fields still
+	// resolve to spoofed values and unrelated fields pass through native.
+	ua := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/132.0.0.0"
+	ident := MapAdvertisedOSIdentity("windows", false)
+	brands := ClientHintBrandsFor("chrome", "132", "")
+	details := NewClientHintsDetails(ua, "chrome", ident)
+	script := antiDetectionScript(ua, ident, brands, details)
+	res := runCamouflageNodePayloadEnv(t, "inject", []byte(script), []string{"HARNESS_WITHHOLD=model,bitness"})
+	if len(res.Errors) != 0 {
+		t.Errorf("inject logged errors: %v", res.Errors)
+	}
+	he, ok := res.Values["highEntropy"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("highEntropy = %v, want object", res.Values["highEntropy"])
+	}
+	for _, k := range []string{"model", "bitness"} {
+		if _, present := he[k]; present {
+			t.Errorf("highEntropy[%q] present despite native withholding: %v", k, he[k])
+		}
+	}
+	for k, want := range map[string]interface{}{
+		"platformVersion": "10.0.0", "architecture": "x86", "uaFullVersion": "132.0.0.0",
+	} {
+		if he[k] != want {
+			t.Errorf("highEntropy[%q] = %v, want %v (full: %v)", k, he[k], want, he)
+		}
+	}
+	if he["unknown-hint-xyz"] != "native:unknown-hint-xyz" {
+		t.Errorf("highEntropy passthrough = %v, want native value", he["unknown-hint-xyz"])
 	}
 }
 

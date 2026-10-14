@@ -1,4 +1,4 @@
-// Camouflage patch execution harness (VDI-008/VDI-011/VDI-012/VDI-014, PR5).
+// Camouflage patch execution harness.
 //
 // Usage: node camouflage_harness.js <phase> <script.js> [extra...]
 // Prints one JSON object to stdout and always exits 0 (failures are data).
@@ -54,7 +54,10 @@ function makeWorld() {
         return Promise.reject(new Error('NotAllowedError'));
       }
       const out = {};
-      wanted.forEach(h => { out[h] = (h in table) ? table[h] : ('native:' + h); });
+      // HARNESS_WITHHOLD (comma-separated) simulates Permissions Policy
+      // withholding: listed keys are omitted from the native result.
+      const withheld = (process.env.HARNESS_WITHHOLD || '').split(',').map(s => s.trim()).filter(Boolean);
+      wanted.forEach(h => { if (withheld.indexOf(h) === -1) out[h] = (h in table) ? table[h] : ('native:' + h); });
       return Promise.resolve(out);
     },
   };

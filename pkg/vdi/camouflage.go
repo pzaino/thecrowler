@@ -21,8 +21,7 @@ import (
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 )
 
-// Shared browser-camouflage patch builders (VDI-008/VDI-011/VDI-012/VDI-014,
-// PR5).
+// Shared browser-camouflage patch builders.
 //
 // Scope contract (read before changing behavior, not just text):
 //   - antiDetectionScript (identity.go, CDP new-document registration) is the
@@ -154,7 +153,7 @@ func gpuPatchScript() string {
 }
 
 // loadListenerScript returns the load-listener registration body.
-// Lifecycle note (VDI-014): it executes one-shot on the current document and
+// Lifecycle note: it executes one-shot on the current document and
 // does not survive navigation; the persistent new-document script already
 // covers these properties on every document. Kept for compatibility; a
 // removal proposal is recorded in the implementation report for approval.

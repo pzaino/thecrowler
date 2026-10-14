@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// Pure-Go camouflage assertions (VDI-008/VDI-011/VDI-012/VDI-013/VDI-014).
+// Pure-Go camouflage assertions.
 // These run everywhere (no node required); node-executed contract tests live
 // in camouflage_node_test.go.
 
@@ -131,7 +131,7 @@ func TestAntiDetectionScriptUsesSharedMocks(t *testing.T) {
 func TestLoadListenerScopeDocumented(t *testing.T) {
 	// The listener registers one-shot on the current document; it must at
 	// least use the canonical plugin shape. Full lifecycle (target-document
-	// reachability, iframes) requires a live browser (VDI-014/VDI-021).
+	// reachability, iframes) requires a live browser.
 	script := loadListenerScript()
 	if !strings.Contains(script, "addEventListener('load'") {
 		t.Error("load listener registration missing")
