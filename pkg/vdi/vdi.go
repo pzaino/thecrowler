@@ -1494,6 +1494,14 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	}
 	// Sleep a few milliseconds to give time for the session to be fully established before we start sending commands to it
 	time.Sleep(500 * time.Millisecond)
+
+	if browseType != 1 { // Desktop mode
+		if err := wd.ResizeWindow("", 1920, 1080); err != nil {
+			abortFailedSession(wd)
+			return nil, fmt.Errorf("resizing VDI window: %w", err)
+		}
+	}
+
 	// Inject anti-detection patch for the identity selected for this event.
 	// ident/brands/details derive from the same selection so UA, Client
 	// Hints, and navigator surfaces agree; rotation-time replacement is
