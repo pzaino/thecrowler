@@ -129,3 +129,27 @@ func AddScriptToEvaluateOnNewDocument(wd WebDriver, delayMs int, source string) 
 	})
 	return err
 }
+
+// AddScriptWithIdentifier injects script before page scripts run and returns
+// the CDP script identifier so a later rotation can remove exactly this
+// registration (review finding 2). An empty identifier with a nil error
+// means the driver acknowledged registration without reporting one; such
+// registrations cannot be selectively removed.
+func AddScriptWithIdentifier(wd WebDriver, delayMs int, source string) (string, error) {
+	result, err := ExecuteCDPCommand(wd, delayMs, "Page.addScriptToEvaluateOnNewDocument", map[string]interface{}{
+		"source": source,
+	})
+	if err != nil {
+		return "", err
+	}
+	return parseScriptIdentifier(result), nil
+}
+
+// RemoveScriptToEvaluateOnNewDocument removes a previously registered
+// new-document script by its CDP identifier.
+func RemoveScriptToEvaluateOnNewDocument(wd WebDriver, delayMs int, identifier string) error {
+	_, err := ExecuteCDPCommand(wd, delayMs, "Page.removeScriptToEvaluateOnNewDocument", map[string]interface{}{
+		"identifier": identifier,
+	})
+	return err
+}

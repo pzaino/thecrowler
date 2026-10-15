@@ -36,22 +36,25 @@ func cleanUpBrowser(wd vdi.WebDriver) error {
 	return nil
 }
 
-func setupBrowser(wd vdi.WebDriver, ctx *ProcessContext) {
+func setupBrowser(wd vdi.WebDriver, ctx *ProcessContext) error {
 	if wd == nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "WebDriver is nil, cannot setup browser.")
-		return
+		return errors.New("WebDriver is nil, cannot setup browser")
 	}
 
 	if ctx.VDIReturned {
-		return
+		return nil
 	}
 
 	var err error
-	// Change the User Agent (if needed)
-	if ctx.config.Crawler.ResetCookiesPolicy == "always" {
-		err = changeUserAgent(&(ctx.wd), ctx)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "changing UserAgent: %v", err)
+	// Change the User Agent (if needed; historical coupling to the cookie
+	// policy is preserved, see refreshUserAgentOnSetup). A failure here
+	// means the session may hold UA-A script state against a UA-B
+	// selection, so setup aborts before any navigation (including the
+	// same-origin pre-navigation below) and the caller retries without
+	// navigating on a partially configured identity.
+	if refreshUserAgentOnSetup(ctx.config.Crawler.ResetCookiesPolicy) {
+		if err := changeUserAgent(&(ctx.wd), ctx); err != nil {
+			return fmt.Errorf("setting up browser identity: %w", err)
 		}
 	}
 
@@ -94,6 +97,8 @@ func setupBrowser(wd vdi.WebDriver, ctx *ProcessContext) {
 			cmn.DebugMsg(cmn.DbgLvlError, "adding XHR Hook: %v", err)
 		}
 	}
+
+	return nil
 }
 
 func waitForDomComplete(wd vdi.WebDriver, timeout time.Duration) error {
