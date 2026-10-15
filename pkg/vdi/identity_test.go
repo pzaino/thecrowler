@@ -87,7 +87,7 @@ func TestAntiDetectionScriptIdentity(t *testing.T) {
 	ident := MapAdvertisedOSIdentity("windows", false)
 	brands := ClientHintBrandsFor("chrome", "131", "")
 	details := NewClientHintsDetails(ua, "chrome", ident)
-	script := antiDetectionScript(ua, ident, brands, details)
+	script := antiDetectionScript(ua, ident, brands, details, 0)
 
 	// Safe encoding: the hostile UA appears only as a JSON literal.
 	if !strings.Contains(script, `"Test UA \"with quotes\" and \\ backslash ✓"`) {
@@ -143,7 +143,7 @@ func TestAntiDetectionScriptEdgeIdentity(t *testing.T) {
 	ua := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0"
 	ident := MapAdvertisedOSIdentity("windows", false)
 	script := antiDetectionScript(ua, ident, ClientHintBrandsFor("edge", "131", "131"),
-		NewClientHintsDetails(ua, "edge", ident))
+		NewClientHintsDetails(ua, "edge", ident), 0)
 	if !strings.Contains(script, `"Microsoft Edge"`) || !strings.Contains(script, `"131"`) {
 		t.Errorf("edge script lacks Microsoft Edge brand:\n%s", script)
 	}
@@ -152,7 +152,7 @@ func TestAntiDetectionScriptEdgeIdentity(t *testing.T) {
 func TestAntiDetectionScriptNonChromeIdentity(t *testing.T) {
 	ident := MapAdvertisedOSIdentity("linux", false)
 	firefoxUA := "Mozilla/5.0 Firefox/133.0"
-	script := antiDetectionScript(firefoxUA, ident, nil, NewClientHintsDetails(firefoxUA, "firefox", ident))
+	script := antiDetectionScript(firefoxUA, ident, nil, NewClientHintsDetails(firefoxUA, "firefox", ident), 0)
 	if strings.Contains(script, `"brands"`) || strings.Contains(script, "Not-A.Brand") {
 		t.Error("non-Chrome identity must not advertise fabricated Client Hints brands")
 	}

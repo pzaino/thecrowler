@@ -186,7 +186,7 @@ func TestIdentityClientHintsIntegration(t *testing.T) {
 	// equal the selection; HTTP Client Hints (if the browser sends any while
 	// --disable-features=UserAgentClientHint is configured) are recorded and
 	// reported, not asserted.
-	if err := ReplaceIdentityScript(wd, 0, antiDetectionScript(selectedUA, ident, brands, details)); err != nil {
+	if err := ReplaceIdentityScript(wd, 0, antiDetectionScript(selectedUA, ident, brands, details, 0)); err != nil {
 		t.Fatalf("ReplaceIdentityScript: %v", err)
 	}
 	if err := wd.Get(server.URL + "/phase1"); err != nil {

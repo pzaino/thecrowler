@@ -100,7 +100,7 @@ func TestNavigatorPropertyScripts(t *testing.T) {
 func TestAntiDetectionScriptUsesSharedMocks(t *testing.T) {
 	ident := MapAdvertisedOSIdentity("windows", false)
 	ua := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/132.0.0.0"
-	script := antiDetectionScript(ua, ident, ClientHintBrandsFor("chrome", "132", ""), NewClientHintsDetails(ua, "chrome", ident))
+	script := antiDetectionScript(ua, ident, ClientHintBrandsFor("chrome", "132", ""), NewClientHintsDetails(ua, "chrome", ident), 0)
 	for _, want := range []string{"namedItem", gpuRendererSpoof, "WebGL2RenderingContext", "getHighEntropyValues"} {
 		if !strings.Contains(script, want) {
 			t.Errorf("persistent script lacks shared %q", want)

@@ -408,16 +408,22 @@ func quotedAll(names []string) []string {
 // antiDetectionScript builds the new-document camouflage script from explicit
 // identity inputs. All free-text values (UA, platforms, brand names) are
 // embedded via JSON string literals so quotes, backslashes, or non-ASCII
-// text cannot break the script. The WebGL, Audio, plugin, and marker
-// behavior is byte-for-byte the long-standing script body; only identity
-// derivation, safe encoding, and removal of the "loaded" debug trace
-// changed.
+// text cannot break the script. Identity derivation, safe encoding, and
+// removal of the "loaded" debug trace changed as before; the AudioBuffer
+// surface is additionally driven by seed (see audioPatchScript) so its
+// perturbation is deterministic and session-stable instead of a cumulative
+// random mutation. The WebGL and plugin/MIME surfaces use the shared canonical
+// builders and are likewise deterministic per realm.
+//
+// seed is the per-WebDriver-session seed (the same value the Canvas export
+// camouflage is driven by, see sessionCamouflageScript) so the audio and
+// canvas fingerprints agree within a session yet differ across sessions.
 //
 // Lifecycle note: this script captures one selection
 // event. Rotation replaces the registration via ReplaceIdentityScript; a
 // superseded registration is removed first so no stale UA-A script survives
 // alongside UA-B overrides.
-func antiDetectionScript(userAgent string, ident OSIdentity, brands []ClientHintBrand, details ClientHintsDetails) string {
+func antiDetectionScript(userAgent string, ident OSIdentity, brands []ClientHintBrand, details ClientHintsDetails, seed uint32) string {
 	userAgentDataBlock := `// No Chromium brand surface for the selected identity:
 // Client Hints brand values are left at native values.
 `
@@ -461,20 +467,105 @@ delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
 
 %s
 
-(function() {
-    const original = AudioBuffer.prototype.getChannelData;
-    AudioBuffer.prototype.getChannelData = function() {
-        const data = original.apply(this, arguments);
-        for (let i = 0; i < data.length; i += 100) {
-            data[i] = data[i] + (Math.random() * 0.0000001);
-        }
-        return data;
-    };
-})();
+%s
 
 %s`, cmn.JSStringLiteral(userAgent), cmn.JSStringLiteral(ident.NavigatorPlatform), userAgentDataBlock,
 		pluginArrayLiteral(), mimeArrayLiteral(), webglSpoofScript(),
-		highEntropySpoofBlock(details))
+		audioPatchScript(seed), highEntropySpoofBlock(details))
+}
+
+// audioPatchScript returns the deterministic AudioBuffer camouflage IIFE.
+//
+// Design rationale — the previous implementation was a fingerprint leak and a
+// latent bug: getChannelData() returns a *view* of the live channel sample
+// store, so the old code (a) mutated the underlying audio on every read, and
+// (b) added a fresh Math.random() delta at each 100th sample on every call.
+// Two defects follow: repeated reads ACCUMULATED drifting noise (no stable
+// fingerprint within a session) and real audio processing / copyFromChannel /
+// application writes saw corrupted samples.
+//
+// This version:
+//   - installs the wrapper at most once per realm (a non-enumerable marker),
+//     so the new-document script re-running after identity rotation or UA
+//     rotation never chains the perturbation (no double-patch);
+//   - copies the samples to a fresh Float32Array before perturbing, so the
+//     live channel store stays intact for copyFromChannel/copyToChannel and
+//     application writes (the perturbation is applied only to the copy);
+//   - derives the per-sample delta deterministically from (seed, index), so
+//     every read in the session is identical (stable) and distinct sessions
+//     yield distinct fingerprints, matching the Canvas export seed;
+//   - preserves the native receiver binding, return type, and error handling:
+//     the native call's RangeError/TypeError (out-of-range channel, etc.) and
+//     any non-array result propagate unchanged, and an already-patched realm
+//     short-circuits without touching the prototype.
+//
+// The magnitude (~1e-7) is below the audible threshold, so legitimate audio
+// pipelines are not degraded.
+func audioPatchScript(seed uint32) string {
+	// A single flat IIFE that embeds the session seed as a local numeric
+	// literal. (A prior nesting — an inner self-invoked `(function(seed){})()`
+	// wrapped in an outer `(function(){…})(seed)` — forwarded the seed to the
+	// OUTER function while the inner perturbator was invoked with NO argument,
+	// so seed was undefined and every session collapsed to one fingerprint. The
+	// flat form below makes the seed reachable by the perturbation closure, so
+	// different sessions genuinely diverge while a session stays stable.)
+	return fmt.Sprintf(`(function() {
+    "use strict";
+    const seed = %d;
+    if (typeof AudioBuffer === "undefined" || !AudioBuffer || !AudioBuffer.prototype) {
+        return;
+    }
+    const proto = AudioBuffer.prototype;
+    const native = proto.getChannelData;
+    if (typeof native !== "function") {
+        return;
+    }
+    // Idempotency: a prior invocation in this realm already installed the
+    // wrapper; re-wrapping would chain the perturbation and accumulate.
+    if (Object.prototype.hasOwnProperty.call(proto, "__crowlerAudioPatched__")) {
+        return;
+    }
+    proto.getChannelData = function(channel) {
+        // Delegate to the native implementation first: this preserves the
+        // receiver, native channel validation/error propagation, and the
+        // native return type (a Float32Array view of the live channel).
+        const data = native.call(this, channel);
+        // Preserve native return-type behavior: only perturb a non-empty
+        // array-like buffer; everything else passes through untouched.
+        if (!data || typeof data !== "object" || typeof data.length !== "number" || data.length === 0) {
+            return data;
+        }
+        // getChannelData returns a *view*; copy so the live channel store is
+        // never mutated (copyFromChannel/copyToChannel and application writes
+        // keep operating on the original samples) and reads never accumulate.
+        const out = new Float32Array(data.length);
+        out.set(data);
+        // Deterministic, seed-stable perturbation in the original noise band
+        // (~1e-7). Identical per (seed, index), so repeated reads agree and a
+        // session stays stable across navigation/reload and proxy/IP rotation.
+        let state = ((seed >>> 0) ^ 0x9e3779b9) >>> 0;
+        for (let i = 0; i < out.length; i += 100) {
+            state ^= (state << 13);
+            state ^= (state >>> 17);
+            state ^= (state << 5);
+            state >>>= 0;
+            out[i] += ((state & 0xffff) / 0x10000 - 0.5) * 2e-7;
+        }
+        return out;
+    };
+    try {
+        // Non-enumerable marker so the guard keeps the prototype shape clean;
+        // configurable so a later realm re-define can still install.
+        Object.defineProperty(proto, "__crowlerAudioPatched__", {
+            value: true,
+            enumerable: false,
+            configurable: true,
+        });
+    } catch (e) {
+        // A frozen prototype cannot carry the marker; the single-run semantics
+        // above still hold within this realm.
+    }
+})();`, uint64(seed))
 }
 
 // userAgentOverrideParams builds the Network.setUserAgentOverride parameters
@@ -690,10 +781,13 @@ func sessionCamouflageScript(
 	details ClientHintsDetails,
 ) string {
 	// Same seed for the entire WebDriver session,
-	// including navigations and User-Agent rotation.
+	// including navigations and User-Agent rotation. The AudioBuffer
+	// camouflage shares this seed so the audio fingerprint is stable per
+	// session and agrees with the Canvas export surface.
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(wd.SessionID()))
+	seed := h.Sum32()
 
-	return canvasExportScript(h.Sum32()) + "\n" +
-		antiDetectionScript(userAgent, ident, brands, details)
+	return canvasExportScript(seed) + "\n" +
+		antiDetectionScript(userAgent, ident, brands, details, seed)
 }
