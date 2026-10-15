@@ -14,7 +14,11 @@ package vdi
 // (or a reachable Selenium+Chrome) it skips — a skip is NOT validation.
 //
 // Run:
-//   THECROWLER_E2E_WEBDRIVER=1 go test -tags integration ./pkg/vdi/ -run TestCamouflageSurfacesRealBrowser -v
+//   THECROWLER_E2E_WEBDRIVER=1 \
+//   THECROWLER_E2E_FIXTURE_HOST=host.docker.internal \
+//   go test -tags integration ./pkg/vdi \
+//     -run '^TestCamouflageSurfacesRealBrowser$' \
+//     -count=1 -v
 //
 // What the harness proves that a real browser cannot easily: the AudioBuffer
 // live-store is not mutated by a read (the harness checks this via a native
@@ -33,6 +37,7 @@ package vdi
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -68,8 +73,35 @@ func TestCamouflageSurfacesRealBrowser(t *testing.T) {
 	}
 
 	recorder := &camRecorder{}
-	server := httptest.NewServer(recorder)
+
+	// Create the test server on an interface accessible from Docker.
+	server := httptest.NewUnstartedServer(recorder)
+	_ = server.Listener.Close()
+
+	listener, err := net.Listen("tcp4", "0.0.0.0:0")
+	if err != nil {
+		t.Fatalf("creating fixture listener: %v", err)
+	}
+
+	server.Listener = listener
+	server.Start()
 	defer server.Close()
+
+	// The address Chrome uses to reach the host machine.
+	fixtureHost := strings.TrimSpace(
+		os.Getenv("THECROWLER_E2E_FIXTURE_HOST"),
+	)
+	if fixtureHost == "" {
+		fixtureHost = "host.docker.internal"
+	}
+
+	_, port, err := net.SplitHostPort(server.Listener.Addr().String())
+	if err != nil {
+		t.Fatalf("reading fixture port: %v", err)
+	}
+
+	fixtureURL := "http://" + net.JoinHostPort(fixtureHost, port)
+	t.Logf("Browser fixture URL: %s", fixtureURL)
 
 	ua := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36"
 	ident := MapAdvertisedOSIdentity("windows", false)
@@ -103,13 +135,13 @@ func TestCamouflageSurfacesRealBrowser(t *testing.T) {
 		canvasExportScript(seed)+"\n"+antiDetectionScript(ua, ident, brands, details, seed)); err != nil {
 		t.Fatalf("ReplaceIdentityScript: %v", err)
 	}
-	if err := wd.Get(server.URL); err != nil {
+	if err := wd.Get(fixtureURL); err != nil {
 		t.Fatalf("Get(fixture): %v", err)
 	}
 
 	mustScript := func(t *testing.T, script string) interface{} {
 		t.Helper()
-		v, err := wd.ExecuteScript(script, nil)
+		v, err := wd.ExecuteScript("return "+script, nil)
 		if err != nil {
 			t.Fatalf("ExecuteScript(%q): %v", script, err)
 		}
@@ -187,7 +219,11 @@ func TestCamouflageSurfacesRealBrowser(t *testing.T) {
 
 	// --- AudioBuffer export is deterministic, copy-based, error-faithful.
 	audioProbe := mustScript(t, `(function(){
-		var buf = new AudioBuffer(1, 300, 44100);
+		var buf = new AudioBuffer({
+			numberOfChannels: 1,
+			length: 300,
+			sampleRate: 44100
+		});
 		var a = buf.getChannelData(0);
 		var b = buf.getChannelData(0);
 		var equal = true;
