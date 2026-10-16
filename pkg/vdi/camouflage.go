@@ -45,19 +45,18 @@ const (
 	gpuRendererSpoof = "Mesa Intel(R) UHD Graphics"
 )
 
-// browserRegistryCore returns the per-realm, memoized browser plugin/mime
-// object-graph builder, shared by pluginArrayLiteral and mimeArrayLiteral so
-// repeated reads and both surfaces resolve to identical, stable objects, and
-// the MimeType instances are shared across each plugin's .mimeTypes and the
-// global navigator.mimeTypes (so enabledPlugin round-trips).
+// registryCore returns the JavaScript that builds the browser plugin/MIME
+// object graph ONCE and returns it as a {plugins, mimes} registry object.
 //
-// The previous two literals re-ran their (independently constructed) builders
-// on every getter access, so navigator.plugins === navigator.plugins and
-// navigator.mimeTypes likewise were false, and each plugins[i].item(0) returned
-// a *fresh* MimeType with no link to navigator.mimeTypes: an observable,
-// elementary fingerprint inconsistency (the native object graph is stable,
-// shared, and mutually linked). The builder now caches on a non-enumerable
-// globalThis key, so the object graph is built once per realm and reused.
+// No discoverable marker. The PREVIOUS version cached the graph on a
+// `globalThis.__crowlerBrowserRegistry__` key: although non-enumerable, that
+// name reflects through JS reflection (getOwnPropertyNames / getOwnPropertyKeys
+// / symbol scans are not the only reflection a careful fingerprinter runs, and a
+// "crowler"-named key is an identifiable artifact), and it also risked a stale
+// cross-realm reference. This builder instead returns a fresh registry per
+// invocation and lets the CALLER memoize it in a closure (registryGettersScript
+// for the persistent identity script; the standalone getters for the one-shot
+// scripts), so no global, prototype, or symbol property is introduced.
 //
 // The object graph is faithful to the native Plugin/PluginArray/MimeType/
 // MimeTypeArray shape:
@@ -69,90 +68,132 @@ const (
 //     instances, so plugins[i].mimeTypes[j] === navigator.mimeTypes[k] and
 //     .enabledPlugin === its owning plugin.
 //
-// Known limitation (unchanged): the arrays stand in for the native
-// PluginArray/MimeTypeArray host objects, so instanceof/toStringTag fidelity
-// is not exact; shapes, indexing, item/namedItem, iteration, and the
-// cross-relationships are.
-func browserRegistryCore() string {
-	return `
-const g = (typeof globalThis !== "undefined") ? globalThis : this;
-const KEY = "__crowlerBrowserRegistry__";
-let reg = g[KEY];
-if (!reg) {
-    reg = { plugins: null, mimes: null };
-    const makeMime = function (type, suffixes, description) {
-        return { type: type, suffixes: suffixes, description: description, enabledPlugin: null };
-    };
-    const makeMimeArray = function (list) {
-        const arr = list.slice(0);
-        arr.item = function (index) { return (index >= 0 && index < this.length) ? this[index] : null; };
-        arr.namedItem = function (name) {
-            for (let i = 0; i < this.length; i++) { if (this[i].type === name) return this[i]; }
-            return null;
+// Known fidelity limitation (unchanged and now explicitly documented, never
+// claimed away): the arrays/objects stand in for the native PluginArray /
+// MimeTypeArray / Plugin / MimeType HOST objects, so `instanceof` against the
+// real host classes and the host `Symbol.toStringTag` ("PluginArray" /
+// "MimeTypeArray") are not reproducible from plain JavaScript objects, and the
+// property descriptors on the synthetic arrays are not bit-for-bit the host
+// shapes. What IS reproduced and cross-consistent — which is the part that
+// drives a fingerprint — is the shape, the index/namedItem/item behavior,
+// iteration, the length/first/last values, and the mutual cross-linking
+// (plugins[i].mimeTypes[j] === navigator.mimeTypes[k], enabledPlugin round-trip,
+// and stable identity across repeated reads).
+func registryCore() string {
+	return `(function () {
+        const makeMime = function (type, suffixes, description) {
+            return { type: type, suffixes: suffixes, description: description, enabledPlugin: null };
         };
-        return arr;
-    };
-    const makePlugin = function (name, filename, description, mimes) {
-        const plugin = {
-            name: name,
-            filename: filename,
-            description: description,
-            length: mimes.length,
-            mimeTypes: mimes,
-            item: function (index) { return mimes.item(index); },
-            namedItem: function (name) { return mimes.namedItem(name); },
-            refresh: function () {},
+        const makeMimeArray = function (list) {
+            const arr = list.slice(0);
+            arr.item = function (index) { return (index >= 0 && index < this.length) ? this[index] : null; };
+            arr.namedItem = function (name) {
+                for (let i = 0; i < this.length; i++) { if (this[i].type === name) return this[i]; }
+                return null;
+            };
+            arr.refresh = function () {};
+            return arr;
         };
-        for (let i = 0; i < mimes.length; i++) { plugin[i] = mimes[i]; }
-        return plugin;
-    };
-    // Two PDF plugins, each owning its own application/pdf MimeType; the flat
-    // navigator.mimeTypes reuses the same MimeType instances so
-    // plugins[i].mimeTypes[j] === navigator.mimeTypes[...] and enabledPlugin
-    // round-trips, mirroring the native object graph.
-    const pdf0 = makeMime("application/pdf", "pdf", "Portable Document Format");
-    const pdf1 = makeMime("application/pdf", "pdf", "Portable Document Format");
-    const p0Mimes = makeMimeArray([pdf0]);
-    const p1Mimes = makeMimeArray([pdf1]);
-    const p0 = makePlugin("Chrome PDF Viewer", "internal-pdf-viewer", "Portable Document Format", p0Mimes);
-    const p1 = makePlugin("Chromium PDF Plugin", "internal-pdf-viewer", "Portable Document Format", p1Mimes);
-    pdf0.enabledPlugin = p0;
-    pdf1.enabledPlugin = p1;
-    reg.plugins = (function () {
-        const arr = [p0, p1];
-        arr.item = function (index) { return (index >= 0 && index < this.length) ? this[index] : null; };
-        arr.namedItem = function (name) {
-            for (let i = 0; i < this.length; i++) { if (this[i].name === name) return this[i]; }
-            return null;
+        const makePlugin = function (name, filename, description, mimes) {
+            const plugin = {
+                name: name,
+                filename: filename,
+                description: description,
+                length: mimes.length,
+                mimeTypes: mimes,
+                item: function (index) { return mimes.item(index); },
+                namedItem: function (name) { return mimes.namedItem(name); },
+                refresh: function () {},
+            };
+            for (let i = 0; i < mimes.length; i++) { plugin[i] = mimes[i]; }
+            return plugin;
         };
-        arr.refresh = function () {};
-        return arr;
-    })();
-    reg.mimes = makeMimeArray([pdf0, pdf1]);
-    try {
-        // Non-enumerable so the cache does not surface in global enumeration;
-        // configurable so a later realm re-define can still install.
-        Object.defineProperty(g, KEY, { value: reg, enumerable: false, configurable: true });
-    } catch (e) {
-        g[KEY] = reg;
-    }
-}
-`
+        // Two PDF plugins, each owning its own application/pdf MimeType; the flat
+        // navigator.mimeTypes reuses the same MimeType instances so
+        // plugins[i].mimeTypes[j] === navigator.mimeTypes[k] and enabledPlugin
+        // round-trips, mirroring the native object graph.
+        const pdf0 = makeMime("application/pdf", "pdf", "Portable Document Format");
+        const pdf1 = makeMime("application/pdf", "pdf", "Portable Document Format");
+        const p0Mimes = makeMimeArray([pdf0]);
+        const p1Mimes = makeMimeArray([pdf1]);
+        const p0 = makePlugin("Chrome PDF Viewer", "internal-pdf-viewer", "Portable Document Format", p0Mimes);
+        const p1 = makePlugin("Chromium PDF Plugin", "internal-pdf-viewer", "Portable Document Format", p1Mimes);
+        pdf0.enabledPlugin = p0;
+        pdf1.enabledPlugin = p1;
+        const plugins = (function () {
+            const arr = [p0, p1];
+            arr.item = function (index) { return (index >= 0 && index < this.length) ? this[index] : null; };
+            arr.namedItem = function (name) {
+                for (let i = 0; i < this.length; i++) { if (this[i].name === name) return this[i]; }
+                return null;
+            };
+            arr.refresh = function () {};
+            return arr;
+        })();
+        const mimes = makeMimeArray([pdf0, pdf1]);
+        return { plugins: plugins, mimes: mimes };
+    })()`
 }
 
-// pluginArrayLiteral returns the getter body for navigator.plugins: a
-// PluginArray-shaped expression that resolves the memoized per-realm registry,
-// so repeated reads return the identical object and the object graph is shared
-// with navigator.mimeTypes.
+// registryGettersScript installs navigator.plugins and navigator.mimeTypes as
+// TWO getters that share ONE closure-memoized registry, so (a) repeated reads
+// return identical objects (stable identity), (b) the MimeType instances are
+// shared between plugins[i].mimeTypes and the flat navigator.mimeTypes (so
+// plugins[0].mimeTypes[0] === navigator.mimeTypes[0] and enabledPlugin
+// round-trips), and (c) no global/prototype/symbol property is introduced. The
+// registry is built lazily on first access and the SAME closure variable holds
+// it thereafter; a re-injection after rotation re-runs this block but, because
+// the getters are redefined rather than stacked, identity remains stable without
+// a marker.
+func registryGettersScript() string {
+	return `(function () {
+        var reg;
+        var R = function () {
+            if (reg === undefined) reg = ` + registryCore() + `;
+            return reg;
+        };
+        try {
+            Object.defineProperty(navigator, "plugins", {
+                configurable: true,
+                get: function () { return R().plugins; },
+            });
+        } catch (e) {}
+        try {
+            Object.defineProperty(navigator, "mimeTypes", {
+                configurable: true,
+                get: function () { return R().mimes; },
+            });
+        } catch (e) {}
+    })();`
+}
+
+// pluginArrayLiteral returns a memoizing GETTER FUNCTION (not a value) for
+// navigator.plugins, used by the one-shot scripts (loadListener, reinforce,
+// navigatorPropertyScripts) that install only the plugins surface. It builds the
+// registry in its own closure on first access and caches it, so repeated reads
+// are stable without any global/prototype marker. Install it as the `get` of an
+// accessor descriptor: `get: <this>`, not `get: () => <this>`.
 func pluginArrayLiteral() string {
-	return "(function () {\n" + browserRegistryCore() + "\n    return g[KEY].plugins;\n})()"
+	return "(function () {\n" +
+		"var cached;\n" +
+		"return function () {\n" +
+		"if (cached === undefined) cached = (" + registryCore() + ").plugins;\n" +
+		"return cached;\n" +
+		"};\n})()"
 }
 
-// mimeArrayLiteral returns the getter body for navigator.mimeTypes, resolving
-// the same memoized per-realm registry so the MimeType instances are shared
-// with each plugin's .mimeTypes and repeated reads return the identical object.
+// mimeArrayLiteral returns a memoizing GETTER FUNCTION (not a value) for
+// navigator.mimeTypes, used by the one-shot scripts that install the mimeTypes
+// surface. It builds the registry in its own closure on first access and caches
+// it, so repeated reads are stable without any global/prototype marker. Install
+// it as the `get` of an accessor descriptor.
 func mimeArrayLiteral() string {
-	return "(function () {\n" + browserRegistryCore() + "\n    return g[KEY].mimes;\n})()"
+	return "(function () {\n" +
+		"var cached;\n" +
+		"return function () {\n" +
+		"if (cached === undefined) cached = (" + registryCore() + ").mimes;\n" +
+		"return cached;\n" +
+		"};\n})()"
 }
 
 // webglSpoofScript returns the shared WebGL identity patch applied to both
@@ -164,15 +205,23 @@ func mimeArrayLiteral() string {
 //     neither throws nor aborts the surrounding script: the new-document
 //     script embeds this BEFORE the Client-Hints override, and an unguarded
 //     throw here would silently drop the remaining identity initialization.
-//   - Installation is idempotent per realm: a non-enumerable marker on each
-//     prototype short-circuits a re-run (the new-document script can install
-//     the patch more than once across an identity/UA rotation window, when a
-//     superseded script may still evaluate), so getParameter is never stacked
-//     on top of itself.
-//   - Native receiver binding is preserved: non-spoofed parameters delegate to
-//     the captured native getParameter via getParameter.call(this, parameter),
-//     so an unbound ("Illegal invocation") call still surfaces the native
-//     contract and unsupported parameters keep their native result.
+//   - Installation is idempotent per realm via a closure-held WeakSet of
+//     patched prototypes (a NON-discoverable guard, not a prototype/global
+//     marker). A re-run after an identity/UA rotation leaves an already-patched
+//     prototype untouched, so getParameter is never stacked on itself.
+//   - Native-first receiver/extension semantics: the captured native getParameter
+//     is ALWAYS called first via getParameter.call(this, parameter). This (a)
+//     validates the receiver — a fabricated/unbound `this` throws "Illegal
+//     invocation" in the native call and therefore can never obtain a spoofed
+//     value; (b) preserves the native error/availability state; and (c) returns
+//     the native result for every parameter not spoofed.
+//   - Extension-aware spoofing: the unmasked vendor/renderer (native enums
+//     37445/37446) are spoofed ONLY when the browser's own query returns a
+//     non-empty string — i.e. WEBGL_debug_renderer_info is available and
+//     activated. When it is absent/disabled the native result is not a string,
+//     so no value is fabricated (the spoof is not claimed where it cannot be
+//     observed). This keeps the prototype patch consistent with the optional
+//     per-context gpuPatchScript.
 //
 // The advertised strings are the single gpuVendorSpoof/gpuRendererSpoof pair
 // by construction, so this per-prototype patch cannot disagree with the
@@ -181,6 +230,11 @@ func mimeArrayLiteral() string {
 func webglSpoofScript() string {
 	return `(function() {
     "use strict";
+    // Idempotency is a closure-held WeakSet of patched prototypes — NOT a
+    // discoverable prototype/global marker. A re-injected new-document script
+    // (identity/UA rotation) re-runs this block, but a prototype already in the
+    // set is left untouched, so getParameter is never stacked on itself.
+    const patched = new WeakSet();
     function patch(Ctx) {
         // typeof probe: a missing WebGL binding must never throw or abort the
         // surrounding identity script (this runs before the Client-Hints
@@ -192,31 +246,33 @@ func webglSpoofScript() string {
             return;
         }
         const proto = Ctx.prototype;
-        // Idempotency: short-circuit a re-installed wrapper so the
-        // new-document script never stacks getParameter on itself.
-        if (Object.prototype.hasOwnProperty.call(proto, "__crowlerWebGLPatched__")) {
+        if (patched.has(proto)) {
             return;
         }
-        // Native call keeps its receiver; an unbound call throws "Illegal
-        // invocation" and unsupported parameters keep their native result.
+        // Native-first: capture the native getParameter and ALWAYS call it first,
+        // via getParameter.call(this, parameter). This preserves (a) the receiver
+        // contract — a fabricated/unbound 'this' throws "Illegal invocation"
+        // here and so never reaches a spoofed return; (b) the native
+        // error/availability state; and (c) the native result for every
+        // parameter we do not spoof.
         const getParameter = proto.getParameter;
         proto.getParameter = function(parameter) {
-            if (parameter === 37445) return "` + gpuVendorSpoof + `";
-            if (parameter === 37446) return "` + gpuRendererSpoof + `";
-            return getParameter.call(this, parameter);
+            // Native answer first; it validates the receiver and, for 37445/37446,
+            // is only a real string when WEBGL_debug_renderer_info is available and
+            // activated.
+            const result = getParameter.call(this, parameter);
+            // Spoof the unmasked vendor/renderer (UNMASKED_VENDOR_WEBGL /
+            // UNMASKED_RENDERER_WEBGL) only when the browser's native query for
+            // that parameter is itself valid (a non-empty string). When the
+            // extension is absent/disabled the native result is not a string, so
+            // we DO NOT fabricate a spoofed value and return the native one.
+            if ((parameter === 37445 || parameter === 37446) &&
+                typeof result === "string" && result !== "") {
+                return parameter === 37445 ? "` + gpuVendorSpoof + `" : "` + gpuRendererSpoof + `";
+            }
+            return result;
         };
-        try {
-            // Non-enumerable marker so the guard does not surface in the
-            // prototype's enumerable shape.
-            Object.defineProperty(proto, "__crowlerWebGLPatched__", {
-                value: true,
-                enumerable: false,
-                configurable: true,
-            });
-        } catch (e) {
-            // A frozen prototype cannot carry the marker; the single-run
-            // semantics above still hold within this realm.
-        }
+        patched.add(proto);
     }
     try {
         patch(typeof WebGLRenderingContext !== "undefined" ? WebGLRenderingContext : undefined);
@@ -271,7 +327,7 @@ func loadListenerScript() string {
                 Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
                 Object.defineProperty(navigator, 'deviceMemory', {get: () => 8});
                 Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 4});
-                Object.defineProperty(navigator, 'plugins', {get: () => ` + pluginArrayLiteral() + `});
+                Object.defineProperty(navigator, 'plugins', {get: ` + pluginArrayLiteral() + `});
             } catch (err) {
                 console.error('Error applying browser settings on page load:', err);
             }
@@ -317,7 +373,7 @@ func reinforceScript() string {
             Object.defineProperty(navigator, 'mediaDevices', {value: undefined});
             Object.defineProperty(navigator, 'deviceMemory', {get: () => 8});
             Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 4});
-            Object.defineProperty(navigator, 'plugins', {get: () => %s});
+            Object.defineProperty(navigator, 'plugins', {get: %s});
 			Object.defineProperty(navigator, 'getUserMedia', {value: undefined});
 			Object.defineProperty(window, 'webkitRTCPeerConnection', {value: undefined});
 		} catch (err) {
@@ -418,7 +474,7 @@ func navigatorPropertyScripts(lang, userAgent string, ident OSIdentity) []string
 		"Object.defineProperty(navigator, 'webdriver', {get: () => undefined, configurable: true})",
 		"window.navigator.chrome = {runtime: {}}",
 		"Object.defineProperty(navigator, 'languages', {get: () => " + selectedLanguage + "})",
-		"Object.defineProperty(navigator, 'plugins', {get: () => " + pluginArrayLiteral() + "})",
+		"Object.defineProperty(navigator, 'plugins', {get: " + pluginArrayLiteral() + "})",
 		"Object.defineProperty(navigator, 'deviceMemory', {get: () => 8})",        // Example device memory spoof
 		"Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 4})", // Example cores
 		// Disable geolocation API

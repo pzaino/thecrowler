@@ -453,13 +453,11 @@ Object.defineProperty(navigator, 'platform', {
 });
 
 %s
-Object.defineProperty(navigator, 'plugins', {
-    get: () => %s
-});
-
-Object.defineProperty(navigator, 'mimeTypes', {
-    get: () => %s
-});
+// The plugin/MIME object graph and its cross-links are installed by a single
+// builder that memoizes ONE shared registry in closure state and defines both
+// getters to reference it (stable identity, shared MimeType instances, and no
+// discoverable global/prototype/symbol marker).
+%s
 
 delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
 delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
@@ -470,100 +468,147 @@ delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
 %s
 
 %s`, cmn.JSStringLiteral(userAgent), cmn.JSStringLiteral(ident.NavigatorPlatform), userAgentDataBlock,
-		pluginArrayLiteral(), mimeArrayLiteral(), webglSpoofScript(),
+		registryGettersScript(), webglSpoofScript(),
 		audioPatchScript(seed), highEntropySpoofBlock(details))
 }
 
 // audioPatchScript returns the deterministic AudioBuffer camouflage IIFE.
 //
-// Design rationale — the previous implementation was a fingerprint leak and a
-// latent bug: getChannelData() returns a *view* of the live channel sample
-// store, so the old code (a) mutated the underlying audio on every read, and
-// (b) added a fresh Math.random() delta at each 100th sample on every call.
-// Two defects follow: repeated reads ACCUMULATED drifting noise (no stable
-// fingerprint within a session) and real audio processing / copyFromChannel /
-// application writes saw corrupted samples.
+// Design: preserve the native AudioBuffer contract, camouflage at the boundary.
 //
-// This version:
-//   - installs the wrapper at most once per realm (a non-enumerable marker),
-//     so the new-document script re-running after identity rotation or UA
-//     rotation never chains the perturbation (no double-patch);
-//   - copies the samples to a fresh Float32Array before perturbing, so the
-//     live channel store stays intact for copyFromChannel/copyToChannel and
-//     application writes (the perturbation is applied only to the copy);
-//   - derives the per-sample delta deterministically from (seed, index), so
-//     every read in the session is identical (stable) and distinct sessions
-//     yield distinct fingerprints, matching the Canvas export seed;
-//   - preserves the native receiver binding, return type, and error handling:
-//     the native call's RangeError/TypeError (out-of-range channel, etc.) and
-//     any non-array result propagate unchanged, and an already-patched realm
-//     short-circuits without touching the prototype.
+// The previous version overrode AudioBuffer.prototype.getChannelData to return
+// a detached, per-read-perturbed Float32Array copy. That broke the native
+// contract three ways at once:
+//   - getChannelData() returns a LIVE view — writes to it mutate the underlying
+//     buffer. Returning a detached copy silently dropped application writes, so
+//     the live store and the returned data diverged (an audio pipeline that
+//     writes then reads, or copyToChannel-then-copyFromChannel, saw corrupted
+//     samples);
+//   - it mutated the live store on every read and added a fresh Math.random()
+//     delta each call, so repeated reads ACCUMULATED drifting noise (no stable
+//     fingerprint within a session) and corrupted real audio;
+//   - it was discoverable via a __crowlerAudioPatched__ prototype marker.
+//
+// Perfect native semantics AND an independent spoofed read value are NOT
+// simultaneously achievable in a pure-JS getChannelData wrapper: a live view
+// that reflects writes cannot also hide an independent perturbation. The
+// reviewer-acknowledged bounded alternative, used here, is to move the
+// camouflage to the audio-RENDERING boundary instead of the read path:
+//   - getChannelData is NEVER overridden — it stays native (live view,
+//     write-through, copyFromChannel/copyToChannel consistency, RangeError on an
+//     out-of-range channel, and the Float32Array return type).
+//   - When an AudioBuffer is PRODUCED by AudioContext.decodeAudioData or
+//     OfflineAudioContext.startRendering, its stored channel samples are
+//     perturbed ONCE, in place, before the buffer is returned. Re-reads of that
+//     buffer then see the SAME perturbed samples: no per-read accumulation, no
+//     drift, application writes still mutate the store natively, and
+//     copyFromChannel/copyToChannel stay consistent — because the perturbation
+//     lives in the stored samples and the reader is native.
+//   - The per-sample delta is a deterministic function of (seed, channel,
+//     index), so a session is stable across navigation/reload/proxy rotation
+//     with the same seed while distinct sessions (different seeds) diverge,
+//     matching the Canvas export seed.
+//   - Idempotency carries no discoverable marker: the render methods are
+//     wrapped at most once per realm via a closure-held WeakSet, and each
+//     produced buffer is perturbed at most once via a non-enumerable marker on
+//     the buffer INSTANCE (never on AudioBuffer.prototype or globalThis), so a
+//     re-injected new-document script after an identity/UA rotation never
+//     double-perturbs. If the instance marker cannot be set (a non-extensible or
+//     frozen host buffer) the patch fails closed and leaves the audio native,
+//     rather than risk a second perturbation.
 //
 // The magnitude (~1e-7) is below the audible threshold, so legitimate audio
-// pipelines are not degraded.
+// pipelines are not noticeably degraded.
 func audioPatchScript(seed uint32) string {
 	// A single flat IIFE that embeds the session seed as a local numeric
-	// literal. (A prior nesting — an inner self-invoked `(function(seed){})()`
-	// wrapped in an outer `(function(){…})(seed)` — forwarded the seed to the
-	// OUTER function while the inner perturbator was invoked with NO argument,
-	// so seed was undefined and every session collapsed to one fingerprint. The
-	// flat form below makes the seed reachable by the perturbation closure, so
-	// different sessions genuinely diverge while a session stays stable.)
+	// literal so the perturbation closure can see it; a nested outer/inner form
+	// forwarded the seed to the wrong function (seed undefined -> one
+	// fingerprint for every session).
 	return fmt.Sprintf(`(function() {
     "use strict";
     const seed = %d;
-    if (typeof AudioBuffer === "undefined" || !AudioBuffer || !AudioBuffer.prototype) {
+    if (typeof AudioContext === "undefined" && typeof OfflineAudioContext === "undefined") {
         return;
     }
-    const proto = AudioBuffer.prototype;
-    const native = proto.getChannelData;
-    if (typeof native !== "function") {
-        return;
-    }
-    // Idempotency: a prior invocation in this realm already installed the
-    // wrapper; re-wrapping would chain the perturbation and accumulate.
-    if (Object.prototype.hasOwnProperty.call(proto, "__crowlerAudioPatched__")) {
-        return;
-    }
-    proto.getChannelData = function(channel) {
-        // Delegate to the native implementation first: this preserves the
-        // receiver, native channel validation/error propagation, and the
-        // native return type (a Float32Array view of the live channel).
-        const data = native.call(this, channel);
-        // Preserve native return-type behavior: only perturb a non-empty
-        // array-like buffer; everything else passes through untouched.
-        if (!data || typeof data !== "object" || typeof data.length !== "number" || data.length === 0) {
-            return data;
+
+    // Idempotency: a closure-held WeakSet of patched prototypes. No discoverable
+    // marker on AudioBuffer.prototype or globalThis.
+    const patched = new WeakSet();
+
+    function perturbBuffer(buf) {
+        if (!buf || typeof buf.getChannelData !== "function") return;
+        // Per-instance idempotency: perturb a given buffer exactly once. The
+        // marker is non-enumerable so it is invisible to property enumeration on
+        // the returned buffer, and it is set on the INSTANCE, not on the shared
+        // prototype or globalThis.
+        if (Object.prototype.hasOwnProperty.call(buf, "__a1")) return;
+        // Install the marker first so a second invocation in this realm (or a
+        // second nested render wrapper) short-circuits here; if the instance is
+        // not extensible we fail closed and leave the audio entirely native.
+        var marked = false;
+        try {
+            Object.defineProperty(buf, "__a1", { value: true, enumerable: false, configurable: true });
+            marked = true;
+        } catch (e) {
+            marked = false;
         }
-        // getChannelData returns a *view*; copy so the live channel store is
-        // never mutated (copyFromChannel/copyToChannel and application writes
-        // keep operating on the original samples) and reads never accumulate.
-        const out = new Float32Array(data.length);
-        out.set(data);
-        // Deterministic, seed-stable perturbation in the original noise band
-        // (~1e-7). Identical per (seed, index), so repeated reads agree and a
-        // session stays stable across navigation/reload and proxy/IP rotation.
-        let state = ((seed >>> 0) ^ 0x9e3779b9) >>> 0;
-        for (let i = 0; i < out.length; i += 100) {
-            state ^= (state << 13);
-            state ^= (state >>> 17);
-            state ^= (state << 5);
-            state >>>= 0;
-            out[i] += ((state & 0xffff) / 0x10000 - 0.5) * 2e-7;
+        if (!marked) return;
+        try {
+            const channels = (typeof buf.numberOfChannels === "number") ? buf.numberOfChannels : 1;
+            for (let c = 0; c < channels; c++) {
+                const data = buf.getChannelData(c); // native live view of the store
+                if (!data || typeof data.length !== "number") continue;
+                const len = data.length;
+                if (len === 0) continue;
+                // Deterministic, seed+channel+index-stable delta in the original
+                // noise band (~1e-7). Applying it once to the stored sample keeps
+                // repeated reads equal (the live view now reflects the perturbed
+                // sample) and cross-session distinct.
+                let state = ((seed >>> 0) ^ 0x9e3779b9 ^ (c * 0x9e3779b1)) >>> 0;
+                for (let i = 0; i < len; i += 100) {
+                    state ^= (state << 13);
+                    state ^= (state >>> 17);
+                    state ^= (state << 5);
+                    state >>>= 0;
+                    data[i] += ((state & 0xffff) / 0x10000 - 0.5) * 2e-7;
+                }
+            }
+        } catch (e) {
+            // A buffer whose channels cannot be read is left exactly as-is.
         }
-        return out;
-    };
+    }
+
+    function wrapRender(Ctx, method) {
+        if (typeof Ctx === "undefined" || Ctx === null || !Ctx || !Ctx.prototype) return;
+        if (typeof Ctx.prototype[method] !== "function") return;
+        if (patched.has(Ctx.prototype)) return;
+        const native = Ctx.prototype[method];
+        Ctx.prototype[method] = function() {
+            const result = native.apply(this, arguments);
+            // Modern WebAudio resolves a Promise<AudioBuffer>. Perturb the
+            // buffer on the success path and propagate any rejection unchanged,
+            // preserving native error behavior and the caller's contract.
+            if (result && typeof result.then === "function") {
+                return result.then(function(buf) {
+                    perturbBuffer(buf);
+                    return buf;
+                }, function(err) {
+                    return Promise.reject(err);
+                });
+            }
+            // Legacy success-callback form resolves synchronously / returns a
+            // buffer; perturb defensively.
+            perturbBuffer(result);
+            return result;
+        };
+        patched.add(Ctx.prototype);
+    }
+
     try {
-        // Non-enumerable marker so the guard keeps the prototype shape clean;
-        // configurable so a later realm re-define can still install.
-        Object.defineProperty(proto, "__crowlerAudioPatched__", {
-            value: true,
-            enumerable: false,
-            configurable: true,
-        });
+        wrapRender(typeof AudioContext !== "undefined" ? AudioContext : undefined, "decodeAudioData");
+        wrapRender(typeof OfflineAudioContext !== "undefined" ? OfflineAudioContext : undefined, "startRendering");
     } catch (e) {
-        // A frozen prototype cannot carry the marker; the single-run semantics
-        // above still hold within this realm.
+        console.error('Error applying AudioBuffer render camouflage:', e);
     }
 })();`, uint64(seed))
 }

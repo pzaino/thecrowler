@@ -214,29 +214,37 @@ function makeWorld() {
   //   - copyFromChannel/copyToChannel operate on the live store, so the
   //     "no mutation / consistency" contract can be observed without peeking
   //     at an implementation private field.
-  // The fill is all-zeros so a ~1e-7 perturbation is observable in float32
-  // while legitimate audio pipelines (real content) stay audibly unchanged.
-  function makeAudioBuffer(channelCount, length) {
+  // The fill is a fixed non-round value so a sub-1e-7 deterministic
+  // perturbation is observable in float32 while legitimate audio stays
+  // audibly unchanged; instances are extensible so the patch's non-enumerable
+  // per-instance idempotency marker can be set like a native AudioBuffer.
+  function makeAudioBuffer(channelCount, length, fillFn) {
+    const nch = (typeof channelCount === "number") ? channelCount : 1;
+    const len = (typeof length === "number") ? length : 0;
     const buf = {
-      length: length,
-      numberOfChannels: channelCount,
+      numberOfChannels: nch,
       sampleRate: 44100,
-      _channels: [],
+      length: len,
+      duration: len / 44100,
     };
-    for (let c = 0; c < channelCount; c++) {
-      const ch = new Float32Array(length);
-      for (let i = 0; i < length; i++) ch[i] = 0;
-      buf._channels.push(ch);
+    const store = [];
+    for (let c = 0; c < nch; c++) {
+      const ch = new Float32Array(len);
+      if (fillFn) fillFn(ch, c);
+      store.push(ch);
     }
+    buf._store = store; // live backing store the native methods read/write
     return buf;
   }
-  function AudioBuffer(channelCount, length) {
+  const RENDER_BASE = 0.123456789;
+  function fillRendered(ch) { for (let i = 0; i < ch.length; i++) ch[i] = RENDER_BASE; }
+  function AudioBuffer(channelCount, length, sampleRate) {
     if (!(this instanceof AudioBuffer)) {
       throw new TypeError("Cannot call a class as a function");
     }
     Object.assign(this, makeAudioBuffer(
       typeof channelCount === "number" ? channelCount : 1,
-      typeof length === "number" ? length : 0
+      typeof length === "number" ? length : 0,
     ));
   }
   AudioBuffer.prototype.getChannelData = function (channel) {
@@ -245,28 +253,59 @@ function makeWorld() {
         'Failed to execute "getChannelData" on "AudioBuffer": the provided channel is out of range'
       );
     }
-    // Return the live view: the SAME reference on every call.
-    return this._channels[channel];
+    // Live view: the SAME backing reference on every call.
+    return this._store[channel];
   };
-  AudioBuffer.prototype.copyFromChannel = function (channel, source) {
+  // copyFromChannel(destination, channelNumber, startInFrames): native direction
+  // copies the channel data OUT into the external destination.
+  AudioBuffer.prototype.copyFromChannel = function (destination, channel, start) {
     if (!Number.isInteger(channel) || channel < 0 || channel >= this.numberOfChannels) {
       throw new RangeError(
         'Failed to execute "copyFromChannel" on "AudioBuffer": the provided channel is out of range'
       );
     }
-    const dst = this._channels[channel];
-    const n = Math.min(dst.length, source.length);
-    for (let i = 0; i < n; i++) dst[i] = source[i];
+    const src = this._store[channel];
+    const s = (typeof start === "number") ? start : 0;
+    const n = Math.min(destination.length, src.length - s);
+    for (let i = 0; i < n; i++) destination[i] = src[s + i];
+    return this;
   };
-  AudioBuffer.prototype.copyToChannel = function (source, channel) {
+  // copyToChannel(source, channelNumber, startInFrames): native direction copies
+  // the external source IN into the channel.
+  AudioBuffer.prototype.copyToChannel = function (source, channel, start) {
     if (!Number.isInteger(channel) || channel < 0 || channel >= this.numberOfChannels) {
       throw new RangeError(
         'Failed to execute "copyToChannel" on "AudioBuffer": the provided channel is out of range'
       );
     }
-    const src = this._channels[channel];
-    const n = Math.min(src.length, source.length);
-    for (let i = 0; i < n; i++) source[i] = src[i];
+    const dst = this._store[channel];
+    const s = (typeof start === "number") ? start : 0;
+    const n = Math.min(source.length, dst.length - s);
+    for (let i = 0; i < n; i++) dst[s + i] = source[i];
+    return this;
+  };
+
+  // AudioContext / OfflineAudioContext: the render BOUNDARY the render-boundary
+  // camouflage patch wraps. startRendering and decodeAudioData return a
+  // Promise<AudioBuffer> (modern API). Each render produces a proper AudioBuffer
+  // instance (not a bare object), so getChannelData works via the prototype,
+  // and a deterministic sub-1e-7 perturbation is observable in float32.
+  function AudioContext() {}
+  AudioContext.prototype.decodeAudioData = function (data) {
+    const buf = new AudioBuffer(1, 1000);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = RENDER_BASE;
+    return Promise.resolve(buf);
+  };
+  function OfflineAudioContext() {}
+  OfflineAudioContext.prototype.createBuffer = function (nch, len) {
+    return new AudioBuffer(nch, len);
+  };
+  OfflineAudioContext.prototype.startRendering = function () {
+    const buf = new AudioBuffer(1, 1000);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = RENDER_BASE;
+    return Promise.resolve(buf);
   };
 
   function Element() {}
@@ -330,7 +369,7 @@ function makeWorld() {
   const sandbox = {
     navigator, window, document, screen, indexedDB,
     HTMLCanvasElement, WebGLRenderingContext, WebGL2RenderingContext,
-    AudioBuffer, Element, RTCPeerConnection, RTCDataChannel,
+    AudioBuffer, AudioContext, OfflineAudioContext, Element, RTCPeerConnection, RTCDataChannel,
     // Standard intrinsics the patch scripts reference: Float32Array/Uint8Array
     // are the view types the camouflage copies into; Buffer backs the native
     // base64 export; Number/RangeError back the out-of-range channel contract.
@@ -396,14 +435,46 @@ function snapshot(world) {
   try { out.devicePixelRatio = window.devicePixelRatio; } catch (e) { out.devicePixelRatio = 'threw'; }
   try { out.toDataURL = new world.sandbox.HTMLCanvasElement().toDataURL(); } catch (e) { out.toDataURL = 'threw:' + e.message; }
   try {
-    const gl = { __isGLContext: true, params: { 37445: 'V', 37446: 'R', 1: 'other' } };
+    // Real GL context: extension available, native returns strings, patch
+    // returns spoofed vendor/renderer.
+    const gl = { __isGLContext: true, params: { 37445: 'RealVendor', 37446: 'RealRenderer', 1: 'other' } };
     const gp = world.sandbox.WebGLRenderingContext.prototype.getParameter;
     out.webglVendor = gp.call(gl, 37445);
     out.webglRenderer = gp.call(gl, 37446);
     out.webglPassthrough = gp.call(gl, 1);
     const gl2proto = world.sandbox.WebGL2RenderingContext.prototype.getParameter;
     out.webgl2Patched = (gl2proto !== world.sandbox.__nativeGL2GetParameter);
+    // Extension-unavailable: native returns a non-string for 37445, so the
+    // patch must NOT fabricate a spoofed value.
+    const glNoExt = { __isGLContext: true, params: {} };
+    out.webglExtNoVendor = gp.call(glNoExt, 37445);
+    out.webglExtNoRenderer = gp.call(glNoExt, 37446);
+    out.webglExtNoFabricated = (out.webglExtNoVendor !== 'Intel Inc.' && out.webglExtNoRenderer !== 'Mesa Intel(R) UHD Graphics');
+    // Fabricated receiver: a non-GL `this` must not yield a spoofed result.
+    // Native getParameter.call(nonGL, 37445) throws "Illegal invocation".
+    out.webglFakerReceiver = 'not-thrown';
+    try {
+      const fake = { not_a_gl: true };
+      gp.call(fake, 37445);
+      out.webglFakerReceiver = 'no-throw';
+    } catch (e) {
+      out.webglFakerReceiver = 'threw:' + (e.message || 'throw');
+    }
   } catch (e) { out.webglError = String(e && e.message || e); }
+  // P1 enumeration: no discoverable CROWler marker on the patched prototypes
+  // or on globalThis.
+  try {
+    const protoNames = Object.getOwnPropertyNames(world.sandbox.WebGLRenderingContext.prototype);
+    out.webglProtoNames = protoNames.filter(n => /crowler|__/.test(n)).join(',');
+    const protoSyms = Object.getOwnPropertySymbols(world.sandbox.WebGLRenderingContext.prototype);
+    out.webglProtoSyms = protoSyms.length;
+    const globalNames = Object.getOwnPropertyNames(world.sandbox);
+    out.crowlerGlobal = globalNames.filter(n => /crowler/i.test(n)).join(',');
+    const abProto = world.sandbox.AudioBuffer && world.sandbox.AudioBuffer.prototype;
+    if (abProto) {
+      out.crowlerAudioProto = Object.getOwnPropertyNames(abProto).filter(n => /crowler/i.test(n)).join(',');
+    }
+  } catch (e) { out.enumError = String(e && e.message || e); }
   try {
     // Per-context path (GPUPatch wraps getContext, not the prototype).
     const canvas = new world.sandbox.HTMLCanvasElement();
@@ -446,61 +517,143 @@ function arraysEqual(a, b) {
 }
 
 // audioProbe exercises the deterministic AudioBuffer camouflage against a
-// FAITHFUL AudioBuffer (live getChannelData view, out-of-range errors, and
-// copyFromChannel/copyToChannel into the live store). This is the only place
-// the non-accumulation / non-mutation / consistency contracts are observable:
-// a patch that mutates "the returned buffer" corrupts real audio, which a
-// non-faithful mock hides. It is deliberately conservative: each assertion
-// degrades to a string on failure rather than throwing, so the JSON always
-// carries the probe's findings.
-function audioProbe(world) {
+// FAITHFUL AudioBuffer mock and a render-boundary mock. It tests BOTH the
+// preserved native getChannelData contract (live view, write-through, copy
+// consistency, range error, no-accumulation) AND the render-boundary
+// perturbation (startRendering / decodeAudioData produce a buffer whose
+// stored samples carry a deterministic seed-driven perturbation, while
+// getChannelData remains native).
+//
+// Deliberately conservative: each assertion degrades to a string on failure,
+// so the JSON always carries the probe's findings.
+async function audioProbe(world) {
   const out = {};
   try {
     const AudioBuffer = world.sandbox.AudioBuffer;
     const F32 = world.sandbox.Float32Array;
+    const OfflineAudioContext = world.sandbox.OfflineAudioContext;
+    const AudioContext = world.sandbox.AudioContext;
     const buf = new AudioBuffer(1, 300, 44100);
 
-    // Read twice: the patch must be session-stable, so the two copies agree
-    // and neither read mutates the underlying channel store.
+    // --- Native getChannelData contract (sync, on a fresh buffer) ---
+
+    // Return type: getChannelData returns a Float32Array view.
     const a = buf.getChannelData(0);
-    const b = buf.getChannelData(0);
     out.audioType = Object.prototype.toString.call(a).toLowerCase();
     out.audioLen = a.length;
-    out.audioSample0 = a[0];
-    out.audioSample100 = a[100];
-    out.audioSample200 = a[200];
-    out.audioDeterministic = arraysEqual(a, b);
 
-    // Non-mutation: copy the (unperturbed) live store back out via the native
-    // copyToChannel. The fill was all-zeros, so any drift means the patch
-    // corrupted the live channel — the old cumulative-mutation defect.
-    const raw = new F32(300);
-    buf.copyToChannel(raw, 0);
-    let intact = true;
-    for (let i = 0; i < raw.length; i++) {
-      if (raw[i] !== 0) { intact = false; break; }
-    }
-    out.audioRawIntact = intact;
+    // Write-through: writing to the returned view mutates the live store.
+    out.audioWriteThrough = (function () {
+      // 0.5 is exactly representable in float32; the live view must reflect the write.
+      const val = 0.5;
+      buf.getChannelData(0)[5] = val;
+      return buf.getChannelData(0)[5] === val;
+    })();
 
-    // Perturbation is applied (and observable in float32 for the zero fill).
-    out.audioPerturbed = (a[0] !== 0 || a[100] !== 0 || a[200] !== 0);
+    // No-accumulation: repeated reads without writes are identical.
+    out.audioDeterministic = (function () {
+      const x = buf.getChannelData(0);
+      const y = buf.getChannelData(0);
+      return arraysEqual(x, y);
+    })();
 
-    // Consistency: a write into the live store via copyFromChannel must be
-    // visible to a subsequent getChannelData read through the same patch.
-    const writesrc = new F32(300);
-    for (let i = 0; i < 300; i++) writesrc[i] = 1;
-    buf.copyFromChannel(0, writesrc);
-    const c = buf.getChannelData(0);
-    out.audioWritePropagates = (c[100] > 0);
+    // copyFromChannel reads the live store into a destination (native order).
+    out.audioCopyFromConsistent = (function () {
+      const dst = new F32(300);
+      buf.copyFromChannel(dst, 0);
+      // dst[5] should equal what write-through wrote (0.5 is float32-exact).
+      return dst[5] === 0.5;
+    })();
 
-    // Native error handling preserved: an out-of-range channel throws through
-    // the wrapper to the caller (the patch must not swallow it).
-    out.audioRangeError = 'no-error';
+    // copyToChannel writes an external source INTO the channel (native order).
+    out.audioCopyToChannel = (function () {
+      const src = new F32(300);
+      for (let i = 0; i < 300; i++) src[i] = 1; // 1.0 is float32-exact
+      buf.copyToChannel(src, 0);
+      return buf.getChannelData(0)[5] === 1.0;
+    })();
+
+    // Raw-intact: reads do not corrupt the live store. Snapshot, read, compare.
+    out.audioRawIntact = (function () {
+      const snap = new F32(300);
+      buf.copyFromChannel(snap, 0);
+      // Read three times (a read-only patch leaves the store unchanged; a
+      // mutating legacy patch accumulates noise).
+      buf.getChannelData(0);
+      buf.getChannelData(0);
+      buf.getChannelData(0);
+      const resnap = new F32(300);
+      buf.copyFromChannel(resnap, 0);
+      return arraysEqual(snap, resnap);
+    })();
+
+    // Native out-of-range channel throws RangeError through the native method.
+    out.audioRangeError = 'no-throw';
     try {
       buf.getChannelData(5);
       out.audioRangeError = 'no-throw';
     } catch (e) {
       out.audioRangeError = 'threw';
+    }
+    out.audioRangeCopyFrom = 'no-throw';
+    try {
+      buf.copyFromChannel(new F32(1), 5);
+      out.audioRangeCopyFrom = 'no-throw';
+    } catch (e) {
+      out.audioRangeCopyFrom = 'threw';
+    }
+
+    // Multi-channel: a 2-channel buffer's channels are independent.
+    out.audioMultiChannel = (function () {
+      const m = new AudioBuffer(2, 300);
+      m.getChannelData(0)[0] = 1.0;
+      m.getChannelData(1)[0] = 2.0;
+      return m.getChannelData(0)[0] === 1.0 && m.getChannelData(1)[0] === 2.0;
+    })();
+
+    // Multi-buffer: two independent buffers do not share state.
+    out.audioMultiBuffer = (function () {
+      const b1 = new AudioBuffer(1, 300);
+      const b2 = new AudioBuffer(1, 300);
+      b1.getChannelData(0)[0] = 0.99;
+      return b2.getChannelData(0)[0] === 0;
+    })();
+
+    // --- Render-boundary perturbation (async) ---
+    // Render a buffer via startRendering (the patch's target boundary). The
+    // rendered buffer's stored samples carry a deterministic seed perturbation
+    // while getChannelData reads stay native.
+    out.audioRenderedPerturbed = false;
+    out.audioRenderedSample100 = null;
+    out.audioPerInstanceMarker = 'no-marker';
+    try {
+      if (OfflineAudioContext && OfflineAudioContext.prototype.startRendering) {
+        const oac = new (OfflineAudioContext)();
+        const rendered = await oac.startRendering();
+        out.audioRenderedSample100 = rendered.getChannelData(0)[100];
+        // Perturbation observable: the base fill is RENDER_BASE (0.123…),
+        // perturb shifts the sub-audiible band, so sample at 100 differs from
+        // the exact fill value in float32.
+        out.audioRenderedPerturbed = (Math.abs(rendered.getChannelData(0)[100] - 0.123456789) > 1e-9);
+        // Per-instance idempotency marker set non-enumerably on the rendered
+        // buffer (guard against double-perturbation across nested wrappers).
+        try {
+          const names = Object.getOwnPropertyNames(rendered).filter(n => n === '__a1');
+          out.audioPerInstanceMarker = names.length > 0 ? 'present' : 'absent';
+        } catch (e) {
+          out.audioPerInstanceMarker = 'threw';
+        }
+        // Re-read deterministic: sample 100 does not drift on repeated reads.
+        out.audioRenderedDeterministic = (rendered.getChannelData(0)[100] === out.audioRenderedSample100);
+      } else if (AudioContext && AudioContext.prototype.decodeAudioData) {
+        // Fallback: use decodeAudioData boundary instead.
+        const ac = new (AudioContext)();
+        const rendered = await ac.decodeAudioData(new Uint8Array([0]));
+        out.audioRenderedSample100 = (rendered && rendered.getChannelData(0)[100]) || null;
+        out.audioRenderedPerturbed = (out.audioRenderedSample100 !== 0.123456789);
+      }
+    } catch (e) {
+      out.audioRenderError = String((e && e.message) || e);
     }
   } catch (e) {
     out.audioProbeError = String((e && e.message) || e);
@@ -616,21 +769,23 @@ async function main() {
       vm.runInContext(scriptText, world.sandbox, { filename: 'reinforce.js' });
       vm.runInContext(scriptText, world.sandbox, { filename: 'reinforce.js' });
     } else if (phase === 'audio-twice') {
-      // Idempotency across a re-injected new-document script: install twice in
-      // the same realm; the guard must make the second install a no-op so the
-      // perturbation is never stacked or accumulated. Capture the prototype
-      // method reference between installs: a re-wrapping (non-idempotent) patch
-      // would replace it, while the marker-guarded install leaves it intact.
+      // Idempotency: install the render-boundary patch twice in the same realm.
+      // The patch has no discoverable prototype/global marker; idempotency is
+      // provided by (a) a closure-held WeakSet (within-eval re-wrap guard) and
+      // (b) a per-instance non-enumerable marker (prevents double-perturbation
+      // of the SAME buffer across nested wrappers).
       vm.runInContext(scriptText, world.sandbox, { filename: 'audio-1st.js' });
-      const protoAfterFirst = world.sandbox.AudioBuffer.prototype.getChannelData;
       vm.runInContext(scriptText, world.sandbox, { filename: 'audio-2nd.js' });
       result.values = result.values || {};
-      result.values.audioProtoStable = (
-        world.sandbox.AudioBuffer.prototype.getChannelData === protoAfterFirst
-      );
-      result.values.audioMarker = Object.prototype.hasOwnProperty.call(
-        world.sandbox.AudioBuffer.prototype, '__crowlerAudioPatched__'
-      );
+      // P1: no crowsler marker on prototypes or globalThis.
+      const abP = world.sandbox.AudioBuffer && world.sandbox.AudioBuffer.prototype;
+      result.values.audioNoMarker = !abP ||
+        !Object.prototype.hasOwnProperty.call(abP, '__crowlerAudioPatched__');
+      const acP = world.sandbox.AudioContext && world.sandbox.AudioContext.prototype;
+      result.values.audioNoMarker2 = !acP ||
+        !Object.prototype.hasOwnProperty.call(acP, '__crowlerAudioPatched__');
+      // No crowler global is reported by the snapshot (crowlerGlobal string),
+      // which runs after this branch and is the source of truth for the test.
     } else if (phase === 'webgl-absent') {
       // Missing WebGL/WebGL2 bindings must not throw or abort the surrounding
       // identity script (which runs this before the Client-Hints override).
@@ -666,14 +821,14 @@ async function main() {
       world.sandbox.WebGL2RenderingContext.prototype.getParameter === gl2
     );
     result.values.webglVendorAfter = world.sandbox.WebGLRenderingContext.prototype.getParameter.call(
-      { __isGLContext: true, params: {} }, 37445
+      { __isGLContext: true, params: { 37445: 'V', 37446: 'R' } }, 37445
     );
   }
   result.errors = world.errors;
   result.values = Object.assign(result.values || {}, snapshot(world));
   // AudioBuffer probe for the deterministic camouflage phases.
   if (phase === 'audio' || phase === 'audio-twice' || phase === 'inject') {
-    result.values = Object.assign(result.values || {}, audioProbe(world));
+    result.values = Object.assign(result.values || {}, await audioProbe(world));
   }
   // Canvas export probe for the deterministic export phase.
   if (phase === 'canvas') {
