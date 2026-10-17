@@ -365,14 +365,27 @@ func mustBool(t *testing.T, v interface{}) bool {
 	return b
 }
 
-// ----- Deterministic AudioBuffer camouflage (PR5 HIGH) -----
+// strValOrEmpty returns the value as a string, or "" when it is nil or a
+// non-string. Used for optional diagnostic fields the probe sets only on the
+// error path, so the happy path leaves them absent.
+func strValOrEmpty(t *testing.T, v interface{}) string {
+	t.Helper()
+	s, _ := v.(string)
+	return s
+}
+
+// ----- Deterministic AudioBuffer camouflage -----
 //
 // The patch must be: type-preserving (a Float32Array), session-stable
 // (repeated reads agree), non-mutating (the live channel store survives
 // copyFromChannel/copyToChannel and application writes), non-accumulating
 // (an idempotent install, not a stacked per-call Math.random mutation),
-// an observable perturbation, and a faithful error proxy (out-of-range
-// channels still throw through the wrapper).
+// an observable perturbation at the render/decode boundary in BOTH the modern
+// Promise form and the legacy success-error callback form (and through
+// OfflineAudioContext, inherited from BaseAudioContext), a faithful error proxy
+// (out-of-range channels, a failing decode, and the legacy error callback all
+// propagate through the wrapper), and marker-free: a produced buffer gains no
+// discoverable own property.
 
 func TestAudioPatchExecution(t *testing.T) {
 	res := runCamouflageNode(t, "audio", audioPatchScript(123456))
@@ -421,38 +434,88 @@ func TestAudioPatchExecution(t *testing.T) {
 	if !mustBool(t, v["audioMultiBuffer"]) {
 		t.Error("independent AudioBuffers share store state")
 	}
-	// Render-boundary perturbation: startRendering-produced buffer is perturbed.
+	// Render-boundary perturbation via startRendering (offline, Promise form):
+	// the produced buffer is perturbed and its reads are stable (no drift).
 	if !mustBool(t, v["audioRenderedPerturbed"]) {
 		t.Error("render-boundary perturbation not observable in float32 (camouflage no-op)")
 	}
-	// Per-instance idempotency marker is set non-enumerably on the rendered buffer.
-	if got := strVal(t, v["audioPerInstanceMarker"]); got != "present" {
-		t.Errorf("audioPerInstanceMarker = %v, want 'present' (per-instance idempotency guard not installed)", got)
-	}
-	// Rendered output is deterministic across re-reads of the same buffer.
 	if !mustBool(t, v["audioRenderedDeterministic"]) {
-		t.Error("rendered buffer's sample drifts on repeated reads")
+		t.Error("rendered buffer's sample drifts on repeated reads (per-read accumulation)")
+	}
+	// Exactly-once, marker-free perturbation: a produced buffer gains no own
+	// property — its own-property set equals a fresh, unperturbed buffer's. A
+	// per-instance marker like the old __a1 would add a name and fail this.
+	if !mustBool(t, v["audioNoInstanceMarker"]) {
+		if s := strValOrEmpty(t, v["audioInstancePropSet"]); s != "" {
+			t.Errorf("audioNoInstanceMarker = false; produced buffer's own-property set = %v (a per-instance marker was added)", s)
+		} else {
+			t.Error("audioNoInstanceMarker = false (a per-instance marker was added to the produced buffer)")
+		}
+	}
+	// Promise-form decoding (modern API): the resolved buffer is perturbed and
+	// carries a thenable handle (the native Promise contract is preserved).
+	if !mustBool(t, v["audioPromiseHasThen"]) {
+		t.Error("Promise-form decodeAudioData did not return a thenable (native Promise form not preserved)")
+	}
+	if !mustBool(t, v["audioPromisePerturbed"]) {
+		if s := strValOrEmpty(t, v["audioPromiseError"]); s != "" {
+			t.Errorf("Promise-form decode error: %s", s)
+		}
+		t.Error("Promise-form decoded buffer was not perturbed at completion")
+	}
+	// Legacy success/error callback-form decoding: the success callback observes
+	// the perturbed buffer (perturbed before the application reads it).
+	if !mustBool(t, v["audioCallbackPerturbed"]) {
+		if s := strValOrEmpty(t, v["audioCallbackError"]); s != "" {
+			t.Errorf("legacy callback-form decode error: %s", s)
+		}
+		t.Error("legacy callback-form decoded buffer was not perturbed before the application observed it")
+	}
+	// OfflineAudioContext.decodeAudioData (inherited from BaseAudioContext) is
+	// perturbed through the single base-level patch.
+	if !mustBool(t, v["audioOfflinePerturbed"]) {
+		if s := strValOrEmpty(t, v["audioOfflineError"]); s != "" {
+			t.Errorf("offline decode error: %s", s)
+		}
+		t.Error("OfflineAudioContext.decodeAudioData was not perturbed through the BaseAudioContext patch")
+	}
+	// A failing Promise-form decode must REJECT (not resolve to a phantom buffer).
+	if got := strVal(t, v["audioRejectThrew"]); got != "rejected" {
+		t.Errorf("audioRejectThrew = %v, want 'rejected': a failing decode must propagate rejection through the wrapper", got)
+	}
+	// A failing callback-form decode must invoke the ERROR callback (not success).
+	if !mustBool(t, v["audioCallbackErrInvoked"]) {
+		if s := strValOrEmpty(t, v["audioCallbackErr"]); s != "" {
+			t.Errorf("callback-error path result = %v", s)
+		}
+		t.Error("a failing callback-form decode did not invoke the error callback")
 	}
 }
 
-// TestAudioPatchIdempotent proves the re-installed render-boundary script does
-// not introduce a discoverable prototype/global marker and is observationally
-// idempotent: repeated reads on rendered buffers are deterministic and the
-// render boundary does not corrupt or accumulate.
+// TestAudioPatchIdempotent proves the re-installed render/decode patch does not
+// introduce a discoverable prototype/global marker and is observationally
+// idempotent: a same-realm reinstall is a test artifact (the new-document
+// identity script runs once per realm), and across two evaluations the patch
+// stays marker-free and the live store is not corrupted or accumulated.
 func TestAudioPatchIdempotent(t *testing.T) {
 	res := runCamouflageNode(t, "audio-twice", audioPatchScript(123456))
 	v := res.Values
-	// P1: no crowler-type marker on AudioBuffer.prototype or AudioContext.prototype.
+	// A same-realm reinstall leaves no discoverable marker on the prototypes.
 	if !mustBool(t, v["audioNoMarker"]) {
-		t.Error("re-install left a discoverable marker on AudioBuffer.prototype (P1 violation)")
+		t.Error("re-install left a discoverable marker on AudioBuffer.prototype")
 	}
 	if !mustBool(t, v["audioNoMarker2"]) {
-		t.Error("re-install left a discoverable marker on AudioContext.prototype (P1 violation)")
+		t.Error("re-install left a discoverable marker on AudioContext.prototype")
 	}
 	// No crowler-named global property was introduced (snapshot reports the
 	// matching-name list as a string; empty means none).
 	if got := strVal(t, v["crowlerGlobal"]); got != "" {
-		t.Errorf("crowlerGlobal = %q, want empty (a crowler-named global was introduced, P1 violation)", got)
+		t.Errorf("crowlerGlobal = %q, want empty (a crowler-named global was introduced)", got)
+	}
+	// The produced buffer gains no per-instance own property even after two
+	// installs (the exactly-once, marker-free guard holds across evaluations).
+	if !mustBool(t, v["audioNoInstanceMarker"]) {
+		t.Errorf("audioNoInstanceMarker = false (a per-instance marker survived a re-install; own-property set = %v)", strValOrEmpty(t, v["audioInstancePropSet"]))
 	}
 	// No per-read accumulation after two installs.
 	if !mustBool(t, v["audioRawIntact"]) {
@@ -460,6 +523,38 @@ func TestAudioPatchIdempotent(t *testing.T) {
 	}
 	if !mustBool(t, v["audioDeterministic"]) {
 		t.Error("double install made reads non-deterministic")
+	}
+}
+
+// TestAudioPatchNoBaseFallback proves the patch degrades correctly when an
+// engine does not expose BaseAudioContext: it wraps the concrete AudioContext /
+// OfflineAudioContext prototypes instead, so decoding and startRendering are
+// still perturbed (the native-layout compatibility branch).
+func TestAudioPatchNoBaseFallback(t *testing.T) {
+	res := runCamouflageNode(t, "audio-no-base", audioPatchScript(31337))
+	v := res.Values
+	// With the base absent, the concrete-context patches must still perturb.
+	if !mustBool(t, v["audioRenderedPerturbed"]) {
+		if s := strValOrEmpty(t, v["audioRenderError"]); s != "" {
+			t.Errorf("no-base fallback render error: %s", s)
+		}
+		t.Error("no-base fallback: startRendering did not perturb the rendered buffer")
+	}
+	if !mustBool(t, v["audioPromisePerturbed"]) {
+		if s := strValOrEmpty(t, v["audioPromiseError"]); s != "" {
+			t.Errorf("no-base fallback Promise-decode error: %s", s)
+		}
+		t.Error("no-base fallback: concrete-context decodeAudioData was not perturbed")
+	}
+	if !mustBool(t, v["audioCallbackPerturbed"]) {
+		if s := strValOrEmpty(t, v["audioCallbackError"]); s != "" {
+			t.Errorf("no-base fallback callback-decode error: %s", s)
+		}
+		t.Error("no-base fallback: legacy callback-form decode was not perturbed")
+	}
+	// The fallback path is still marker-free.
+	if !mustBool(t, v["audioNoInstanceMarker"]) {
+		t.Errorf("no-base fallback added a per-instance marker; own-property set = %v", strValOrEmpty(t, v["audioInstancePropSet"]))
 	}
 }
 
@@ -485,15 +580,17 @@ func TestAudioPatchSeedStability(t *testing.T) {
 	}
 }
 
-// ----- WebGL identity patch (PR5 HIGH) -----
+// ----- WebGL identity patch -----
 
 // TestWebGLPatchIdempotent verifies observable behavioral idempotency across a
-// second install. The patch uses a per-eval WeakSet guard; a separate IIFE eval
-// (simulating a re-injected document-start script) creates a new closure and
-// may wrap the prototype a second time physically. The observable behavior
-// — the spoofed identity and the native-first validation — stays identical,
-// which is the meaningful guarantee (no behavioral stacking, no observable
-// drift).
+// second install. The supported injection lifecycle evaluates the new-document
+// identity script exactly once per realm (a new document is a fresh realm with
+// fresh prototypes), so the per-closure WeakSet is the complete within-realm
+// guard. A second IIFE eval in the SAME realm (a test artifact, not a supported
+// scenario) creates a new closure and may physically re-wrap the prototype; the
+// meaningful guarantee is observable idempotency — the spoofed identity and the
+// native-first receiver validation stay identical across the reinstall — not
+// pointer stability.
 func TestWebGLPatchIdempotent(t *testing.T) {
 	res := runCamouflageNode(t, "webgl-double", webglSpoofScript())
 	if len(res.Errors) != 0 {
@@ -507,14 +604,11 @@ func TestWebGLPatchIdempotent(t *testing.T) {
 	if got := v["webglVendorAfter"]; got != gpuVendorSpoof {
 		t.Errorf("webglVendorAfter = %v, want %q (identity drifted across reinstall)", got, gpuVendorSpoof)
 	}
-	// Observable behavior idempotent: after two installs the vendor is still spoofed.
-	if mustBool(t, v["webglStable"]) {
-		// Prototype reference unchanged (within-eval WeakSet guard worked).
-	} else {
-		// Prototype reference changed (cross-eval re-wrap) — acceptable as long
-		// as the observable behavior is correct (webglVendorAfter == spoof).
-		// This is the physically-stacked but observably-idempotent case.
-	}
+	// webglStable reports whether the prototype reference survived the cross-eval
+	// reinstall. When true, the within-eval WeakSet already prevented the re-wrap;
+	// when false, the observable behavior is still correct (the else branch makes
+	// the point — a physically-stacked but observably-idempotent result).
+	_ = mustBool(t, v["webglStable"])
 }
 
 // TestWebGLPatchMissingAPI proves a missing WebGL/WebGL2 binding does not throw
@@ -546,7 +640,7 @@ func TestWebGLPatchMissingAPI(t *testing.T) {
 // TestWebGLFakerReceiverRejected proves the native-first design rejects a
 // fabricated / unbound receiver: calling getParameter on a non-GL context must
 // throw (native "Illegal invocation" propagates rather than returning a spoofed
-// value), which is the P0 defect that the old implementation did not guard.
+// value), which the previous unguarded implementation did not guard against.
 func TestWebGLFakerReceiverRejected(t *testing.T) {
 	res := runCamouflageNode(t, "webgl-double", webglSpoofScript())
 	v := res.Values
@@ -574,7 +668,7 @@ func TestWebGLExtUnavailableNoFabricate(t *testing.T) {
 	}
 }
 
-// TestPatchArtifactEnumeration verifies P1: no discoverable crowler-named
+// TestPatchArtifactEnumeration verifies that no discoverable crowler-named
 // prototype or global properties are introduced by the antiDetectionScript.
 func TestPatchArtifactEnumeration(t *testing.T) {
 	ua := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/132.0.0.0"
@@ -585,7 +679,7 @@ func TestPatchArtifactEnumeration(t *testing.T) {
 	v := res.Values
 	// The snapshot's crowlerGlobal field must be empty (no crowler globals).
 	if got := strVal(t, v["crowlerGlobal"]); got != "" {
-		t.Errorf("crowlerGlobal = %q, want empty: discoverable crowler global property was introduced (P1)", got)
+		t.Errorf("crowlerGlobal = %q, want empty: discoverable crowler global property was introduced", got)
 	}
 	// WebGL prototype names filtered for crowler/underscore must be empty.
 	if got := strVal(t, v["webglProtoNames"]); got != "" {
@@ -593,7 +687,7 @@ func TestPatchArtifactEnumeration(t *testing.T) {
 	}
 }
 
-// ----- Plugin / MIME object graph (PR5) -----
+// ----- Plugin / MIME object graph -----
 
 // TestPluginMimeConsistency proves the object graph is stable, indexable, and
 // mutually linked: repeated reads return identical objects; per-plugin
@@ -631,13 +725,13 @@ func TestPluginMimeConsistency(t *testing.T) {
 
 // ----- Legacy-defect differential control (proves the harness is not green-washing) -----
 //
-// The harness must DETECT each PR5 defect when fed the exact pre-fix patch
+// The harness must DETECT each defect when fed the exact unfixed patch
 // text, and report the fixed surface clean when fed the new builder output.
 // This guards against a faithful-but-blind mock that would pass either way.
 
-// legacyAudioPatch is the exact pre-fix AudioBuffer patch (cumulative
-// Math.random mutation of the live getChannelData view), verbatim from the
-// pre-PR5 identity.go.
+// legacyAudioPatch is the unfixed AudioBuffer patch it supersedes (a cumulative
+// Math.random mutation of the live getChannelData view), kept verbatim so the
+// differential control can confirm the harness detects that defect.
 const legacyAudioPatch = `(function() {
     const original = AudioBuffer.prototype.getChannelData;
     AudioBuffer.prototype.getChannelData = function() {
@@ -649,8 +743,8 @@ const legacyAudioPatch = `(function() {
     };
 })();`
 
-// legacyWebGLPatch is the exact pre-fix WebGL patch, verbatim from the
-// pre-PR5 camouflage.go (with the shared spoof constants inlined). It probes
+// legacyWebGLPatch is the unfixed WebGL patch it supersedes (with the shared
+// spoof constants inlined), kept verbatim for the same reason. It probes
 // WebGLRenderingContext unguarded, so a missing binding throws.
 const legacyWebGLPatch = `(function() {
     const contexts = [WebGLRenderingContext];

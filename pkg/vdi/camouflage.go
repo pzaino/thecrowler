@@ -197,21 +197,28 @@ func mimeArrayLiteral() string {
 }
 
 // webglSpoofScript returns the shared WebGL identity patch applied to both
-// WebGLRenderingContext and WebGL2RenderingContext (the latter was previously
-// unpatched, leaking a contradictory native identity).
+// WebGLRenderingContext and WebGL2RenderingContext. Without this patch, the
+// WebGL2 context would leak a contradictory native identity.
 //
 // Robustness and correctness:
 //   - Each API is probed with typeof, so a missing WebGL/WebGL2 binding
 //     neither throws nor aborts the surrounding script: the new-document
 //     script embeds this BEFORE the Client-Hints override, and an unguarded
 //     throw here would silently drop the remaining identity initialization.
-//   - Installation is idempotent per realm via a closure-held WeakSet of
-//     patched prototypes (a NON-discoverable guard, not a prototype/global
-//     marker). A re-run after an identity/UA rotation leaves an already-patched
-//     prototype untouched, so getParameter is never stacked on itself.
+//   - Installation uses a closure-held WeakSet of patched prototypes (a
+//     NON-discoverable guard, not a prototype/global marker). It is a
+//     per-realm guard: re-running the block inside the SAME realm never stacks
+//     getParameter on itself. The supported injection lifecycle evaluates the
+//     new-document identity script exactly once per realm — a new document is a
+//     fresh realm (with fresh WebGL prototypes) and an identity/UA rotation
+//     removes the prior registration before adding the next — so a fresh realm
+//     re-establishes the patch cleanly. A cross-evaluation re-injection into the
+//     SAME realm is NOT a supported scenario: it would spawn a second,
+//     independent closure whose WeakSet cannot share state with the first
+//     without a discoverable property, which we deliberately avoid.
 //   - Native-first receiver/extension semantics: the captured native getParameter
 //     is ALWAYS called first via getParameter.call(this, parameter). This (a)
-//     validates the receiver — a fabricated/unbound `this` throws "Illegal
+//     validates the receiver — a fabricated or unbound `this` throws "Illegal
 //     invocation" in the native call and therefore can never obtain a spoofed
 //     value; (b) preserves the native error/availability state; and (c) returns
 //     the native result for every parameter not spoofed.
@@ -230,10 +237,13 @@ func mimeArrayLiteral() string {
 func webglSpoofScript() string {
 	return `(function() {
     "use strict";
-    // Idempotency is a closure-held WeakSet of patched prototypes — NOT a
-    // discoverable prototype/global marker. A re-injected new-document script
-    // (identity/UA rotation) re-runs this block, but a prototype already in the
-    // set is left untouched, so getParameter is never stacked on itself.
+    // Per-realm idempotency: a closure-held WeakSet of patched prototypes. It is
+    // NOT a discoverable prototype/global marker and NOT a cross-evaluation
+    // guard. Within a single evaluation a prototype already in the set is left
+    // untouched, so getParameter is never stacked on itself. The supported
+    // lifecycle evaluates this script once per realm (a new document is a fresh
+    // realm with fresh prototypes; a rotation removes the prior registration
+    // before adding the next); a same-realm re-evaluation is not supported.
     const patched = new WeakSet();
     function patch(Ctx) {
         // typeof probe: a missing WebGL binding must never throw or abort the

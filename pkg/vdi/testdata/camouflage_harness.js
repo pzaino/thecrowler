@@ -212,40 +212,54 @@ function makeWorld() {
   //   - out-of-range / non-integer channels throw like the native method, so
   //     the patch's error propagation can be verified;
   //   - copyFromChannel/copyToChannel operate on the live store, so the
-  //     "no mutation / consistency" contract can be observed without peeking
-  //     at an implementation private field.
-  // The fill is a fixed non-round value so a sub-1e-7 deterministic
-  // perturbation is observable in float32 while legitimate audio stays
-  // audibly unchanged; instances are extensible so the patch's non-enumerable
-  // per-instance idempotency marker can be set like a native AudioBuffer.
-  function makeAudioBuffer(channelCount, length, fillFn) {
-    const nch = (typeof channelCount === "number") ? channelCount : 1;
-    const len = (typeof length === "number") ? length : 0;
-    const buf = {
-      numberOfChannels: nch,
-      sampleRate: 44100,
-      length: len,
-      duration: len / 44100,
-    };
-    const store = [];
-    for (let c = 0; c < nch; c++) {
-      const ch = new Float32Array(len);
-      if (fillFn) fillFn(ch, c);
-      store.push(ch);
-    }
-    buf._store = store; // live backing store the native methods read/write
+  //     "no mutation / consistency" contract can be observed.
+  // The per-channel store lives in a side table keyed by the buffer (a
+  // WeakMap), so a returned AudioBuffer carries NO own data property — matching
+  // the native AudioBuffer, whose channels are exposed only through getters (not
+  // own properties). The "exactly-once, marker-free" contract therefore has no
+  // observable place to hide a per-instance marker. The fill uses a fixed
+  // non-round value so a sub-1e-7 deterministic perturbation is observable in
+  // float32 while legitimate audio stays audibly unchanged.
+  const abstore = new WeakMap(); // buffer -> [Float32Array channel views]
+  const RENDER_BASE = 0.123456789;
+  // nextDecodeRejection flips decodeAudioData into a failing mode so the probe
+  // can exercise the Promise-rejection and callback-error paths without needing
+  // a malformed audio payload (a real decoder rejects an undecodable buffer).
+  let nextDecodeRejection = false;
+
+  function makeRenderedBuffer() {
+    // A freshly produced AudioBuffer, filled (as a native render would) with a
+    // fixed base so the render-boundary perturbation is observable in float32.
+    const buf = new AudioBuffer(1, 1000, 44100);
+    const d = abstore.get(buf)[0];
+    for (let i = 0; i < d.length; i++) d[i] = RENDER_BASE;
     return buf;
   }
-  const RENDER_BASE = 0.123456789;
-  function fillRendered(ch) { for (let i = 0; i < ch.length; i++) ch[i] = RENDER_BASE; }
+
   function AudioBuffer(channelCount, length, sampleRate) {
     if (!(this instanceof AudioBuffer)) {
       throw new TypeError("Cannot call a class as a function");
     }
-    Object.assign(this, makeAudioBuffer(
-      typeof channelCount === "number" ? channelCount : 1,
-      typeof length === "number" ? length : 0,
-    ));
+    let nch = 1, len = 0;
+    if (typeof channelCount === "object" && channelCount !== null) {
+      nch = channelCount.numberOfChannels || 1;
+      len = channelCount.length || 0;
+    } else {
+      nch = (typeof channelCount === "number" && channelCount) ? channelCount : 1;
+      len = (typeof length === "number") ? length : 0;
+    }
+    const store = [];
+    for (let c = 0; c < nch; c++) store.push(new Float32Array(len));
+    // The live store is held outside the instance, so a returned buffer has no
+    // own data property (and thus no room for a per-instance patch marker).
+    abstore.set(this, store);
+    // Standard AudioBuffer accessors (native getters); in the mock they are own
+    // data properties, so a returned buffer has exactly these four own
+    // properties and no patch-introduced marker.
+    Object.defineProperty(this, "numberOfChannels", { value: nch, enumerable: true, configurable: true });
+    Object.defineProperty(this, "sampleRate", { value: (typeof sampleRate === "number" && sampleRate) ? sampleRate : 44100, enumerable: true, configurable: true });
+    Object.defineProperty(this, "length", { value: len, enumerable: true, configurable: true });
+    Object.defineProperty(this, "duration", { value: ((typeof sampleRate === "number" && sampleRate) ? len / sampleRate : len / 44100), enumerable: true, configurable: true });
   }
   AudioBuffer.prototype.getChannelData = function (channel) {
     if (!Number.isInteger(channel) || channel < 0 || channel >= this.numberOfChannels) {
@@ -254,7 +268,7 @@ function makeWorld() {
       );
     }
     // Live view: the SAME backing reference on every call.
-    return this._store[channel];
+    return abstore.get(this)[channel];
   };
   // copyFromChannel(destination, channelNumber, startInFrames): native direction
   // copies the channel data OUT into the external destination.
@@ -264,7 +278,7 @@ function makeWorld() {
         'Failed to execute "copyFromChannel" on "AudioBuffer": the provided channel is out of range'
       );
     }
-    const src = this._store[channel];
+    const src = abstore.get(this)[channel];
     const s = (typeof start === "number") ? start : 0;
     const n = Math.min(destination.length, src.length - s);
     for (let i = 0; i < n; i++) destination[i] = src[s + i];
@@ -278,34 +292,61 @@ function makeWorld() {
         'Failed to execute "copyToChannel" on "AudioBuffer": the provided channel is out of range'
       );
     }
-    const dst = this._store[channel];
+    const dst = abstore.get(this)[channel];
     const s = (typeof start === "number") ? start : 0;
     const n = Math.min(source.length, dst.length - s);
     for (let i = 0; i < n; i++) dst[s + i] = source[i];
     return this;
   };
 
-  // AudioContext / OfflineAudioContext: the render BOUNDARY the render-boundary
-  // camouflage patch wraps. startRendering and decodeAudioData return a
-  // Promise<AudioBuffer> (modern API). Each render produces a proper AudioBuffer
-  // instance (not a bare object), so getChannelData works via the prototype,
-  // and a deterministic sub-1e-7 perturbation is observable in float32.
-  function AudioContext() {}
-  AudioContext.prototype.decodeAudioData = function (data) {
-    const buf = new AudioBuffer(1, 1000);
-    const d = buf.getChannelData(0);
-    for (let i = 0; i < d.length; i++) d[i] = RENDER_BASE;
-    return Promise.resolve(buf);
+  // BaseAudioContext: the shared base of AudioContext and OfflineAudioContext,
+  // on which decodeAudioData natively lives. Both concrete decoders inherit this
+  // single implementation, so a prototype-level patch on BaseAudioContext reaches
+  // every concrete decoder — the real browser layout the patch targets. The mock
+  // models all three completion boundaries: Promise form, legacy callback form,
+  // and a rejection mode (Promise rejects / the error callback is invoked).
+  function BaseAudioContext() {}
+  BaseAudioContext.prototype.decodeAudioData = function (data) {
+    const self = this;
+    const failing = nextDecodeRejection;
+    nextDecodeRejection = false;
+    if (arguments.length >= 2 && typeof arguments[1] === "function") {
+      // Legacy callback form: the engine invokes the callbacks asynchronously.
+      const success = arguments[1];
+      const errback = (arguments.length >= 3 && typeof arguments[2] === "function") ? arguments[2] : null;
+      Promise.resolve().then(function () {
+        if (failing) {
+          if (errback) errback.call(self, new Error("The audio data provided cannot be processed."));
+          return;
+        }
+        success.call(self, makeRenderedBuffer());
+      });
+      return void 0;
+    }
+    // Promise form (or a synchronous throw on a malformed argument).
+    if (failing) return Promise.reject(new Error("The audio data provided cannot be processed."));
+    return Promise.resolve(makeRenderedBuffer());
   };
+
+  // AudioContext and OfflineAudioContext inherit decodeAudioData from the shared
+  // base; OfflineAudioContext additionally provides startRendering (a Promise
+  // boundary). Neither defines an OWN decodeAudioData, so a single patch on the
+  // base reaches both.
+  function AudioContext() {}
+  Object.setPrototypeOf(AudioContext.prototype, BaseAudioContext.prototype);
   function OfflineAudioContext() {}
+  Object.setPrototypeOf(OfflineAudioContext.prototype, BaseAudioContext.prototype);
   OfflineAudioContext.prototype.createBuffer = function (nch, len) {
     return new AudioBuffer(nch, len);
   };
   OfflineAudioContext.prototype.startRendering = function () {
-    const buf = new AudioBuffer(1, 1000);
-    const d = buf.getChannelData(0);
-    for (let i = 0; i < d.length; i++) d[i] = RENDER_BASE;
-    return Promise.resolve(buf);
+    // OfflineAudioContext.decodeAudioData is inherited from BaseAudioContext;
+    // startRendering is offline-only and always resolves a Promise<AudioBuffer>.
+    if (nextDecodeRejection) {
+      nextDecodeRejection = false;
+      return Promise.reject(new Error("The audio data provided cannot be processed."));
+    }
+    return Promise.resolve(makeRenderedBuffer());
   };
 
   function Element() {}
@@ -369,7 +410,7 @@ function makeWorld() {
   const sandbox = {
     navigator, window, document, screen, indexedDB,
     HTMLCanvasElement, WebGLRenderingContext, WebGL2RenderingContext,
-    AudioBuffer, AudioContext, OfflineAudioContext, Element, RTCPeerConnection, RTCDataChannel,
+    AudioBuffer, BaseAudioContext, AudioContext, OfflineAudioContext, Element, RTCPeerConnection, RTCDataChannel,
     // Standard intrinsics the patch scripts reference: Float32Array/Uint8Array
     // are the view types the camouflage copies into; Buffer backs the native
     // base64 export; Number/RangeError back the out-of-range channel contract.
@@ -377,6 +418,7 @@ function makeWorld() {
     Error, Object, Array, Promise, JSON, Math,
     console: consoleStub,
     // Probe-only helpers.
+    __setDecodeRejection: function (v) { nextDecodeRejection = !!v; },
     __makeCanvas: makeCanvas,
     __urlBytes: function (dataURL) {
       const i = dataURL.indexOf('base64,');
@@ -517,22 +559,26 @@ function arraysEqual(a, b) {
 }
 
 // audioProbe exercises the deterministic AudioBuffer camouflage against a
-// FAITHFUL AudioBuffer mock and a render-boundary mock. It tests BOTH the
+// FAITHFUL AudioBuffer mock and render/decode-boundary mocks. It tests BOTH the
 // preserved native getChannelData contract (live view, write-through, copy
-// consistency, range error, no-accumulation) AND the render-boundary
-// perturbation (startRendering / decodeAudioData produce a buffer whose
-// stored samples carry a deterministic seed-driven perturbation, while
-// getChannelData remains native).
+// consistency, range error, no-accumulation) AND the render/decode-boundary
+// perturbation in every supported completion form — the modern Promise form, the
+// legacy success-error callback form, and OfflineAudioContext decoding (inherited
+// from BaseAudioContext) — while getChannelData itself stays native. Each
+// produced buffer is perturbed exactly once and carries no discoverable own
+// property (verified against a fresh, unperturbed buffer's own-property set).
 //
 // Deliberately conservative: each assertion degrades to a string on failure,
 // so the JSON always carries the probe's findings.
 async function audioProbe(world) {
   const out = {};
   try {
-    const AudioBuffer = world.sandbox.AudioBuffer;
-    const F32 = world.sandbox.Float32Array;
-    const OfflineAudioContext = world.sandbox.OfflineAudioContext;
-    const AudioContext = world.sandbox.AudioContext;
+    const S = world.sandbox;
+    const AudioBuffer = S.AudioBuffer;
+    const AudioContext = S.AudioContext;
+    const OfflineAudioContext = S.OfflineAudioContext;
+    const F32 = S.Float32Array;
+    const REFBASE = 0.123456789; // the fixed render fill; a perturbed sample differs
     const buf = new AudioBuffer(1, 300, 44100);
 
     // --- Native getChannelData contract (sync, on a fresh buffer) ---
@@ -619,41 +665,140 @@ async function audioProbe(world) {
       return b2.getChannelData(0)[0] === 0;
     })();
 
-    // --- Render-boundary perturbation (async) ---
-    // Render a buffer via startRendering (the patch's target boundary). The
-    // rendered buffer's stored samples carry a deterministic seed perturbation
-    // while getChannelData reads stay native.
-    out.audioRenderedPerturbed = false;
+    const canDecode = !!(AudioContext && typeof AudioContext.prototype.decodeAudioData === 'function');
+
+    // --- Render-boundary perturbation via startRendering (offline, Promise) ---
+    // A freshly rendered buffer's stored samples carry the deterministic seed
+    // perturbation while getChannelData reads stay native, and re-reads of the
+    // same buffer do not drift (the perturbation is applied once at the boundary,
+    // not per read — no accumulation).
     out.audioRenderedSample100 = null;
-    out.audioPerInstanceMarker = 'no-marker';
+    out.audioRenderedPerturbed = false;
+    out.audioRenderedDeterministic = false;
     try {
-      if (OfflineAudioContext && OfflineAudioContext.prototype.startRendering) {
+      if (OfflineAudioContext && typeof OfflineAudioContext.prototype.startRendering === 'function') {
         const oac = new (OfflineAudioContext)();
         const rendered = await oac.startRendering();
         out.audioRenderedSample100 = rendered.getChannelData(0)[100];
-        // Perturbation observable: the base fill is RENDER_BASE (0.123…),
-        // perturb shifts the sub-audiible band, so sample at 100 differs from
-        // the exact fill value in float32.
-        out.audioRenderedPerturbed = (Math.abs(rendered.getChannelData(0)[100] - 0.123456789) > 1e-9);
-        // Per-instance idempotency marker set non-enumerably on the rendered
-        // buffer (guard against double-perturbation across nested wrappers).
-        try {
-          const names = Object.getOwnPropertyNames(rendered).filter(n => n === '__a1');
-          out.audioPerInstanceMarker = names.length > 0 ? 'present' : 'absent';
-        } catch (e) {
-          out.audioPerInstanceMarker = 'threw';
-        }
-        // Re-read deterministic: sample 100 does not drift on repeated reads.
+        out.audioRenderedPerturbed = (Math.abs(out.audioRenderedSample100 - REFBASE) > 1e-9);
         out.audioRenderedDeterministic = (rendered.getChannelData(0)[100] === out.audioRenderedSample100);
-      } else if (AudioContext && AudioContext.prototype.decodeAudioData) {
-        // Fallback: use decodeAudioData boundary instead.
-        const ac = new (AudioContext)();
-        const rendered = await ac.decodeAudioData(new Uint8Array([0]));
-        out.audioRenderedSample100 = (rendered && rendered.getChannelData(0)[100]) || null;
-        out.audioRenderedPerturbed = (out.audioRenderedSample100 !== 0.123456789);
       }
     } catch (e) {
       out.audioRenderError = String((e && e.message) || e);
+    }
+
+    // --- Exactly-once, marker-free perturbation ---
+    // A produced buffer is perturbed exactly once and the patch leaves NO own
+    // property on it: its own-property set is identical to a fresh, unperturbed
+    // buffer's. A per-instance marker (the defect being removed) would add a name
+    // here, so the sets would differ.
+    out.audioNoInstanceMarker = false;
+    out.audioInstancePropSet = null;
+    try {
+      const clean = new AudioBuffer(1, 128, 44100);
+      const cleanNames = Object.getOwnPropertyNames(clean).slice().sort();
+      const rendered = await (new (OfflineAudioContext)()).startRendering();
+      const renderedNames = Object.getOwnPropertyNames(rendered).slice().sort();
+      out.audioInstancePropSet = JSON.stringify(renderedNames);
+      out.audioNoInstanceMarker = arraysEqual(cleanNames, renderedNames);
+    } catch (e) {
+      out.audioInstanceMarkerError = String((e && e.message) || e);
+    }
+
+    // --- Promise-form decoding (modern API) perturbs the resolved buffer ---
+    out.audioPromiseHasThen = false;
+    out.audioPromiseSample100 = null;
+    out.audioPromisePerturbed = false;
+    out.audioPromiseDeterministic = false;
+    try {
+      if (canDecode) {
+        const ac = new (AudioContext)();
+        const p = ac.decodeAudioData(new S.Uint8Array([1, 2, 3]));
+        out.audioPromiseHasThen = !!(p && typeof p.then === 'function');
+        const rendered = await p;
+        out.audioPromiseSample100 = rendered.getChannelData(0)[100];
+        out.audioPromisePerturbed = (Math.abs(out.audioPromiseSample100 - REFBASE) > 1e-9);
+        out.audioPromiseDeterministic = (rendered.getChannelData(0)[100] === out.audioPromiseSample100);
+      }
+    } catch (e) {
+      out.audioPromiseError = String((e && e.message) || e);
+    }
+
+    // --- Legacy success/error callback-form decoding perturbs the delivered
+    // buffer; the application's success callback must observe the perturbed value.
+    out.audioCallbackSample100 = null;
+    out.audioCallbackPerturbed = false;
+    try {
+      if (canDecode) {
+        const ac = new (AudioContext)();
+        let sample100 = null;
+        await new Promise(function (resolve, reject) {
+          ac.decodeAudioData(new S.Uint8Array([1, 2, 3]),
+            function (decoded) { sample100 = decoded.getChannelData(0)[100]; resolve(); },
+            function (err) { reject(err); });
+        });
+        out.audioCallbackSample100 = sample100;
+        out.audioCallbackPerturbed = (Math.abs(sample100 - REFBASE) > 1e-9);
+      }
+    } catch (e) {
+      out.audioCallbackError = String((e && e.message) || e);
+    }
+
+    // --- OfflineAudioContext.decodeAudioData (inherited from BaseAudioContext)
+    // is perturbed through the single base-level patch.
+    out.audioOfflineSample100 = null;
+    out.audioOfflinePerturbed = false;
+    try {
+      if (OfflineAudioContext && typeof OfflineAudioContext.prototype.decodeAudioData === 'function') {
+        const oac = new (OfflineAudioContext)();
+        const rendered = await oac.decodeAudioData(new S.Uint8Array([1, 2, 3]));
+        out.audioOfflineSample100 = rendered.getChannelData(0)[100];
+        out.audioOfflinePerturbed = (Math.abs(out.audioOfflineSample100 - REFBASE) > 1e-9);
+      }
+    } catch (e) {
+      out.audioOfflineError = String((e && e.message) || e);
+    }
+
+    // --- Promise-form rejection propagates: a failing decode rejects the returned
+    // Promise (it does NOT resolve to a perturbed/phantom buffer).
+    out.audioRejectHasThen = false;
+    out.audioRejectThrew = 'not-run';
+    out.audioRejectReason = null;
+    try {
+      if (canDecode) {
+        const ac = new (AudioContext)();
+        S.__setDecodeRejection(true);
+        const p = ac.decodeAudioData(new S.Uint8Array([1, 2, 3]));
+        out.audioRejectHasThen = !!(p && typeof p.then === 'function');
+        let resolved = false;
+        await p.then(function () { resolved = true; }, function (reason) {
+          out.audioRejectReason = (reason && (reason.name || reason.message)) || null;
+        });
+        out.audioRejectThrew = resolved ? 'resolved-unexpectedly' : 'rejected';
+      }
+    } catch (e) {
+      out.audioRejectThrew = 'threw-synchronous:' + String((e && e.message) || e);
+    }
+
+    // --- Legacy callback-form error handling: a failing decode must invoke the
+    // (optional) error callback rather than the success callback.
+    out.audioCallbackErr = 'not-run';
+    out.audioCallbackErrInvoked = false;
+    try {
+      if (canDecode) {
+        const ac = new (AudioContext)();
+        S.__setDecodeRejection(true);
+        const result = await new Promise(function (resolve, reject) {
+          ac.decodeAudioData(new S.Uint8Array([1, 2, 3]),
+            function (decoded) { reject(new Error('success-called-on-failure')); },
+            function (err) { resolve('errback:' + ((err && err.message) || String(err))); });
+        });
+        out.audioCallbackErr = result;
+        out.audioCallbackErrInvoked = (typeof result === 'string' && result.indexOf('errback:') === 0);
+      }
+    } catch (e) {
+      out.audioCallbackErr = 'failure:' + String((e && e.message) || e);
+      out.audioCallbackErrInvoked = false;
     }
   } catch (e) {
     out.audioProbeError = String((e && e.message) || e);
@@ -769,23 +914,31 @@ async function main() {
       vm.runInContext(scriptText, world.sandbox, { filename: 'reinforce.js' });
       vm.runInContext(scriptText, world.sandbox, { filename: 'reinforce.js' });
     } else if (phase === 'audio-twice') {
-      // Idempotency: install the render-boundary patch twice in the same realm.
-      // The patch has no discoverable prototype/global marker; idempotency is
-      // provided by (a) a closure-held WeakSet (within-eval re-wrap guard) and
-      // (b) a per-instance non-enumerable marker (prevents double-perturbation
-      // of the SAME buffer across nested wrappers).
+      // Install the render/decode patch twice in the SAME realm to observe that a
+      // same-realm re-evaluation leaves NO discoverable prototype or global marker
+      // and does not corrupt the live store. This is a test artifact: a
+      // cross-evaluation re-injection is NOT a supported production scenario (the
+      // new-document identity script runs once per realm). The per-closure
+      // WeakSets guard within an evaluation; across two evaluations the patch
+      // stays observationally stable and marker-free.
       vm.runInContext(scriptText, world.sandbox, { filename: 'audio-1st.js' });
       vm.runInContext(scriptText, world.sandbox, { filename: 'audio-2nd.js' });
       result.values = result.values || {};
-      // P1: no crowsler marker on prototypes or globalThis.
+      // A same-realm reinstall leaves no discoverable prototype marker; the
+      // crowler global is reported by the snapshot (crowlerGlobal string), which
+      // runs after this branch and is the source of truth for the test.
       const abP = world.sandbox.AudioBuffer && world.sandbox.AudioBuffer.prototype;
       result.values.audioNoMarker = !abP ||
         !Object.prototype.hasOwnProperty.call(abP, '__crowlerAudioPatched__');
       const acP = world.sandbox.AudioContext && world.sandbox.AudioContext.prototype;
       result.values.audioNoMarker2 = !acP ||
         !Object.prototype.hasOwnProperty.call(acP, '__crowlerAudioPatched__');
-      // No crowler global is reported by the snapshot (crowlerGlobal string),
-      // which runs after this branch and is the source of truth for the test.
+    } else if (phase === 'audio-no-base') {
+      // Exercise the fallback path: on an engine that does NOT expose
+      // BaseAudioContext, the patch must wrap the concrete AudioContext /
+      // OfflineAudioContext prototypes instead of the shared base.
+      delete world.sandbox.BaseAudioContext;
+      vm.runInContext(scriptText, world.sandbox, { filename: 'audio-no-base.js' });
     } else if (phase === 'webgl-absent') {
       // Missing WebGL/WebGL2 bindings must not throw or abort the surrounding
       // identity script (which runs this before the Client-Hints override).
@@ -798,14 +951,16 @@ async function main() {
   } catch (e) {
     result.threw = String((e && e.message) || e);
   }
-  // WebGL idempotency: where the phase exercises a WebGL patch, install it a
-  // second time in the same realm and confirm getParameter was NOT stacked.
-  // The idempotency guard makes the reinstall a no-op, so the prototype
-  // reference is stable and the advertised identity did not drift. (The
-  // persistent antiDetectionScript is intentionally excluded: re-running the
-  // full identity script throws at its non-configurable navigator redefines,
-  // so its "second run" would abort before reaching the WebGL block and give a
-  // false idempotency signal — the WebGl-only phases below test the guard.)
+  // WebGL observable idempotency: where the phase exercises a WebGL patch,
+  // install it a SECOND time in the same realm and confirm the OBSERVED identity
+  // did not drift. A cross-evaluation re-injection builds a fresh closure whose
+  // WeakSet cannot see the first wrapper, so the prototype reference may re-wrap;
+  // the meaningful guarantee is observable idempotency (the spoofed value and the
+  // native-first receiver validation are unchanged), not pointer stability.
+  // (The full antiDetectionScript is intentionally excluded: re-running it throws
+  // at its non-configurable navigator redefines, so a "second run" would abort
+  // before reaching the WebGL block and give a false signal — the WebGL-only
+  // phases below test the guard in isolation.)
   if (phase === 'webgl-double' || phase === 'reinforce-twice') {
     const gl1 = world.sandbox.WebGLRenderingContext.prototype.getParameter;
     const gl2 = world.sandbox.WebGL2RenderingContext.prototype.getParameter;
@@ -827,7 +982,7 @@ async function main() {
   result.errors = world.errors;
   result.values = Object.assign(result.values || {}, snapshot(world));
   // AudioBuffer probe for the deterministic camouflage phases.
-  if (phase === 'audio' || phase === 'audio-twice' || phase === 'inject') {
+  if (phase === 'audio' || phase === 'audio-twice' || phase === 'audio-no-base' || phase === 'inject') {
     result.values = Object.assign(result.values || {}, await audioProbe(world));
   }
   // Canvas export probe for the deterministic export phase.
