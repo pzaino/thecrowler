@@ -222,7 +222,12 @@ func TestAPIQuotaDynamicStaticDynamicResetsReportAuthority(t *testing.T) {
 	static.Events.HeartbeatEnabled = false
 	configureAPIQuota(static)
 	if apiDBQuota.hasValidReport || !apiDBQuota.lastGeneratedAt.IsZero() || apiDBQuota.lastParentEventID != "" {
-		t.Fatalf("dynamic-to-static transition retained report authority: %+v", apiDBQuota)
+		t.Fatalf(
+			"dynamic-to-static transition retained report authority: hasValidReport=%t lastGeneratedAt=%v lastParentEventID=%q",
+			apiDBQuota.hasValidReport,
+			apiDBQuota.lastGeneratedAt,
+			apiDBQuota.lastParentEventID,
+		)
 	}
 	configureAPIQuota(static) // static-to-static remains static
 	configureAPIQuota(dynamic)

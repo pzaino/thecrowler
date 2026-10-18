@@ -67,7 +67,8 @@ type authListResponse[T any] struct {
 }
 
 type authGrantRequest struct {
-	Roles, Scopes []string `json:"roles,omitempty"`
+	Roles  []string `json:"roles,omitempty"`
+	Scopes []string `json:"scopes,omitempty"`
 }
 
 func withRoleMiddlewares(h http.HandlerFunc, allowed ...string) http.Handler {
