@@ -17,7 +17,11 @@ func ExecuteCDPCommand(wd WebDriver, delayMs int, command string, params map[str
 		time.Sleep(time.Duration(delayMs) * time.Millisecond)
 	}
 
-	cmn.DebugMsg(cmn.DbgLvlDebug5, "[CDP] Executing command '%s' with params: %v", command, params)
+	// Log a redacted copy of the parameters at the most-verbose level: the
+	// operational parameters are sent to the driver unchanged, so credential,
+	// cookie and proxy-URL material never reaches the verbose log.
+	cmn.DebugMsg(cmn.DbgLvlDebug5, "[CDP] Executing command '%s' with params: %v",
+		command, redactCDPParams(params))
 	result, err := wd.ExecuteChromeDPCommand(command, params)
 	if err != nil {
 		return nil, fmt.Errorf("executing CDP command '%s': %w", command, err)

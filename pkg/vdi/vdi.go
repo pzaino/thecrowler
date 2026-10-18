@@ -1560,6 +1560,13 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-ConnectVDI] Browser Configuration on '%s': %v\n", sel.Config.Name, result)
 	}
 
+	// Emit the redacted, read-only presentation report and run the
+	// profile-aware consistency checks at the most-verbose level. This is a
+	// no-op below debug level five and reuses the single observation above.
+	emitVDIPresentationReport(
+		pConfig, sel.Config, selection, userAgent, ident, brands, details,
+		cdpActive, effectiveProxy, result, err2 == nil)
+
 	err2 = addLoadListener(wd)
 	if err2 != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "adding Load Listener to the VDI session: %v", err)
@@ -1667,6 +1674,21 @@ func getBrowserConfiguration(wd WebDriver) (map[string]interface{}, error) {
 			webdriver: navigator.webdriver,
 			platform: navigator.platform,
 			plugins: navigator.plugins.length,
+			// Low-entropy userAgentData surfaces, read natively and never fabricated.
+			userAgentData: (function(){
+				try {
+					var u = navigator.userAgentData;
+					if (!u) return null;
+					return {
+						platform: u.platform,
+						mobile: !!u.mobile,
+						highEntropy: typeof u.getHighEntropyValues === "function",
+						brands: (u.brands || []).map(function(x){ return { brand: x.brand, version: x.version }; })
+					};
+				} catch (e) {
+					return null;
+				}
+			})(),
 
 			// Screen dimensions
 			screenWidth: window.screen.width,
@@ -1691,6 +1713,82 @@ func getBrowserConfiguration(wd WebDriver) (map[string]interface{}, error) {
 	}
 
 	return config, nil
+}
+
+// emitVDIPresentationReport builds the redacted, read-only presentation report
+// and runs the pure, profile-aware consistency checks, logging both at the most
+// verbose debug level. It is a no-op below debug level five, so an ordinary
+// session pays no diagnostic cost: the build and serialization are gated. It
+// reuses the single getBrowserConfiguration observation (passed in) and issues
+// no additional browser or CDP call.
+func emitVDIPresentationReport(
+	pConfig *cfg.Config,
+	vd cfg.Selenium,
+	selection cmn.UASelection,
+	userAgent string,
+	ident OSIdentity,
+	brands []ClientHintBrand,
+	details ClientHintsDetails,
+	cdpActive bool,
+	effectiveProxy string,
+	observation map[string]interface{},
+	observedOK bool,
+) {
+	if cmn.GetDebugLevel() < cmn.DbgLvlDebug5 {
+		return
+	}
+
+	uaOverride, identityScript := ActionNotRequested(), ActionNotRequested()
+	if cdpActive {
+		// When CDP is active, the initial identity override and the new-document
+		// script have been applied without error (the call site returns before
+		// emitting on any such error), so they report as applied. On engines
+		// without a CDP bridge (native Firefox) there is nothing to apply.
+		uaOverride, identityScript = ActionApplied(), ActionApplied()
+	}
+
+	obsStatus := StatusNotObserved
+	if observedOK {
+		obsStatus = StatusKnown
+	}
+
+	rep := BuildPresentationReport(PresentationInput{
+		BrowserType:       vd.Type,
+		UserAgent:         userAgent,
+		Product:           selection.Product,
+		Family:            selection.Family,
+		ResolvedOS:        selection.ResolvedOS,
+		DeviceClass:       pConfig.Crawler.Platform,
+		AdvertisedOS:      pConfig.Crawler.BrowserPlatform,
+		Language:          vd.Language,
+		Identity:          ident,
+		Brands:            brands,
+		Details:           details,
+		Proxy:             effectiveProxy,
+		ProxyRequested:    effectiveProxy != "",
+		GPUPatchRequested: pConfig.Crawler.SetVDIGPUPatch,
+		FallbackUsed:      selection.FallbackUsed,
+		DegradedProduct:   selection.DegradedProduct,
+		UserAgentOverride: uaOverride,
+		IdentityScript:    identityScript,
+		// The GPU patch is applied in a later setup phase, so its outcome is not
+		// recorded here; an empty status is reported as not_observed, never a
+		// false "applied".
+		Observation:    observation,
+		ObservedStatus: obsStatus,
+	})
+
+	assess := EvaluatePresentationConsistency(rep)
+	if b, err := json.Marshal(rep); err == nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "[PRESENTATION] effective browser presentation on '%s': %s", vd.Name, b)
+	}
+	if assess.HasFault() {
+		if b, err := json.Marshal(assess.Failures()); err == nil {
+			cmn.DebugMsg(cmn.DbgLvlWarn, "[PRESENTATION-FAULT] on '%s': %s", vd.Name, b)
+		}
+	} else {
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "[PRESENTATION-CHECK] on '%s': %d checks, no faults", vd.Name, len(assess.Results))
+	}
 }
 
 func setNavigatorProperties(wd WebDriver, lang, userAgent string, ident OSIdentity) {
