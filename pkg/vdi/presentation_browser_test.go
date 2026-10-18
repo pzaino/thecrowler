@@ -41,6 +41,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-auxiliaries/selenium"
 
@@ -194,7 +195,11 @@ func TestPresentationDiagnosticsRealBrowser(t *testing.T) {
 	}
 
 	wd := newDriver(t, selectedUA)
-	defer func() { _ = wd.Quit() }()
+	defer func() {
+		if wd != nil {
+			_ = wd.Quit()
+		}
+	}()
 
 	ident := MapAdvertisedOSIdentity("windows", false)
 	major, ok := ChromeMajorVersion(selectedUA)
@@ -311,7 +316,9 @@ func TestPresentationDiagnosticsRealBrowser(t *testing.T) {
 			caps[0].Observed = CapabilityAbsent
 			// An absent capability must be unsupported (a recorded skip), NOT a
 			// fault that would suppress the other surfaces.
-			ca := EvaluatePresentationConsistency(reportFromLive(t, wd, selectedUA, ident, brands, details, "", false, nil, caps))
+			ca := EvaluatePresentationConsistency(
+				reportFromLive(t, wd, rotatedUA, rotIdent, rotBrands, rotDetails, "", true, nil, caps),
+			)
 			if ca.HasFault() {
 				t.Errorf("absent WebGL was reported as a fault: %+v", ca.Failures())
 			}
@@ -320,13 +327,17 @@ func TestPresentationDiagnosticsRealBrowser(t *testing.T) {
 			}
 		} else if strings.Contains(tStr, `"observed":"broken"`) {
 			caps[0].Observed = CapabilityBroken
-			ca := EvaluatePresentationConsistency(reportFromLive(t, wd, selectedUA, ident, brands, details, "", false, nil, caps))
+			ca := EvaluatePresentationConsistency(
+				reportFromLive(t, wd, rotatedUA, rotIdent, rotBrands, rotDetails, "", true, nil, caps),
+			)
 			if r := findResult(ca, "native_capability_consistency"); r.Verdict != VerdictMismatch {
 				t.Errorf("broken WebGL verdict = %v, want mismatch", r.Verdict)
 			}
 		} else {
 			caps[0].Observed = CapabilityAvailable
-			ca := EvaluatePresentationConsistency(reportFromLive(t, wd, selectedUA, ident, brands, details, "", false, nil, caps))
+			ca := EvaluatePresentationConsistency(
+				reportFromLive(t, wd, rotatedUA, rotIdent, rotBrands, rotDetails, "", true, nil, caps),
+			)
 			if r := findResult(ca, "native_capability_consistency"); r.Verdict == VerdictMismatch {
 				t.Errorf("an available WebGL context should not be a fault: %+v", r)
 			}
@@ -404,36 +415,88 @@ func TestPresentationDiagnosticsRealBrowser(t *testing.T) {
 		})
 	})
 
+	// The next subtest needs a new Chrome session.
+	// Release the original session first, since Selenium may allow
+	// only one active session per VDI container.
+	if err := wd.Quit(); err != nil {
+		t.Fatalf("releasing initial Selenium session: %v", err)
+	}
+	wd = nil
+
+	t.Log("initial Selenium session released")
+
 	// --- Phase E (optional): a source-effective proxy is reflected in the report's
 	// proxy section and the consistency check, driven through a real proxy. ---
 	t.Run("proxy_applied", func(t *testing.T) {
 		proxy := &dummyProxy{name: "pres-diag-proxy"}
-		proxyAddr, closeProxy := listenLoopback(t, proxy)
-		defer closeProxy()
+
+		// Start a temporary HTTP proxy reachable from Docker.
+		proxyServer := httptest.NewUnstartedServer(proxy)
+		_ = proxyServer.Listener.Close()
+
+		proxyListener, err := net.Listen("tcp4", "0.0.0.0:0")
+		if err != nil {
+			t.Fatalf("creating proxy listener: %v", err)
+		}
+
+		proxyServer.Listener = proxyListener
+		proxyServer.Start()
+		defer proxyServer.Close()
+
+		_, proxyPort, err := net.SplitHostPort(proxyListener.Addr().String())
+		if err != nil {
+			t.Fatalf("reading proxy listener port: %v", err)
+		}
+
+		// Advertise the Docker-reachable address, not the bind address.
+		proxyURL := "http://" + net.JoinHostPort(fixtureHost, proxyPort)
+
 		target := &proxyTarget{}
 		targetAddr, closeTarget := listenLoopback(t, target)
 		defer closeTarget()
+
 		targetURL := "http://" + targetAddr + "/page"
 
-		effective := effectiveSessionProxy("http://"+proxyAddr, true, "", "http://vdi-default:8080")
+		effective := effectiveSessionProxy(
+			proxyURL,
+			true,
+			"",
+			"http://vdi-default:8080",
+		)
+
+		t.Logf("creating proxied browser using %s", redactProxyURL(effective))
+
 		wdP := newProxiedDriver(t, effective, webdriverURL)
 		defer func() { _ = wdP.Quit() }()
+
+		t.Logf("proxied Selenium session created: %s", wdP.SessionID())
+
 		if err := wdP.Get(targetURL); err != nil {
-			t.Logf("proxied navigation recorded: %v", err)
+			t.Fatalf("proxied navigation failed: %v", err)
 		}
-		// The report's proxy section must carry the (redacted) effective proxy.
-		rep := reportFromLive(t, wdP, selectedUA, ident, brands, details, effective, false, nil, nil)
-		if r := findResult(EvaluatePresentationConsistency(rep), "source_proxy_vs_applied_proxy"); r.Verdict == VerdictMismatch {
+
+		rep := reportFromLive(
+			t, wdP,
+			selectedUA, ident, brands, details,
+			effective, false, nil, nil,
+		)
+
+		assess := EvaluatePresentationConsistency(rep)
+
+		if r := findResult(assess, "source_proxy_vs_applied_proxy"); r.Verdict == VerdictMismatch {
 			t.Errorf("proxy section mismatch: %+v", r)
 		}
-		if !strings.Contains(rep.Requested.Proxy, proxyAddr) {
-			// The host is preserved; only userinfo would be scrubbed.
-			if !strings.Contains(effective, proxyAddr) {
-				t.Logf("proxy host %s did not propagate (recorded)", proxyAddr)
-			}
+
+		if rep.Requested.Proxy != redactProxyURL(effective) {
+			t.Errorf(
+				"reported proxy = %q, want %q",
+				rep.Requested.Proxy,
+				redactProxyURL(effective),
+			)
 		}
+
 		if got := proxy.count(); got < 1 {
-			t.Logf("dummy proxy saw %d forwards (recorded, may vary if bypass-list routes loopback direct)", got)
+			t.Errorf("dummy proxy received %d requests, expected at least one", got)
 		}
 	})
 }
@@ -444,28 +507,94 @@ func TestPresentationDiagnosticsRealBrowser(t *testing.T) {
 // untouched).
 func newProxiedDriver(t *testing.T, proxyURL, webdriverURL string) selenium.WebDriver {
 	t.Helper()
-	args := buildLaunchArgs(BrowserChrome, BrowserChrome,
+
+	proxyURL = strings.TrimSpace(proxyURL)
+	if proxyURL == "" {
+		t.Fatal("proxy URL is unexpectedly empty")
+	}
+
+	args := buildLaunchArgs(
+		BrowserChrome,
+		BrowserChrome,
 		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
-		cfg.Crawler{RequestImages: true, RequestCSS: true, RequestScripts: true, RequestPlugins: true},
-		proxyURL)
-	filtered := args[:0:0]
+		cfg.Crawler{
+			RequestImages:  true,
+			RequestCSS:     true,
+			RequestScripts: true,
+			RequestPlugins: true,
+		},
+		proxyURL,
+	)
+
+	// Remove the production bypass list and install the test-specific one.
+	filtered := make([]string, 0, len(args)+4)
+
 	for _, a := range args {
 		if !strings.HasPrefix(a, "--proxy-bypass-list=") {
 			filtered = append(filtered, a)
 		}
 	}
+
 	filtered = append(filtered,
 		"--headless=new",
 		"--no-sandbox",
 		"--disable-dev-shm-usage",
 		"--proxy-bypass-list=<-loopback>",
 	)
+
+	// Verify the builder and final capabilities arguments.
+	want := "--proxy-server=" + proxyURL
+
+	inBuilder := false
+	for _, arg := range args {
+		if arg == want {
+			inBuilder = true
+			break
+		}
+	}
+
+	inFiltered := false
+	for _, arg := range filtered {
+		if arg == want {
+			inFiltered = true
+			break
+		}
+	}
+
+	if !inBuilder || !inFiltered {
+		t.Fatalf(
+			"proxy launch argument missing: builder=%t filtered=%t proxy=%q args=%v filteredArgs=%v",
+			inBuilder,
+			inFiltered,
+			redactProxyURL(proxyURL),
+			redactProxyArgs(args),
+			redactProxyArgs(filtered),
+		)
+	}
+
 	capabilities := selenium.Capabilities{"browserName": "chrome"}
 	capabilities.AddChrome(buildChromeCapabilities(filtered, map[string]interface{}{}))
+
+	t.Log("requesting new proxied Selenium session")
+	start := time.Now()
+
 	wd, err := selenium.NewRemote(capabilities, webdriverURL)
+
+	t.Logf("NewRemote returned after %s", time.Since(start))
+
 	if err != nil {
-		t.Fatalf("proxied Selenium/Chrome unavailable at %s: %v", webdriverURL, err)
+		t.Fatalf("creating proxied Selenium session: %v", err)
 	}
+	if wd.SessionID() == "" {
+		t.Fatal("proxied Selenium session has an empty ID")
+	}
+
+	// Prevent a broken proxy fixture from hanging for five minutes.
+	if err := wd.SetPageLoadTimeout(20 * time.Second); err != nil {
+		_ = wd.Quit()
+		t.Fatalf("setting proxy page-load timeout: %v", err)
+	}
+
 	return wd
 }
 

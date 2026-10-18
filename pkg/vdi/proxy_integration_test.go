@@ -103,7 +103,7 @@ func (t *proxyTarget) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func listenLoopback(t *testing.T, handler http.Handler) (addr string, closeFn func()) {
 	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := net.Listen("tcp", "0.0.0.0:0")
 	if err != nil {
 		t.Skipf("loopback listener unavailable: %v", err)
 	}
