@@ -215,7 +215,12 @@ func TestEngineQuotaDynamicStaticDynamicResetsReportAuthority(t *testing.T) {
 	static.Events.HeartbeatEnabled = false
 	configureEngineDBQuota(static)
 	if engineDBQuota.hasValidReport || !engineDBQuota.lastGeneratedAt.IsZero() || engineDBQuota.lastParentEventID != "" {
-		t.Fatalf("dynamic-to-static transition retained report authority: %+v", engineDBQuota)
+		t.Fatalf(
+			"dynamic-to-static transition retained report authority: hasValidReport=%t lastGeneratedAt=%v lastParentEventID=%q",
+			engineDBQuota.hasValidReport,
+			engineDBQuota.lastGeneratedAt,
+			engineDBQuota.lastParentEventID,
+		)
 	}
 	configureEngineDBQuota(static)
 	configureEngineDBQuota(dynamic)

@@ -122,7 +122,12 @@ func TestEventsQuotaRejectsMalformedInvalidAndFailedApplication(t *testing.T) {
 	processEventsHeartbeatReport(cdb.Event{Details: eventsQuotaDetails(t, "failed", now,
 		cdb.FleetMemberAllocation{OriginType: cdb.FleetMemberCrowlerEvents, OriginName: "events-a", MaxConnections: 5})})
 	if len(*calls) != 0 || eventsDBQuota.hasValidReport || eventsDBQuota.quota != 0 {
-		t.Fatalf("rejected reports changed quota state: calls=%v state=%+v", *calls, eventsDBQuota)
+		t.Fatalf(
+			"rejected reports changed quota state: calls=%v hasValidReport=%t quota=%d",
+			*calls,
+			eventsDBQuota.hasValidReport,
+			eventsDBQuota.quota,
+		)
 	}
 }
 

@@ -408,16 +408,22 @@ func quotedAll(names []string) []string {
 // antiDetectionScript builds the new-document camouflage script from explicit
 // identity inputs. All free-text values (UA, platforms, brand names) are
 // embedded via JSON string literals so quotes, backslashes, or non-ASCII
-// text cannot break the script. The WebGL, Audio, plugin, and marker
-// behavior is byte-for-byte the long-standing script body; only identity
-// derivation, safe encoding, and removal of the "loaded" debug trace
-// changed.
+// text cannot break the script. Identity derivation, safe encoding, and
+// removal of the "loaded" debug trace changed as before; the AudioBuffer
+// surface is additionally driven by seed (see audioPatchScript) so its
+// perturbation is deterministic and session-stable instead of a cumulative
+// random mutation. The WebGL and plugin/MIME surfaces use the shared canonical
+// builders and are likewise deterministic per realm.
+//
+// seed is the per-WebDriver-session seed (the same value the Canvas export
+// camouflage is driven by, see sessionCamouflageScript) so the audio and
+// canvas fingerprints agree within a session yet differ across sessions.
 //
 // Lifecycle note: this script captures one selection
 // event. Rotation replaces the registration via ReplaceIdentityScript; a
 // superseded registration is removed first so no stale UA-A script survives
 // alongside UA-B overrides.
-func antiDetectionScript(userAgent string, ident OSIdentity, brands []ClientHintBrand, details ClientHintsDetails) string {
+func antiDetectionScript(userAgent string, ident OSIdentity, brands []ClientHintBrand, details ClientHintsDetails, seed uint32) string {
 	userAgentDataBlock := `// No Chromium brand surface for the selected identity:
 // Client Hints brand values are left at native values.
 `
@@ -447,13 +453,11 @@ Object.defineProperty(navigator, 'platform', {
 });
 
 %s
-Object.defineProperty(navigator, 'plugins', {
-    get: () => %s
-});
-
-Object.defineProperty(navigator, 'mimeTypes', {
-    get: () => %s
-});
+// The plugin/MIME object graph and its cross-links are installed by a single
+// builder that memoizes ONE shared registry in closure state and defines both
+// getters to reference it (stable identity, shared MimeType instances, and no
+// discoverable global/prototype/symbol marker).
+%s
 
 delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
 delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
@@ -461,20 +465,221 @@ delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
 
 %s
 
-(function() {
-    const original = AudioBuffer.prototype.getChannelData;
-    AudioBuffer.prototype.getChannelData = function() {
-        const data = original.apply(this, arguments);
-        for (let i = 0; i < data.length; i += 100) {
-            data[i] = data[i] + (Math.random() * 0.0000001);
-        }
-        return data;
-    };
-})();
+%s
 
 %s`, cmn.JSStringLiteral(userAgent), cmn.JSStringLiteral(ident.NavigatorPlatform), userAgentDataBlock,
-		pluginArrayLiteral(), mimeArrayLiteral(), webglSpoofScript(),
-		highEntropySpoofBlock(details))
+		registryGettersScript(), webglSpoofScript(),
+		audioPatchScript(seed), highEntropySpoofBlock(details))
+}
+
+// audioPatchScript returns the deterministic AudioBuffer camouflage IIFE.
+//
+// Design: preserve the native AudioBuffer contract, camouflage at the boundary.
+//
+// A pure-JS override of AudioBuffer.prototype.getChannelData cannot SIMULTANEOUSLY
+// return a live, write-through view AND carry an independent perturbation: a live
+// view reflects application writes, so it cannot also hold a separate spoofed
+// value. This patch therefore leaves getChannelData native and instead perturbs
+// an AudioBuffer exactly once at the point where it is produced, by wrapping the
+// render/decode boundary:
+//   - getChannelData is NEVER overridden — it stays native (live view,
+//     write-through, copyFromChannel/copyToChannel consistency, RangeError on an
+//     out-of-range channel, and the Float32Array return type).
+//   - When an AudioBuffer is produced by BaseAudioContext.prototype.decodeAudioData
+//     (inherited by both AudioContext and OfflineAudioContext) or by
+//     OfflineAudioContext.prototype.startRendering, its stored channel samples are
+//     perturbed ONCE, in place, before the buffer reaches the caller — via the
+//     resolved value of the Promise for the Promise-form API and inside the
+//     invoked success callback for the legacy callback-form API. Re-reads of that
+//     buffer then see the SAME perturbed samples: no per-read accumulation, no
+//     drift, application writes still mutate the store natively, and
+//     copyFromChannel/copyToChannel stay consistent — because the perturbation
+//     lives in the stored samples and the reader is native.
+//   - In both forms the native implementation is invoked first
+//     (native.call(this, ...)), preserving argument validation, this binding,
+//     Promise rejection, and the optional legacy error callback by delegation.
+//   - The per-sample delta is a deterministic function of (seed, channel,
+//     index), so a session is stable across navigation/reload/proxy rotation
+//     with the same seed while distinct sessions (different seeds) diverge,
+//     matching the Canvas export seed.
+//   - Idempotency carries no discoverable marker: the render/decode methods are
+//     wrapped at most once per realm via a closure-held WeakSet, and each
+//     produced buffer is perturbed at most once via a SECOND closure-held
+//     WeakSet of buffers — never a property on the buffer instance, on
+//     AudioBuffer.prototype, or on globalThis, and the reference is held weakly
+//     so completed buffers are not retained. A re-injected new-document script
+//     after an identity/UA rotation runs in a fresh realm with its own closure
+//     state, so it never double-perturbs a buffer from a prior realm. A
+//     same-realm re-evaluation is not a supported lifecycle.
+//
+// The magnitude (~1e-7) is below the audible threshold, so legitimate audio
+// pipelines are not noticeably degraded.
+func audioPatchScript(seed uint32) string {
+	// A single flat IIFE that embeds the session seed as a local numeric
+	// literal so the perturbation closure can see it; a nested outer/inner form
+	// forwarded the seed to the wrong function (seed undefined -> one
+	// fingerprint for every session).
+	return fmt.Sprintf(`(function() {
+    "use strict";
+    const seed = %d;
+    if (typeof AudioContext === "undefined" && typeof OfflineAudioContext === "undefined") {
+        return;
+    }
+
+    // Idempotency is held entirely in closure state — no discoverable property
+    // on any AudioBuffer instance, on a prototype, or on globalThis:
+    //   - patched is a WeakSet of the prototypes this evaluation has already
+    //     wrapped, so a re-run inside the same realm never stacks a wrapper;
+    //   - perturbed is a WeakSet of the AudioBuffers this evaluation has
+    //     already perturbed, marking each produced buffer exactly once. Because
+    //     it is weak, it retains no completed buffer and cannot leak.
+    // The supported injection lifecycle evaluates the new-document identity
+    // script exactly once per realm (a new document is a fresh realm; an
+    // identity/UA rotation removes the prior registration before adding the
+    // next), so a single closure's WeakSets are the complete exactly-once
+    // guard. A cross-evaluation re-injection into the same realm is not a
+    // supported scenario: it would spawn a second, independent closure whose
+    // WeakSet cannot share state with the first without a discoverable
+    // property, which we deliberately avoid.
+    const patchedDecode = new WeakSet();
+	const patchedRender = new WeakSet();
+	const perturbed = new WeakSet();
+
+    function perturbBuffer(buf) {
+        if (!buf || typeof buf.getChannelData !== "function") return;
+        // Perturb each produced buffer exactly once, guarded by the closure-held
+        // perturbed WeakSet. The guard adds no property to the returned buffer
+        // and holds it only weakly: it leaves no discoverable marker on the
+        // instance and retains no completed buffer.
+        if (perturbed.has(buf)) return;
+        try { perturbed.add(buf); } catch (e) { /* leave the buffer as-is */ }
+        try {
+            const channels = (typeof buf.numberOfChannels === "number") ? buf.numberOfChannels : 1;
+            for (let c = 0; c < channels; c++) {
+                const data = buf.getChannelData(c); // native live view of the store
+                if (!data || typeof data.length !== "number") continue;
+                const len = data.length;
+                if (len === 0) continue;
+                // Deterministic, seed+channel+index-stable delta in the original
+                // noise band (~1e-7). Applying it once to the stored sample keeps
+                // repeated reads equal (the live view now reflects the perturbed
+                // sample) and cross-session distinct.
+                let state = ((seed >>> 0) ^ 0x9e3779b9 ^ (c * 0x9e3779b1)) >>> 0;
+                for (let i = 0; i < len; i += 100) {
+                    state ^= (state << 13);
+                    state ^= (state >>> 17);
+                    state ^= (state << 5);
+                    state >>>= 0;
+                    data[i] += ((state & 0xffff) / 0x10000 - 0.5) * 2e-7;
+                }
+            }
+        } catch (e) {
+            // A buffer whose channels cannot be read is left exactly as-is.
+        }
+    }
+
+    // Wrap the render/decode boundary so a buffer it produces is perturbed
+    // exactly once, at completion, before the application observes it, in either
+    // supported completion form:
+    //   - Promise form:  decodeAudioData(arrayBuffer) -> Promise<AudioBuffer>.
+    //   - Legacy form:   decodeAudioData(arrayBuffer, success[, error]); the
+    //     engine invokes the callbacks asynchronously with the decoded buffer.
+    // In both forms the native implementation is invoked first
+    // (native.call(this, ...)), so native argument validation, this binding,
+    // Promise rejection, and the (optional) error callback are all preserved by
+    // delegation. The perturbation is applied on completion — to the resolved
+    // value for the Promise form and inside the wrapped success callback for the
+    // legacy form — exactly once.
+    function wrapDecode(proto) {
+        if (!proto || typeof proto.decodeAudioData !== "function") return;
+        if (patchedDecode.has(proto)) return;
+        const native = proto.decodeAudioData;
+        proto.decodeAudioData = function(arrayBuffer) {
+            const ctx = this;
+            // Legacy callback form: the native call drives the callbacks and
+            // resolves nothing observable, so we wrap the SUCCESS callback to
+            // perturb the decoded buffer before the application's callback runs,
+            // forwarding the optional error callback unchanged. Native argument
+            // validation stays native because we always call the native method.
+            if (arguments.length >= 2 && typeof arguments[1] === "function") {
+                const success = arguments[1];
+                const errback = (arguments.length >= 3 && typeof arguments[2] === "function")
+                    ? arguments[2] : undefined;
+                const onDecoded = function(decoded) {
+                    perturbBuffer(decoded);
+                    return success.call(ctx, decoded);
+                };
+                return (errback === undefined)
+                    ? native.call(ctx, arrayBuffer, onDecoded)
+                    : native.call(ctx, arrayBuffer, onDecoded, errback);
+            }
+            // Promise form: native.call returns a Promise<AudioBuffer> (or throws
+            // synchronously on a malformed argument, which propagates as native).
+            const result = native.call(ctx, arrayBuffer);
+            if (result && typeof result.then === "function") {
+                return result.then(function(decoded) {
+                    perturbBuffer(decoded);
+                    return decoded;
+                }, function(reason) {
+                    return Promise.reject(reason);
+                });
+            }
+            // An unexpected native shape: perturb defensively and pass through.
+            perturbBuffer(result);
+            return result;
+        };
+        patchedDecode.add(proto);
+    }
+
+    // startRendering is OfflineAudioContext-only and always completes a
+    // Promise<AudioBuffer>; keep its wrapping as a single Promise-boundary
+    // perturbation with rejection propagated unchanged (behavior unmodified).
+    function wrapStart(proto) {
+        if (!proto || typeof proto.startRendering !== "function") return;
+        if (patchedRender.has(proto)) return;
+        const native = proto.startRendering;
+        proto.startRendering = function() {
+            const result = native.apply(this, arguments);
+            if (result && typeof result.then === "function") {
+                return result.then(function(decoded) {
+                    perturbBuffer(decoded);
+                    return decoded;
+                }, function(reason) {
+                    return Promise.reject(reason);
+                });
+            }
+            perturbBuffer(result);
+            return result;
+        };
+        patchedRender.add(proto);
+    }
+
+    try {
+        // decodeAudioData is defined on the shared BaseAudioContext and is
+        // inherited by both AudioContext and OfflineAudioContext, so wrapping the
+        // base covers every concrete decoder through the native implementation.
+        // Fall back to the concrete prototypes when an engine does not expose
+        // BaseAudioContext (a different native layout).
+        const base = (typeof BaseAudioContext !== "undefined" && BaseAudioContext && BaseAudioContext.prototype)
+            ? BaseAudioContext.prototype
+            : undefined;
+        if (base) {
+            wrapDecode(base);
+        } else {
+            if (typeof AudioContext !== "undefined" && AudioContext && AudioContext.prototype) {
+                wrapDecode(AudioContext.prototype);
+            }
+            if (typeof OfflineAudioContext !== "undefined" && OfflineAudioContext && OfflineAudioContext.prototype) {
+                wrapDecode(OfflineAudioContext.prototype);
+            }
+        }
+        if (typeof OfflineAudioContext !== "undefined" && OfflineAudioContext && OfflineAudioContext.prototype) {
+            wrapStart(OfflineAudioContext.prototype);
+        }
+    } catch (e) {
+        console.error('Error applying AudioBuffer render camouflage:', e);
+    }
+})();`, uint64(seed))
 }
 
 // userAgentOverrideParams builds the Network.setUserAgentOverride parameters
@@ -690,10 +895,13 @@ func sessionCamouflageScript(
 	details ClientHintsDetails,
 ) string {
 	// Same seed for the entire WebDriver session,
-	// including navigations and User-Agent rotation.
+	// including navigations and User-Agent rotation. The AudioBuffer
+	// camouflage shares this seed so the audio fingerprint is stable per
+	// session and agrees with the Canvas export surface.
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(wd.SessionID()))
+	seed := h.Sum32()
 
-	return canvasExportScript(h.Sum32()) + "\n" +
-		antiDetectionScript(userAgent, ident, brands, details)
+	return canvasExportScript(seed) + "\n" +
+		antiDetectionScript(userAgent, ident, brands, details, seed)
 }
