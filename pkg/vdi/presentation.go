@@ -75,6 +75,10 @@ type RequestedPresentation struct {
 	Language     string `json:"language"`
 	Proxy        string `json:"proxy,omitempty"`
 	GPUPatch     string `json:"gpu_patch,omitempty"`
+	// UAChangePolicy is the configured User-Agent rotation policy
+	// (crawler.change_useragent: "never"/"always"/"on_start"). It records the
+	// selected policy but not a rotation counter (unavailable at this point).
+	UAChangePolicy string `json:"ua_change_policy,omitempty"`
 }
 
 // EffectivePresentation is the deliberately chosen presentation after
@@ -94,6 +98,10 @@ type EffectivePresentation struct {
 	GPUPatchRequested     bool               `json:"gpu_patch_requested"`
 	FallbackUsed          bool               `json:"fallback_used"`
 	DegradedProduct       bool               `json:"degraded_product"`
+	// LaunchOptions, when non-nil, is a redacted summary of the effective launch
+	// argv resolved for this session (DNS-prefetch presence and duplicate-switch
+	// coherence included). It is an effective artifact, not an observation.
+	LaunchOptions *LaunchOptionsSummary `json:"launch_options,omitempty"`
 }
 
 // ClientHintsSurface is the high/low-entropy Client Hints the session intends
@@ -122,6 +130,11 @@ type AppliedPresentation struct {
 	GPUPatch          ApplyStatus `json:"gpu_patch"`
 	Proxy             string      `json:"proxy,omitempty"`
 	ProxyApplied      bool        `json:"proxy_applied"`
+	// RegistrationScope documents the registration scope of an applied
+	// new-document identity script. It is a structural fact about the mechanism
+	// (the script is registered per-session via addScriptToEvaluateOnNewDocument),
+	// set only when the script actually applied; it is "not_applied" otherwise.
+	RegistrationScope string `json:"registration_scope,omitempty"`
 }
 
 // ObservedPresentation is what the browser (or a controlled HTTP recorder)
@@ -144,6 +157,63 @@ type ObservedPresentation struct {
 	// unavailable capability (e.g. a missing WebGL context) is never read as an
 	// identity fault, while a broken (fabricated) implementation is.
 	Capabilities []CapabilityReport `json:"capabilities,omitempty"`
+	// Viewport is the observed screen/window dimension set the
+	// getBrowserConfiguration observation already returns. It is an OBSERVED
+	// surface: it reflects what the engine presents and may be altered by the
+	// anti-detection viewport patch, so it is never synthesized from
+	// configuration and never treated as an intent.
+	Viewport *ObservedViewport `json:"viewport,omitempty"`
+	// DeviceMemory / HardwareConcurrency / Plugins are the observed navigator
+	// device surfaces. Like Viewport they are observed (browser-presented)
+	// values, may be spoofed by the anti-detection patch, and are reported as
+	// observed, never as intended.
+	DeviceMemory        int `json:"device_memory,omitempty"`
+	HardwareConcurrency int `json:"hardware_concurrency,omitempty"`
+	Plugins             int `json:"plugins,omitempty"`
+}
+
+// ObservedViewport is the observed screen/window dimensions. Every field is an
+// OBSERVED value (what the engine reports); the anti-detection viewport patch may
+// alter them, so they are never used as an intent and never synthesized.
+type ObservedViewport struct {
+	ScreenWidth  int `json:"screen_width,omitempty"`
+	ScreenHeight int `json:"screen_height,omitempty"`
+	InnerWidth   int `json:"inner_width,omitempty"`
+	InnerHeight  int `json:"inner_height,omitempty"`
+	OuterWidth   int `json:"outer_width,omitempty"`
+	OuterHeight  int `json:"outer_height,omitempty"`
+}
+
+// LaunchOptionsSummary is a redacted, read-only summary of the effective browser
+// launch options resolved for a session. It is safe to emit or persist: the only
+// credential-bearing switch (--proxy-server=) is scrubbed by the same proxy
+// redaction the report already applies, so no proxy credential reaches a
+// diagnostic. The summary carries no new observation: the argv is built by the
+// same builder the session already runs, so surfacing it costs nothing.
+type LaunchOptionsSummary struct {
+	// Redacted is the launch argv with the --proxy-server userinfo scrubbed.
+	Redacted []string `json:"redacted"`
+	// Duplicates are launch switches that appear more than once in the command
+	// line. The shared builder keeps each multi-value switch single, so a
+	// non-empty result is a coherence regression signal, not expected output.
+	Duplicates []string `json:"duplicate_switches,omitempty"`
+	// DNSPrefetchDisabled records whether the DNS-prefetch privacy switch is set.
+	DNSPrefetchDisabled bool `json:"dns_prefetch_disabled,omitempty"`
+}
+
+// DiagnosticGaps records the v2.1 diagnostic facts the connection-time VDI emit
+// cannot yet establish, with the technical reason each is not surfaced — so a
+// consumer neither invents the value nor silently drops the requirement.
+type DiagnosticGaps struct {
+	// ProxyProvenance attributes the effective proxy to the configuration layer
+	// that supplied it: source, custom_vdi, vdi_default, no_proxy (a layer forced
+	// a direct connection) or none (no proxy layered). It is the one
+	// effective-setting-ownership fact derivable at the emit.
+	ProxyProvenance string `json:"proxy_provenance,omitempty"`
+	// Notes lists the remaining requirements the current emit cannot derive, each
+	// a stable "key: reason" string documenting why the value is unavailable so a
+	// gap is explicit rather than fabricated or dropped.
+	Notes []string `json:"notes,omitempty"`
 }
 
 // ObservedUserAgentData is the low-entropy navigator.userAgentData observation.
@@ -207,6 +277,11 @@ type PresentationReport struct {
 	// Rotated records that this report follows an intentional User-Agent
 	// rotation, so the evaluator can judge rotation completeness.
 	Rotated bool `json:"rotated,omitempty"`
+	// DiagnosticGaps, when non-nil, documents the v2.1 diagnostic facts that
+	// cannot be established at this emit (proxy provenance and the remaining
+	// unavailable/observed-not requirements), so a consumer neither invents nor
+	// silently drops them.
+	DiagnosticGaps *DiagnosticGaps `json:"diagnostic_gaps,omitempty"`
 }
 
 // PresentationInput is the gathered data a report is built from. It is pure
@@ -246,6 +321,25 @@ type PresentationInput struct {
 	Capabilities []CapabilityReport
 	// Rotated marks a post-rotation report.
 	Rotated bool
+	// The fields below are the PR7 additive diagnostic inputs. Every one is
+	// optional and consumed only on the verbose-only emit path; the builder
+	// performs no observation from them.
+	// LaunchOptions is the effective launch argv resolved for the session; the
+	// builder redacts the --proxy-server userinfo and derives the summary.
+	LaunchOptions []string
+	// UAChangePolicy is the configured User-Agent rotation policy
+	// (crawler.change_useragent); recorded in Requested, not a rotation counter.
+	UAChangePolicy string
+	// IdentityScriptScope is the registration scope of an applied new-document
+	// identity script ("new_document_session" when CDP-applied, else
+	// "not_applied"); a structural fact, not an observation.
+	IdentityScriptScope string
+	// ProxyProvenance attributes the effective proxy to its config layer; the
+	// caller derives it via proxyProvenanceLayer. "" leaves it unattributed.
+	ProxyProvenance string
+	// DiagnosticGapNotes documents the requirements not derivable at this emit
+	// (each a "key: reason" string); an empty slice emits no gaps.
+	DiagnosticGapNotes []string
 }
 
 // BuildPresentationReport assembles a typed report from gathered data. It is
@@ -277,12 +371,13 @@ func BuildPresentationReport(in PresentationInput) PresentationReport {
 	return PresentationReport{
 		SchemaVersion: schemaVersionPresentation,
 		Requested: RequestedPresentation{
-			BrowserType:  in.BrowserType,
-			DeviceClass:  in.DeviceClass,
-			AdvertisedOS: in.AdvertisedOS,
-			Language:     in.Language,
-			Proxy:        prox,
-			GPUPatch:     gpuRequestString(in.GPUPatchRequested),
+			BrowserType:    in.BrowserType,
+			DeviceClass:    in.DeviceClass,
+			AdvertisedOS:   in.AdvertisedOS,
+			Language:       in.Language,
+			Proxy:          prox,
+			GPUPatch:       gpuRequestString(in.GPUPatchRequested),
+			UAChangePolicy: in.UAChangePolicy,
 		},
 		Effective: EffectivePresentation{
 			UserAgent:             in.UserAgent,
@@ -298,6 +393,7 @@ func BuildPresentationReport(in PresentationInput) PresentationReport {
 			GPUPatchRequested:     in.GPUPatchRequested,
 			FallbackUsed:          in.FallbackUsed,
 			DegradedProduct:       in.DegradedProduct,
+			LaunchOptions:         buildLaunchOptionsSummary(in.LaunchOptions),
 		},
 		Applied: AppliedPresentation{
 			UserAgentOverride: in.UserAgentOverride,
@@ -305,9 +401,11 @@ func BuildPresentationReport(in PresentationInput) PresentationReport {
 			GPUPatch:          gpuApply,
 			Proxy:             prox,
 			ProxyApplied:      in.Proxy != "",
+			RegistrationScope: in.IdentityScriptScope,
 		},
-		Observed: obs,
-		Rotated:  in.Rotated,
+		Observed:       obs,
+		Rotated:        in.Rotated,
+		DiagnosticGaps: buildDiagnosticGaps(in.ProxyProvenance, in.DiagnosticGapNotes),
 	}
 }
 
@@ -317,6 +415,122 @@ func gpuRequestString(requested bool) string {
 		return "set_vdi_gpu_patch"
 	}
 	return ""
+}
+
+// buildLaunchOptionsSummary redacts the effective launch argv into the report's
+// launch-option summary. It is a pure transformation of the argv the session
+// already built (no new observation or call). Only the credential-bearing
+// --proxy-server value is scrubbed, via the same proxy redaction the report
+// already applies, so no proxy credential reaches a diagnostic; the remaining
+// switches are benign and left intact.
+func buildLaunchOptionsSummary(args []string) *LaunchOptionsSummary {
+	if len(args) == 0 {
+		return nil
+	}
+	redacted := make([]string, len(args))
+	for i, a := range args {
+		redacted[i] = redactLaunchArg(a)
+	}
+	return &LaunchOptionsSummary{
+		Redacted:            redacted,
+		Duplicates:          duplicateLaunchSwitches(args),
+		DNSPrefetchDisabled: hasLaunchFlag(args, "--dns-prefetch-disable"),
+	}
+}
+
+// redactLaunchArg scrubs the proxy-server userinfo while leaving the benign
+// switches (including the user-agent, which carries no credential) untouched.
+// Only --proxy-server= is credential-bearing, so it is the only switch rewritten.
+func redactLaunchArg(a string) string {
+	const prefix = "--proxy-server="
+	if strings.HasPrefix(a, prefix) {
+		return prefix + redactProxyURL(a[len(prefix):])
+	}
+	return a
+}
+
+// duplicateLaunchSwitches returns, in first-seen order, the switches that appear
+// more than once in the argv. The shared builder keeps each multi-value switch
+// single, so a non-empty result is a coherence regression signal rather than
+// expected output. The order is deterministic so the result is comparable.
+func duplicateLaunchSwitches(args []string) []string {
+	seen := make(map[string]int, len(args))
+	var order []string
+	for _, a := range args {
+		if seen[a] == 0 {
+			order = append(order, a)
+		}
+		seen[a]++
+	}
+	var dups []string
+	for _, a := range order {
+		if seen[a] > 1 {
+			dups = append(dups, a)
+		}
+	}
+	return dups
+}
+
+// hasLaunchFlag reports whether an exact switch or a --flag=value form is present
+// (a pure presence check, distinct from the proxy tests' prefix-matching
+// hasFlag, which returns the matched switch).
+func hasLaunchFlag(args []string, flag string) bool {
+	for _, a := range args {
+		if a == flag || strings.HasPrefix(a, flag+"=") {
+			return true
+		}
+	}
+	return false
+}
+
+// buildDiagnosticGaps assembles the explicit "not-yet-derivable" surface of the
+// report. It is nil only when neither a proxy provenance nor any gap note is
+// supplied, so an ordinary report carries no gap section. The notes are copied
+// into a fresh slice so a report never aliases a shared caller/package slice —
+// a consumer may mutate the returned report without corrupting other reports.
+func buildDiagnosticGaps(proxyProvenance string, notes []string) *DiagnosticGaps {
+	if proxyProvenance == "" && len(notes) == 0 {
+		return nil
+	}
+	g := &DiagnosticGaps{ProxyProvenance: proxyProvenance}
+	if len(notes) > 0 {
+		g.Notes = make([]string, len(notes))
+		copy(g.Notes, notes)
+	}
+	return g
+}
+
+// proxyProvenanceLayer attributes the effective proxy to the configuration layer
+// that supplied it, reproducing the exact precedence of effectiveSessionProxy:
+// the top-level source wins when present (a "no_proxy" source forces a direct
+// connection and overrides the lower layers); otherwise the merged custom.vdi
+// override applies; otherwise the VDI default. It returns "source", "custom_vdi",
+// "vdi_default", "no_proxy" (a layer forced a direct connection) or "none" (no
+// proxy layered). Because effectiveSessionProxy composes the effective value from
+// exactly one of these layers, the effective never fails to reconcile. It is a
+// pure best-effort diagnostic attribution, not a security boundary, and is tested
+// against effectiveSessionProxy.
+func proxyProvenanceLayer(sourceProxy string, sourceOK bool, customProxy, effective string) string {
+	trim := func(s string) string { return strings.TrimSpace(s) }
+	// The top-level source wins when it supplies a value or a no_proxy sentinel.
+	if sourceOK {
+		if sw := trim(sourceProxy); sw == "no_proxy" {
+			return "no_proxy"
+		} else if sw != "" {
+			return "source"
+		}
+	}
+	// Otherwise the composed base is the custom.vdi override, a forced direct
+	// connection, or the VDI default.
+	if cw := trim(customProxy); cw == "no_proxy" {
+		return "no_proxy"
+	} else if cw != "" {
+		return "custom_vdi"
+	}
+	if trim(effective) == "" {
+		return "none"
+	}
+	return "vdi_default"
 }
 
 // observeFromMap turns a getBrowserConfiguration map into an
@@ -349,8 +563,69 @@ func observeFromMap(m map[string]interface{}, status DiagnosticStatus, httpHints
 	if uad := observeUserAgentData(m); uad != nil {
 		obs.UserAgentData = uad
 	}
+	// Viewport/device surfaces are parsed from the SAME observation the browser
+	// already returned (no new call). Each is an OBSERVED surface: it reflects
+	// what the engine presents and may be spoofed by the anti-detection patch, so
+	// it is never synthesized from configuration. Absent keys stay zero and, via
+	// omitempty, are omitted rather than reported as a deliberate empty value.
+	if vp := observeViewport(m); vp != nil {
+		obs.Viewport = vp
+	}
+	if mem, ok := toInt(m["deviceMemory"]); ok {
+		obs.DeviceMemory = mem
+	}
+	if hc, ok := toInt(m["hardwareConcurrency"]); ok {
+		obs.HardwareConcurrency = hc
+	}
+	if pl, ok := toInt(m["plugins"]); ok {
+		obs.Plugins = pl
+	}
 	obs.Status = StatusKnown
 	return obs, caps
+}
+
+// observeViewport extracts the observed screen/window dimensions from the
+// getBrowserConfiguration map. It returns nil when no dimension was present so an
+// engine that reports none is not shown a fabricated empty viewport. The values
+// are browser-presented (possibly spoofed by the anti-detection patch) and are
+// therefore treated as observed, never as an intent.
+func observeViewport(m map[string]interface{}) *ObservedViewport {
+	vp := &ObservedViewport{}
+	any := false
+	set := func(key string, dst *int) {
+		if v, ok := m[key]; ok {
+			if n, ok := toInt(v); ok {
+				*dst = n
+				any = true
+			}
+		}
+	}
+	set("screenWidth", &vp.ScreenWidth)
+	set("screenHeight", &vp.ScreenHeight)
+	set("innerWidth", &vp.InnerWidth)
+	set("innerHeight", &vp.InnerHeight)
+	set("outerWidth", &vp.OuterWidth)
+	set("outerHeight", &vp.OuterHeight)
+	if !any {
+		return nil
+	}
+	return vp
+}
+
+// toInt coerces the numeric kinds ExecuteScript can return (int, int64, and the
+// float64 that JSON-decoded numbers become) to int. A non-number yields ok=false
+// so the surface is omitted rather than shown a fabricated zero.
+func toInt(v interface{}) (int, bool) {
+	switch n := v.(type) {
+	case int:
+		return n, true
+	case int64:
+		return int(n), true
+	case float64:
+		return int(n), true
+	default:
+		return 0, false
+	}
 }
 
 // observeUserAgentData extracts the low-entropy navigator.userAgentData

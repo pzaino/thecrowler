@@ -1562,10 +1562,14 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 
 	// Emit the redacted, read-only presentation report and run the
 	// profile-aware consistency checks at the most-verbose level. This is a
-	// no-op below debug level five and reuses the single observation above.
+	// no-op below debug level five and reuses the single observation above. The
+	// additive PR7 inputs (the launch argv, the proxy-provenance layers and the
+	// User-Agent rotation policy) are all already computed in this function, so
+	// threading them in adds no observation or call.
 	emitVDIPresentationReport(
 		pConfig, sel.Config, selection, userAgent, ident, brands, details,
-		cdpActive, effectiveProxy, result, err2 == nil)
+		cdpActive, effectiveProxy, result, err2 == nil,
+		args, sourceProxy, sourceProxyOK, customProxy, pConfig.Crawler.ChangeUserAgent)
 
 	err2 = addLoadListener(wd)
 	if err2 != nil {
@@ -1715,12 +1719,28 @@ func getBrowserConfiguration(wd WebDriver) (map[string]interface{}, error) {
 	return config, nil
 }
 
+// unavailableDiagnosticNotes are the v2.1 diagnostic facts the connection-time
+// VDI emit cannot yet derive. Each is a stable "key: reason" string so a gap
+// is explicit and documented rather than fabricated or silently dropped. They
+// are constant: the process re-reads configuration on SIGHUP without a
+// generation counter, and the resolution path composes a value without
+// recording which layer supplied each non-proxy setting.
+var unavailableDiagnosticNotes = []string{
+	"config_generation: untracked — no monotonic generation counter is maintained on SIGHUP reload, so no reload generation is reported",
+	"setting_ownership: unrecorded for non-proxy settings — the composition path resolves a value without recording the winning layer (only the proxy layer is attributable, see proxy_provenance)",
+	"lifecycle_state: unobserved at connection time — rotation count, pool index and session lifecycle are not tracked on the User-Agent selection",
+}
+
 // emitVDIPresentationReport builds the redacted, read-only presentation report
 // and runs the pure, profile-aware consistency checks, logging both at the most
 // verbose debug level. It is a no-op below debug level five, so an ordinary
 // session pays no diagnostic cost: the build and serialization are gated. It
 // reuses the single getBrowserConfiguration observation (passed in) and issues
 // no additional browser or CDP call.
+//
+// The additive PR7 inputs (launchArgs, the proxy-provenance layers, and the
+// User-Agent rotation policy) are likewise pure, in-scope, in-scope values the
+// session already computed; surfacing them adds no observation and no call.
 func emitVDIPresentationReport(
 	pConfig *cfg.Config,
 	vd cfg.Selenium,
@@ -1733,6 +1753,11 @@ func emitVDIPresentationReport(
 	effectiveProxy string,
 	observation map[string]interface{},
 	observedOK bool,
+	launchArgs []string,
+	sourceProxy string,
+	sourceProxyOK bool,
+	customProxy string,
+	uaChangePolicy string,
 ) {
 	if cmn.GetDebugLevel() < cmn.DbgLvlDebug5 {
 		return
@@ -1746,6 +1771,21 @@ func emitVDIPresentationReport(
 		// without a CDP bridge (native Firefox) there is nothing to apply.
 		uaOverride, identityScript = ActionApplied(), ActionApplied()
 	}
+
+	// The registration scope of an applied new-document identity script is a
+	// structural fact about the mechanism, not an observation: when CDP is active
+	// the script is registered per-session via addScriptToEvaluateOnNewDocument,
+	// and on engines without a CDP bridge nothing is registered. It is never
+	// inferred from the configured behavior.
+	identityScriptScope := "not_applied"
+	if cdpActive {
+		identityScriptScope = "new_document_session"
+	}
+
+	// Proxy provenance is the one effective-setting-ownership fact derivable at
+	// the emit: it attributes the effective proxy to the configuration layer that
+	// supplied it, mirroring effectiveSessionProxy's precedence.
+	proxyProvenance := proxyProvenanceLayer(sourceProxy, sourceProxyOK, customProxy, effectiveProxy)
 
 	obsStatus := StatusNotObserved
 	if observedOK {
@@ -1774,8 +1814,13 @@ func emitVDIPresentationReport(
 		// The GPU patch is applied in a later setup phase, so its outcome is not
 		// recorded here; an empty status is reported as not_observed, never a
 		// false "applied".
-		Observation:    observation,
-		ObservedStatus: obsStatus,
+		Observation:         observation,
+		ObservedStatus:      obsStatus,
+		LaunchOptions:       launchArgs,
+		UAChangePolicy:      uaChangePolicy,
+		IdentityScriptScope: identityScriptScope,
+		ProxyProvenance:     proxyProvenance,
+		DiagnosticGapNotes:  unavailableDiagnosticNotes,
 	})
 
 	assess := EvaluatePresentationConsistency(rep)

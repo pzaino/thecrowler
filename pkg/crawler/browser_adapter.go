@@ -70,6 +70,7 @@ func setupBrowser(wd vdi.WebDriver, ctx *ProcessContext) error {
 	// Block URLs if any (URLs firewall)
 	err = blockCDPURLs(wd, ctx)
 	if err != nil {
+		// This error is not critical; we log it but continue execution.
 		cmn.DebugMsg(cmn.DbgLvlError, "blocking URLs: %v", err)
 	}
 

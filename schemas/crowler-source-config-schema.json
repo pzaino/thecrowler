@@ -351,6 +351,13 @@
                 "items": {
                   "type": "string"
                 }
+              },
+              "url_block_patterns": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "URL patterns to block at the browser network layer using CDP."
               }
             },
             "additionalProperties": false,

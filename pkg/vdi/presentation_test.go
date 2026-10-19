@@ -2,6 +2,7 @@ package vdi
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -495,5 +496,385 @@ func TestObserveUserAgentDataReadsAllKeys(t *testing.T) {
 	}
 	if g := observeUserAgentData(map[string]interface{}{}); g != nil {
 		t.Errorf("an absent userAgentData must yield a nil observation, got %+v", g)
+	}
+}
+
+// --- PR7 additive diagnostic coverage --------------------------------------
+//
+// These tests extend the existing suite for the new, gated diagnostic surfaces.
+// They prove the known/unavailable distinction, credential redaction in the
+// launch summary, correct section separation of requested/effective/applied/
+// observed values, and that no field is ever synthesized from configuration.
+
+// TestObservedViewportParsedFromMap proves viewport and device surfaces are
+// parsed from the getBrowserConfiguration map the session already captured (no
+// new browser call). Numbers arrive as float64 (JSON-decoded), so toInt must
+// coerce float64, int and int64; absent keys stay zero/omitted.
+func TestObservedViewportParsedFromMap(t *testing.T) {
+	obs, _ := observeFromMap(map[string]interface{}{
+		"userAgent":           "Chrome/132.0.0.0",
+		"platform":            "Win32",
+		"screenWidth":         float64(1920),
+		"screenHeight":        float64(1080),
+		"innerWidth":          float64(1920),
+		"innerHeight":         float64(1032),
+		"outerWidth":          float64(1920),
+		"outerHeight":         float64(1080),
+		"deviceMemory":        float64(8),
+		"hardwareConcurrency": float64(4),
+		"plugins":             float64(2),
+	}, StatusKnown, nil, nil)
+	if obs.Viewport == nil {
+		t.Fatalf("viewport not parsed from a populated observation")
+	}
+	if obs.Viewport.ScreenWidth != 1920 || obs.Viewport.ScreenHeight != 1080 ||
+		obs.Viewport.InnerWidth != 1920 || obs.Viewport.InnerHeight != 1032 ||
+		obs.Viewport.OuterWidth != 1920 || obs.Viewport.OuterHeight != 1080 {
+		t.Errorf("viewport = %+v, want 1920x1080 / 1920x1032 inner", obs.Viewport)
+	}
+	if obs.DeviceMemory != 8 || obs.HardwareConcurrency != 4 || obs.Plugins != 2 {
+		t.Errorf("device = mem=%d hc=%d plugins=%d, want 8/4/2", obs.DeviceMemory, obs.HardwareConcurrency, obs.Plugins)
+	}
+	// toInt must coerce the numeric kinds and reject non-numbers.
+	if n, ok := toInt(int(10)); !ok || n != 10 {
+		t.Errorf("toInt(int 10) = %d,%t", n, ok)
+	}
+	if n, ok := toInt(int64(11)); !ok || n != 11 {
+		t.Errorf("toInt(int64 11) = %d,%t", n, ok)
+	}
+	if n, ok := toInt(float64(12.9)); !ok || n != 12 {
+		t.Errorf("toInt(float64 12.9) = %d,%t (want truncation to 12)", n, ok)
+	}
+	if _, ok := toInt("nope"); ok {
+		t.Errorf("toInt(non-number) reported ok")
+	}
+}
+
+// TestObservedViewportAbsentIsNotFabricated proves an observation that lacks
+// dimension/device keys does not show a fabricated empty surface — the viewport
+// stays nil (omitted) and the device fields stay zero, and a nil observation is
+// not_observed.
+func TestObservedViewportAbsentIsNotFabricated(t *testing.T) {
+	obs, _ := observeFromMap(map[string]interface{}{"userAgent": "Chrome/132", "platform": "Win32"}, StatusKnown, nil, nil)
+	if obs.Viewport != nil {
+		t.Errorf("a populated-but-undimensioned observation must not fabricate a viewport: %+v", obs.Viewport)
+	}
+	if obs.DeviceMemory != 0 || obs.HardwareConcurrency != 0 || obs.Plugins != 0 {
+		t.Errorf("device surfaces must stay zero/omitted when unobserved: %+v", obs)
+	}
+	obs2, _ := observeFromMap(nil, StatusNotObserved, nil, nil)
+	if obs2.Viewport != nil || obs2.Status != StatusNotObserved {
+		t.Errorf("nil observation must be not_observed with no viewport: %+v", obs2)
+	}
+}
+
+// TestLaunchOptionsSummaryRedactsProxy proves the launch-option summary scrubs
+// the proxy credential while preserving the host/port (so it stays diagnostic),
+// detects DNS-prefetch presence, and is JSON-safe. Benign switches are untouched.
+func TestLaunchOptionsSummaryRedactsProxy(t *testing.T) {
+	args := []string{
+		"--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
+		"--proxy-server=http://user:s3cr3t@corp.local:8080",
+		"--dns-prefetch-disable",
+		"--headless=new",
+	}
+	s := buildLaunchOptionsSummary(args)
+	if s == nil {
+		t.Fatalf("summary nil for a non-empty argv")
+	}
+	var sawProxy bool
+	for _, a := range s.Redacted {
+		if strings.Contains(a, "--proxy-server=") {
+			sawProxy = true
+			if strings.Contains(a, "s3cr3t") || strings.Contains(a, "user:s3cr3t") {
+				t.Errorf("proxy credential leaked into the launch summary: %q", a)
+			}
+			if !strings.Contains(a, "corp.local:8080") {
+				t.Errorf("proxy host/port lost in redaction: %q", a)
+			}
+		}
+	}
+	if !sawProxy {
+		t.Errorf("proxy-server switch missing from the summary: %v", s.Redacted)
+	}
+	if !hasLaunchFlag(s.Redacted, "--user-agent") {
+		t.Errorf("benign --user-agent was altered: %v", s.Redacted)
+	}
+	if !s.DNSPrefetchDisabled {
+		t.Errorf("--dns-prefetch-disable present but not detected")
+	}
+	if len(s.Duplicates) != 0 {
+		t.Errorf("unexpected duplicate switches: %v", s.Duplicates)
+	}
+	// The summary is safe to serialize end to end.
+	b, err := json.Marshal(s)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(b), "s3cr3t") {
+		t.Errorf("serialized summary leaks a credential: %s", b)
+	}
+	// An empty argv yields a nil summary, never a fabricated empty slice.
+	if buildLaunchOptionsSummary(nil) != nil {
+		t.Errorf("nil argv must yield a nil summary")
+	}
+	if buildLaunchOptionsSummary([]string{}) != nil {
+		t.Errorf("empty argv must yield a nil summary")
+	}
+}
+
+// TestLaunchOptionsDuplicateSwitches proves a repeated switch is a recorded
+// coherence signal in first-seen order, while unique switches are not flagged.
+func TestLaunchOptionsDuplicateSwitches(t *testing.T) {
+	s := buildLaunchOptionsSummary([]string{
+		"--headless=new", "--no-sandbox", "--headless=new", "--disable-gpu", "--no-sandbox",
+	})
+	if s == nil {
+		t.Fatalf("summary nil")
+	}
+	want := []string{"--headless=new", "--no-sandbox"}
+	if !reflect.DeepEqual(s.Duplicates, want) {
+		t.Errorf("duplicates = %v, want %v (first-seen order)", s.Duplicates, want)
+	}
+	if got := buildLaunchOptionsSummary([]string{"--a", "--b", "--c"}).Duplicates; len(got) != 0 {
+		t.Errorf("unique switches must not be flagged: %v", got)
+	}
+	// A single occurrence is not a duplicate; a double occurrence with an
+	// intervening switch must still report first-seen order.
+	if got := buildLaunchOptionsSummary([]string{"--a", "--b", "--a"}).Duplicates; !reflect.DeepEqual(got, []string{"--a"}) {
+		t.Errorf("spaced duplicates = %v, want [--a]", got)
+	}
+}
+
+// TestReportWithLaunchOptionsJSONSafe proves a credentialed --proxy-server launch
+// argument cannot leak a proxy credential through JSON serialization of the whole
+// report, while the host/port survive for diagnosis.
+func TestReportWithLaunchOptionsJSONSafe(t *testing.T) {
+	rep := BuildPresentationReport(PresentationInput{
+		Proxy:          "http://user:s3cr3t@corp.local:8080",
+		ProxyRequested: true,
+		LaunchOptions:  []string{"--proxy-server=http://user:s3cr3t@corp.local:8080", "--headless=new"},
+		Observation:    map[string]interface{}{"userAgent": "Chrome/132", "platform": "Win32"},
+		ObservedStatus: StatusKnown,
+	})
+	b, err := json.Marshal(rep)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	s := string(b)
+	if strings.Contains(s, "s3cr3t") || strings.Contains(s, "user:s3cr3t") {
+		t.Errorf("report leaks a proxy credential through launch options: %s", s)
+	}
+	if !strings.Contains(s, "corp.local:8080") {
+		t.Errorf("proxy host/port lost in launch-summary redaction: %s", s)
+	}
+}
+
+// TestProxyProvenanceLayer pins the proxy-provenance attribution against the real
+// effectiveSessionProxy composition for every precedence branch, so a proxy layer
+// is never attributed to the wrong setting. The layer helper is a pure mirror of
+// the composition, so its output is always reconcilable with the effective value.
+func TestProxyProvenanceLayer(t *testing.T) {
+	cases := []struct {
+		name       string
+		source     string
+		sourceOK   bool
+		custom     string
+		vdiDefault string
+		wantLayer  string
+	}{
+		{"source_wins_over_custom_and_vdi", "http://src:1", true, "http://custom:2", "http://vdi:3", "source"},
+		{"source_no_proxy_forces_direct_over_custom", "no_proxy", true, "http://custom:2", "http://vdi:3", "no_proxy"},
+		{"source_empty_falls_to_custom", "   ", true, "http://custom:2", "http://vdi:3", "custom_vdi"},
+		{"source_absent_custom", "", false, "http://custom:2", "http://vdi:3", "custom_vdi"},
+		{"custom_no_proxy_forces_direct", "", false, "no_proxy", "http://vdi:3", "no_proxy"},
+		{"custom_empty_falls_to_vdi", "   ", false, "  ", "http://vdi:3", "vdi_default"},
+		{"all_empty_none", "", false, "", "", "none"},
+		{"source_present_but_not_ok_ignored", "http://src:1", false, "", "", "none"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			eff := effectiveSessionProxy(c.source, c.sourceOK, c.custom, c.vdiDefault)
+			got := proxyProvenanceLayer(c.source, c.sourceOK, c.custom, eff)
+			if got != c.wantLayer {
+				t.Errorf("layer = %q for effective=%q, want %q", got, redactProxyURL(eff), c.wantLayer)
+			}
+		})
+	}
+}
+
+// TestRegistrationScopePassesThrough proves the registration scope is a structural
+// fact that the builder passes through verbatim (never inferred from config): a
+// CDP-applied script reports a session-scoped new-document registration, a
+// non-CDP engine reports not_applied, and an unscoped input fabricates nothing.
+func TestRegistrationScopePassesThrough(t *testing.T) {
+	applied := BuildPresentationReport(PresentationInput{
+		IdentityScript:      ActionApplied(),
+		IdentityScriptScope: "new_document_session",
+	})
+	if applied.Applied.RegistrationScope != "new_document_session" {
+		t.Errorf("registration scope = %q, want new_document_session", applied.Applied.RegistrationScope)
+	}
+	none := BuildPresentationReport(PresentationInput{
+		IdentityScript:      ActionNotRequested(),
+		IdentityScriptScope: "not_applied",
+	})
+	if none.Applied.RegistrationScope != "not_applied" {
+		t.Errorf("registration scope = %q, want not_applied", none.Applied.RegistrationScope)
+	}
+	if got := BuildPresentationReport(PresentationInput{}).Applied.RegistrationScope; got != "" {
+		t.Errorf("an unscoped input must not fabricate a registration scope, got %q", got)
+	}
+}
+
+// TestDiagnosticGapsSurfaceUntrackedRequirements proves the explicitly-unavailable
+// v2.1 diagnostics (config generation, per-setting ownership, rotation lifecycle)
+// are surfaced as documented gaps rather than fabricated, and that an input with
+// no gap data emits no gap section.
+func TestDiagnosticGapsSurfaceUntrackedRequirements(t *testing.T) {
+	const note = "config_generation: untracked — no reload generation counter"
+	rep := BuildPresentationReport(PresentationInput{
+		ProxyProvenance:    "custom_vdi",
+		DiagnosticGapNotes: []string{note},
+	})
+	if rep.DiagnosticGaps == nil {
+		t.Fatalf("diagnostic gaps not surfaced")
+	}
+	if rep.DiagnosticGaps.ProxyProvenance != "custom_vdi" {
+		t.Errorf("proxy provenance = %q, want custom_vdi", rep.DiagnosticGaps.ProxyProvenance)
+	}
+	if len(rep.DiagnosticGaps.Notes) != 1 || rep.DiagnosticGaps.Notes[0] != note {
+		t.Errorf("gap notes = %v, want [%q]", rep.DiagnosticGaps.Notes, note)
+	}
+	// No provenance and no notes -> no gap section (not a fabricated one).
+	if got := BuildPresentationReport(PresentationInput{}).DiagnosticGaps; got != nil {
+		t.Errorf("an input with no gap data must carry no DiagnosticGaps section, got %+v", got)
+	}
+
+	// The gap notes must not alias the caller's slice: a consumer may mutate a
+	// report's notes without corrupting the source or other reports.
+	src := []string{}
+	repA := BuildPresentationReport(PresentationInput{DiagnosticGapNotes: append(src, "a")})
+	// Append to the source slice; the built report must be unaffected.
+	src = append(src, "corrupted-after-build")
+	if len(repA.DiagnosticGaps.Notes) != 1 || repA.DiagnosticGaps.Notes[0] != "a" {
+		t.Errorf("report notes must not alias the source slice: %+v", repA.DiagnosticGaps.Notes)
+	}
+	// Mutating the built report must not affect a subsequent build.
+	if repA.DiagnosticGaps.Notes != nil {
+		repA.DiagnosticGaps.Notes[0] = "mutated"
+	}
+	repB := BuildPresentationReport(PresentationInput{DiagnosticGapNotes: append([]string{}, "b")})
+	if repB.DiagnosticGaps.Notes[0] != "b" {
+		t.Errorf("subsequent report mutated through repA's build: %+v", repB.DiagnosticGaps.Notes)
+	}
+}
+
+// TestReportSectionSeparation proves the new PR7 fields land in exactly their
+// Requested / Effective / Applied / Observed sections, so a consumer can never
+// confuse a requested value with an effective, an applied registration with an
+// observed surface, or a diagnostic gap with a section value. (The type system
+// enforces each field lives on exactly one section struct; this pins the wiring.)
+func TestReportSectionSeparation(t *testing.T) {
+	rep := BuildPresentationReport(PresentationInput{
+		BrowserType:  "chrome",
+		DeviceClass:  "desktop",
+		AdvertisedOS: "windows",
+		Language:     "en-US",
+		UserAgent:    "Mozilla/5.0 Chrome/132.0.0.0",
+		Product:      "chrome",
+		Family:       "chromium",
+		ResolvedOS:   "windows",
+		Identity:     MapAdvertisedOSIdentity("windows", false),
+		Brands:       ClientHintBrandsFor("chrome", "132", "132"),
+		Details:      NewClientHintsDetails("Mozilla/5.0 Chrome/132.0.0.0", "chrome", MapAdvertisedOSIdentity("windows", false)),
+		// Requested: the configured rotation policy.
+		UAChangePolicy: "on_start",
+		// Effective: the (redacted) launch argv.
+		LaunchOptions: []string{"--user-agent=Mozilla/5.0 Chrome/132.0.0.0", "--dns-prefetch-disable"},
+		// Applied: the registration scope.
+		IdentityScriptScope: "new_document_session",
+		IdentityScript:      ActionApplied(),
+		// Observed: viewport / device from the already-taken observation.
+		Observation: map[string]interface{}{
+			"userAgent":    "Mozilla/5.0 Chrome/132.0.0.0",
+			"platform":     "Win32",
+			"screenWidth":  float64(1920),
+			"screenHeight": float64(1080),
+			"deviceMemory": float64(8),
+			"plugins":      float64(2),
+		},
+		ObservedStatus: StatusKnown,
+		// Diagnostics.
+		ProxyProvenance:    "custom_vdi",
+		DiagnosticGapNotes: []string{"setting_ownership: unrecorded"},
+	})
+	if rep.Requested.UAChangePolicy != "on_start" {
+		t.Errorf("UAChangePolicy not wired into Requested: %q", rep.Requested.UAChangePolicy)
+	}
+	if rep.Effective.LaunchOptions == nil || len(rep.Effective.LaunchOptions.Redacted) != 2 {
+		t.Errorf("LaunchOptions not wired into Effective: %+v", rep.Effective.LaunchOptions)
+	}
+	if rep.Applied.RegistrationScope != "new_document_session" {
+		t.Errorf("RegistrationScope not wired into Applied: %q", rep.Applied.RegistrationScope)
+	}
+	if rep.Observed.Viewport == nil || rep.Observed.Viewport.ScreenWidth != 1920 || rep.Observed.DeviceMemory != 8 {
+		t.Errorf("viewport/device not wired into Observed: %+v / mem=%d", rep.Observed.Viewport, rep.Observed.DeviceMemory)
+	}
+	if rep.DiagnosticGaps == nil || rep.DiagnosticGaps.ProxyProvenance != "custom_vdi" {
+		t.Errorf("DiagnosticGaps not surfaced: %+v", rep.DiagnosticGaps)
+	}
+}
+
+// TestNewFieldsJSONRoundTrip proves the additive diagnostic fields survive a JSON
+// round-trip and that a credentialed launch argument cannot leak through them.
+func TestNewFieldsJSONRoundTrip(t *testing.T) {
+	rep := BuildPresentationReport(PresentationInput{
+		UAChangePolicy:      "always",
+		LaunchOptions:       []string{"--dns-prefetch-disable", "--proxy-server=http://u:s3cr3t@h:8080"},
+		IdentityScriptScope: "new_document_session",
+		IdentityScript:      ActionApplied(),
+		ProxyProvenance:     "vdi_default",
+		DiagnosticGapNotes:  []string{"lifecycle_state: unobserved at connection time"},
+		Observation: map[string]interface{}{
+			"userAgent":           "Chrome/132",
+			"platform":            "Win32",
+			"screenWidth":         float64(1280),
+			"screenHeight":        float64(720),
+			"deviceMemory":        float64(4),
+			"hardwareConcurrency": float64(8),
+		},
+		ObservedStatus: StatusKnown,
+	})
+	b, err := json.Marshal(rep)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var back PresentationReport
+	if err := json.Unmarshal(b, &back); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if back.Requested.UAChangePolicy != "always" {
+		t.Errorf("UAChangePolicy round-trip = %q, want always", back.Requested.UAChangePolicy)
+	}
+	if back.Applied.RegistrationScope != "new_document_session" {
+		t.Errorf("RegistrationScope round-trip = %q, want new_document_session", back.Applied.RegistrationScope)
+	}
+	if back.Effective.LaunchOptions == nil || !back.Effective.LaunchOptions.DNSPrefetchDisabled ||
+		len(back.Effective.LaunchOptions.Redacted) != 2 {
+		t.Errorf("LaunchOptions round-trip = %+v", back.Effective.LaunchOptions)
+	}
+	if back.DiagnosticGaps == nil || back.DiagnosticGaps.ProxyProvenance != "vdi_default" {
+		t.Errorf("DiagnosticGaps round-trip = %+v", back.DiagnosticGaps)
+	}
+	if back.Observed.Viewport == nil || back.Observed.Viewport.ScreenWidth != 1280 {
+		t.Errorf("viewport round-trip = %+v", back.Observed.Viewport)
+	}
+	if back.Observed.HardwareConcurrency != 8 || back.Observed.DeviceMemory != 4 {
+		t.Errorf("device round-trip = hc %d mem %d, want 8/4", back.Observed.HardwareConcurrency, back.Observed.DeviceMemory)
+	}
+	// The scrubbed credential must not survive the round-trip.
+	if strings.Contains(string(b), "s3cr3t") || strings.Contains(string(b), "u:s3cr3t") {
+		t.Errorf("credential leaked through the launch-options round-trip: %s", b)
 	}
 }

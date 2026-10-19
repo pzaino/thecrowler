@@ -358,6 +358,13 @@ func TestPresentationDiagnosticsRealBrowser(t *testing.T) {
 		phaseBase := "http://" + net.JoinHostPort(fixtureHost,
 			mustPort(t, phaseListener.Addr().String()))
 
+		// Non-fabrication invariant shared by every phase below: a missing or
+		// unobserved signal is recorded (a log / skip), never promoted to a
+		// passing check, and a successful navigation is never read as an HTTP
+		// status. The phases are distinguished by their OBSERVED signals, not by
+		// an absence of error.
+		t.Logf("phase fixture distinguishes HTTP / redirect / network / JS phases; unobserved signals stay explicit, not passing")
+
 		// HTTP status phase: a 403 / 404 is a server-side denial (HTTP phase),
 		// distinct from a network/route failure — navigation itself succeeds as
 		// the browser loads the error page.
@@ -367,6 +374,11 @@ func TestPresentationDiagnosticsRealBrowser(t *testing.T) {
 					t.Logf("HTTP status phase %q navigation recorded: %v", p, err)
 				} else {
 					t.Logf("HTTP status phase %q: error page loaded (HTTP phase, not a network/route failure)", p)
+					// Non-fabrication invariant: a nil navigation error means the
+					// browser LOADED the (error) page, not that the server
+					// returned 200. This VDI layer surfaces no HTTP status, so a
+					// consumer must not infer one from a successful navigation.
+					t.Logf("HTTP status not asserted for %q: a successful navigation is not evidence of HTTP 200; status comes only from an observed recorder surface", p)
 				}
 			}
 		})
@@ -498,6 +510,11 @@ func TestPresentationDiagnosticsRealBrowser(t *testing.T) {
 		if got := proxy.count(); got < 1 {
 			t.Errorf("dummy proxy received %d requests, expected at least one", got)
 		}
+		// Non-fabrication invariant: a configured proxy with a forwarding
+		// hit-count proves the proxy was USED (egress evidence) but does NOT
+		// establish an exit IP, session affinity, or any WAF causality. Those
+		// remain unobserved and are asserted nowhere; only the forwarding is evidenced.
+		t.Logf("proxy egress evidenced only by the forwarding hit-count; exit-IP / session-affinity / WAF causality are NOT inferred from a configured proxy and remain unobserved")
 	})
 }
 
