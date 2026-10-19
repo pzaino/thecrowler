@@ -314,6 +314,66 @@ func TestGPUPatchChecks(t *testing.T) {
 	}
 }
 
+// TestGPUPatchApplicationMatrix exercises BuildPresentationReport end to end so a
+// requested GPU patch whose outcome has not yet been observed can never be
+// reported as a fabricated success, while the explicit outcomes (applied,
+// failed-to-apply, unsupported) are preserved. Each case asserts the builder's
+// applied status, the consistency verdict, and that the status survives a JSON
+// round-trip.
+func TestGPUPatchApplicationMatrix(t *testing.T) {
+	cases := []struct {
+		name        string
+		requested   bool
+		apply       ApplyStatus
+		wantStatus  DiagnosticStatus
+		wantVerdict ConsistencyVerdict
+	}{
+		{"disabled_not_requested", false, ApplyStatus{}, StatusNotRequested, VerdictNotRequested},
+		{"enabled_unobserved", true, ApplyStatus{}, StatusNotObserved, VerdictNotObserved},
+		{"enabled_explicit_applied", true, ActionApplied(), StatusApplied, VerdictConsistent},
+		{"enabled_explicit_failed", true, ActionApplyFailed("no GPU device"), StatusApplyFailed, VerdictFailedToApply},
+		{"enabled_unsupported", true, ActionUnsupported("engine lacks the patch"), StatusUnsupported, VerdictInformational},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rep := BuildPresentationReport(PresentationInput{
+				GPUPatchRequested: c.requested,
+				GPUPatch:          c.apply,
+			})
+			if got := rep.Applied.GPUPatch.Status; got != c.wantStatus {
+				t.Errorf("builder status = %q, want %q", got, c.wantStatus)
+			}
+			// The core invariant: a requested-but-unobserved patch is never a
+			// fabricated "applied" (the regression this fix guards).
+			if c.requested && c.wantStatus != StatusApplied && rep.Applied.GPUPatch.Status == StatusApplied {
+				t.Fatalf("a requested GPU patch (%s) was reported as applied", c.name)
+			}
+			r, ok := findCheck(EvaluatePresentationConsistency(rep), "gpu_patch_applied")
+			if !ok {
+				t.Fatal("gpu_patch_applied check missing from assessment")
+			}
+			if r.Verdict != c.wantVerdict {
+				t.Errorf("verdict = %v, want %v", r.Verdict, c.wantVerdict)
+			}
+			// Serialization preserves the correct status.
+			b, err := json.Marshal(rep)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			var back PresentationReport
+			if err := json.Unmarshal(b, &back); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if back.Applied.GPUPatch.Status != c.wantStatus {
+				t.Errorf("round-tripped status = %q, want %q", back.Applied.GPUPatch.Status, c.wantStatus)
+			}
+			if !strings.Contains(string(b), `"`+string(c.wantStatus)+`"`) {
+				t.Errorf("status %q absent from serialized report: %s", c.wantStatus, b)
+			}
+		})
+	}
+}
+
 func TestCapabilityAbsentNotFaultBrokenIs(t *testing.T) {
 	// A requested WebGL that is simply absent is unsupported (NOT a fault), while
 	// a broken (fabricated) one is a mismatch.

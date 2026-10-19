@@ -266,7 +266,12 @@ func BuildPresentationReport(in PresentationInput) PresentationReport {
 	if !in.GPUPatchRequested {
 		gpuApply = ActionNotRequested()
 	} else if gpuApply.Status == "" {
-		gpuApply = ActionApplied()
+		// Requested, but no application outcome was supplied: the GPU patch is
+		// applied in a later setup phase, so its outcome is not observed yet.
+		// Report not_observed rather than a fabricated success; an explicit
+		// applied / failed / unsupported status from the input falls through
+		// and is preserved.
+		gpuApply = ApplyStatus{Status: StatusNotObserved}
 	}
 	obs, _ := observeFromMap(in.Observation, in.ObservedStatus, in.HTTPClientHints, in.Capabilities)
 	return PresentationReport{

@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	cmn "github.com/pzaino/thecrowler/pkg/common"
 )
 
 // TestRedactCDPParamsRedactsSensitiveValues proves the verbose-log redactor
@@ -167,4 +169,27 @@ func cloneParams(m map[string]interface{}) map[string]interface{} {
 		}
 	}
 	return out
+}
+
+// TestRedactionGuardPolarity pins the level comparison ExecuteCDPCommand uses to
+// skip the log-only, recursive redaction when Debug5 is disabled. Redaction never
+// alters the parameters handed to the driver, so the guard controls only whether
+// the verbose copy is built: it must be false below Debug5 (so no redaction work
+// or allocation happens) and true at Debug5 (so sensitive material is masked).
+func TestRedactionGuardPolarity(t *testing.T) {
+	prev := cmn.GetDebugLevel()
+	defer cmn.SetDebugLevel(prev)
+
+	cmn.SetDebugLevel(cmn.DbgLvlInfo)
+	if cmn.GetDebugLevel() >= cmn.DbgLvlDebug5 {
+		t.Fatalf("redaction must be skipped when the level is below Debug5 (Info)")
+	}
+	cmn.SetDebugLevel(cmn.DbgLvlDebug4)
+	if cmn.GetDebugLevel() >= cmn.DbgLvlDebug5 {
+		t.Fatalf("redaction must be skipped one level below Debug5 (Debug4)")
+	}
+	cmn.SetDebugLevel(cmn.DbgLvlDebug5)
+	if cmn.GetDebugLevel() < cmn.DbgLvlDebug5 {
+		t.Fatalf("redaction must run when Debug5 is enabled")
+	}
 }
