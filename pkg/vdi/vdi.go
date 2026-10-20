@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -636,6 +638,9 @@ func ResetVDI(ctx ProcessContextInterface, browserType int) error {
 	vdi := ctx.GetWebDriver()
 
 	if vdi != nil && *vdi != nil {
+		// Drop the tracked identity-script registration for the outgoing
+		// session (bookkeeping only; the session itself is ending).
+		forgetIdentityScript((*vdi).SessionID())
 		// Quit current session
 		_ = (*vdi).Close()
 		_ = (*vdi).Quit()
@@ -731,6 +736,421 @@ func waitForVDIRetry(ctx ProcessContextInterface, delay time.Duration) error {
 	}
 }
 
+// baseBrowserArgs returns the launch arguments derived from
+// browserSettingsMap for the given Selenium browser type.
+//
+// Preservation note: the map key is lowercase "windowSize".
+// The previous lookup used "WindowSize", which never matched, so
+// --window-size=1920,1080 was silently dropped for Chrome/Chromium. Only the
+// key spelling is corrected; the map contents and selection semantics are
+// unchanged.
+func baseBrowserArgs(selType string) []string {
+	var args []string
+	keys := []string{"windowSize", "initialWindow", "gpu", "headless", "javascript", "incognito"}
+	for _, key := range keys {
+		if value, ok := browserSettingsMap[selType][key]; ok && value != "" {
+			args = append(args, value)
+		}
+	}
+	return args
+}
+
+// chromeDisabledFeaturesValue returns the single comma-joined value for the
+// Chromium --disable-features switch, preserving every feature the
+// configuration intends to disable.
+//
+// Preservation note: the previous code appended up to four
+// separate --disable-features flags (UserAgentClientHint, Battery,
+// IsolateOrigins/site-per-process, SameSiteByDefaultCookies). Chromium honors
+// a single value per switch, so only the last flag took effect and the rest
+// were silently lost. The union of intended features is unchanged; only the
+// encoding is corrected to one flag.
+func chromeDisabledFeaturesValue(resetCookiesPolicy string, noThirdPartyCookies bool) string {
+	features := []string{"UserAgentClientHint", "Battery"}
+	if resetCookiesPolicy != "" && resetCookiesPolicy != "none" {
+		features = append(features, "IsolateOrigins", "site-per-process")
+		if noThirdPartyCookies {
+			features = append(features, "SameSiteByDefaultCookies")
+		}
+	}
+	return strings.Join(features, ",")
+}
+
+// chromeBlinkSettingsValue returns the single comma-joined value for the
+// Chromium --blink-settings switch, preserving all four resource policies.
+//
+// Preservation note: the previous code appended four separate
+// --blink-settings flags, so only the last one (PluginsEnabled) took effect.
+// Key spellings are kept exactly as configured; validity of individual keys
+// against the pinned Chromium is covered by real-browser integration
+// validation, not asserted here.
+func chromeBlinkSettingsValue(requestImages, requestCSS, requestScripts, requestPlugins bool) string {
+	return fmt.Sprintf("imagesEnabled=%t,CSSImagesEnabled=%t,JavaScriptEnabled=%t,PluginsEnabled=%t",
+		requestImages, requestCSS, requestScripts, requestPlugins)
+}
+
+// resolveEffectiveProxyURL applies the existing source-vs-VDI proxy
+// precedence without changing its semantics: an absent source key (ok=false,
+// including source-JSON unmarshal failure at the caller) or an empty source
+// value inherits the VDI default; the exact sentinel "no_proxy" forces a
+// direct connection; otherwise the trimmed source value wins.
+func resolveEffectiveProxyURL(sourceProxy string, ok bool, vdiProxy string) string {
+	if !ok {
+		return vdiProxy
+	}
+	trimmed := strings.TrimSpace(sourceProxy)
+	if trimmed == "" {
+		return vdiProxy
+	}
+	if trimmed == "no_proxy" {
+		return ""
+	}
+	return trimmed
+}
+
+// proxyBypassList returns the hosts that bypass the proxy: always
+// localhost, plus the detected local network when available. Shared by the
+// Chromium CLI bypass flag and the Firefox proxy capability so both agree.
+func proxyBypassList() []string {
+	bypass := []string{"localhost"}
+	if localNet, err := cmn.DetectLocalNetwork(); err == nil && strings.TrimSpace(localNet) != "" {
+		bypass = append(bypass, localNet)
+	}
+	return bypass
+}
+
+// firefoxProxyCapability converts a downstream proxy listener URL into
+// the W3C WebDriver proxy capability expected by Firefox/geckodriver.
+//
+// MicroProxy handles upstream authentication and routing. The browser
+// connects only to the configured downstream listener.
+//
+// A nil capability means direct browsing; invalid proxy configurations
+// return an error instead of silently falling back to a direct connection.
+func firefoxProxyCapability(effectiveProxy string) (*selenium.Proxy, error) {
+	effectiveProxy = strings.TrimSpace(effectiveProxy)
+	if effectiveProxy == "" {
+		return nil, nil
+	}
+
+	parsed, err := url.Parse(effectiveProxy)
+	if err != nil {
+		return nil, fmt.Errorf("invalid Firefox proxy URL")
+	}
+
+	// No browser-side proxy authentication.
+	if parsed.User != nil {
+		return nil, fmt.Errorf("Firefox proxy listener must not require authentication")
+	}
+
+	// The proxy configuration must identify a listener, not an HTTP resource.
+	if parsed.Hostname() == "" ||
+		parsed.Path != "" ||
+		parsed.RawQuery != "" ||
+		parsed.Fragment != "" {
+		return nil, fmt.Errorf("invalid Firefox proxy listener endpoint")
+	}
+
+	port, err := strconv.Atoi(parsed.Port())
+	if err != nil || port < 1 || port > 65535 {
+		return nil, fmt.Errorf("invalid Firefox proxy listener port")
+	}
+
+	// W3C WebDriver expects host:port, not scheme://host:port.
+	// JoinHostPort also handles IPv6 addresses correctly.
+	address := net.JoinHostPort(parsed.Hostname(), strconv.Itoa(port))
+
+	proxy := &selenium.Proxy{
+		Type:    selenium.Manual,
+		NoProxy: proxyBypassList(),
+	}
+
+	switch strings.ToLower(parsed.Scheme) {
+	case "http":
+		// An HTTP forward proxy can handle both HTTP requests
+		// and HTTPS destinations through CONNECT.
+		proxy.HTTP = address
+		proxy.SSL = address
+
+	case "socks5":
+		proxy.SOCKS = address
+		proxy.SOCKSVersion = 5
+
+	default:
+		return nil, fmt.Errorf(
+			"unsupported Firefox proxy listener scheme %q",
+			parsed.Scheme,
+		)
+	}
+
+	return proxy, nil
+}
+
+// customSeleniumProxyURL returns the per-source proxy override merged from
+// custom.vdi for the VDI with the given name, or "" when absent.
+// The merge is positional, so the leased instance is matched by name against
+// the current process configuration; a missing name (or empty process list)
+// safely yields no override. Callers treat "" as "no override".
+func customSeleniumProxyURL(processCfg cfg.Config, vdiName string) string {
+	vdiName = strings.TrimSpace(vdiName)
+	if vdiName == "" {
+		return ""
+	}
+	for _, sel := range processCfg.Selenium {
+		if strings.TrimSpace(sel.Name) == vdiName {
+			return strings.TrimSpace(sel.ProxyURL)
+		}
+	}
+	return ""
+}
+
+// effectiveSessionProxy composes the three proxy layers without changing
+// their individual semantics: the top-level source proxy_url
+// wins when present (value or no_proxy sentinel); otherwise the merged
+// custom.vdi override applies; otherwise the VDI default. An
+// unparseable source document behaves like an absent top-level key.
+func effectiveSessionProxy(sourceProxy string, sourceOK bool, customProxy, vdiProxy string) string {
+	base := vdiProxy
+	if customProxy = strings.TrimSpace(customProxy); customProxy != "" {
+		if customProxy == "no_proxy" {
+			base = ""
+		} else {
+			base = customProxy
+		}
+	}
+	return resolveEffectiveProxyURL(sourceProxy, sourceOK, base)
+}
+
+// redactProxyURL removes authentication secrets from a proxy URL for
+// diagnostics: "http://user:pass@host:port" becomes
+// "http://***@host:port". Scheme, host, port, and path are preserved so logs
+// stay useful, including for misconfigured values (an operator must see a
+// malformed value to fix it). Only userinfo-shaped credentials are scrubbed;
+// values with "@" but no usable host yield a fixed placeholder (never the
+// secret).
+func redactProxyURL(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	if at := strings.LastIndex(trimmed, "@"); at >= 0 {
+		host := trimmed[at+1:]
+		if host == "" || strings.ContainsAny(host, " \t") {
+			return "redacted-invalid-proxy"
+		}
+		if scheme := strings.Index(trimmed, "://"); scheme >= 0 && scheme < at {
+			return trimmed[:scheme+3] + "***@" + host
+		}
+		return "***@" + host
+	}
+	return trimmed
+}
+
+// redactProxyArgs copies args with --proxy-server values redacted.
+func redactProxyArgs(args []string) []string {
+	if args == nil {
+		return nil
+	}
+	const prefix = "--proxy-server="
+	out := make([]string, len(args))
+	for i, a := range args {
+		if strings.HasPrefix(a, prefix) {
+			out[i] = prefix + redactProxyURL(strings.TrimPrefix(a, prefix))
+		} else {
+			out[i] = a
+		}
+	}
+	return out
+}
+
+// redactedCapabilities returns a copy of caps with proxy credentials
+// scrubbed from browser arguments, for debug logging. The input
+// map and nested option structs are never mutated.
+func redactedCapabilities(caps selenium.Capabilities) selenium.Capabilities {
+	if caps == nil {
+		return nil
+	}
+	out := make(selenium.Capabilities, len(caps))
+	for k, v := range caps {
+		out[k] = v
+	}
+	if cc, ok := out[chrome.CapabilitiesKey].(chrome.Capabilities); ok {
+		cc.Args = redactProxyArgs(cc.Args)
+		out[chrome.CapabilitiesKey] = cc
+	}
+	if cc, ok := out[chrome.DeprecatedCapabilitiesKey].(chrome.Capabilities); ok {
+		cc.Args = redactProxyArgs(cc.Args)
+		out[chrome.DeprecatedCapabilitiesKey] = cc
+	}
+	if fc, ok := out[firefox.CapabilitiesKey].(firefox.Capabilities); ok {
+		fc.Args = redactProxyArgs(fc.Args)
+		out[firefox.CapabilitiesKey] = fc
+	}
+	return out
+}
+
+// buildChromeCapabilities assembles goog:chromeOptions with ExcludeSwitches
+// at the capability level, where ChromeDriver reads it.
+//
+// Preservation note: "excludeSwitches" was previously placed
+// inside the prefs dictionary, where ChromeDriver ignores it, so
+// --enable-automation was never excluded. "useAutomationExtension" has no
+// supported equivalent in this Selenium binding (go-auxiliaries/selenium
+// v0.9.10 chrome.Capabilities exposes only ExcludeSwitches) or in modern
+// ChromeDriver, so it is dropped from prefs where it was inert. The
+// automation-hiding intent is preserved through ExcludeSwitches together
+// with the existing --disable-blink-features=AutomationControlled flag.
+func buildChromeCapabilities(args []string, prefs map[string]interface{}) chrome.Capabilities {
+	return chrome.Capabilities{
+		Args:            args,
+		ExcludeSwitches: []string{"enable-automation"},
+		W3C:             true,
+		Prefs:           prefs,
+	}
+}
+
+// buildLaunchArgs assembles the browser command-line arguments for a VDI
+// session. It is a pure function of its inputs (apart from the local-network
+// probe used for the proxy bypass list) so launch-argument defects can be
+// covered by unit tests without a live Selenium server.
+//
+// Preservation notes: every previously emitted
+// capability is still emitted. Changed encodings only:
+//   - window size now resolves via baseBrowserArgs (case fix);
+//   - one --disable-features flag (union preserved);
+//   - one --blink-settings flag (all four policies preserved);
+//   - the --proxy-server flag uses the resolved effective proxy;
+//   - exact-duplicate flags (--disable-webrtc, --disable-plugins,
+//     --disable-extensions) appear once;
+//   - the two --host-resolver-rules flags are removed (MAP * <ip> rewrites
+//     every hostname to a fixed destination instead of selecting a resolver,
+//     and the second entry was malformed); --dns-prefetch-disable is retained
+//     and proxy egress still carries DNS when configured.
+func buildLaunchArgs(browser, selType, userAgent string, crawler cfg.Crawler, effectiveProxy string) []string {
+	var args []string
+
+	// Base map entries (window size, maximized, gpu, headless, javascript,
+	// incognito).
+	args = append(args, baseBrowserArgs(selType)...)
+
+	// User agent.
+	args = append(args, "--user-agent="+userAgent)
+
+	if browser == BrowserChrome || browser == BrowserChromium {
+		args = append(args, "--incognito")                              // Run in incognito mode
+		args = append(args, "--disable-client-side-phishing-detection") // Disable client-side phishing detection
+		args = append(args, "--disable-component-update")               // Disable component updates
+		args = append(args, "--no-first-run")
+	}
+
+	// Proxy settings use the resolved effective proxy (the previous code
+	// resolved the per-source value but then emitted the VDI-global string
+	// in the flag). Chromium-family browsers take it as
+	// CLI flags; Firefox has no --proxy-server switch, so it receives the
+	// standard W3C proxy capability instead (see the firefox branch and
+	// firefoxProxyCapability).
+	if effectiveProxy != "" && browser != BrowserFirefox {
+		args = append(args, "--proxy-server="+effectiveProxy)
+		args = append(args, "--force-proxy-for-all")
+		args = append(args, "--proxy-bypass-list="+strings.Join(proxyBypassList(), ","))
+	}
+
+	// General settings
+	if browser == BrowserChrome || browser == BrowserChromium {
+		args = append(args, "--disable-software-rasterizer")
+		args = append(args, "--use-fake-ui-for-media-stream")
+	}
+
+	// Avoid funny localizations/detections
+	if browser == BrowserChrome || browser == BrowserChromium {
+		// DNS privacy: prefetch disabling is retained. The previous pair of
+		// --host-resolver-rules flags is intentionally not emitted (see the
+		// function documentation). Proxy egress carries DNS when a proxy is
+		// configured, system DNS otherwise.
+		args = append(args, "--dns-prefetch-disable")
+
+		// Reduce geolocation leaks
+		args = append(args, "--disable-geolocation")
+		args = append(args, "--disable-notifications")
+		args = append(args, "--disable-quic")
+		args = append(args, "--disable-blink-features=AutomationControlled")
+
+		// Reduce Hardware fingerprinting
+		args = append(args, "--override-hardware-concurrency=4")
+		args = append(args, "--override-device-memory=4")
+
+		// Reduce Browser fingerprinting
+		args = append(args, "--disable-infobars")
+		args = append(args, "--disable-extensions")
+		args = append(args, "--disable-plugins")
+		args = append(args, "--disable-plugins-discovery")
+		args = append(args, "--disable-peer-to-peer")
+
+		// Disable WebRTC
+		args = append(args, "--disable-rtc-smoothness-algorithm")
+		args = append(args, "--disable-webrtc")
+		args = append(args, "--force-webrtc-ip-handling-policy=disable_non_proxied_udp")
+		args = append(args, "--webrtc-ip-handling-policy=default_public_interface_only")
+		args = append(args, "--webrtc-max-cpu-consumption-percentage=1")
+		args = append(args, "--disable-webrtc-multiple-routes")
+		args = append(args, "--disable-webrtc-hw-encoding")
+		args = append(args, "--disable-webrtc-hw-decoding")
+		args = append(args, "--disable-webrtc-encryption")
+
+		// Disable WebUSB
+		args = append(args, "--disable-webusb")
+
+		// Disable WebBluetooth
+		args = append(args, "--disable-web-bluetooth")
+
+		args = append(args, "--disable-popup-blocking")
+
+		// Ensure Screen Resolution is correct
+		args = append(args, "--force-device-scale-factor=1")
+
+		// Enable/Disable JavaScript, Images, CSS, and Plugins requests
+		// based on user's configuration (single flag; all four preserved).
+		args = append(args, "--blink-settings="+chromeBlinkSettingsValue(
+			crawler.RequestImages, crawler.RequestCSS, crawler.RequestScripts, crawler.RequestPlugins))
+
+		// Reduce Cookie based tracking
+		if crawler.ResetCookiesPolicy != "" && crawler.ResetCookiesPolicy != "none" {
+			args = append(args, "--disable-site-isolation-trials")
+		}
+		// Single --disable-features flag (union of intended disables).
+		args = append(args, "--disable-features="+chromeDisabledFeaturesValue(
+			crawler.ResetCookiesPolicy, crawler.NoThirdPartyCookies))
+
+		// Disable video auto-play:
+		//args = append(args, "--autoplay-policy=user-required") // this option does't work and cause chrome/chromium to crash
+	}
+
+	// Append logging settings if available
+	args = append(args, "--enable-logging")
+	args = append(args, "--v=1")
+
+	return args
+}
+
+// webdriverBrowserName normalizes the browserName WebDriver capability for
+// session registration (follow-up finding 2, P1).
+//
+// ChromeDriver serves Chromium under browserName "chrome", and the pinned
+// Selenium binding (go-auxiliaries/selenium v0.9.10) records wd.browser from
+// the requested browserName and gates ExecuteChromeDPCommand — the transport
+// for every CDP call in this package — on exactly "chrome". Registering a
+// Chromium VDI as "chromium" therefore disables the entire CDP layer,
+// including the identity-script replacement mechanism. Normalizing here
+// restores CDP for Chromium VDIs. Product identity, UA selection, launch
+// arguments, and camouflage selection keep using the configured "chromium"
+// type and are unchanged by this transport-level normalization.
+func webdriverBrowserName(browser string) string {
+	if browser == BrowserChromium {
+		return BrowserChrome
+	}
+	return browser
+}
+
 // ConnectVDI is responsible for connecting to the Selenium server instance
 func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType int) (WebDriver, error) {
 	if ctx == nil {
@@ -762,7 +1182,9 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	}
 
 	// Connect to the WebDriver instance running locally.
-	caps := selenium.Capabilities{"browserName": browser}
+	// The capability carries the normalized name (chromium registers as
+	// chrome); selection and camouflage keep the configured browser type.
+	caps := selenium.Capabilities{"browserName": webdriverBrowserName(browser)}
 
 	// Get process configuration
 	pConfig := ctx.GetConfig()
@@ -779,59 +1201,53 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 		}
 	}
 
-	// Define the user agent string for a desktop Google Chrome browser
-	var userAgent string
-
-	// Get the user agent string from the UserAgentsDB
-	userAgent = cmn.UADB.GetAgentByTypeAndOSAndBRG(pConfig.Crawler.Platform, pConfig.Crawler.BrowserPlatform, browser)
-
-	// Parse the User Agent string for {random_int1}
-	if strings.Contains(userAgent, "{random_int1}") {
-		// Generates a random integer in the range [0, 999)
-		randInt := rand.IntN(8000) // nolint:gosec // We are using "math/rand/v2" here
-		userAgent = strings.ReplaceAll(userAgent, "{random_int1}", strconv.Itoa(randInt))
+	// Select the User-Agent for this session event: shared mechanic for
+	// connection-time and request-time paths. Family
+	// mapping (chromium shares chrome's group), template expansion, product
+	// resolution, and identity-aware fallback are centralized in common;
+	// rotation policy (when selection runs) is unchanged. The returned
+	// selection carries the single advertised-OS key and product every
+	// surface in this event derives from.
+	selection := cmn.UADB.SelectUserAgent(
+		pConfig.Crawler.Platform, pConfig.Crawler.BrowserPlatform, browser, browseType == 1, rand.IntN)
+	userAgent := selection.UserAgent
+	if note := cmn.UserAgentCompatibilityNote(selection); note != "" {
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ConnectVDI] User-Agent note on '%s': %s", sel.Config.Name, note)
 	}
+	ident := MapAdvertisedOSIdentity(selection.ResolvedOS, browseType == 1)
+	chromeMajor, _ := ChromeMajorVersion(userAgent)
+	productMajor := cmn.ProductMajorVersion(userAgent, selection.Product)
+	brands := ClientHintBrandsFor(selection.Product, chromeMajor, productMajor)
+	details := NewClientHintsDetails(userAgent, selection.Product, ident)
 
-	// Parse the User Agent string for {random_int2}
-	if strings.Contains(userAgent, "{random_int2}") {
-		// Generates a random integer in the range [0, 999)
-		randInt := rand.IntN(999) // nolint:gosec // We are using "math/rand/v2" here
-		userAgent = strings.ReplaceAll(userAgent, "{random_int2}", strconv.Itoa(randInt))
-	}
-
-	// Fallback in case the user agent is not found in the UserAgentsDB
-	if userAgent == "" {
-		if browseType == 0 {
-			userAgent = cmn.UsrAgentStrMap[browser+"-desktop01"]
-		} else if browseType == 1 {
-			userAgent = cmn.UsrAgentStrMap[browser+"-mobile01"]
+	// Resolve the effective proxy preserving the existing source-vs-VDI
+	// precedence (absent/empty inherits the VDI default; "no_proxy" forces a
+	// direct connection; otherwise the trimmed source value wins).
+	var sourceProxy string
+	var sourceProxyOK bool
+	if rawSource := ctx.GetSource(); rawSource != nil && rawSource.Config != nil {
+		var sourceConfig map[string]interface{}
+		if err := json.Unmarshal(*rawSource.Config, &sourceConfig); err == nil {
+			if val, ok := sourceConfig["proxy_url"].(string); ok {
+				sourceProxy, sourceProxyOK = val, true
+			}
 		}
 	}
+	// Middle layer: the merged custom.vdi override for this
+	// VDI, if any. The top-level source key keeps precedence via
+	// effectiveSessionProxy; each layer retains its existing meaning.
+	customProxy := customSeleniumProxyURL(*pConfig, sel.Config.Name)
+	effectiveProxy := effectiveSessionProxy(sourceProxy, sourceProxyOK, customProxy, sel.Config.ProxyURL)
 
-	var args []string
-
-	// Populate the args slice based on the browser type
-	keys := []string{"WindowSize", "initialWindow", "gpu", "headless", "javascript", "incognito"}
-	for _, key := range keys {
-		if value, ok := browserSettingsMap[sel.Config.Type][key]; ok && value != "" {
-			args = append(args, value)
-		}
-	}
-
-	// Append user-agent separately as it's a constant value
-	args = append(args, "--user-agent="+userAgent)
-
-	if browser == BrowserChrome || browser == BrowserChromium {
-		args = append(args, "--incognito")                              // Run in incognito mode
-		args = append(args, "--disable-client-side-phishing-detection") // Disable client-side phishing detection
-		args = append(args, "--disable-component-update")               // Disable component updates
-		args = append(args, "--disable-features=UserAgentClientHint")   // Disable background networking
-	}
+	// Assemble the browser launch arguments with the shared builder so
+	// multi-value switches stay coherent (single --disable-features and
+	// --blink-settings values) and every fix is unit-testable without a live
+	// Selenium server. (before I used sel.Config.Type for the 2nd parameter here, but I think using browser is a better idea)
+	args := buildLaunchArgs(browser, browser, userAgent, pConfig.Crawler, effectiveProxy)
 
 	// CDP Config for Chrome/Chromium
 	var cdpActive bool
 	if browser == BrowserChrome || browser == BrowserChromium {
-		args = append(args, "--no-first-run")
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ConnectVDI] Setting up Chrome DevTools Protocol (CDP) for '%s'...", sel.Config.Name)
 		// Set the CDP port
 		//args = append(args, "--remote-debugging-port=9222")
@@ -842,41 +1258,16 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 		cdpActive = true
 	}
 
-	proxy := ProxySettings{}
-	rawSource := ctx.GetSource()
-	if rawSource != nil {
-		if rawSource.Config != nil {
-			var sourceConfig map[string]interface{}
-			err := json.Unmarshal(*rawSource.Config, &sourceConfig)
-			if err != nil {
-				proxy.ProxyURL = strings.TrimSpace(sel.Config.ProxyURL)
-			} else {
-				if val, ok := sourceConfig["proxy_url"].(string); ok {
-					proxy.ProxyURL = strings.TrimSpace(val)
-				}
-			}
-		}
-	}
-	if proxy.ProxyURL == "" {
-		proxy.ProxyURL = sel.Config.ProxyURL
-	} else if proxy.ProxyURL == "no_proxy" {
-		proxy.ProxyURL = ""
-	}
-
-	// Append proxy settings if available
-	if proxy.ProxyURL != "" {
+	// Proxy observability for the resolved effective value (same shape as before).
+	if effectiveProxy != "" {
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ConnectVDI] Setting up Proxy for '%s'...", sel.Config.Name)
-		args = append(args, "--proxy-server="+sel.Config.ProxyURL)
-		args = append(args, "--force-proxy-for-all")
 		// Get local network:
 		localNet, err := cmn.DetectLocalNetwork()
 		if err == nil {
-			args = append(args, "--proxy-bypass-list=localhost,"+localNet)
+			cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ConnectVDI] Proxy settings: URL '%s', Exclusions: '%s' for '%s'", redactProxyURL(effectiveProxy), "localhost,"+localNet, sel.Config.Name)
 		} else {
-			args = append(args, "--proxy-bypass-list=localhost")
+			cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ConnectVDI] Proxy settings: URL '%s', Exclusions: '%s' for '%s'", redactProxyURL(effectiveProxy), "localhost", sel.Config.Name)
 		}
-
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ConnectVDI] Proxy settings: URL '%s', Exclusions: '%s' for '%s'", sel.Config.ProxyURL, "localhost,"+localNet, sel.Config.Name)
 
 		/*
 			proxyURL, err := url.Parse(sel.Config.ProxyURL)
@@ -922,111 +1313,6 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ConnectVDI] No proxy settings for '%s'", sel.Config.Name)
 	}
 
-	// General settings
-	if browser == BrowserChrome || browser == BrowserChromium {
-		args = append(args, "--disable-software-rasterizer")
-		args = append(args, "--use-fake-ui-for-media-stream")
-	}
-
-	// Avoid funny localizations/detections
-	if browser == BrowserChrome || browser == BrowserChromium {
-		// DNS over HTTPS (DoH) settings
-		args = append(args, "--dns-prefetch-disable")
-		//args = append(args, "--host-resolver-rules=MAP * 8.8.8.8")
-		args = append(args, "--host-resolver-rules=MAP * 1.1.1.1")
-		args = append(args, "--host-resolver-rules=MAP *:443")
-
-		// Reduce geolocation leaks
-		args = append(args, "--disable-geolocation")
-		args = append(args, "--disable-notifications")
-		args = append(args, "--disable-quic")
-		args = append(args, "--disable-blink-features=AutomationControlled")
-
-		// Reduce Hardware fingerprinting
-		args = append(args, "--override-hardware-concurrency=4")
-		args = append(args, "--override-device-memory=4")
-		args = append(args, "--disable-features=Battery")
-
-		// Reduce Browser fingerprinting
-		args = append(args, "--disable-infobars")
-		args = append(args, "--disable-extensions")
-		args = append(args, "--disable-plugins")
-		args = append(args, "--disable-plugins-discovery")
-		args = append(args, "--disable-peer-to-peer")
-
-		// Disable WebRTC
-		args = append(args, "--disable-rtc-smoothness-algorithm")
-		args = append(args, "--disable-webrtc")
-		args = append(args, "--force-webrtc-ip-handling-policy=disable_non_proxied_udp")
-		args = append(args, "--webrtc-ip-handling-policy=default_public_interface_only")
-		args = append(args, "--webrtc-max-cpu-consumption-percentage=1")
-		args = append(args, "--disable-webrtc-multiple-routes")
-		args = append(args, "--disable-webrtc-hw-encoding")
-		args = append(args, "--disable-webrtc-hw-decoding")
-		args = append(args, "--disable-webrtc-encryption")
-		args = append(args, "--disable-webrtc")
-
-		// Disable WebUSB
-		args = append(args, "--disable-webusb")
-
-		// Disable WebBluetooth
-		args = append(args, "--disable-web-bluetooth")
-
-		// Disable Plugins
-		args = append(args, "--disable-plugins")
-		args = append(args, "--disable-extensions")
-
-		// Disable Sandboxing
-		/*
-			args = append(args, "--no-sandbox")
-			args = append(args, "--disable-dev-shm-usage")
-		*/
-
-		args = append(args, "--disable-popup-blocking")
-
-		// Ensure Screen Resolution is correct
-		args = append(args, "--force-device-scale-factor=1")
-
-		// Enable/Disable JavaScript, Images, CSS, and Plugins requests
-		// based on user's configuration
-		if pConfig.Crawler.RequestImages {
-			args = append(args, "--blink-settings=imagesEnabled=true")
-		} else {
-			args = append(args, "--blink-settings=imagesEnabled=false")
-		}
-		if pConfig.Crawler.RequestCSS {
-			args = append(args, "--blink-settings=CSSImagesEnabled=true")
-		} else {
-			args = append(args, "--blink-settings=CSSImagesEnabled=false")
-		}
-		if pConfig.Crawler.RequestScripts {
-			args = append(args, "--blink-settings=JavaScriptEnabled=true")
-		} else {
-			args = append(args, "--blink-settings=JavaScriptEnabled=false")
-		}
-		if pConfig.Crawler.RequestPlugins {
-			args = append(args, "--blink-settings=PluginsEnabled=true")
-		} else {
-			args = append(args, "--blink-settings=PluginsEnabled=false")
-		}
-
-		// Reduce Cookie based tracking
-		if pConfig.Crawler.ResetCookiesPolicy != "" && pConfig.Crawler.ResetCookiesPolicy != "none" {
-			args = append(args, "--disable-site-isolation-trials")
-			args = append(args, "--disable-features=IsolateOrigins,site-per-process")
-			if pConfig.Crawler.NoThirdPartyCookies {
-				args = append(args, "--disable-features=SameSiteByDefaultCookies")
-			}
-		}
-
-		// Disable video auto-play:
-		//args = append(args, "--autoplay-policy=user-required") // this option does't work and cause chrome/chromium to crash
-	}
-
-	// Append logging settings if available
-	args = append(args, "--enable-logging")
-	args = append(args, "--v=1")
-
 	// Configure the download directory
 	downloadDir := strings.TrimSpace(sel.Config.DownloadDir)
 	if downloadDir == "" {
@@ -1044,8 +1330,6 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 			"safebrowsing.disable_download_protection": false,
 			"safebrowsing.disable_extension_blacklist": false,
 			"safebrowsing.disable_automatic_downloads": false,
-			"useAutomationExtension":                   false,
-			"excludeSwitches":                          []string{"enable-automation"},
 		}
 
 		// Configure user content capabilities:
@@ -1078,13 +1362,11 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 			chromePrefs["profile.managed_default_content_settings.plugins"] = 1
 		}
 
-		// Finalize the capabilities
-		caps.AddChrome(chrome.Capabilities{
-			Args:  args,
-			W3C:   true,
-			Prefs: chromePrefs,
-		})
-		cmn.DebugMsg(cmn.DbgLvlDebug5, "[DEBUG-ConnectVDI] Chrome capabilities: %v\n", caps)
+		// Finalize the capabilities (ExcludeSwitches lives at the
+		// goog:chromeOptions level via buildChromeCapabilities, where
+		// ChromeDriver reads it, not inside prefs).
+		caps.AddChrome(buildChromeCapabilities(args, chromePrefs))
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "[DEBUG-ConnectVDI] Chrome capabilities: %v\n", redactedCapabilities(caps))
 	} else if browser == "firefox" {
 		firefoxCaps := map[string]interface{}{
 			"browser.download.folderList":               2,
@@ -1124,11 +1406,26 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 		}
 
 		// Finalize the capabilities
+		// Proxying for Firefox goes through the standard W3C proxy capability
+		// (geckodriver translates it into network.proxy.* preferences); the
+		// binary has no --proxy-server switch. A nil capability preserves
+		// existing direct behavior.
+		proxyCaps, proxyErr := firefoxProxyCapability(effectiveProxy)
+		if proxyErr != nil {
+			return nil, fmt.Errorf(
+				"configuring Firefox proxy for VDI %q: %w",
+				sel.Config.Name,
+				proxyErr,
+			)
+		}
+		if proxyCaps != nil {
+			caps.AddProxy(*proxyCaps)
+		}
 		caps.AddFirefox(firefox.Capabilities{
 			Args:  args,
 			Prefs: firefoxCaps,
 		})
-		cmn.DebugMsg(cmn.DbgLvlDebug5, "[DEBUG-ConnectVDI] Firefox capabilities: %v\n", caps)
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "[DEBUG-ConnectVDI] Firefox capabilities: %v\n", redactedCapabilities(caps))
 	}
 
 	// Enable logging
@@ -1197,20 +1494,58 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	}
 	// Sleep a few milliseconds to give time for the session to be fully established before we start sending commands to it
 	time.Sleep(500 * time.Millisecond)
-	// Inject anti-detection patch
-	err = InjectAntiDetectionPatches(wd, userAgent, pConfig.Crawler.Platform)
+
+	if browseType != 1 { // Desktop mode
+		if err := wd.ResizeWindow("", 1920, 1080); err != nil {
+			abortFailedSession(wd)
+			return nil, fmt.Errorf("resizing VDI window: %w", err)
+		}
+	}
+
+	// Inject anti-detection patch for the identity selected for this event.
+	// ident/brands/details derive from the same selection so UA, Client
+	// Hints, and navigator surfaces agree; rotation-time replacement is
+	// owned by ReplaceIdentityScript (review finding 2).
+	err = InjectAntiDetectionPatches(wd, userAgent, ident, brands, details)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ConnectVDI] Patch injection failed on '%s': %v", sel.Config.Name, err)
 		// Check if we have lost the session
 		if strings.Contains(strings.ToLower(err.Error()), "invalid session id") {
 			// We lost the session (this is a Selenium bug sometimes)
+			abortFailedSession(wd)
 			return nil, err
+		}
+		// Identity-script registration is critical on CDP-capable browsers:
+		// a session without it would navigate with a partially configured
+		// identity, so establishment fails here and the caller retries via
+		// the existing session-recovery paths. Firefox has no CDP bridge,
+		// so injection stays best-effort there (unchanged behavior).
+		if browser == BrowserChrome || browser == BrowserChromium {
+			abortFailedSession(wd)
+			return nil, fmt.Errorf("injecting identity patches on '%s': %w", sel.Config.Name, err)
+		}
+	}
+
+	// Apply the selected identity to the network layer before the first
+	// navigation: launch arguments cover the
+	// User-Agent header, but without this override Sec-CH-UA* would carry
+	// native runtime values on every document until a request-level UA
+	// change happens — which default policies never trigger. Firefox has no
+	// CDP bridge and keeps the previous best-effort behavior (skipped).
+	if cdpActive {
+		if err := establishInitialIdentity(wd, ctx.GetConfig().Crawler.CDPDelay, userAgent, ident, brands, details); err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "establishing initial browser identity on '%s': %v", sel.Config.Name, err)
+			abortFailedSession(wd)
+			if strings.Contains(strings.ToLower(err.Error()), "invalid session id") {
+				return nil, err
+			}
+			return nil, fmt.Errorf("establishing initial browser identity on '%s': %w", sel.Config.Name, err)
 		}
 	}
 
 	// Post-connection settings
 	if !(*ctx.GetVDIReturnedFlag()) {
-		setNavigatorProperties(wd, sel.Config.Language, userAgent)
+		setNavigatorProperties(wd, sel.Config.Language, userAgent, ident)
 	}
 
 	// Retrieve Browser Configuration and display it for debugging purposes:
@@ -1224,6 +1559,17 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	} else {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-ConnectVDI] Browser Configuration on '%s': %v\n", sel.Config.Name, result)
 	}
+
+	// Emit the redacted, read-only presentation report and run the
+	// profile-aware consistency checks at the most-verbose level. This is a
+	// no-op below debug level five and reuses the single observation above. The
+	// additive PR7 inputs (the launch argv, the proxy-provenance layers and the
+	// User-Agent rotation policy) are all already computed in this function, so
+	// threading them in adds no observation or call.
+	emitVDIPresentationReport(
+		pConfig, sel.Config, selection, userAgent, ident, brands, details,
+		cdpActive, effectiveProxy, result, err2 == nil,
+		args, sourceProxy, sourceProxyOK, customProxy, pConfig.Crawler.ChangeUserAgent)
 
 	err2 = addLoadListener(wd)
 	if err2 != nil {
@@ -1275,21 +1621,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 }
 
 func addLoadListener(wd WebDriver) error {
-	script := `
-        window.addEventListener('load', () => {
-            try {
-                Object.defineProperty(window, 'RTCPeerConnection', {value: undefined});
-                Object.defineProperty(window, 'RTCDataChannel', {value: undefined});
-                Object.defineProperty(navigator, 'mediaDevices', {value: undefined});
-                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-                Object.defineProperty(navigator, 'deviceMemory', {get: () => 8});
-                Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 4});
-                Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
-            } catch (err) {
-                console.error('Error applying browser settings on page load:', err);
-            }
-        });
-    `
+	script := loadListenerScript()
 
 	_, err := wd.ExecuteScript(script, nil)
 	if err != nil {
@@ -1299,182 +1631,30 @@ func addLoadListener(wd WebDriver) error {
 	return nil
 }
 
-// GPUPatch sets default GPU for session
+// GPUPatch sets default GPU for session. The patch itself is optional and
+// gated by crawler.set_vdi_gpu_patch at the call site; this function only
+// applies it. (A long dead commented-out alternative was removed here.)
 func GPUPatch(wd WebDriver) error {
-	script := `
-	HTMLCanvasElement.prototype.getContext = (function(orig) {
-	return function(type, attribs) {
-		const ctx = orig.call(this, type, attribs);
-		if (type === 'webgl' || type === 'webgl2') {
-		const ext = ctx.getExtension('WEBGL_debug_renderer_info');
-		if (ext) {
-			const getParamOrig = ctx.getParameter.bind(ctx);
-			ctx.getParameter = function(param) {
-			if (param === ext.UNMASKED_RENDERER_WEBGL) return 'Intel(R) UHD Graphics 620';
-			if (param === ext.UNMASKED_VENDOR_WEBGL) return 'Intel Inc.';
-			return getParamOrig(param);
-			};
-		}
-		}
-		return ctx;
-	};
-	})(HTMLCanvasElement.prototype.getContext);
-	`
+	script := gpuPatchScript()
 
 	_, err := wd.ExecuteScript(script, nil)
 	if err != nil {
 		return fmt.Errorf("error reinforcing browser GPU settings: %v", err)
 	}
 
-	/* Old patch:
-		script = `
-	await page.evaluateOnNewDocument(() => {
-	const canvasProto = HTMLCanvasElement.prototype;
-	const getContextOrig = canvasProto.getContext;
-
-	canvasProto.getContext = function(type, attribs) {
-		const ctx = getContextOrig.call(this, type, attribs);
-
-		if (type === 'webgl' || type === 'webgl2') {
-		const getExtOrig = ctx.getExtension;
-		ctx.getExtension = function(ext) {
-			if (ext === 'WEBGL_debug_renderer_info') {
-			return getExtOrig.call(this, ext); // Keep it available
-			}
-			return getExtOrig.call(this, ext);
-		};
-
-		const getParamOrig = ctx.getParameter;
-		ctx.getParameter = function(param) {
-			const debugInfo = getExtOrig.call(this, 'WEBGL_debug_renderer_info');
-			if (debugInfo) {
-			if (param === debugInfo.UNMASKED_RENDERER_WEBGL) {
-				return 'Intel(R) UHD Graphics 620';
-			}
-			if (param === debugInfo.UNMASKED_VENDOR_WEBGL) {
-				return 'Intel Inc.';
-			}
-			}
-			return getParamOrig.call(this, param);
-		};
-		}
-
-		return ctx;
-	};
-	});
-	`
-
-	_, err = wd.ExecuteScript(script, nil)
-	if err != nil {
-		return fmt.Errorf("error reinforcing browser GPU settings: %v", err)
-	}
-	*/
-
 	return nil
 }
 
-// ReinforceBrowserSettings applies additional settings to the WebDriver instance
+// ReinforceBrowserSettings applies additional settings to the WebDriver instance.
+// One-shot scope: it runs on the current (blank) document and does not
+// survive navigation; persistence belongs to the new-document registration.
+// See reinforceScript for the repaired stages.
 func ReinforceBrowserSettings(wd WebDriver) error {
 	if wd == nil {
 		return fmt.Errorf("WebDriver is nil")
 	}
 
-	// Reapply WebRTC and navigator spoofing settings
-	script := `
-        try {
-			Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-			delete window._Selenium_IDE_Recorder;
-			delete navigator.webdriver;
-			delete navigator.webdriver.chrome;
-			delete navigator.__proto__.webdriver;
-		} catch (err) {
-            console.error('Error reinforcing browser settings stage 1:', err);
-        }
-
-		try {
-            Object.defineProperty(window, 'RTCPeerConnection', {value: undefined});
-            Object.defineProperty(window, 'RTCDataChannel', {value: undefined});
-            Object.defineProperty(navigator, 'mediaDevices', {value: undefined});
-            Object.defineProperty(navigator, 'deviceMemory', {get: () => 8});
-            Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 4});
-            Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
-			Object.defineProperty(navigator, 'getUserMedia', {value: undefined});
-			Object.defineProperty(window, 'webkitRTCPeerConnection', {value: undefined});
-		} catch (err) {
-            console.error('Error reinforcing browser settings stage 2:', err);
-        }
-
-		try {
-			HTMLCanvasElement.prototype.toDataURL = function() { return 'data:image/png;base64,fakemockdata'; };
-		} catch (err) {
-            console.error('Error reinforcing browser settings stage 3:', err);
-        }
-
-		try {
-			const getParameter = WebGLRenderingContext.prototype.getParameter;
-			WebGLRenderingContext.prototype.getParameter = function(parameter) {
-				if (parameter === 37445) return 'Intel Inc.'; // Mock Vendor
-				if (parameter === 37446) return 'Intel Iris OpenGL'; // Mock Renderer
-				return getParameter(parameter);
-			};
-		} catch (err) {
-			console.error('Error reinforcing browser settings stage 4:', err);
-		}
-
-		try {
-			Object.defineProperty(window, 'devicePixelRatio', {
-				get: function() { return 1; }
-			});
-		} catch (err) {
-			console.error('Error reinforcing browser settings stage 5:', err);
-		}
-
-		try {
-			Element.prototype.attachShadow = function() {
-    			return null; // Disable shadow DOM if necessary
-			};
-		} catch (err) {
-			console.error('Error reinforcing browser settings stage 5:', err);
-		}
-
-		try {
-			const originalQuery = navigator.permissions.query;
-			navigator.permissions.query = (parameters) => (
-    			parameters.name === 'notifications'
-        		? Promise.resolve({ state: 'denied' })
-        		: originalQuery(parameters)
-			);
-		} catch (err) {
-			console.error('Error reinforcing browser settings stage 6:', err);
-		}
-
-		try {
-			Object.defineProperty(navigator, 'webdriver', {
-    			get: () => undefined,
-    			configurable: true,
-			});
-
-			Object.defineProperty(document, 'selenium-evaluate', { value: undefined });
-			Error.stackTraceLimit = 0; // Limit error stack traces
-        } catch (err) {
-            console.error('Error reinforcing browser settings stage 7:', err);
-        }
-
-		try {
-			Object.defineProperty(navigator, 'doNotTrack', {get: () => '1'}); // User enables Do Not Track
-		} catch (err) {
-			console.error('Error reinforcing browser settings stage 8:', err);
-		}
-
-		try {
-			// Clean IndexedDB
-            indexedDB.deleteDatabase('webdriver');
-		} catch (err) {
-			console.error('Error reinforcing browser settings stage 9:', err);
-		}
-    `
-
-	_, err := wd.ExecuteScript(script, nil)
+	_, err := wd.ExecuteScript(reinforceScript(), nil)
 	if err != nil {
 		return fmt.Errorf("error reinforcing browser settings: %v", err)
 	}
@@ -1498,6 +1678,21 @@ func getBrowserConfiguration(wd WebDriver) (map[string]interface{}, error) {
 			webdriver: navigator.webdriver,
 			platform: navigator.platform,
 			plugins: navigator.plugins.length,
+			// Low-entropy userAgentData surfaces, read natively and never fabricated.
+			userAgentData: (function(){
+				try {
+					var u = navigator.userAgentData;
+					if (!u) return null;
+					return {
+						platform: u.platform,
+						mobile: !!u.mobile,
+						highEntropy: typeof u.getHighEntropyValues === "function",
+						brands: (u.brands || []).map(function(x){ return { brand: x.brand, version: x.version }; })
+					};
+				} catch (e) {
+					return null;
+				}
+			})(),
 
 			// Screen dimensions
 			screenWidth: window.screen.width,
@@ -1524,87 +1719,125 @@ func getBrowserConfiguration(wd WebDriver) (map[string]interface{}, error) {
 	return config, nil
 }
 
-func setNavigatorProperties(wd WebDriver, lang, userAgent string) {
-	lang = strings.ToLower(strings.TrimSpace(lang))
-	selectedLanguage := ""
+// unavailableDiagnosticNotes are the v2.1 diagnostic facts the connection-time
+// VDI emit cannot yet derive. Each is a stable "key: reason" string so a gap
+// is explicit and documented rather than fabricated or silently dropped. They
+// are constant: the process re-reads configuration on SIGHUP without a
+// generation counter, and the resolution path composes a value without
+// recording which layer supplied each non-proxy setting.
+var unavailableDiagnosticNotes = []string{
+	"config_generation: untracked — no monotonic generation counter is maintained on SIGHUP reload, so no reload generation is reported",
+	"setting_ownership: unrecorded for non-proxy settings — the composition path resolves a value without recording the winning layer (only the proxy layer is attributable, see proxy_provenance)",
+	"lifecycle_state: unobserved at connection time — rotation count, pool index and session lifecycle are not tracked on the User-Agent selection",
+}
 
-	switch lang {
-	case "en-gb":
-		selectedLanguage = "['en-GB', 'en']"
-	case "fr-fr":
-		selectedLanguage = "['fr-FR', 'fr']"
-	case "de-de":
-		selectedLanguage = "['de-DE', 'de']"
-	case "es-es":
-		selectedLanguage = "['es-ES', 'es']"
-	case "it-it":
-		selectedLanguage = "['it-IT', 'it']"
-	case "pt-pt":
-		selectedLanguage = "['pt-PT', 'pt']"
-	case "pt-br":
-		selectedLanguage = "['pt-BR', 'pt']"
-	case "ja-jp":
-		selectedLanguage = "['ja-JP', 'ja']"
-	case "ko-kr":
-		selectedLanguage = "['ko-KR', 'ko']"
-	case "zh-cn":
-		selectedLanguage = "['zh-CN', 'zh']"
-	case "zh-tw":
-		selectedLanguage = "['zh-TW', 'zh']"
-	default:
-		selectedLanguage = "['en-US', 'en']"
+// emitVDIPresentationReport builds the redacted, read-only presentation report
+// and runs the pure, profile-aware consistency checks, logging both at the most
+// verbose debug level. It is a no-op below debug level five, so an ordinary
+// session pays no diagnostic cost: the build and serialization are gated. It
+// reuses the single getBrowserConfiguration observation (passed in) and issues
+// no additional browser or CDP call.
+//
+// The additive PR7 inputs (launchArgs, the proxy-provenance layers, and the
+// User-Agent rotation policy) are likewise pure, in-scope, in-scope values the
+// session already computed; surfacing them adds no observation and no call.
+func emitVDIPresentationReport(
+	pConfig *cfg.Config,
+	vd cfg.Selenium,
+	selection cmn.UASelection,
+	userAgent string,
+	ident OSIdentity,
+	brands []ClientHintBrand,
+	details ClientHintsDetails,
+	cdpActive bool,
+	effectiveProxy string,
+	observation map[string]interface{},
+	observedOK bool,
+	launchArgs []string,
+	sourceProxy string,
+	sourceProxyOK bool,
+	customProxy string,
+	uaChangePolicy string,
+) {
+	if cmn.GetDebugLevel() < cmn.DbgLvlDebug5 {
+		return
 	}
 
-	// Set the navigator properties
-	scripts := []string{
-		"Object.defineProperty(navigator, 'webdriver', {get: () => undefined})",
-		"window.navigator.chrome = {runtime: {}}",
-		"Object.defineProperty(navigator, 'languages', {get: () => " + selectedLanguage + "})",
-		"Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]})",
-		"Object.defineProperty(navigator, 'deviceMemory', {get: () => 8})",        // Example device memory spoof
-		"Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 4})", // Example cores
-		// Disable geolocation API
-		"Object.defineProperty(navigator, 'geolocation', {get: () => null})",
-
-		// Mock `navigator.doNotTrack`
-		"Object.defineProperty(navigator, 'doNotTrack', {get: () => '1'})", // User enables Do Not Track
-
-		// Mock `navigator.vendor` and `navigator.platform`
-		"Object.defineProperty(navigator, 'vendor', {get: () => 'Google Inc.'})",
-		"Object.defineProperty(navigator, 'platform', {get: () => 'Linux'})", // Mimic Linux platform
-
-		// Spoof `navigator.deviceMemory`
-		//"Object.defineProperty(navigator, 'deviceMemory', {get: () => 4})", // 4 GB memory
-
-		// Spoof `navigator.hardwareConcurrency`
-		//"Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 4})", // 4 CPU cores
-
-		//"Object.defineProperty(navigator, 'getBattery', {get: () => undefined})", // Disable battery API
-
-		// Override screen width and height
-		"Object.defineProperty(screen, 'width', {get: () => 1920})",
-		"Object.defineProperty(screen, 'height', {get: () => 1080})",
-
-		// Override window inner and outer dimensions
-		"Object.defineProperty(window, 'innerWidth', {get: () => 1920})",
-		"Object.defineProperty(window, 'innerHeight', {get: () => 1080})",
-		"Object.defineProperty(window, 'outerWidth', {get: () => 1920})",
-		"Object.defineProperty(window, 'outerHeight', {get: () => 1080})",
-
-		// Mock `navigator.appVersion` and `navigator.userAgent`
-		fmt.Sprintf("Object.defineProperty(navigator, 'appVersion', {get: () => '%s'})", userAgent),
-		fmt.Sprintf("Object.defineProperty(navigator, 'userAgent', {get: () => '%s'})", userAgent),
-
-		"Object.defineProperty(navigator, 'getBattery', {get: () => undefined})", // Disable battery API
-
-		// Mock `navigator.connection`
-		"Object.defineProperty(navigator, 'connection', {get: () => ({type: 'wifi', downlink: 10.0})})", // Mimic WiFi connection
-
-		// Disable WebRTC APIs to prevent IP leakage
-		"Object.defineProperty(window, 'RTCPeerConnection', {value: undefined});",
-		"Object.defineProperty(window, 'RTCDataChannel', {value: undefined});",
+	uaOverride, identityScript := ActionNotRequested(), ActionNotRequested()
+	if cdpActive {
+		// When CDP is active, the initial identity override and the new-document
+		// script have been applied without error (the call site returns before
+		// emitting on any such error), so they report as applied. On engines
+		// without a CDP bridge (native Firefox) there is nothing to apply.
+		uaOverride, identityScript = ActionApplied(), ActionApplied()
 	}
-	for _, script := range scripts {
+
+	// The registration scope of an applied new-document identity script is a
+	// structural fact about the mechanism, not an observation: when CDP is active
+	// the script is registered per-session via addScriptToEvaluateOnNewDocument,
+	// and on engines without a CDP bridge nothing is registered. It is never
+	// inferred from the configured behavior.
+	identityScriptScope := "not_applied"
+	if cdpActive {
+		identityScriptScope = "new_document_session"
+	}
+
+	// Proxy provenance is the one effective-setting-ownership fact derivable at
+	// the emit: it attributes the effective proxy to the configuration layer that
+	// supplied it, mirroring effectiveSessionProxy's precedence.
+	proxyProvenance := proxyProvenanceLayer(sourceProxy, sourceProxyOK, customProxy, effectiveProxy)
+
+	obsStatus := StatusNotObserved
+	if observedOK {
+		obsStatus = StatusKnown
+	}
+
+	rep := BuildPresentationReport(PresentationInput{
+		BrowserType:       vd.Type,
+		UserAgent:         userAgent,
+		Product:           selection.Product,
+		Family:            selection.Family,
+		ResolvedOS:        selection.ResolvedOS,
+		DeviceClass:       pConfig.Crawler.Platform,
+		AdvertisedOS:      pConfig.Crawler.BrowserPlatform,
+		Language:          vd.Language,
+		Identity:          ident,
+		Brands:            brands,
+		Details:           details,
+		Proxy:             effectiveProxy,
+		ProxyRequested:    effectiveProxy != "",
+		GPUPatchRequested: pConfig.Crawler.SetVDIGPUPatch,
+		FallbackUsed:      selection.FallbackUsed,
+		DegradedProduct:   selection.DegradedProduct,
+		UserAgentOverride: uaOverride,
+		IdentityScript:    identityScript,
+		// The GPU patch is applied in a later setup phase, so its outcome is not
+		// recorded here; an empty status is reported as not_observed, never a
+		// false "applied".
+		Observation:         observation,
+		ObservedStatus:      obsStatus,
+		LaunchOptions:       launchArgs,
+		UAChangePolicy:      uaChangePolicy,
+		IdentityScriptScope: identityScriptScope,
+		ProxyProvenance:     proxyProvenance,
+		DiagnosticGapNotes:  unavailableDiagnosticNotes,
+	})
+
+	assess := EvaluatePresentationConsistency(rep)
+	if b, err := json.Marshal(rep); err == nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "[PRESENTATION] effective browser presentation on '%s': %s", vd.Name, b)
+	}
+	if assess.HasFault() {
+		if b, err := json.Marshal(assess.Failures()); err == nil {
+			cmn.DebugMsg(cmn.DbgLvlWarn, "[PRESENTATION-FAULT] on '%s': %s", vd.Name, b)
+		}
+	} else {
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "[PRESENTATION-CHECK] on '%s': %d checks, no faults", vd.Name, len(assess.Results))
+	}
+}
+
+func setNavigatorProperties(wd WebDriver, lang, userAgent string, ident OSIdentity) {
+	for _, script := range navigatorPropertyScripts(lang, userAgent, ident) {
 		_, err := wd.ExecuteScript(script, nil)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "setting navigator properties: %v", err)
@@ -1613,75 +1846,21 @@ func setNavigatorProperties(wd WebDriver, lang, userAgent string) {
 }
 
 // InjectAntiDetectionPatches injects JavaScript anti-fingerprinting logic
-func InjectAntiDetectionPatches(driver WebDriver, uaString string, platform string) error {
-
-	script := fmt.Sprintf(`
-Object.defineProperty(navigator, 'webdriver', {
-    get: () => undefined
-});
-
-Object.defineProperty(navigator, 'userAgent', {
-    get: () => "%s"
-});
-
-Object.defineProperty(navigator, 'platform', {
-    get: () => "%s"
-});
-
-if (navigator.userAgentData) {
-    Object.defineProperty(navigator.userAgentData, 'platform', { value: "%s" });
-    Object.defineProperty(navigator.userAgentData, 'mobile', { value: false });
-    Object.defineProperty(navigator.userAgentData, 'brands', {
-        value: [
-            { brand: "Chromium", version: "132" },
-            { brand: "Not-A.Brand", version: "8" }
-        ]
-    });
-}
-
-Object.defineProperty(navigator, 'plugins', {
-    get: () => [
-        { name: "Chrome PDF Viewer" },
-        { name: "Chromium PDF Plugin" }
-    ]
-});
-
-Object.defineProperty(navigator, 'mimeTypes', {
-    get: () => [
-        { type: "application/pdf", suffixes: "pdf", description: "PDF" }
-    ]
-});
-
-delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
-delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
-delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
-
-(function() {
-    const getParameter = WebGLRenderingContext.prototype.getParameter;
-    WebGLRenderingContext.prototype.getParameter = function(param) {
-        if (param === 37445) return "Intel Inc.";
-        if (param === 37446) return "Mesa Intel(R) UHD Graphics";
-        return getParameter.call(this, param);
-    };
-})();
-
-(function() {
-    const original = AudioBuffer.prototype.getChannelData;
-    AudioBuffer.prototype.getChannelData = function() {
-        const data = original.apply(this, arguments);
-        for (let i = 0; i < data.length; i += 100) {
-            data[i] = data[i] + (Math.random() * 0.0000001);
-        }
-        return data;
-    };
-})();
-
-// Debug
-console.log("loaded");
-`, uaString, platform, platform)
-
-	err := AddScriptToEvaluateOnNewDocument(driver, 0, script)
-	if err != nil {
+// for one selection event. ident, brands, and details must derive from the
+// same User-Agent selection (see ConnectVDI) so navigator, Client Hints,
+// and CDP surfaces agree. The script body is built by antiDetectionScript:
+// identity derivation, safe string encoding, and removal of the debug trace
+// changed; WebGL, Audio, plugin, MIME, and marker behavior is preserved.
+//
+// Registration replaces any previous identity script for the session
+// (ReplaceIdentityScript), so rotation never stacks stale identities.
+// Custom (including synthetic) identities are preserved: values are derived
+// from the selection, never forced to host-native ones.
+func InjectAntiDetectionPatches(driver WebDriver, uaString string, ident OSIdentity, brands []ClientHintBrand, details ClientHintsDetails) error {
+	if err := ReplaceIdentityScript(
+		driver, 0,
+		sessionCamouflageScript(driver, uaString, ident, brands, details),
+	); err != nil {
 		return fmt.Errorf("failed to inject stealth patches: %w", err)
 	}
 
@@ -1807,4 +1986,7 @@ func QuitSelenium(ctx ProcessContextInterface) {
 			cmn.DebugMsg(cmn.DbgLvlInfo, "WebDriver quitted successfully.")
 		}
 	}
+	// Drop the tracked identity-script registration for the ended session.
+	// Best-effort bookkeeping; it changes nothing about the quit path.
+	forgetIdentityScript((*wd).SessionID())
 }

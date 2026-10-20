@@ -161,6 +161,10 @@ func Cleanup(wd vdi.WebDriver, opts CleanupOptions) error {
 	cleanupErr = errors.Join(cleanupErr, wrapError("delete browser cookies", wd.DeleteAllCookies()))
 
 	if opts.Close {
+		// Drop the VDI-tracked identity-script registration for the ending
+		// session (minor follow-up 1: sessions closed here bypass
+		// QuitSelenium). SessionID is readable before teardown.
+		vdi.ForgetIdentityScript(wd.SessionID())
 		cleanupErr = errors.Join(cleanupErr, wrapError("close WebDriver", wd.Close()))
 		cleanupErr = errors.Join(cleanupErr, wrapError("quit WebDriver", wd.Quit()))
 	}

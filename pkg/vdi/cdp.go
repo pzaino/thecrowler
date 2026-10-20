@@ -17,7 +17,16 @@ func ExecuteCDPCommand(wd WebDriver, delayMs int, command string, params map[str
 		time.Sleep(time.Duration(delayMs) * time.Millisecond)
 	}
 
-	cmn.DebugMsg(cmn.DbgLvlDebug5, "[CDP] Executing command '%s' with params: %v", command, params)
+	// Log a redacted copy of the parameters at the most-verbose level: the
+	// operational parameters are sent to the driver unchanged, so credential,
+	// cookie and proxy-URL material never reaches the verbose log. Guard the
+	// redaction and log construction by the current debug level so a session
+	// not logging at Debug5 pays neither the recursive redaction nor its
+	// allocations.
+	if cmn.GetDebugLevel() >= cmn.DbgLvlDebug5 {
+		cmn.DebugMsg(cmn.DbgLvlDebug5, "[CDP] Executing command '%s' with params: %v",
+			command, redactCDPParams(params))
+	}
 	result, err := wd.ExecuteChromeDPCommand(command, params)
 	if err != nil {
 		return nil, fmt.Errorf("executing CDP command '%s': %w", command, err)
@@ -126,6 +135,30 @@ func SetUserAgentOverride(wd WebDriver, delayMs int, userAgent string, platform 
 func AddScriptToEvaluateOnNewDocument(wd WebDriver, delayMs int, source string) error {
 	_, err := ExecuteCDPCommand(wd, delayMs, "Page.addScriptToEvaluateOnNewDocument", map[string]interface{}{
 		"source": source,
+	})
+	return err
+}
+
+// AddScriptWithIdentifier injects script before page scripts run and returns
+// the CDP script identifier so a later rotation can remove exactly this
+// registration (review finding 2). An empty identifier with a nil error
+// means the driver acknowledged registration without reporting one; such
+// registrations cannot be selectively removed.
+func AddScriptWithIdentifier(wd WebDriver, delayMs int, source string) (string, error) {
+	result, err := ExecuteCDPCommand(wd, delayMs, "Page.addScriptToEvaluateOnNewDocument", map[string]interface{}{
+		"source": source,
+	})
+	if err != nil {
+		return "", err
+	}
+	return parseScriptIdentifier(result), nil
+}
+
+// RemoveScriptToEvaluateOnNewDocument removes a previously registered
+// new-document script by its CDP identifier.
+func RemoveScriptToEvaluateOnNewDocument(wd WebDriver, delayMs int, identifier string) error {
+	_, err := ExecuteCDPCommand(wd, delayMs, "Page.removeScriptToEvaluateOnNewDocument", map[string]interface{}{
+		"identifier": identifier,
 	})
 	return err
 }

@@ -1146,21 +1146,6 @@ func indexPageContext(
 		return 0, err
 	}
 
-	// MetaTags: persist only, without Time Series emission.
-	phase = "insert_metatags"
-
-	if pageInfo.Config.Crawler.CollectMetaTags {
-		err = insertMetaTagsOnly(
-			tx,
-			indexID,
-			pageInfo.MetaTags,
-		)
-		if err != nil {
-			rollbackTransaction(tx)
-			return 0, err
-		}
-	}
-
 	// Commit the main page transaction.
 	phase = "commit"
 
@@ -1204,7 +1189,77 @@ func indexPageContext(
 	}
 
 	// ------------------------------------------------------------
-	// Transaction 2: ObjectAttributes
+	// Transaction 2: MetaTags
+	// ------------------------------------------------------------
+
+	if pageInfo.Config.Crawler.CollectMetaTags {
+		phase = "insert_metatags"
+
+		tx4Ctx, cancelTx4 := cdb.TransactionContext(
+			waitCtx,
+			processCfg,
+		)
+
+		tx4Started := time.Now()
+
+		tx4, tx4Err := db.BeginTx(tx4Ctx, nil)
+		if tx4Err == nil {
+			tx4Err = insertMetaTagsOnly(
+				tx4,
+				indexID,
+				pageInfo.MetaTags,
+			)
+
+			if tx4Err == nil {
+				tx4Err = tx4.Commit()
+			}
+
+			// Safe after a successful commit; releases the transaction
+			// on any earlier error.
+			_ = tx4.Rollback()
+		}
+
+		tx4Err = cdb.NormalizeTransactionError(tx4Ctx, tx4Err)
+		cancelTx4()
+
+		cdb.LogTransactionOutcome(
+			"insertMetaTags",
+			tx4Started,
+			tx4Err,
+		)
+
+		if tx4Err != nil {
+			cmn.DebugMsg(
+				cmn.DbgLvlError,
+				"MetaTags indexing failed for indexID %d: %v",
+				indexID,
+				tx4Err,
+			)
+
+			logIndexPagePhase(
+				"insertMetaTags",
+				phase,
+				tx4Started,
+				sourceID,
+				indexID,
+				tx4Err,
+			)
+
+			// The main page transaction has committed.
+			// Continue processing keywords, ObjectAttributes and Time Series.
+		} else {
+			cmn.DebugMsg(
+				cmn.DbgLvlDebug4,
+				"[DEBUG-Indexing] MetaTags committed for indexID: %d",
+				indexID,
+			)
+		}
+	}
+
+	// Stored all the main page information successfully.
+
+	// ------------------------------------------------------------
+	// Transaction 3: ObjectAttributes
 	// ------------------------------------------------------------
 
 	phase = "index_object_attributes"
@@ -1274,7 +1329,7 @@ func indexPageContext(
 	}
 
 	// ------------------------------------------------------------
-	// Transaction 3: Time Series
+	// Transaction 4: Time Series
 	// ------------------------------------------------------------
 
 	phase = "emit_artifact_timeseries"

@@ -133,6 +133,12 @@ func (d *fakeDriver) Quit() error {
 	return nil
 }
 
+func (d *fakeDriver) SessionID() string {
+	// Cleanup now drops the VDI-tracked identity registration for closing
+	// sessions; every real WebDriver provides an ID.
+	return "fake-session-id"
+}
+
 func (d *fakeDriver) cleanupCounts() (int, int, int) {
 	d.mu.Lock()
 	defer d.mu.Unlock()

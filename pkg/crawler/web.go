@@ -727,39 +727,32 @@ func setReferrerHeader(wd *vdi.WebDriver, ctx *ProcessContext) {
 func changeUserAgent(wd *vdi.WebDriver, ctx *ProcessContext) error {
 	var err error
 
-	// Get the User Agent
-	userAgent := cmn.UADB.GetAgentByTypeAndOSAndBRG(ctx.config.Crawler.Platform, ctx.config.Crawler.BrowserPlatform, ctx.config.Selenium[ctx.SelID].Type)
-	if userAgent == "" {
-		if ctx.config.Crawler.Platform == "desktop" {
-			userAgent = cmn.UsrAgentStrMap[ctx.config.Selenium[ctx.SelID].Type+"-desktop01"]
-		} else {
-			userAgent = cmn.UsrAgentStrMap[ctx.config.Selenium[ctx.SelID].Type+"-mobile01"]
-		}
+	// Shared selection mechanic with the connection-time path.
+	// The historical fallback rule of this path is preserved
+	// verbatim: only the "desktop" device class selects the desktop
+	// fallback, anything else selects the mobile one. Rotation policy (when
+	// this runs) is unchanged.
+	selection := cmn.UADB.SelectUserAgent(
+		ctx.config.Crawler.Platform, ctx.config.Crawler.BrowserPlatform,
+		ctx.config.Selenium[ctx.SelID].Type, ctx.config.Crawler.Platform != "desktop", rand.IntN)
+	userAgent := selection.UserAgent
+	if note := cmn.UserAgentCompatibilityNote(selection); note != "" {
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[CDP] User-Agent note: %s", note)
 	}
-
-	// Parse the User Agent string for {random_int1}
-	if strings.Contains(userAgent, "{random_int1}") {
-		// Generates a random integer in the range [0, 999)
-		randInt := rand.IntN(8000) // nolint:gosec // We are using "math/rand/v2" here
-		userAgent = strings.ReplaceAll(userAgent, "{random_int1}", strconv.Itoa(randInt))
-	}
-
-	// Parse the User Agent string for {random_int2}
-	if strings.Contains(userAgent, "{random_int2}") {
-		// Generates a random integer in the range [0, 999)
-		randInt := rand.IntN(999) // nolint:gosec // We are using "math/rand/v2" here
-		userAgent = strings.ReplaceAll(userAgent, "{random_int2}", strconv.Itoa(randInt))
-	}
+	ident := vdi.MapAdvertisedOSIdentity(selection.ResolvedOS, ctx.config.Crawler.Platform == "mobile")
+	chromeMajor, _ := vdi.ChromeMajorVersion(userAgent)
+	brands := vdi.ClientHintBrandsFor(selection.Product, chromeMajor, cmn.ProductMajorVersion(userAgent, selection.Product))
+	details := vdi.NewClientHintsDetails(userAgent, selection.Product, ident)
 
 	// Check if the browser is Chrome and CDP is available
 	if ctx.config.Selenium[ctx.SelID].Type == "chrome" || ctx.config.Selenium[ctx.SelID].Type == "chromium" {
 		// Try with changeUserAgentCDP
-		err := changeUserAgentCDP(ctx, userAgent)
+		err := changeUserAgentCDP(ctx, userAgent, ident, brands, details)
 		if err != nil {
 			// Enable the Network domain
 			_ = vdi.EnableNetwork(*wd, getCDPDelay(ctx.config), nil)
 			// Set the User-Agent using CDP
-			err = vdi.SetUserAgentOverride(*wd, getCDPDelay(ctx.config), userAgent, ctx.config.Crawler.Platform)
+			err = vdi.SetUserAgentOverrideWithMetadata(*wd, getCDPDelay(ctx.config), userAgent, ident, brands, details)
 			if err == nil {
 				cmn.DebugMsg(cmn.DbgLvlDebug3, "[CDP] UserAgent changed via CDP to: %s", userAgent)
 				//return nil
@@ -769,16 +762,35 @@ func changeUserAgent(wd *vdi.WebDriver, ctx *ProcessContext) error {
 		}
 	}
 
-	// Fallback: Override userAgent using JavaScript injection
+	// Fallback: Override userAgent using JavaScript injection, with safe
+	// string encoding (raw single-quote interpolation broke on UA
+	// text containing quotes, backslashes, or non-ASCII).
 	js := fmt.Sprintf(`
 		Object.defineProperty(navigator, 'userAgent', {
-			get: function() { return '%s'; }
+			get: function() { return %s; }
 		});
-	`, userAgent)
+	`, cmn.JSStringLiteral(userAgent))
 
 	_, err = (*wd).ExecuteScript(js, nil)
 	if err != nil {
 		return fmt.Errorf("failed to dynamically change User-Agent: %v", err)
+	}
+
+	// Replace the session's new-document identity script with the current
+	// selection (review finding 2): changeUserAgent runs before navigation,
+	// so the upcoming documents must evaluate UA B, not the connection-time
+	// script. On CDP-capable browsers a replacement failure propagates
+	// (follow-up finding 1): setupBrowser logs it explicitly, the tracked
+	// previous script stays registered for a later retry, and a dead session
+	// reaches the existing invalid-session recovery. Firefox has no CDP
+	// bridge (and therefore no registered script to go stale), so the
+	// refresh stays best-effort there. Rotation policy and navigation flow
+	// are otherwise unchanged.
+	if rerr := vdi.RefreshIdentityScript(*wd, getCDPDelay(ctx.config), userAgent, ident, brands, details); rerr != nil {
+		if ctx.config.Selenium[ctx.SelID].Type == "chrome" || ctx.config.Selenium[ctx.SelID].Type == "chromium" {
+			return fmt.Errorf("refreshing identity script: %w", rerr)
+		}
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[CDP] refreshing identity script (best-effort): %v", rerr)
 	}
 
 	cmn.DebugMsg(cmn.DbgLvlDebug3, "UserAgent changed via JavaScript to: %s", userAgent)
@@ -786,7 +798,9 @@ func changeUserAgent(wd *vdi.WebDriver, ctx *ProcessContext) error {
 }
 
 // changeUserAgentCDP modifies the User-Agent using CDP via Selenium bridge.
-func changeUserAgentCDP(pctx *ProcessContext, userAgent string) error {
+// ident/brands derive from the same selection event as userAgent so
+// protocol metadata agrees with the advertised identity.
+func changeUserAgentCDP(pctx *ProcessContext, userAgent string, ident vdi.OSIdentity, brands []vdi.ClientHintBrand, details vdi.ClientHintsDetails) error {
 	if pctx == nil || pctx.wd == nil {
 		return fmt.Errorf("invalid process context or webdriver")
 	}
@@ -797,7 +811,7 @@ func changeUserAgentCDP(pctx *ProcessContext, userAgent string) error {
 		return err
 	}
 
-	err = vdi.SetUserAgentOverride(pctx.wd, getCDPDelay(pctx.config), userAgent, pctx.config.Crawler.Platform)
+	err = vdi.SetUserAgentOverrideWithMetadata(pctx.wd, getCDPDelay(pctx.config), userAgent, ident, brands, details)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "[CDP] failed to change User-Agent using Selenium CDP bridge: %v", err)
 		return err
@@ -1253,7 +1267,8 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 		}
 
 		// Reset the VDI session for a clean browser with new User-Agent
-		if ctx.config.Crawler.ChangeUserAgent == "always" {
+		// (policy decision preserved verbatim, see resetSessionForUserAgent).
+		if resetSessionForUserAgent(ctx.config.Crawler.ChangeUserAgent) {
 			err = cleanUpBrowser(wd) // Clear everything before resetting the VDI session
 			if err != nil {
 				// Let's check if session ID is invalid, if so we need to create a new one
@@ -1268,7 +1283,12 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 				}
 			}
 
-			err = vdi.ResetVDI(ctx, ctx.SelID) // 0 = desktop; use 1 for mobile if needed
+			browserType := 0
+			if ctx.config.Crawler.Platform == optBrowsingMobile {
+				browserType = 1
+			}
+
+			err = vdi.ResetVDI(ctx, browserType) // 0 = desktop; use 1 for mobile if needed
 			if ctx.RefreshCrawlingTimer != nil {
 				ctx.RefreshCrawlingTimer()
 			}
@@ -1296,8 +1316,20 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 			}
 		}
 
-		// Setup the Browser before requesting a page
-		setupBrowser(wd, ctx)
+		// Setup the Browser before requesting a page. A setup failure means
+		// the camouflage identity is not safely configured: never navigate
+		// on this attempt. Retry through the existing loop (which recreates
+		// dead sessions via the paths above); on exhaustion return an
+		// explicit error instead of falling through to post-navigation
+		// processing with a partially configured identity.
+		if serr := setupBrowser(wd, ctx); serr != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "[DEBUG-Worker] %s: browser setup failed for %s: %v", id, url, serr)
+			if retries >= maxRetries {
+				return nil, "", fmt.Errorf("failed browser setup for %s after %d retries: %w", url, maxRetries, serr)
+			}
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Retrying browser setup for %s (%d/%d)", id, url, retries+1, maxRetries)
+			continue
+		}
 
 		// Set the HTTP referer if we are on the first URL
 		if level == -1 {
@@ -1337,8 +1369,12 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 					_, _ = cdb.CreateEventWithRetries(ctx.db, e)
 					return nil, "", fmt.Errorf("[critical] failed to create a new WebDriver session: %v", err)
 				}
-				// Setup the Browser before requesting a page
-				setupBrowser(wd, ctx)
+				// Setup the Browser before requesting a page. A setup failure
+				// after session recreation is terminal for this attempt:
+				// never navigate on a partially configured identity.
+				if serr := setupBrowser(wd, ctx); serr != nil {
+					return nil, "", fmt.Errorf("[critical] failed browser setup for %s after session recreation: %w", url, serr)
+				}
 				// Set the HTTP referer if we are on the first URL
 				if level == -1 {
 					setReferrerHeader(&wd, ctx)

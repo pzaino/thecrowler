@@ -142,19 +142,35 @@ func TestIndexingAdmissionPreservesEachChangeChain(t *testing.T) {
 	r := newIndexingAdmissionRegistry()
 	want := map[int][]string{}
 	got := map[int][]string{}
+
 	var mu sync.Mutex
 	var wg sync.WaitGroup
+
+	// Populate expected results before starting any goroutines.
 	for page := range 12 {
-		want[page] = []string{"search-index", "web-object", "attributes", "metrics", "commit", "keywords"}
+		want[page] = []string{
+			"search-index",
+			"web-object",
+			"attributes",
+			"metrics",
+			"commit",
+			"keywords",
+		}
+	}
+
+	// Execute change chains concurrently.
+	for page := range 12 {
 		wg.Add(1)
 		go func(page int) {
 			defer wg.Done()
+
 			release, err := r.acquire(context.Background(), 4)
 			if err != nil {
 				t.Errorf("acquire: %v", err)
 				return
 			}
 			defer release()
+
 			for _, change := range want[page] {
 				mu.Lock()
 				got[page] = append(got[page], change)
@@ -162,9 +178,14 @@ func TestIndexingAdmissionPreservesEachChangeChain(t *testing.T) {
 			}
 		}(page)
 	}
+
 	wg.Wait()
+
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("change chains differ:\ngot  %#v\nwant %#v", got, want)
+		t.Fatalf(
+			"change chains differ:\ngot  %#v\nwant %#v",
+			got, want,
+		)
 	}
 }
 
