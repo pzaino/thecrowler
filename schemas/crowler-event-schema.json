@@ -222,6 +222,14 @@
                 "provider": {
                     "type": "string"
                 },
+                "transport": {
+                    "type": "string",
+                    "description": "Provider transport normalized by configuration validation.",
+                    "enum": [
+                        "http",
+                        "webdriver"
+                    ]
+                },
                 "host": {
                     "type": "string"
                 },
@@ -245,16 +253,100 @@
                     "additionalProperties": {
                         "type": "string"
                     }
+                },
+                "browser": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "navigation_timeout": {
+                            "type": "integer"
+                        },
+                        "page_readiness_timeout": {
+                            "type": "integer"
+                        },
+                        "hbs_enabled": {
+                            "type": "boolean"
+                        },
+                        "selenium_fallback": {
+                            "type": "boolean"
+                        },
+                        "initial_actions": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        },
+                        "consent_actions": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        },
+                        "query_actions": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        },
+                        "pagination_actions": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        },
+                        "scraping_rules": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        },
+                        "allowed_navigation_hosts": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        },
+                        "max_pages": {
+                            "type": "integer"
+                        },
+                        "max_requests": {
+                            "type": "integer"
+                        },
+                        "max_candidates": {
+                            "type": "integer"
+                        },
+                        "screenshot_on_error": {
+                            "type": "boolean"
+                        }
+                    },
+                    "required": [
+                        "navigation_timeout",
+                        "page_readiness_timeout",
+                        "hbs_enabled",
+                        "selenium_fallback",
+                        "initial_actions",
+                        "consent_actions",
+                        "query_actions",
+                        "pagination_actions",
+                        "scraping_rules",
+                        "allowed_navigation_hosts",
+                        "max_pages",
+                        "max_requests",
+                        "max_candidates",
+                        "screenshot_on_error"
+                    ]
                 }
             },
             "required": [
                 "provider",
+                "transport",
                 "host",
                 "max_requests",
                 "max_pages",
                 "page_size",
                 "parameters",
-                "headers"
+                "headers",
+                "browser"
             ]
         },
         "IntegerMap": {

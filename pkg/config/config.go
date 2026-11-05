@@ -17,6 +17,7 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -633,6 +634,9 @@ func ParseConfig(data []byte) (*Config, error) {
 func (c *Config) Validate() error {
 	// Check if the Crawling configuration file contains valid values
 	c.validateCrawler()
+	if errs := c.AttributesIndexing.Validate(); len(errs) > 0 {
+		return fmt.Errorf("invalid attributes_indexing configuration: %w", errors.Join(errs...))
+	}
 	if err := c.Email.Validate(); err != nil {
 		return err
 	}

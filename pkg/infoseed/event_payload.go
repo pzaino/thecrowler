@@ -195,9 +195,13 @@ func redactProviderConfigs(configs map[string]cfg.InformationSeedProviderConfig)
 	sort.Strings(names)
 	for _, name := range names {
 		providerCfg := configs[name]
+		transport := strings.ToLower(strings.TrimSpace(providerCfg.Transport))
+		if transport == "" {
+			transport = "http"
+		}
 		safe[name] = map[string]interface{}{
 			"provider":     providerCfg.Provider,
-			"transport":    providerCfg.Transport,
+			"transport":    transport,
 			"host":         redactInformationSeedURL(providerCfg.Host),
 			"max_requests": providerCfg.MaxRequests,
 			"max_pages":    providerCfg.MaxPages,
@@ -216,12 +220,12 @@ func redactInformationSeedBrowserConfig(browser cfg.InformationSeedBrowserConfig
 		"page_readiness_timeout":   browser.PageReadinessTimeout,
 		"hbs_enabled":              browser.HBSEnabled,
 		"selenium_fallback":        browser.SeleniumFallback,
-		"initial_actions":          append([]string(nil), browser.InitialActions...),
-		"consent_actions":          append([]string(nil), browser.ConsentActions...),
-		"query_actions":            append([]string(nil), browser.QueryActions...),
-		"pagination_actions":       append([]string(nil), browser.PaginationActions...),
-		"scraping_rules":           append([]string(nil), browser.ScrapingRules...),
-		"allowed_navigation_hosts": append([]string(nil), browser.AllowedNavigationHosts...),
+		"initial_actions":          append([]string{}, browser.InitialActions...),
+		"consent_actions":          append([]string{}, browser.ConsentActions...),
+		"query_actions":            append([]string{}, browser.QueryActions...),
+		"pagination_actions":       append([]string{}, browser.PaginationActions...),
+		"scraping_rules":           append([]string{}, browser.ScrapingRules...),
+		"allowed_navigation_hosts": append([]string{}, browser.AllowedNavigationHosts...),
 		"max_pages":                browser.MaxPages,
 		"max_requests":             browser.MaxRequests,
 		"max_candidates":           browser.MaxCandidates,

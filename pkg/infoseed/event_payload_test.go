@@ -1,9 +1,13 @@
 package infoseed
 
 import (
+	"context"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
+
+	"github.com/qri-io/jsonschema"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
@@ -176,6 +180,29 @@ func assertNoSecret(t *testing.T, value string) {
 	}
 }
 
+func loadEventDefinitionSchema(t *testing.T, name string) *jsonschema.Schema {
+	t.Helper()
+	data, err := os.ReadFile("../../schemas/crowler-event-schema.json")
+	if err != nil {
+		t.Fatalf("read event schema: %v", err)
+	}
+	var document struct {
+		Definitions map[string]json.RawMessage `json:"definitions"`
+	}
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatalf("parse event schema: %v", err)
+	}
+	raw := document.Definitions[name]
+	if len(raw) == 0 {
+		t.Fatalf("event schema definition %q not found", name)
+	}
+	schema := &jsonschema.Schema{}
+	if err := schema.UnmarshalJSON(raw); err != nil {
+		t.Fatalf("compile event schema definition %q: %v", name, err)
+	}
+	return schema
+}
+
 func TestInformationSeedEventPayloadUsesExplicitAgentIdentity(t *testing.T) {
 	payload := informationSeedEventPayloadWithOptions(cdb.InformationSeed{ID: 7, InformationSeed: "seed"}, nil, informationSeedEventPayloadOptions{
 		AgentIdentity: AgentIdentity{
@@ -238,6 +265,114 @@ func TestInformationSeedEventPayloadRedactsWebDriverProviderDiagnostics(t *testi
 	headers := browserProvider["headers"].(map[string]string)
 	if headers["Authorization"] != informationSeedRedactedValue || headers["Cookie"] != informationSeedRedactedValue || headers["X-Trace"] != "trace" {
 		t.Fatalf("unexpected redacted headers: %#v", headers)
+	}
+}
+
+func TestRedactedProviderConfigSchemaMatchesRuntimeDiagnostics(t *testing.T) {
+	payload := informationSeedEventPayloadWithOptions(cdb.InformationSeed{ID: 7, InformationSeed: "seed"}, nil, informationSeedEventPayloadOptions{
+		ProviderConfigs: map[string]cfg.InformationSeedProviderConfig{
+			"browser": {
+				Provider:    "browser_search",
+				Transport:   "webdriver",
+				Host:        "https://search.example.invalid/?api_token=SHOULD_NOT_LEAK",
+				Parameters:  map[string]string{"token": "SHOULD_NOT_LEAK", "q": "safe"},
+				Headers:     map[string]string{"Authorization": "Bearer SHOULD_NOT_LEAK", "X-Trace": "trace"},
+				MaxRequests: 2,
+				MaxPages:    1,
+				PageSize:    10,
+				Browser: cfg.InformationSeedBrowserConfig{
+					NavigationTimeout:      45,
+					PageReadinessTimeout:   5,
+					HBSEnabled:             true,
+					SeleniumFallback:       true,
+					InitialActions:         []string{"init"},
+					ConsentActions:         []string{"consent"},
+					QueryActions:           []string{"query"},
+					PaginationActions:      []string{"next"},
+					ScrapingRules:          []string{"extract"},
+					AllowedNavigationHosts: []string{"example.invalid"},
+					MaxPages:               1,
+					MaxRequests:            2,
+					MaxCandidates:          10,
+					ScreenshotOnError:      true,
+				},
+			},
+			"http": {
+				Provider:    "http_json",
+				Host:        "https://search.example.invalid/?api_key=SHOULD_NOT_LEAK",
+				Parameters:  map[string]string{"api_key": "SHOULD_NOT_LEAK", "q": "safe"},
+				Headers:     map[string]string{"X-Trace": "trace"},
+				MaxRequests: 1,
+				MaxPages:    1,
+				PageSize:    10,
+			},
+		},
+	})
+	providerConfigs := payload["provider_configs"].(map[string]interface{})
+	schema := loadEventDefinitionSchema(t, "RedactedProviderConfig")
+	for name, raw := range providerConfigs {
+		runtimeConfig, ok := raw.(map[string]interface{})
+		if !ok {
+			t.Fatalf("runtime provider config %q has type %T", name, raw)
+		}
+		encoded := mustJSON(t, runtimeConfig)
+		assertNoSecret(t, encoded)
+		issues, err := schema.ValidateBytes(context.Background(), []byte(encoded))
+		if err != nil {
+			t.Fatalf("validate runtime provider diagnostics for %q: %v", name, err)
+		}
+		if len(issues) != 0 {
+			t.Fatalf("runtime provider diagnostics for %q do not match schema: %v", name, issues)
+		}
+	}
+	httpConfig, ok := providerConfigs["http"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("runtime HTTP provider config has type %T", providerConfigs["http"])
+	}
+	if httpConfig["transport"] != "http" {
+		t.Fatalf("empty provider transport = %#v, want default http", httpConfig["transport"])
+	}
+	runtimeConfig, ok := providerConfigs["browser"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("runtime provider config has type %T", providerConfigs["browser"])
+	}
+
+	cloneConfig := func() map[string]interface{} {
+		clone := make(map[string]interface{}, len(runtimeConfig))
+		for key, value := range runtimeConfig {
+			clone[key] = value
+		}
+		return clone
+	}
+
+	withUnknownField := cloneConfig()
+	withUnknownField["unexpected_diagnostic"] = "value"
+	issues, err := schema.ValidateBytes(context.Background(), []byte(mustJSON(t, withUnknownField)))
+	if err != nil {
+		t.Fatalf("validate provider diagnostics with unknown field: %v", err)
+	}
+	if len(issues) == 0 {
+		t.Fatal("schema accepted an unknown provider diagnostic field")
+	}
+
+	withInvalidTransport := cloneConfig()
+	withInvalidTransport["transport"] = "browser"
+	issues, err = schema.ValidateBytes(context.Background(), []byte(mustJSON(t, withInvalidTransport)))
+	if err != nil {
+		t.Fatalf("validate provider diagnostics with invalid transport: %v", err)
+	}
+	if len(issues) == 0 {
+		t.Fatal("schema accepted an invalid provider transport")
+	}
+
+	withInvalidBrowser := cloneConfig()
+	withInvalidBrowser["browser"] = "not-an-object"
+	issues, err = schema.ValidateBytes(context.Background(), []byte(mustJSON(t, withInvalidBrowser)))
+	if err != nil {
+		t.Fatalf("validate provider diagnostics with invalid browser: %v", err)
+	}
+	if len(issues) == 0 {
+		t.Fatal("schema accepted a non-object browser diagnostic")
 	}
 }
 

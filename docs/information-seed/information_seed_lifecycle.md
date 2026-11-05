@@ -762,12 +762,29 @@ contracts, or source override metadata.
   "provider_configs": {
     "example_provider": {
       "provider": "http_json",
+      "transport": "http",
       "host": "https://search.example/?api_key=REDACTED",
       "max_requests": 3,
       "max_pages": 1,
       "page_size": 10,
       "parameters": { "api_key": "REDACTED", "safe": "value" },
-      "headers": { "Authorization": "REDACTED", "X-Trace": "trace" }
+      "headers": { "Authorization": "REDACTED", "X-Trace": "trace" },
+      "browser": {
+        "navigation_timeout": 0,
+        "page_readiness_timeout": 0,
+        "hbs_enabled": false,
+        "selenium_fallback": false,
+        "initial_actions": [],
+        "consent_actions": [],
+        "query_actions": [],
+        "pagination_actions": [],
+        "scraping_rules": [],
+        "allowed_navigation_hosts": [],
+        "max_pages": 0,
+        "max_requests": 0,
+        "max_candidates": 0,
+        "screenshot_on_error": false
+      }
     }
   },
   "candidate_counts": {
@@ -814,6 +831,9 @@ summaries.
 
 Operators may inspect `provider_configs`, `plugin_metadata`, and
 `error_summaries` for diagnostics, but these fields are redacted before storage.
+Provider diagnostics include the normalized `transport` and the bounded
+`browser` settings used by the WebDriver transport; both are observational and
+must never contain credentials.
 Provider API keys/tokens, configured headers such as `Authorization`, sensitive
 query parameters, plugin metadata keys containing words such as `secret`,
 `token`, `password`, or `credential`, and matching error fragments are replaced

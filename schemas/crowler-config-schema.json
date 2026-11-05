@@ -1189,8 +1189,14 @@
                     "lowercase",
                     "uppercase",
                     "trim",
-                    "fix_utf8",
                     "collapse_spaces",
+                    "remove_punctuation",
+                    "normalize_url",
+                    "normalize_email",
+                    "fix_utf8",
+                    "normalize_unicode",
+                    "sanitize_string",
+                    "unix_to_datetime",
                     ""
                   ]
                 },
@@ -1212,6 +1218,11 @@
                 "description": "This is a flag that tells the CROWler to index this web object attribute in the database. This is required in order to implement data correlation features."
               }
             },
+            "required": [
+              "key",
+              "path",
+              "index_type"
+            ],
             "additionalProperties": false
           }
         },
@@ -1247,6 +1258,7 @@
                   "string",
                   "integer",
                   "boolean",
+                  "float",
                   "date",
                   "array"
                 ],
@@ -1264,7 +1276,16 @@
                   "enum": [
                     "lowercase",
                     "uppercase",
-                    "trim"
+                    "trim",
+                    "collapse_spaces",
+                    "remove_punctuation",
+                    "normalize_url",
+                    "normalize_email",
+                    "fix_utf8",
+                    "normalize_unicode",
+                    "sanitize_string",
+                    "unix_to_datetime",
+                    ""
                   ]
                 },
                 "examples": [
@@ -1273,11 +1294,23 @@
                   "trim"
                 ]
               },
+              "run_also": {
+                "type": "array",
+                "description": "if this key matches, then also run the ones in this List",
+                "items": {
+                  "type": "string"
+                }
+              },
               "index": {
                 "type": "boolean",
                 "description": "This is a flag that tells the CROWler to index this net info attribute in the database. This is required in order to implement data correlation features."
               }
             },
+            "required": [
+              "key",
+              "path",
+              "index_type"
+            ],
             "additionalProperties": false
           }
         },
@@ -1311,6 +1344,7 @@
                   "string",
                   "integer",
                   "boolean",
+                  "float",
                   "date",
                   "array"
                 ],
@@ -1328,7 +1362,16 @@
                   "enum": [
                     "lowercase",
                     "uppercase",
-                    "trim"
+                    "trim",
+                    "collapse_spaces",
+                    "remove_punctuation",
+                    "normalize_url",
+                    "normalize_email",
+                    "fix_utf8",
+                    "normalize_unicode",
+                    "sanitize_string",
+                    "unix_to_datetime",
+                    ""
                   ]
                 },
                 "examples": [
@@ -1337,11 +1380,23 @@
                   "trim"
                 ]
               },
+              "run_also": {
+                "type": "array",
+                "description": "if this key matches, then also run the ones in this List",
+                "items": {
+                  "type": "string"
+                }
+              },
               "index": {
                 "type": "boolean",
                 "description": "This is a flag that tells the CROWler to index this http info attribute in the database. This is required in order to implement data correlation features."
               }
             },
+            "required": [
+              "key",
+              "path",
+              "index_type"
+            ],
             "additionalProperties": false
           }
         }

@@ -874,12 +874,22 @@ func BuildOpenAPISpec(routes []APIRoute, opt OpenAPIOptions) OpenAPISpec {
 				Responses:   responses,
 			}
 
-			const inQuery = "query"
 			const inPath = "path"
 
-			// Add query parameters from QueryType for GET
-			if (method == getStr) && (r.QueryType != nil) {
-				op.Parameters = append(op.Parameters, queryParamsFromSchemaAny(r.QueryType, r.Path)...)
+			// Query parameters apply to GET operations. Path parameters apply to
+			// every operation, including state-changing POST routes such as the
+			// information-seed path actions.
+			if r.QueryType != nil {
+				parameters := queryParamsFromSchemaAny(r.QueryType, r.Path)
+				if method == getStr {
+					op.Parameters = append(op.Parameters, parameters...)
+				} else {
+					for _, parameter := range parameters {
+						if parameter.In == inPath {
+							op.Parameters = append(op.Parameters, parameter)
+						}
+					}
+				}
 			}
 
 			bodySchema := schemaForRouteValue(r.BodyType)

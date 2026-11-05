@@ -725,10 +725,41 @@ type AttributeIndexingConfig struct {
 type AttributeDefinition struct {
 	Key         string   `json:"key" yaml:"key"`                 // Attribute key (e.g., "domain", "email")
 	Path        string   `json:"path" yaml:"path"`               // JSON path (e.g., "details.scraped_data.url")
-	IndexType   string   `json:"index_type" yaml:"index_type"`   // string, integer, boolean, date, array
-	Normalizers []string `json:"normalizers" yaml:"normalizers"` // lowercase, trim, domain, etc.
+	IndexType   string   `json:"index_type" yaml:"index_type"`   // string, integer, boolean, float, date, array
+	Normalizers []string `json:"normalizers" yaml:"normalizers"` // lowercase, trim, normalize_url, etc.
 	Index       bool     `json:"index" yaml:"index"`             // Whether to index this attribute
 	RunAlso     []string `json:"run_also" yaml:"run_also"`       // List of other attribute keys to run if this one is found
+}
+
+// supportedAttributeIndexTypes mirrors the index_type enum in the configuration
+// schema. The runtime persists the value as the attribute_type column, so these
+// are the types accepted at the configuration boundary.
+var supportedAttributeIndexTypes = map[string]struct{}{
+	"string":  {},
+	"integer": {},
+	"boolean": {},
+	"float":   {},
+	"date":    {},
+	"array":   {},
+}
+
+// supportedAttributeNormalizers mirrors the normalizers implemented by
+// pkg/crawler.ApplyNormalizers. Keep the two lists and the configuration schema
+// normalizers enum in sync so configuration validation never rejects a
+// normalizer the runtime supports.
+var supportedAttributeNormalizers = map[string]struct{}{
+	"":                   {},
+	"lowercase":          {},
+	"uppercase":          {},
+	"trim":               {},
+	"collapse_spaces":    {},
+	"remove_punctuation": {},
+	"normalize_url":      {},
+	"normalize_email":    {},
+	"fix_utf8":           {},
+	"normalize_unicode":  {},
+	"sanitize_string":    {},
+	"unix_to_datetime":   {},
 }
 
 // IsCommandPath checks if the Path field is a command (e.g., "cmd(some_command)")
@@ -749,27 +780,42 @@ func (a *AttributeDefinition) ParseCommand() string {
 	return strings.TrimSpace(tmp)
 }
 
-// IsValid checks if the attribute definition is valid (e.g., has a key, path, and valid index type and normalizer)
+// IsValid checks if the attribute definition is valid (e.g., has a key, path,
+// supported index type, and supported normalizer names).
 func (a *AttributeDefinition) IsValid() bool {
-	if a.Key == "" || a.Path == "" {
-		return false
-	}
+	return a.validationError() == nil
+}
 
-	switch a.IndexType {
-	case "string", "integer", "boolean", "date", "array":
-	default:
-		return false
+func (a *AttributeDefinition) normalize() {
+	a.IndexType = strings.ToLower(strings.TrimSpace(a.IndexType))
+	if len(a.Normalizers) == 0 {
+		return
 	}
+	normalizers := make([]string, 0, len(a.Normalizers))
+	for _, normalizer := range a.Normalizers {
+		normalizers = append(normalizers, strings.ToLower(strings.TrimSpace(normalizer)))
+	}
+	a.Normalizers = normalizers
+}
 
-	for _, n := range a.Normalizers {
-		switch n {
-		case "", "lowercase", "uppercase", "trim":
-		default:
-			return false
+func (a *AttributeDefinition) validationError() error {
+	if strings.TrimSpace(a.Key) == "" {
+		return fmt.Errorf("key is required")
+	}
+	if strings.TrimSpace(a.Path) == "" {
+		return fmt.Errorf("path is required")
+	}
+	indexType := strings.ToLower(strings.TrimSpace(a.IndexType))
+	if _, ok := supportedAttributeIndexTypes[indexType]; !ok {
+		return fmt.Errorf("unsupported index_type %q", a.IndexType)
+	}
+	for _, normalizer := range a.Normalizers {
+		name := strings.ToLower(strings.TrimSpace(normalizer))
+		if _, ok := supportedAttributeNormalizers[name]; !ok {
+			return fmt.Errorf("unsupported normalizer %q", normalizer)
 		}
 	}
-
-	return true
+	return nil
 }
 
 // IsEmpty checks if the AttributeIndexingConfig has no attribute definitions.
@@ -807,9 +853,15 @@ func (c *AttributeIndexingConfig) Validate() []error {
 	var errs []error
 
 	check := func(list []AttributeDefinition, group string) {
-		for _, a := range list {
-			if !a.IsValid() {
-				errs = append(errs, fmt.Errorf("invalid attribute in %s: %s", group, a.Key))
+		for index := range list {
+			attribute := &list[index]
+			attribute.normalize()
+			if err := attribute.validationError(); err != nil {
+				key := strings.TrimSpace(attribute.Key)
+				if key == "" {
+					key = "<unnamed>"
+				}
+				errs = append(errs, fmt.Errorf("attributes_indexing.%s[%d] (%s): %w", group, index, key, err))
 			}
 		}
 	}
