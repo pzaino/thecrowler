@@ -157,6 +157,17 @@ func (p *OllamaProvider) ExecuteWithContext(ctx context.Context, req LLMRequest)
 		return nil, err
 	}
 	req.URL = endpoint
+	// Ollama's compatible endpoint is a chat API: it has no completion-style
+	// `prompt` field. A legacy prompt-only request therefore becomes one
+	// explicit user message. Explicit messages always take precedence, and
+	// prompt+tool requests were already converted by normalizeLLMRequest.
+	if len(req.Messages) == 0 && strings.TrimSpace(req.Prompt) != "" {
+		req.Messages = []interface{}{map[string]interface{}{
+			"role":    "user",
+			"content": req.Prompt,
+		}}
+		req.Prompt = ""
+	}
 	return p.transport.ExecuteWithContext(ctx, req)
 }
 

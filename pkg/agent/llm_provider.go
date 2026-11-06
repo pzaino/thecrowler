@@ -17,7 +17,8 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
+	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -141,7 +142,7 @@ func (p *OpenAICompatibleProvider) ExecuteWithContext(ctx context.Context, req L
 
 	status, body, err := postLLMRequest(ctx, req.URL, headers, string(cmn.ConvertMapToJSON(requestBody)))
 	if err != nil {
-		return nil, fmt.Errorf("AI interaction failed: %v", err)
+		return nil, fmt.Errorf("AI interaction failed: %w", err)
 	}
 	// Same envelope shape as the legacy GenericAPIRequest path
 	// (float64 status, string body) so downstream parsing is identical.
@@ -210,29 +211,90 @@ func buildLLMHeaders(req LLMRequest) map[string]interface{} {
 
 // finishLLMResponse applies the shared post-transport gates: retained-size
 // bound, envelope decoding, and explicit non-2xx failures. Error text never
-// carries auth tokens, prompts, or bodies.
+// carries auth tokens, prompts, response bodies, or endpoint URLs.
 func finishLLMResponse(responseMap map[string]interface{}) (map[string]interface{}, error) {
 	if body, ok := responseMap["body"].(string); ok && len(body) > maxLLMResponseBytes {
 		return nil, fmt.Errorf("AI response exceeded %d bytes", maxLLMResponseBytes)
 	}
 	// Surface provider-side failures explicitly: a non-2xx envelope would
-	// otherwise read as success.
+	// otherwise read as success. Only the status and a fixed category leave
+	// this function; provider bodies are untrusted and may contain secrets.
 	if status := providerStatusCode(responseMap); status < 200 || status >= 300 {
-		return nil, fmt.Errorf("AI provider returned status %d: %s", status, providerBodyExcerpt(responseMap))
+		return nil, providerStatusError(status)
 	}
 	return responseMap, nil
+}
+
+// providerStatusError maps an HTTP failure to a stable category without
+// echoing the provider body, request, endpoint, or credentials.
+func providerStatusError(status int) error {
+	category := "provider request rejected"
+	switch {
+	case status == http.StatusUnauthorized:
+		category = "provider authentication failed"
+	case status == http.StatusForbidden:
+		category = "provider authorization failed"
+	case status == http.StatusNotFound:
+		category = "provider endpoint not found"
+	case status == http.StatusRequestTimeout:
+		category = "provider request timed out"
+	case status == http.StatusTooManyRequests:
+		category = "provider rate limited"
+	case status >= 500:
+		category = "provider server error"
+	}
+	return fmt.Errorf("AI provider returned status %d: %s", status, category)
+}
+
+// Provider redirect sentinels let transport failures keep a useful category
+// without parsing or echoing the wrapped URL.
+var (
+	errProviderRedirectBlocked = errors.New("provider redirect blocked")
+	errProviderRedirectLimit   = errors.New("provider redirect limit exceeded")
+)
+
+// sanitizeProviderTransportError reduces an HTTP transport failure to a
+// fixed category. Go's url.Error normally embeds the full URL, host, port and
+// query string, so raw transport errors must never escape this package.
+func sanitizeProviderTransportError(err error) error {
+	if err == nil {
+		return nil
+	}
+	switch {
+	case errors.Is(err, context.Canceled):
+		return fmt.Errorf("provider request cancelled")
+	case errors.Is(err, context.DeadlineExceeded):
+		return fmt.Errorf("provider request timed out")
+	case errors.Is(err, errProviderRedirectBlocked):
+		return fmt.Errorf("provider redirect blocked")
+	case errors.Is(err, errProviderRedirectLimit):
+		return fmt.Errorf("provider redirect limit exceeded")
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return fmt.Errorf("provider request timed out")
+	}
+	var recordErr tls.RecordHeaderError
+	if errors.As(err, &recordErr) {
+		return fmt.Errorf("provider TLS handshake failed")
+	}
+	var certErr *tls.CertificateVerificationError
+	if errors.As(err, &certErr) {
+		return fmt.Errorf("provider TLS certificate validation failed")
+	}
+	return fmt.Errorf("provider request failed")
 }
 
 // postLLMRequest performs one bounded POST with a context-aware request.
 // The transport timeout backstops requests while the caller context (loop
 // deadline or cancellation) preempts earlier at connect, header, and body
 // stages alike. Bodies are capped WHILE reading: at most maxLLMResponseBytes
-// +1 bytes are ever buffered. Errors carry statuses and short excerpts only,
-// never URLs, credentials, or request contents.
+// +1 bytes are ever buffered. Errors carry fixed categories only, never
+// URLs, credentials, or request contents.
 func postLLMRequest(ctx context.Context, rawURL string, headers map[string]interface{}, body string) (int, string, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, rawURL, strings.NewReader(body))
 	if err != nil {
-		return 0, "", err
+		return 0, "", fmt.Errorf("provider request could not be created")
 	}
 	request.Header.Set("Content-Type", jsonAppType)
 	for key, value := range headers {
@@ -261,14 +323,14 @@ func postLLMRequest(ctx context.Context, rawURL string, headers map[string]inter
 		// an operator-configured inference endpoint.
 		CheckRedirect: func(r *http.Request, via []*http.Request) error {
 			if len(via) >= 5 {
-				return fmt.Errorf("stopped after 5 redirects")
+				return errProviderRedirectLimit
 			}
 			if len(via) > 0 {
 				origin := via[0].URL
 				if !strings.EqualFold(r.URL.Scheme, origin.Scheme) ||
 					!strings.EqualFold(r.URL.Host, origin.Host) {
 					r.Header.Del("Authorization")
-					return fmt.Errorf("redirect to different origin blocked")
+					return errProviderRedirectBlocked
 				}
 			}
 			return nil
@@ -276,12 +338,12 @@ func postLLMRequest(ctx context.Context, rawURL string, headers map[string]inter
 	}
 	response, err := client.Do(request)
 	if err != nil {
-		return 0, "", err
+		return 0, "", sanitizeProviderTransportError(err)
 	}
 	defer response.Body.Close() //nolint:errcheck
 	content, err := io.ReadAll(io.LimitReader(response.Body, maxLLMResponseBytes+1))
 	if err != nil {
-		return 0, "", err
+		return 0, "", fmt.Errorf("provider response could not be read")
 	}
 	if len(content) > maxLLMResponseBytes {
 		return 0, "", fmt.Errorf("AI response exceeded %d bytes", maxLLMResponseBytes)
@@ -307,28 +369,6 @@ func providerStatusCode(responseMap map[string]interface{}) int {
 	default:
 		return 200
 	}
-}
-
-// providerBodyExcerpt returns a short, secret-free slice of a provider error
-// body for actionable failures.
-func providerBodyExcerpt(responseMap map[string]interface{}) string {
-	body, _ := responseMap["body"].(string)
-	if body == "" {
-		if raw, ok := responseMap["error"]; ok && raw != nil {
-			if text, err := json.Marshal(raw); err == nil {
-				body = string(text)
-			}
-		}
-	}
-	body = strings.TrimSpace(body)
-	const maxExcerpt = 200
-	if len(body) > maxExcerpt {
-		body = body[:maxExcerpt] + "..."
-	}
-	if body == "" {
-		return "empty error body"
-	}
-	return body
 }
 
 var (

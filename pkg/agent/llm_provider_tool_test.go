@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -237,71 +238,184 @@ func TestProviderRejectsOversizedBodies(t *testing.T) {
 	}
 }
 
-// TestOllamaSmokeOptional is an opt-in manual smoke test against a real
-// Ollama host. It exercises the first-class ollama provider (base URL
-// normalization included), sends one tool declaration, then returns a
-// correlated tool result for a second model turn. It never runs in CI: both
-// CROWLER_OLLAMA_SMOKE_URL and CROWLER_OLLAMA_SMOKE_MODEL must be set.
-func TestOllamaSmokeOptional(t *testing.T) {
+// ollamaSmokeConfig returns the explicitly configured live Ollama endpoint
+// and model, skipping when the operator has not opted in.
+func ollamaSmokeConfig(t *testing.T) (string, string) {
+	t.Helper()
 	baseURL := strings.TrimSpace(os.Getenv("CROWLER_OLLAMA_SMOKE_URL"))
 	model := strings.TrimSpace(os.Getenv("CROWLER_OLLAMA_SMOKE_MODEL"))
 	if baseURL == "" || model == "" {
-		t.Skip("set CROWLER_OLLAMA_SMOKE_URL and CROWLER_OLLAMA_SMOKE_MODEL to run the live Ollama smoke test")
+		t.Skip("set CROWLER_OLLAMA_SMOKE_URL and CROWLER_OLLAMA_SMOKE_MODEL to run live Ollama tests")
 	}
+	return baseURL, model
+}
+
+// TestOllamaConnectivityOptional proves a configured Ollama server and model
+// can answer a prompt-only chat request. It deliberately does not assert tool
+// calling: that is a separate contract.
+func TestOllamaConnectivityOptional(t *testing.T) {
+	baseURL, model := ollamaSmokeConfig(t)
 	provider := NewOllamaProvider(nil)
-	req := LLMRequest{
-		URL:      baseURL,
-		Model:    model,
-		Messages: []any{map[string]any{"role": "user", "content": "Reply with one tool call to ping."}},
+	response, err := provider.Execute(LLMRequest{
+		URL:       baseURL,
+		Model:     model,
+		Prompt:    "Reply with the single word ready.",
+		MaxTokens: intPtr(32),
+	})
+	if err != nil {
+		t.Fatalf("connectivity request failed: %v", err)
+	}
+	payload, err := ExtractChatPayload(response)
+	if err != nil {
+		t.Fatalf("connectivity payload: %v", err)
+	}
+	normalized, err := NormalizeChatCompletion(payload)
+	if err != nil {
+		t.Fatalf("connectivity response was not a valid chat completion: %v", err)
+	}
+	if strings.TrimSpace(normalized.Content) == "" {
+		t.Fatalf("connectivity response carried no content")
+	}
+	t.Logf("live ollama connectivity ok: model=%q content=%q", model, normalized.Content)
+}
+
+// validateLiveToolCall enforces the tool-calling smoke contract: a text-only
+// reply or a malformed call is a failure, not a pass. It is a small helper so
+// the contract is unit-testable without a live model.
+func validateLiveToolCall(normalized LLMNormalizedResponse) error {
+	if len(normalized.ToolCalls) == 0 {
+		return fmt.Errorf("model returned text %q instead of a tool call", normalized.Content)
+	}
+	call := normalized.ToolCalls[0]
+	if strings.TrimSpace(call.Name) == "" {
+		return fmt.Errorf("tool call has an empty name: %+v", call)
+	}
+	if call.Arguments == nil {
+		return fmt.Errorf("tool call has nil arguments: %+v", call)
+	}
+	if value, ok := call.Arguments["value"].(string); !ok || strings.TrimSpace(value) == "" {
+		return fmt.Errorf("tool call is missing the required value argument: %+v", call.Arguments)
+	}
+	return nil
+}
+
+// TestLiveToolCallValidationContract pins the smoke helper's rejection of
+// text-only and malformed replies.
+func TestLiveToolCallValidationContract(t *testing.T) {
+	if err := validateLiveToolCall(LLMNormalizedResponse{Content: "I cannot call tools"}); err == nil {
+		t.Fatalf("text-only reply must fail the tool-calling contract")
+	}
+	if err := validateLiveToolCall(LLMNormalizedResponse{ToolCalls: []LLMToolCall{{Name: ""}}}); err == nil {
+		t.Fatalf("empty tool name must fail the tool-calling contract")
+	}
+	if err := validateLiveToolCall(LLMNormalizedResponse{ToolCalls: []LLMToolCall{{Name: "ping"}}}); err == nil {
+		t.Fatalf("missing arguments must fail the tool-calling contract")
+	}
+	if err := validateLiveToolCall(LLMNormalizedResponse{ToolCalls: []LLMToolCall{{
+		Name: "ping", Arguments: map[string]any{},
+	}}}); err == nil {
+		t.Fatalf("missing required value must fail the tool-calling contract")
+	}
+	if err := validateLiveToolCall(LLMNormalizedResponse{ToolCalls: []LLMToolCall{{
+		Name: "ping", Arguments: map[string]any{"value": "smoke"},
+	}}}); err != nil {
+		t.Fatalf("valid call rejected: %v", err)
+	}
+}
+
+// TestOllamaToolCallingSmokeOptional requires the configured live model to
+// produce a valid tool call and then accept a correlated tool result. When a
+// model is configured, a text-only reply is a failure, not a passing
+// tool-calling test.
+func TestOllamaToolCallingSmokeOptional(t *testing.T) {
+	baseURL, model := ollamaSmokeConfig(t)
+	provider := NewOllamaProvider([]string{model})
+	request := LLMRequest{
+		URL:   baseURL,
+		Model: model,
+		Messages: []any{map[string]any{
+			"role":    "user",
+			"content": `Call the ping tool with value "smoke". Do not answer with text.`,
+		}},
 		Tools: []LLMToolDefinition{{
-			Type:     "function",
-			Function: LLMFunctionSpec{Name: "ping", Parameters: map[string]any{"type": "object"}},
+			Type: "function",
+			Function: LLMFunctionSpec{
+				Name:        "ping",
+				Description: "Record a smoke-test value.",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"value": map[string]any{"type": "string"},
+					},
+					"required":             []any{"value"},
+					"additionalProperties": false,
+				},
+			},
 		}},
 		ToolChoice:    LLMToolChoice{Mode: "auto"},
 		HasToolChoice: true,
 	}
-	resp, err := provider.Execute(req)
+	response, err := provider.Execute(request)
 	if err != nil {
-		t.Fatalf("smoke request failed: %v", err)
+		t.Fatalf("tool-calling request failed: %v", err)
 	}
-	payload, err := ExtractChatPayload(resp)
+	payload, err := ExtractChatPayload(response)
 	if err != nil {
-		t.Fatalf("smoke payload: %v", err)
+		t.Fatalf("tool-calling payload: %v", err)
 	}
 	normalized, err := NormalizeChatCompletion(payload)
-	if err != nil || len(normalized.ToolCalls) == 0 {
-		t.Logf("model returned no tool calls (valid text reply): err=%v content=%q", err, normalized.Content)
-		return
+	if err != nil {
+		t.Fatalf("tool-calling response was not a valid chat completion: %v", err)
 	}
-	t.Logf("smoke tool calls (inert, not executed here): %+v", normalized.ToolCalls)
-	// Return a synthetic correlated result and require a second response.
-	callID := normalized.ToolCalls[0].ID
-	if strings.TrimSpace(callID) == "" {
+	if err := validateLiveToolCall(normalized); err != nil {
+		t.Fatalf("tool-calling smoke failed: %v", err)
+	}
+	call := normalized.ToolCalls[0]
+	t.Logf("live ollama tool call (inert until explicitly authorized): %+v", call)
+
+	callID := strings.TrimSpace(call.ID)
+	if callID == "" {
 		callID = "local-r1-c0"
 	}
-	req.Messages = append(req.Messages,
-		map[string]any{"role": "assistant", "content": normalized.Content,
-			"tool_calls": []any{map[string]any{
-				"id": callID, "type": "function",
-				"function": map[string]any{"name": normalized.ToolCalls[0].Name, "arguments": "{}"},
-			}}},
-		map[string]any{"role": "tool", "tool_call_id": callID, "content": `{"ok":true}`},
-	)
-	req.Tools = nil
-	req.HasToolChoice = false
-	finalResp, err := provider.Execute(req)
+	arguments, err := json.Marshal(call.Arguments)
 	if err != nil {
-		t.Fatalf("smoke follow-up failed: %v", err)
+		t.Fatalf("tool-calling smoke failed: arguments are not serializable: %v", err)
 	}
-	finalPayload, err := ExtractChatPayload(finalResp)
+	request.Messages = append(request.Messages,
+		map[string]any{
+			"role":    "assistant",
+			"content": normalized.Content,
+			"tool_calls": []any{map[string]any{
+				"id":   callID,
+				"type": "function",
+				"function": map[string]any{
+					"name":      call.Name,
+					"arguments": string(arguments),
+				},
+			}},
+		},
+		map[string]any{
+			"role":         "tool",
+			"tool_call_id": callID,
+			"content":      `{"ok":true}`,
+		},
+	)
+	request.Tools = nil
+	request.HasToolChoice = false
+	finalResponse, err := provider.Execute(request)
 	if err != nil {
-		t.Fatalf("smoke follow-up payload: %v", err)
+		t.Fatalf("tool-result follow-up failed: %v", err)
+	}
+	finalPayload, err := ExtractChatPayload(finalResponse)
+	if err != nil {
+		t.Fatalf("tool-result follow-up payload: %v", err)
 	}
 	finalNormalized, err := NormalizeChatCompletion(finalPayload)
 	if err != nil {
-		t.Fatalf("smoke follow-up normalization: %v", err)
+		t.Fatalf("tool-result follow-up was not a valid chat completion: %v", err)
 	}
-	t.Logf("smoke final model content: %q", finalNormalized.Content)
+	t.Logf("live ollama final turn: content=%q tool_calls=%d",
+		finalNormalized.Content, len(finalNormalized.ToolCalls))
 }
 
 // TestProviderKeepsRawBodyCompatibility pins that raw mode still returns

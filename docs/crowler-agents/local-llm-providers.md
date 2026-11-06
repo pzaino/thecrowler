@@ -58,6 +58,12 @@ The `url` may be:
 `/api/chat`, `/api/generate` and unrelated paths are rejected with an
 actionable error rather than sent to the wrong handler.
 
+Ollama's compatible endpoint is a chat API. A legacy prompt-only request
+(`prompt` without `messages`) is therefore serialized as one `user` chat
+message. Explicit `messages` always take precedence, and prompt-plus-tools
+requests are converted the same way. The `openai-compatible` provider keeps
+its historical completion-style `prompt` payload unchanged.
+
 ## Tool-capable models
 
 Ollama installs many models, and not every model implements tool calling.
@@ -117,12 +123,13 @@ behaviour. The legacy two-method `LLMProvider` interface is unchanged.
 * A redirect to a different scheme or `host:port` is blocked, and
   `Authorization` is not forwarded. Reconfigure the endpoint at its final
   origin instead of relying on redirects.
-* Provider output is capped at 8 MiB; error text carries statuses and short
-  excerpts only. Error messages never echo the endpoint URL, credentials or
-  prompts.
+* Provider output is capped at 8 MiB. Error text carries only the HTTP status
+  and a fixed category; it never echoes response bodies, prompts, endpoint
+  URLs, hostnames, query strings or credentials.
 * Endpoints are operator configuration. `AgentToolLoop` rejects dataflow
-  references in `provider`, `url`, `auth` and `model`, so model output cannot
-  select an inference endpoint.
+  references in `provider`, `url`, `auth` and `model` in direct step params,
+  in the `config.ai` fallback, and in config inherited from a previous step,
+  so model output cannot select an inference endpoint.
 * Unix domain socket endpoints are not supported in this stage. Expose the
   local engine on a loopback or container TCP listener instead.
 

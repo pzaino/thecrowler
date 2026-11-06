@@ -126,9 +126,10 @@ func normalizeToolLoopConfig(params, config map[string]interface{}, ictx InputCo
 
 	// Endpoint and credential selection are authority-bearing. They must be
 	// statically declared in the manifest so neither a prior model response
-	// ($response) nor event data can steer inference. Environment
-	// interpolation (${VAR}) already happened at manifest load time.
-	if err := rejectLoopProviderMarkers(params); err != nil {
+	// ($response), event data, nor an inherited step config can steer
+	// inference. Environment interpolation (${VAR}) already happened at
+	// manifest load time.
+	if err := rejectLoopProviderMarkers(params, config); err != nil {
 		return loop, err
 	}
 
@@ -355,19 +356,32 @@ func rejectInputMarkers(value any) error {
 var loopProviderPolicyFields = []string{"provider", "url", "auth", "model"}
 
 // rejectLoopProviderMarkers refuses dataflow references in provider
-// selection so a prior model response or event cannot choose the endpoint or
-// credential.
-func rejectLoopProviderMarkers(params map[string]interface{}) error {
-	if params == nil {
+// selection so a prior model response, an event, or an inherited step config
+// cannot choose the endpoint or credential. Direct step params and the
+// config.ai fallback used by resolveLoopString are both checked.
+func rejectLoopProviderMarkers(params, config map[string]interface{}) error {
+	if params != nil {
+		for _, key := range loopProviderPolicyFields {
+			raw, ok := params[key]
+			if !ok || raw == nil {
+				continue
+			}
+			if err := rejectInputMarkers(raw); err != nil {
+				return fmt.Errorf("tool loop denied: %s must be statically declared", key)
+			}
+		}
+	}
+	if len(config) == 0 {
 		return nil
 	}
+	aiSection := mapStringAny(config["ai"])
 	for _, key := range loopProviderPolicyFields {
-		raw, ok := params[key]
+		raw, ok := aiSection[key]
 		if !ok || raw == nil {
 			continue
 		}
 		if err := rejectInputMarkers(raw); err != nil {
-			return fmt.Errorf("tool loop denied: %s must be statically declared", key)
+			return fmt.Errorf("tool loop denied: ai.%s must be statically declared", key)
 		}
 	}
 	return nil

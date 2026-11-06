@@ -944,8 +944,10 @@ Operations:
   come from operator configuration — CROWler never discovers endpoints.
 * A 30s HTTP timeout bounds in-flight I/O and an 8 MiB cap bounds retained
   provider output; non-2xx provider statuses surface as explicit step
-  errors. Auth tokens, prompts, and full responses never appear in error
-  text or logs.
+  errors. Provider errors carry only the HTTP status and a fixed category
+  (authentication, authorization, rate limit, server error, timeout,
+  redirect, TLS, transport failure). They never echo the response body,
+  prompt, endpoint URL, hostname, query string, or credentials.
 * Identity, contract, budget, and delegation gates run before any transport.
 
 References: <https://docs.ollama.com/api/openai-compatibility>,
@@ -1309,9 +1311,10 @@ Normalized AI inputs may include:
 Provider endpoints are operator configuration. In `AgentToolLoop`, the
 `provider`, `url`, `auth` and `model` fields must be statically declared; any
 `$response`, `$event` or `{{...}}` reference in them is rejected before the
-provider is resolved. A prior model response or event can therefore never
-select the inference endpoint or its credential. `AIInteraction` keeps its
-legacy dataflow behaviour for compatibility.
+provider is resolved, including in the `config.ai` fallback and in a config
+inherited from a previous step. A prior model response or event can therefore
+never select the inference endpoint or its credential. `AIInteraction` keeps
+its legacy dataflow behaviour for compatibility.
 
 ### 14.1 Ollama (first-class local provider)
 
@@ -1346,9 +1349,13 @@ Rules:
     before any HTTP call;
   * set with names: only those models are attested; other models fail before
     any HTTP call.
-* The opt-in live smoke test is
-  `CROWLER_OLLAMA_SMOKE_URL=http://host:11434 CROWLER_OLLAMA_SMOKE_MODEL=qwen3:8b go test ./pkg/agent -run TestOllamaSmokeOptional -v`.
-  A skipped test is not evidence of live Ollama support.
+* The opt-in live tests are split by contract:
+  `CROWLER_OLLAMA_SMOKE_URL=http://host:11434 CROWLER_OLLAMA_SMOKE_MODEL=qwen3:8b go test ./pkg/agent -run TestOllamaConnectivityOptional -v`
+  checks provider connectivity, while
+  `... -run TestOllamaToolCallingSmokeOptional -v` requires a valid tool call
+  and a correlated follow-up turn. A text-only reply fails the tool-calling
+  test when a model is configured. A skipped test is not evidence of live
+  Ollama support.
 
 Capability metadata is available through the optional
 `ProviderCapabilityReporter` and `ModelCapabilityReporter` interfaces. The
