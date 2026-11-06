@@ -92,6 +92,7 @@ func RegisterActions(engine *JobEngine) {
 	engine.RegisterAction(&PluginAction{})
 	engine.RegisterAction(&DecisionAction{})
 	engine.RegisterAction(&AgentToolLoopAction{})
+	engine.RegisterAction(&AgentGoalRunAction{})
 }
 
 // NewJobEngine creates a new job engine

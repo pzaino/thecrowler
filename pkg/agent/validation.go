@@ -263,6 +263,10 @@ func validateSemanticRules(doc map[string]any, registry *AgentRegistry) *Validat
 			if params == nil {
 				continue
 			}
+			if action == "AgentGoalRun" {
+				validateGoalStepForStrict(doc, jobName, sIdx, stepPath, params, ve)
+				continue
+			}
 			cond, _ := params["condition"].(map[string]any)
 			checkDecisionTarget(cond, "on_true", stepPath+".params.condition.on_true", ve, doc, registry)
 			checkDecisionTarget(cond, "on_false", stepPath+".params.condition.on_false", ve, doc, registry)
@@ -270,6 +274,46 @@ func validateSemanticRules(doc map[string]any, registry *AgentRegistry) *Validat
 	}
 
 	return ve
+}
+
+// validateGoalStepForStrict mirrors the load-time goal checks for
+// `crowler-agt agents validate --strict` without changing lenient loading.
+func validateGoalStepForStrict(doc map[string]any, jobName string, stepIndex int, path string, params map[string]any, ve *ValidationError) {
+	formatVersion, _ := doc["format_version"].(string)
+	formatVersion = strings.ToLower(strings.TrimSpace(formatVersion))
+	identity, _ := doc["agent_identity"].(map[string]any)
+	if formatVersion == "" && len(identity) > 0 {
+		formatVersion = AgentFormatVersionV2
+	}
+	if formatVersion != AgentFormatVersionV2 || len(identity) == 0 {
+		ve.add(path+".action", "AgentGoalRun requires format_version v2 and agent_identity")
+		return
+	}
+	capabilities := toStringSlice(identity["capabilities"])
+	if !containsString(capabilities, "all") && !containsString(capabilities, "goal_execution") {
+		ve.add("agent_identity.capabilities", "AgentGoalRun requires the goal_execution capability")
+	}
+	trust, _ := identity["trust_level"].(string)
+	if trustLevelRank(trust) < minToolTrustRank {
+		ve.add("agent_identity.trust_level", "AgentGoalRun requires trusted or system standing")
+	}
+	spec, err := parseAgentGoalSpec(params, nil, jobName, stepIndex)
+	if err != nil {
+		ve.add(path+".params", err.Error())
+		return
+	}
+	if err := validateGoalTools(spec); err != nil {
+		ve.add(path+".params", err.Error())
+	}
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), target) {
+			return true
+		}
+	}
+	return false
 }
 
 func checkDecisionTarget(condition map[string]any, branch, path string, ve *ValidationError, doc map[string]any, registry *AgentRegistry) {

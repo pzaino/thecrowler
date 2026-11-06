@@ -42,6 +42,11 @@ type AuditEvent struct {
 	Reason             string   `json:"reason,omitempty"`
 	DelegationTarget   string   `json:"delegation_target,omitempty"`
 	FailurePolicy      string   `json:"failure_policy,omitempty"`
+	// WP-02 goal correlation fields. Empty for legacy actions.
+	GoalID      string   `json:"goal_id,omitempty"`
+	CriterionID string   `json:"criterion_id,omitempty"`
+	ReasonCode  string   `json:"reason_code,omitempty"`
+	EvidenceIDs []string `json:"evidence_ids,omitempty"`
 }
 
 func (je *JobEngine) startGovernanceRun() {

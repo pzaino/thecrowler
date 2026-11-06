@@ -120,6 +120,15 @@ func (t *sourceStatusTool) InputSchema() map[string]any {
 
 func (t *sourceStatusTool) RequiredCapabilities() []string { return []string{"db_read"} }
 
+// EvidenceKind declares the observation kind recorded for authorized runs.
+func (t *sourceStatusTool) EvidenceKind() EvidenceKind { return EvidenceToolObservation }
+
+// EvidenceTrustClass declares the trust class for the observation.
+func (t *sourceStatusTool) EvidenceTrustClass() TrustClass { return TrustToolObservation }
+
+// IsReadOnly reports that the tool has no side effects.
+func (t *sourceStatusTool) IsReadOnly() bool { return true }
+
 func (t *sourceStatusTool) Execute(ctx context.Context, args map[string]any) (map[string]any, error) {
 	runtime, ok := ToolRuntimeFromContext(ctx)
 	if !ok || runtime.DB == nil {
@@ -177,6 +186,15 @@ func (p *pageSearchTool) InputSchema() map[string]any {
 }
 
 func (p *pageSearchTool) RequiredCapabilities() []string { return []string{"db_read"} }
+
+// EvidenceKind declares the observation kind recorded for authorized runs.
+func (p *pageSearchTool) EvidenceKind() EvidenceKind { return EvidenceToolObservation }
+
+// EvidenceTrustClass declares the trust class for the observation.
+func (p *pageSearchTool) EvidenceTrustClass() TrustClass { return TrustToolObservation }
+
+// IsReadOnly reports that the tool has no side effects.
+func (p *pageSearchTool) IsReadOnly() bool { return true }
 
 func (p *pageSearchTool) Execute(ctx context.Context, args map[string]any) (map[string]any, error) {
 	runtime, ok := ToolRuntimeFromContext(ctx)

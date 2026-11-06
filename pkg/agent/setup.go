@@ -231,6 +231,10 @@ type Job struct {
 	Steps          []map[string]any `yaml:"steps" json:"steps"`
 	AgentsTimeout  int              `yaml:"timeout" json:"timeout"`
 	PluginsTimeout int              `yaml:"plugins_timeout" json:"plugins_timeout"`
+
+	// goalSpecs is an internal, non-serialized side table populated at load.
+	// The action never reads authority from runtime params.
+	goalSpecs []*AgentGoalSpec
 }
 
 // NewJobConfig creates a new job configuration
@@ -291,6 +295,9 @@ func parseAgentsBytes(data []byte, fileType string) (JobConfig, error) {
 		return cfg, err
 	}
 	if err = cfg.normalizeAgentIdentity(); err != nil {
+		return cfg, err
+	}
+	if err = cfg.freezeGoalSpecs(); err != nil {
 		return cfg, err
 	}
 	return cfg, nil
@@ -753,6 +760,9 @@ func deepCopyJob(j Job) Job {
 		}
 		out.Steps[i] = m
 	}
+	if j.goalSpecs != nil {
+		out.goalSpecs = append([]*AgentGoalSpec(nil), j.goalSpecs...)
+	}
 
 	return out
 }
@@ -964,6 +974,7 @@ func (je *JobEngine) executeJobsWithContextResult(j *JobConfig, iCfg map[string]
 				terminal, err := executeJobGroup(
 					je,
 					jg,
+					jobGroup.goalSpecs,
 					identity,
 					execCtx,
 					flags,
@@ -1000,7 +1011,7 @@ func (je *JobEngine) executeJobsWithContextResult(j *JobConfig, iCfg map[string]
 
 		} else {
 			// Execute the group serially
-			terminal, err := executeJobGroup(je, jobGroup.Steps, j.AgentIdentity, execCtx, flags)
+			terminal, err := executeJobGroup(je, jobGroup.Steps, jobGroup.goalSpecs, j.AgentIdentity, execCtx, flags)
 			if err != nil {
 				return nil, fmt.Errorf("failed to execute job group '%s': %v", jobGroup.Name, err)
 			}
@@ -1045,7 +1056,7 @@ func (je *JobEngine) executeJobsWithContextResult(j *JobConfig, iCfg map[string]
 
 // executeJobGroup runs jobs in a group serially with a fresh per-group budget,
 // returning the terminal step payload.
-func executeJobGroup(je *JobEngine, steps []map[string]any, identity *AgentIdentity, execCtx AgentExecutionContext, flags cfg.AgentRuntimeConfig) (any, error) {
+func executeJobGroup(je *JobEngine, steps []map[string]any, goalSpecs []*AgentGoalSpec, identity *AgentIdentity, execCtx AgentExecutionContext, flags cfg.AgentRuntimeConfig) (any, error) {
 	var budget *constraintBudgetManager
 	if flags.IdentityEnforcement && identity != nil {
 		b, err := newConstraintBudgetManager(*identity)
@@ -1055,7 +1066,7 @@ func executeJobGroup(je *JobEngine, steps []map[string]any, identity *AgentIdent
 		budget = b
 		defer budget.release()
 	}
-	return executeJobGroupWithBudget(je, steps, identity, execCtx, flags, budget)
+	return executeJobGroupWithBudget(je, steps, goalSpecs, identity, execCtx, flags, budget)
 }
 
 // executeJobGroupWithBudget runs jobs in a group serially against an existing
@@ -1063,7 +1074,7 @@ func executeJobGroup(je *JobEngine, steps []map[string]any, identity *AgentIdent
 // variant so they are charged to the same group instead of receiving a fresh
 // budget. Only the budget owner (executeJobGroup) releases the context,
 // never a fallback invocation.
-func executeJobGroupWithBudget(je *JobEngine, steps []map[string]any, identity *AgentIdentity, execCtx AgentExecutionContext, flags cfg.AgentRuntimeConfig, budget *constraintBudgetManager) (any, error) {
+func executeJobGroupWithBudget(je *JobEngine, steps []map[string]any, goalSpecs []*AgentGoalSpec, identity *AgentIdentity, execCtx AgentExecutionContext, flags cfg.AgentRuntimeConfig, budget *constraintBudgetManager) (any, error) {
 	lastResult := make(map[string]any)
 
 	if (flags.IdentityEnforcement || flags.ContractEnforcement) && identity != nil {
@@ -1160,6 +1171,14 @@ func executeJobGroupWithBudget(je *JobEngine, steps []map[string]any, identity *
 			}
 		}
 
+		if strings.EqualFold(strings.TrimSpace(actionName), "AgentGoalRun") {
+			var spec *AgentGoalSpec
+			if goalSpecs != nil && i < len(goalSpecs) {
+				spec = goalSpecs[i]
+			}
+			setGoalRuntimeSpec(params, spec, i, identity, execCtx)
+		}
+
 		action, exists := je.actions[actionName]
 		if !exists {
 			return nil, fmt.Errorf("unknown action: %s", actionName)
@@ -1200,7 +1219,7 @@ func executeJobGroupWithBudget(je *JobEngine, steps []map[string]any, identity *
 				je.appendAudit(AuditEvent{RunID: execCtx.RunID, TraceID: execCtx.TraceID, AgentID: auditAgentID, AgentName: auditAgentName, Owner: auditOwner, Action: actionName, RequiredCapability: requiredCapabilityForActionName(actionName), CapabilitiesUsed: capabilitiesUsed(identity, actionName), Outcome: auditOutcomeError, Reason: err.Error(), FailurePolicy: policy})
 				if fallback, hasFallback := (*step)["fallback"].([]map[string]interface{}); hasFallback && policy != "continue" {
 					cmn.DebugMsg(cmn.DbgLvlError, "Action %s failed, executing fallback steps", actionName)
-					return executeJobGroupWithBudget(je, fallback, identity, execCtx, flags, budget)
+					return executeJobGroupWithBudget(je, fallback, nil, identity, execCtx, flags, budget)
 				}
 				switch policy {
 				case "continue":
@@ -1208,7 +1227,7 @@ func executeJobGroupWithBudget(je *JobEngine, steps []map[string]any, identity *
 				case "fallback":
 					if fallback, hasFallback := (*step)["fallback"].([]map[string]interface{}); hasFallback {
 						cmn.DebugMsg(cmn.DbgLvlError, "Action %s failed, executing fallback steps", actionName)
-						return executeJobGroupWithBudget(je, fallback, identity, execCtx, flags, budget)
+						return executeJobGroupWithBudget(je, fallback, nil, identity, execCtx, flags, budget)
 					}
 					return nil, fmt.Errorf("action %s failed: %v", actionName, err)
 				default:

@@ -120,11 +120,21 @@ func (r *AgentToolRegistry) Register(tool AgentTool) error {
 		schemaCopy = map[string]any{}
 	}
 	capsCopy := append([]string(nil), tool.RequiredCapabilities()...)
+	evidence := EvidenceMetadata{}
+	if source, ok := tool.(EvidenceSource); ok {
+		evidence = EvidenceMetadata{
+			Kind:      source.EvidenceKind(),
+			Trust:     source.EvidenceTrustClass(),
+			ReadOnly:  source.IsReadOnly(),
+			Supported: true,
+		}
+	}
 	r.tools[name] = &frozenTool{
 		name:         name,
 		description:  tool.Description(),
 		schema:       schemaCopy,
 		capabilities: capsCopy,
+		evidence:     evidence,
 		inner:        tool,
 	}
 	r.order = append(r.order, name)
@@ -138,6 +148,7 @@ type frozenTool struct {
 	description  string
 	schema       map[string]any
 	capabilities []string
+	evidence     EvidenceMetadata
 	inner        AgentTool
 }
 
@@ -223,6 +234,24 @@ func (r *AgentToolRegistry) InputSchemaCopy(name string) map[string]any {
 		return cloned
 	}
 	return map[string]any{}
+}
+
+// EvidenceMetadata returns the frozen evidence capability for a tool.
+func (r *AgentToolRegistry) EvidenceMetadata(name string) (EvidenceMetadata, bool) {
+	if r == nil {
+		return EvidenceMetadata{}, false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	tool, ok := r.tools[strings.TrimSpace(name)]
+	if !ok {
+		return EvidenceMetadata{}, false
+	}
+	frozen, ok := tool.(*frozenTool)
+	if !ok {
+		return EvidenceMetadata{}, false
+	}
+	return frozen.evidence, true
 }
 
 // ToolDefinitions exports the registry in Phase 2 transport shape for

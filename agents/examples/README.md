@@ -25,6 +25,9 @@ carry the `delegate` capability, and `CreateEvent` steps use numeric sources.
   `CROWLER_OLLAMA_TOOL_MODELS` before relying on tool execution.
 - `ai-tool-calling-probe.agent.yaml` uses `provider: ollama` for inert
   tool-call proposals. Nothing it returns is executed.
+- `goal-source-reader.agent.yaml` and `goal-source-any.agent.yaml` show
+  evidence-verified `AgentGoalRun` goals. A model's final text is never proof;
+  the deterministic verifier decides completion.
 - See `docs/crowler-agents/local-llm-providers.md` for endpoint rules,
   capability reporting and the live smoke test.
 
@@ -62,9 +65,13 @@ Use the CLI to lint and validate examples:
 crowler-agt agents lint agents/examples/soc-autonomous-triage-v2.agent.yaml
 crowler-agt agents lint agents/examples/compliance-evidence-fabric-v2.agent.yaml
 crowler-agt agents lint agents/examples/revenue-growth-experiment-lab-v2.agent.yaml
+crowler-agt agents lint agents/examples/goal-source-reader.agent.yaml
+crowler-agt agents lint agents/examples/goal-source-any.agent.yaml
 
 # strict validation
 crowler-agt agents validate --strict agents/examples/soc-autonomous-triage-v2.agent.yaml
 crowler-agt agents validate --strict agents/examples/compliance-evidence-fabric-v2.agent.yaml
 crowler-agt agents validate --strict agents/examples/revenue-growth-experiment-lab-v2.agent.yaml
+crowler-agt agents validate --strict agents/examples/goal-source-reader.agent.yaml
+crowler-agt agents validate --strict agents/examples/goal-source-any.agent.yaml
 ```

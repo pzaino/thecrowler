@@ -1,0 +1,63 @@
+# Goal-driven read-only verification with `any` acceptance semantics.
+# One proven criterion is enough; missing evidence never becomes success.
+format_version: v2
+agent_identity:
+  agent_id: goal-source-any
+  name: Goal Source Any
+  agent_type: executor
+  owner: platform
+  trust_level: trusted
+  capabilities:
+    - goal_execution
+    - db_read
+    - ai_reasoning
+  memory:
+    scope: none
+  constraints:
+    max_steps: 3
+    time_budget: 3m
+jobs:
+  - name: Goal Source Any
+    process: serial
+    trigger_type: manual
+    trigger_name: run_goal_source_any
+    steps:
+      - action: AgentGoalRun
+        params:
+          provider: ollama
+          url: "http://OLLAMA_HOST:11434"
+          model: "tool-capable-model"
+          goal_id: source-7-any-evidence
+          objective: >-
+            Determine whether source 7 completed a crawl or has at least one
+            indexed page. Any one proven criterion is sufficient.
+          prompt: >-
+            Gather the permitted read-only evidence. A final text response is
+            not proof of completion.
+          allowlist:
+            - get_source_status
+            - search_indexed_pages
+          allowed_sources:
+            - 7
+          evidence:
+            allow:
+              - source_status
+              - indexed_page
+            default_max_age: 30m
+          acceptance:
+            mode: any
+            criteria:
+              - id: source_completed
+                description: "Source 7 reports a completed crawl."
+                predicate:
+                  kind: resource_status
+                  resource: source
+                  resource_id: 7
+                  status: completed
+              - id: pages_indexed
+                description: "Source 7 has indexed pages."
+                predicate:
+                  kind: evidence_exists
+                  evidence: indexed_page
+                  where:
+                    source_id: 7

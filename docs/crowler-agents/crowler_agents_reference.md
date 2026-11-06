@@ -438,6 +438,8 @@ capabilities:
   - call_plugin
   - ai_reasoning
   - delegate
+  - tool_execution
+  - goal_execution
 ```
 
 Use only these exact strings when validating against `schemas/crowler-agent-schema.json`.
@@ -454,6 +456,8 @@ Action-to-capability mapping enforced with identity enforcement on:
 | `CreateEvent` | `emit_event` |
 | `Decision` local branching | none |
 | `Decision` delegation | `delegate` |
+| `AgentToolLoop` | `tool_execution` |
+| `AgentGoalRun` | `goal_execution` |
 
 Notes:
 
@@ -467,8 +471,9 @@ Notes:
   must use the canonical names. `decision` alone never authorizes
   delegation.
 * Trust ranks: `system` is top tier with `privileged`; `trusted` is mid;
-  `restricted`/`untrusted` are low. `DBQuery`, `RunCommand`, and
-  `PluginExecution` need rank 2 (`trusted`) or higher.
+  `restricted`/`untrusted` are low. `DBQuery`, `RunCommand`,
+  `PluginExecution`, `AgentToolLoop` and `AgentGoalRun` need rank 2
+  (`trusted`) or higher.
 
 ### 8.8 `constraints`
 
@@ -762,7 +767,9 @@ CROWler registers these built-in actions:
 * `RunCommand`,
 * `PluginExecution`,
 * `CreateEvent`,
-* `Decision`.
+* `Decision`,
+* `AgentToolLoop`,
+* `AgentGoalRun`.
 
 ### 11.1 `APIRequest`
 
@@ -983,6 +990,94 @@ resolved. If a provider explicitly reports that its model lacks tool-call
 support (see `CROWLER_OLLAMA_TOOL_MODELS`), the loop denies before any HTTP
 call; providers that report unknown keep the historical permissive
 behaviour. See `agents/examples/tool-loop-reader.agent.yaml`.
+
+#### 11.2.3 Goal-driven verified execution (`AgentGoalRun`)
+
+`AgentGoalRun` is a separate opt-in action for goals that must end only when
+machine-checkable acceptance criteria pass. It does **not** change
+`AgentToolLoop` or `AIInteraction` semantics. It requires `format_version: v2`,
+identity enforcement, trust level `trusted` or above, and the
+`goal_execution` capability.
+
+The action freezes its authority at manifest load: objective, criteria,
+evidence policy, budgets, allowlist, source scope, provider, URL and model are
+parsed once into an immutable `AgentGoalSpec`. The action reads that frozen
+spec and the engine-provided identity/scope from trusted runtime context; it
+never reads policy from model output, runtime params or prior-step config.
+Marker rejection remains defense-in-depth, not the provenance guarantee.
+
+Acceptance language:
+
+* composition: `all`, `any` (no `not`);
+* evidence checks: `evidence_exists`, `evidence_count`,
+  `evidence_field_equals`, `evidence_field_in`, `evidence_field_number`,
+  `evidence_scope`;
+* direct checks: `resource_status` for a source or Information Seed;
+* `event_observed` is defined but **disabled in v1** until trusted event
+  producer provenance is approved. Crawl completion must be proven from source
+  status/indexed-page evidence, not a notification event.
+
+Evidence is trusted only when it comes from a registered read-only provider or
+an authorized, pinned tool observation. `source_metadata`, `scraped_field` and
+`artifact` selectors require `source_id`; `tool_observation` requires `tool`
+and `arguments_sha256`. Page titles, snippets, scraped values and artifact
+content are untrusted; field comparisons outside a kind's verified field set
+are rejected with `untrusted_path`. Evidence is bound to a
+fresh run ID/nonce, agent identity, source scope, goal-spec hash and expiry;
+replayed evidence is rejected. Model text is recorded as an untrusted claim,
+never as proof.
+
+Terminal states are `criteria_met`, `incomplete`, `budget_exhausted`,
+`cancelled`, `denied`, `provider_error`, `tool_error` and
+`verification_error`. Only `criteria_met` maps to action-level success; all
+other states return an action error with the typed result in `output`.
+
+Default budgets preserve the `AgentToolLoop` posture (4 model rounds, 8 tool
+calls, 16 evidence records, 32 KiB evidence bytes, 64 KiB tool-result bytes,
+30 s). Explicit values may reach the approved ceilings (8 rounds, 16 calls,
+32 records, 64 KiB evidence bytes, 2 min). The inherited job-group deadline
+always wins. Direct evidence provider reads consume evidence budgets but not
+model tool-call budgets. A final model response with unmet criteria ends as
+`incomplete`; there is no automatic repair turn in v1.
+
+Minimal shape:
+
+```yaml
+- action: AgentGoalRun
+  params:
+    provider: ollama
+    url: "http://ollama:11434"
+    model: "qwen3:8b"
+    objective: "Confirm source 7 has indexed pages."
+    prompt: "Gather evidence; do not claim success without proof."
+    allowlist:
+      - get_source_status
+      - search_indexed_pages
+    allowed_sources:
+      - 7
+    evidence:
+      allow:
+        - source_status
+        - indexed_page
+        - tool_observation
+    acceptance:
+      mode: all
+      criteria:
+        - id: pages_indexed
+          description: "Source 7 has indexed pages."
+          predicate:
+            kind: evidence_count
+            evidence: indexed_page
+            where:
+              source_id: 7
+            op: gte
+            value: 1
+```
+
+See `agents/examples/goal-source-reader.agent.yaml` and
+`agents/examples/goal-source-any.agent.yaml`. The schema defines the public
+field names; the approved design package under `artifacts/agentic/` documents
+the full contract, evidence model and test plan.
 
 ### 11.3 `DBQuery`
 

@@ -41,6 +41,9 @@ func (jc *JobConfig) NormalizeToAgentDefinition(source AgentSourceMetadata) (*Ag
 	if jc == nil {
 		return nil, fmt.Errorf("nil job config")
 	}
+	if err := jc.freezeGoalSpecs(); err != nil {
+		return nil, err
+	}
 	clone := *jc
 	if jc.AgentIdentity != nil {
 		clone.AgentIdentity = cloneAgentIdentity(jc.AgentIdentity)

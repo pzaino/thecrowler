@@ -396,6 +396,20 @@ func RunToolLoop(config ToolLoopConfig) (ToolLoopResult, error) {
 // position. Any repeat — explicit-explicit, synthetic-synthetic across
 // rounds, or explicit-synthetic — denies the batch before any execution.
 func assignEffectiveIDs(calls []LLMToolCall, round int, state *toolLoopState) ([]string, error) {
+	ids, err := assignCallIDs(calls, round, state.seenIDs)
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range ids {
+		state.seenIDs[id] = true
+	}
+	return ids, nil
+}
+
+// assignCallIDs computes one unambiguous correlation ID per call without
+// mutating the run ledger. Callers commit the IDs after the whole batch is
+// accepted, so a duplicate denies the batch before any execution.
+func assignCallIDs(calls []LLMToolCall, round int, seen map[string]bool) ([]string, error) {
 	ids := make([]string, len(calls))
 	batch := map[string]bool{}
 	for i, call := range calls {
@@ -403,14 +417,11 @@ func assignEffectiveIDs(calls []LLMToolCall, round int, state *toolLoopState) ([
 		if id == "" {
 			id = fmt.Sprintf("local-r%d-c%d", round, i)
 		}
-		if state.seenIDs[id] || batch[id] {
+		if seen[id] || batch[id] {
 			return nil, denyTool(ToolDenyDuplicateCallID, "duplicate tool call ID")
 		}
 		batch[id] = true
 		ids[i] = id
-	}
-	for _, id := range ids {
-		state.seenIDs[id] = true
 	}
 	return ids, nil
 }
