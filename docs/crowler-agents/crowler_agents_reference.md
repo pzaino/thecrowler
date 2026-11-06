@@ -1012,10 +1012,21 @@ Acceptance language:
 * evidence checks: `evidence_exists`, `evidence_count`,
   `evidence_field_equals`, `evidence_field_in`, `evidence_field_number`,
   `evidence_scope`;
-* direct checks: `resource_status` for a source or Information Seed;
+* direct checks: `resource_status` for a source (the Information Seed variant is disabled in v1 pending an approved seed authorization scope);
 * `event_observed` is defined but **disabled in v1** until trusted event
   producer provenance is approved. Crawl completion must be proven from source
   status/indexed-page evidence, not a notification event.
+
+Zero-result criteria require an explicit, verified query-completion record.
+An empty set caused by an unavailable provider, a failed query, a truncated
+result or a missing completion observation is never treated as proof that the
+count is zero. `evidence_count` with `eq: 0` passes only after a completed,
+untruncated query returned no matches.
+
+`any` composition is fail-closed: a passing criterion cannot hide a `denied`
+or verification `error` result in another criterion, at top level or inside a
+nested `any`. A pass may still satisfy `any` when the other criteria are merely
+`unavailable` or not satisfied.
 
 Evidence is trusted only when it comes from a registered read-only provider or
 an authorized, pinned tool observation. `source_metadata`, `scraped_field` and
@@ -1023,9 +1034,25 @@ an authorized, pinned tool observation. `source_metadata`, `scraped_field` and
 and `arguments_sha256`. Page titles, snippets, scraped values and artifact
 content are untrusted; field comparisons outside a kind's verified field set
 are rejected with `untrusted_path`. Evidence is bound to a
-fresh run ID/nonce, agent identity, source scope, goal-spec hash and expiry;
-replayed evidence is rejected. Model text is recorded as an untrusted claim,
-never as proof.
+fresh run ID/nonce, agent identity, source scope, goal-spec hash, ledger ID and
+expiry; replayed, forged, tampered or cross-run evidence is rejected. Record
+integrity is checked in addition to the trust class; a hash alone is not
+authority. Model text is recorded as an untrusted claim, never as proof.
+
+Selector and source binding are enforced: a provider must return the requested
+kind and an explicit source identity matching the selector and run scope.
+Missing, wrong-kind, wrong-source and mixed-source observations are rejected
+before admission. A request for source 7 cannot be satisfied by source 8.
+
+Freshness applies to both the trusted read time and, when supplied, the
+underlying record update time. A fresh read of an old crawl cannot satisfy a
+freshness-bound criterion. For `resource_status`, a missing underlying update
+time is unavailable, not fresh.
+
+Before any model request, `AgentGoalRun` rejects an explicitly
+tool-incompatible provider and applies the agent contract's provider/model
+restrictions. Unknown provider capability remains permissive for compatibility;
+explicitly unsupported tool calling is denied without an HTTP request.
 
 Terminal states are `criteria_met`, `incomplete`, `budget_exhausted`,
 `cancelled`, `denied`, `provider_error`, `tool_error` and

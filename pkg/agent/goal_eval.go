@@ -15,6 +15,9 @@
 package agent
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -94,6 +97,15 @@ func evalComposition(predicate Predicate, input GoalEvalInput, now time.Time, ma
 	for _, child := range predicate.Predicates {
 		children = append(children, evalPredicate(child, input, now, maxAge))
 	}
+	// Authorization and verification failures always outrank a pass. This
+	// preserves fail-closed behavior for top-level `any` and nested `any`.
+	for _, state := range []CriterionState{CriterionError, CriterionDenied} {
+		for _, child := range children {
+			if child.state == state {
+				return mergeOutcome(state, child.reason, children)
+			}
+		}
+	}
 	if predicate.Kind == PredicateAny {
 		for _, child := range children {
 			if child.state == CriterionPass {
@@ -102,7 +114,6 @@ func evalComposition(predicate Predicate, input GoalEvalInput, now time.Time, ma
 		}
 		return worstNonPass(children)
 	}
-	// all
 	for _, child := range children {
 		if child.state != CriterionPass {
 			return worstNonPass(children)
@@ -157,19 +168,45 @@ func evalEvidencePredicate(predicate Predicate, input GoalEvalInput, now time.Ti
 		if value, ok := goalToFloat(predicate.Value); ok {
 			want = int(value)
 		}
+		query, hasQuery := evidenceQueryResultFor(input, predicate.Evidence, predicate.Where)
 		if count == 0 {
 			if predicate.Op == CompareEq && want == 0 {
+				if !hasQuery {
+					return outcome(CriterionUnavailable, "evidence_query_completion_unavailable")
+				}
+				if query.State != EvidenceQueryCompleted || query.Count != 0 || query.Limit > 0 && query.Count >= query.Limit {
+					return queryFailureOutcome(query)
+				}
 				return outcome(CriterionPass, "evidence_count_satisfied")
 			}
+			if hasQuery {
+				if query.State == EvidenceQueryFailed || query.State == EvidenceQueryTruncated {
+					return queryFailureOutcome(query)
+				}
+			}
 			return outcome(CriterionUnavailable, "no_matching_evidence")
+		}
+		if hasQuery && query.State == EvidenceQueryTruncated {
+			switch predicate.Op {
+			case CompareEq, CompareLt, CompareLte:
+				return outcome(CriterionError, "evidence_query_truncated")
+			case CompareGte, CompareGt:
+				if compareInt(count, predicate.Op, want) {
+					return evidenceOutcome(CriterionPass, "evidence_count_satisfied", records)
+				}
+				return outcome(CriterionUnavailable, "evidence_query_truncated")
+			}
 		}
 		if compareInt(count, predicate.Op, want) {
 			return evidenceOutcome(CriterionPass, "evidence_count_satisfied", records)
 		}
 		return evidenceOutcome(CriterionFail, "evidence_count_not_satisfied", records)
 	case PredicateFieldEquals, PredicateFieldIn, PredicateFieldNumber:
-		return evalFieldPredicate(predicate, records)
+		return evalFieldPredicate(predicate, records, input)
 	case PredicateEvidenceScope:
+		if query, hasQuery := evidenceQueryResultFor(input, predicate.Evidence, predicate.Where); hasQuery && query.State == EvidenceQueryTruncated {
+			return outcome(CriterionError, "evidence_query_truncated")
+		}
 		if len(records) == 0 {
 			return outcome(CriterionUnavailable, "no_matching_evidence")
 		}
@@ -189,7 +226,7 @@ func evalEvidencePredicate(predicate Predicate, input GoalEvalInput, now time.Ti
 	}
 }
 
-func evalFieldPredicate(predicate Predicate, records []EvidenceRecord) predicateOutcome {
+func evalFieldPredicate(predicate Predicate, records []EvidenceRecord, input GoalEvalInput) predicateOutcome {
 	if len(records) == 0 {
 		return outcome(CriterionUnavailable, "no_matching_evidence")
 	}
@@ -234,6 +271,9 @@ func evalFieldPredicate(predicate Predicate, records []EvidenceRecord) predicate
 	if quantifier == "" {
 		quantifier = "any"
 	}
+	if query, hasQuery := evidenceQueryResultFor(input, predicate.Evidence, predicate.Where); hasQuery && query.State == EvidenceQueryTruncated && quantifier == "all" {
+		return outcome(CriterionError, "evidence_query_truncated")
+	}
 	if quantifier == "all" {
 		if mismatched > 0 {
 			return evidenceOutcome(CriterionFail, "evidence_contradictory", records)
@@ -264,8 +304,20 @@ func evalResourceStatus(predicate Predicate, input GoalEvalInput, now time.Time,
 		}
 		return outcome(CriterionUnavailable, obs.Err)
 	}
-	if maxAge > 0 && !obs.ObservedAt.IsZero() && obs.ObservedAt.Before(now.Add(-maxAge)) {
+	if input.RunID != "" && (obs.RunID != input.RunID || obs.GoalID != input.GoalID || obs.GoalSpecHash != input.GoalSpecHash) {
+		return outcome(CriterionError, "evidence_provenance_invalid")
+	}
+	cutoff := now.Add(-maxAge)
+	if maxAge > 0 && !obs.ObservedAt.IsZero() && obs.ObservedAt.Before(cutoff) {
 		return outcome(CriterionStale, "evidence_stale")
+	}
+	if maxAge > 0 {
+		if obs.DataUpdatedAt.IsZero() {
+			return outcome(CriterionUnavailable, "freshness_unavailable")
+		}
+		if obs.DataUpdatedAt.Before(cutoff) {
+			return outcome(CriterionStale, "evidence_stale")
+		}
 	}
 	observedAt := ""
 	if !obs.ObservedAt.IsZero() {
@@ -290,19 +342,38 @@ func matchingEvidence(kind EvidenceKind, selector *EvidenceSelector, input GoalE
 	}
 	hash := selectorHash(filter)
 	cutoff := now.Add(-maxAge)
+	query, hasQuery := evidenceQueryResultFor(input, kind, selector)
+	if hasQuery && query.State != EvidenceQueryCompleted && query.State != EvidenceQueryTruncated {
+		if query.State == EvidenceQueryUnavailable {
+			return nil, CriterionUnavailable, query.Reason
+		}
+		return nil, CriterionError, query.Reason
+	}
 	var fresh, stale []EvidenceRecord
 	for _, record := range input.Records {
 		if record.Kind != kind || record.SelectorSHA256 != hash {
 			continue
 		}
-		if len(input.Spec.AllowedSources) > 0 && len(record.SourceIDs) > 0 && !recordWithinScope(record, input.Spec.AllowedSources) {
+		if err := validateEvidenceRecord(record, input); err != nil {
+			return nil, CriterionError, "evidence_provenance_invalid"
+		}
+		if len(input.Spec.AllowedSources) > 0 && !recordWithinScope(record, input.Spec.AllowedSources) {
 			return nil, CriterionDenied, "evidence_out_of_scope"
+		}
+		if filter.SourceID != nil {
+			if len(record.SourceIDs) == 0 || len(record.SourceIDs) != 1 || record.SourceIDs[0] != *filter.SourceID {
+				return nil, CriterionDenied, "evidence_source_mismatch"
+			}
 		}
 		if !record.ExpiresAt.IsZero() && !record.ExpiresAt.After(now) {
 			stale = append(stale, record)
 			continue
 		}
 		if maxAge > 0 && !record.ObservedAt.IsZero() && record.ObservedAt.Before(cutoff) {
+			stale = append(stale, record)
+			continue
+		}
+		if maxAge > 0 && !record.DataUpdatedAt.IsZero() && record.DataUpdatedAt.Before(cutoff) {
 			stale = append(stale, record)
 			continue
 		}
@@ -314,7 +385,64 @@ func matchingEvidence(kind EvidenceKind, selector *EvidenceSelector, input GoalE
 	if len(stale) > 0 {
 		return nil, CriterionStale, "evidence_stale"
 	}
+	if hasQuery {
+		if query.State == EvidenceQueryTruncated {
+			return nil, CriterionError, query.Reason
+		}
+		return nil, "", ""
+	}
 	return nil, "", ""
+}
+
+func evidenceQueryResultFor(input GoalEvalInput, kind EvidenceKind, selector *EvidenceSelector) (EvidenceQueryResult, bool) {
+	filter := EvidenceSelector{}
+	if selector != nil {
+		filter = *selector
+	}
+	query, ok := input.Queries[evidenceQueryKey(kind, filter)]
+	return query, ok
+}
+
+func queryFailureOutcome(query EvidenceQueryResult) predicateOutcome {
+	if query.State == EvidenceQueryUnavailable {
+		return outcome(CriterionUnavailable, query.Reason)
+	}
+	return outcome(CriterionError, query.Reason)
+}
+
+// validateEvidenceRecord enforces run/ledger/spec provenance, trust class and
+// integrity. A hash alone is not authority: the record must be stamped by the
+// same ledger and carry a permitted trust class.
+func validateEvidenceRecord(record EvidenceRecord, input GoalEvalInput) error {
+	if input.LedgerID == "" || input.RunID == "" || input.GoalID == "" ||
+		input.GoalSpecHash == "" || input.RunNonceHash == "" || input.AgentID == "" {
+		return fmt.Errorf("evaluator provenance context is incomplete")
+	}
+	if record.EvidenceID == "" || record.LedgerID != input.LedgerID ||
+		record.RunID != input.RunID || record.GoalID != input.GoalID ||
+		record.GoalSpecHash != input.GoalSpecHash ||
+		record.RunNonceHash != input.RunNonceHash ||
+		record.AgentID != input.AgentID || record.Owner != input.Owner {
+		return fmt.Errorf("evidence does not belong to this run")
+	}
+	if record.TrustClass != TrustSystemVerified && record.TrustClass != TrustToolObservation {
+		return fmt.Errorf("evidence trust class %q is not acceptable", record.TrustClass)
+	}
+	if record.ObservedAt.IsZero() || record.ExpiresAt.IsZero() {
+		return fmt.Errorf("evidence timestamps are incomplete")
+	}
+	encoded, err := json.Marshal(record.Payload)
+	if err != nil {
+		return fmt.Errorf("evidence payload is not serializable")
+	}
+	sum := sha256.Sum256(encoded)
+	if hex.EncodeToString(sum[:]) != record.PayloadSHA256 {
+		return fmt.Errorf("evidence payload integrity check failed")
+	}
+	if recordHash(record) != record.RecordSHA256 {
+		return fmt.Errorf("evidence record integrity check failed")
+	}
+	return nil
 }
 
 func recordWithinScope(record EvidenceRecord, allowed []uint64) bool {
@@ -358,16 +486,21 @@ func combineAcceptance(mode AcceptanceMode, criteria []CriterionResult) string {
 			hasUnavailable = true
 		}
 	}
+	// Authorization/verification failures outrank any pass. A passing
+	// criterion cannot hide a denial or integrity error in another criterion.
+	if hasError {
+		return "error"
+	}
+	if hasDenied {
+		return "not_met"
+	}
 	if mode == AcceptanceAny && passes > 0 {
 		return "met"
 	}
 	if mode == AcceptanceAll && passes == len(criteria) {
 		return "met"
 	}
-	if hasError {
-		return "error"
-	}
-	if hasDenied || hasFail {
+	if hasFail {
 		return "not_met"
 	}
 	if hasUnavailable {

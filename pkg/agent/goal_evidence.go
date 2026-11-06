@@ -16,6 +16,7 @@ package agent
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -113,6 +114,7 @@ func NewDefaultGoalEvidenceRegistry(db cdb.Handler) *GoalEvidenceRegistry {
 // goalEvidenceLedger is a run-scoped, immutable-after-record ledger.
 type goalEvidenceLedger struct {
 	mu        sync.Mutex
+	ledgerID  string
 	runID     string
 	runNonce  string
 	nonceHash string
@@ -148,8 +150,11 @@ func NewGoalEvidenceLedger(runID, runNonce, traceID, goalID, specHash, agentID, 
 		budgets.MaxEvidenceBytes = defaultGoalEvidenceBytes
 	}
 	sum := sha256.Sum256([]byte(runNonce))
+	idBytes := make([]byte, 16)
+	_, _ = rand.Read(idBytes)
 	ledger := &goalEvidenceLedger{
-		runID: runID, runNonce: runNonce,
+		ledgerID: hex.EncodeToString(idBytes),
+		runID:    runID, runNonce: runNonce,
 		nonceHash: hex.EncodeToString(sum[:]),
 		traceID:   traceID, goalID: goalID, specHash: specHash,
 		agentID: agentID, owner: owner,
@@ -200,7 +205,7 @@ func (l *goalEvidenceLedger) Record(ctx context.Context, obs EvidenceObservation
 	sort.Slice(sourceCopy, func(i, j int) bool { return sourceCopy[i] < sourceCopy[j] })
 	payloadSum := sha256.Sum256(encoded)
 	payloadHash := hex.EncodeToString(payloadSum[:])
-	dedupeKey := string(obs.Kind) + "|" + selector + "|" + payloadHash + "|" + sourceIDsKey(sourceCopy)
+	dedupeKey := string(obs.Kind) + "|" + selector + "|" + payloadHash + "|" + sourceIDsKey(sourceCopy) + "|" + fmt.Sprintf("%d", obs.DataUpdatedAt.UnixNano())
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -218,14 +223,17 @@ func (l *goalEvidenceLedger) Record(ctx context.Context, obs EvidenceObservation
 	if !l.deadline.IsZero() && expiresAt.After(l.deadline) {
 		expiresAt = l.deadline
 	}
+	dataUpdatedAt := obs.DataUpdatedAt.UTC()
 	record := EvidenceRecord{
-		RunID: l.runID, RunNonceHash: l.nonceHash, TraceID: l.traceID,
+		LedgerID: l.ledgerID,
+		RunID:    l.runID, RunNonceHash: l.nonceHash, TraceID: l.traceID,
 		GoalID: l.goalID, GoalSpecHash: l.specHash,
 		AgentID: l.agentID, Owner: l.owner,
 		Kind: obs.Kind, Producer: obs.Producer, TrustClass: trustForEvidence(obs),
 		SourceIDs: sourceCopy, SourceUID: obs.SourceUID,
-		Operation: obs.Operation, ObservedAt: observedAt, ExpiresAt: expiresAt,
-		Payload: payload, PayloadSHA256: payloadHash, SelectorSHA256: selector,
+		Operation: obs.Operation, ObservedAt: observedAt, DataUpdatedAt: dataUpdatedAt,
+		ExpiresAt: expiresAt,
+		Payload:   payload, PayloadSHA256: payloadHash, SelectorSHA256: selector,
 	}
 	idSum := sha256.Sum256([]byte(fmt.Sprintf("%s|%s|%s|%s|%d|%d",
 		l.nonceHash, record.Kind, record.SelectorSHA256, record.PayloadSHA256,
@@ -251,6 +259,22 @@ func (l *goalEvidenceLedger) Snapshot() []EvidenceRecord {
 		out[i].Payload = cloneMap(record.Payload)
 	}
 	return out
+}
+
+// ID returns the ledger identity used to bind evidence to this run.
+func (l *goalEvidenceLedger) ID() string {
+	if l == nil {
+		return ""
+	}
+	return l.ledgerID
+}
+
+// RunNonceHash returns the public hash of the run nonce.
+func (l *goalEvidenceLedger) RunNonceHash() string {
+	if l == nil {
+		return ""
+	}
+	return l.nonceHash
 }
 
 func (l *goalEvidenceLedger) Count() int {
@@ -288,17 +312,19 @@ func sourceIDsKey(ids []uint64) string {
 
 func recordHash(record EvidenceRecord) string {
 	data, _ := json.Marshal(struct {
-		RunID, GoalSpecHash string
-		Kind                EvidenceKind
-		Producer            string
-		TrustClass          TrustClass
-		SourceIDs           []uint64
-		ObservedAt          time.Time
-		PayloadSHA256       string
-		SelectorSHA256      string
+		LedgerID, RunID, RunNonceHash, GoalID, GoalSpecHash string
+		AgentID, Owner                                      string
+		Kind                                                EvidenceKind
+		Producer                                            string
+		TrustClass                                          TrustClass
+		SourceIDs                                           []uint64
+		ObservedAt, DataUpdatedAt                           time.Time
+		PayloadSHA256                                       string
+		SelectorSHA256                                      string
 	}{
-		record.RunID, record.GoalSpecHash, record.Kind, record.Producer,
-		record.TrustClass, record.SourceIDs, record.ObservedAt,
+		record.LedgerID, record.RunID, record.RunNonceHash, record.GoalID, record.GoalSpecHash,
+		record.AgentID, record.Owner, record.Kind, record.Producer,
+		record.TrustClass, record.SourceIDs, record.ObservedAt, record.DataUpdatedAt,
 		record.PayloadSHA256, record.SelectorSHA256,
 	})
 	sum := sha256.Sum256(data)
@@ -320,9 +346,20 @@ func argumentsHash(args map[string]any) string {
 // refreshGoalEvidence reads every operator-defined evidence selector used by
 // the criteria and records the observations. tool_observation is recorded
 // during authorized tool execution, not refreshed here.
-func refreshGoalEvidence(ctx context.Context, spec *AgentGoalSpec, registry *GoalEvidenceRegistry, ledger *goalEvidenceLedger, now time.Time) error {
+func refreshGoalEvidence(ctx context.Context, spec *AgentGoalSpec, registry *GoalEvidenceRegistry, ledger *goalEvidenceLedger, queries map[string]EvidenceQueryResult, now time.Time) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if spec == nil || ledger == nil {
 		return fmt.Errorf("%w: missing goal spec or ledger", ErrEvidenceInvalid)
+	}
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return ErrEvidenceUnavailable
+		}
+	}
+	if queries == nil {
+		queries = map[string]EvidenceQueryResult{}
 	}
 	seen := map[string]bool{}
 	var selectors []EvidenceSelector
@@ -350,22 +387,49 @@ func refreshGoalEvidence(ctx context.Context, spec *AgentGoalSpec, registry *Goa
 		if !ok {
 			return fmt.Errorf("%w: no provider for evidence kind %q", ErrEvidenceInvalid, kind)
 		}
+		if ctx != nil {
+			if err := ctx.Err(); err != nil {
+				return ErrEvidenceUnavailable
+			}
+		}
 		sourceIDs := spec.AllowedSources
 		if selector.SourceID != nil {
 			sourceIDs = []uint64{*selector.SourceID}
 		}
+		limit := spec.Budgets.MaxEvidenceRecords
 		request := EvidenceRequest{
-			Selector: selector, Limit: spec.Budgets.MaxEvidenceRecords,
+			Selector: selector, Limit: limit,
 			MaxAge: spec.Evidence.DefaultMaxAge, Now: now, SourceIDs: sourceIDs,
 		}
+		queryKey := evidenceQueryKey(kind, selector)
 		observations, err := provider.Read(ctx, request)
 		if err != nil {
+			state := EvidenceQueryFailed
+			reason := "evidence_query_failed"
 			if errors.Is(err, ErrEvidenceUnavailable) {
-				continue
+				state = EvidenceQueryUnavailable
+				reason = "evidence_query_unavailable"
 			}
-			return err
+			queries[queryKey] = EvidenceQueryResult{
+				Kind: kind, SelectorSHA256: selectorHash(selector),
+				State: state, Limit: limit, Reason: reason,
+			}
+			continue
+		}
+		state := EvidenceQueryCompleted
+		reason := "evidence_query_completed"
+		if limit > 0 && len(observations) >= limit {
+			state = EvidenceQueryTruncated
+			reason = "evidence_query_truncated"
+		}
+		queries[queryKey] = EvidenceQueryResult{
+			Kind: kind, SelectorSHA256: selectorHash(selector),
+			State: state, Count: len(observations), Limit: limit, Reason: reason,
 		}
 		for _, obs := range observations {
+			if err := validateProviderObservation(kind, selector, spec.AllowedSources, obs); err != nil {
+				return fmt.Errorf("%w: %v", ErrEvidenceInvalid, err)
+			}
 			obs.SelectorSHA256 = selectorHash(selector)
 			if obs.ObservedAt.IsZero() {
 				obs.ObservedAt = now
@@ -377,6 +441,39 @@ func refreshGoalEvidence(ctx context.Context, spec *AgentGoalSpec, registry *Goa
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+func evidenceQueryKey(kind EvidenceKind, selector EvidenceSelector) string {
+	return string(kind) + "|" + selectorHash(selector)
+}
+
+// validateProviderObservation enforces that a provider returned the requested
+// kind and an explicit source identity compatible with the selector and run
+// scope. Provider-supplied selector hashes and UIDs are not trusted.
+func validateProviderObservation(kind EvidenceKind, selector EvidenceSelector, allowed []uint64, obs EvidenceObservation) error {
+	if obs.Kind != kind {
+		return fmt.Errorf("provider returned kind %q for requested %q", obs.Kind, kind)
+	}
+	switch kind {
+	case EvidenceSourceStatus, EvidenceSourceMetadata, EvidenceIndexedPage, EvidenceScrapedField, EvidenceArtifact:
+		if len(obs.SourceIDs) == 0 {
+			return fmt.Errorf("provider returned %q evidence without a source identity", kind)
+		}
+		for _, sourceID := range obs.SourceIDs {
+			if len(allowed) > 0 && !containsSource(allowed, sourceID) {
+				return fmt.Errorf("provider returned source %d outside run scope", sourceID)
+			}
+			if selector.SourceID != nil && sourceID != *selector.SourceID {
+				return fmt.Errorf("provider returned source %d for selector source %d", sourceID, *selector.SourceID)
+			}
+		}
+	case EvidenceToolObservation:
+		// Tool observations are admitted by the tool execution path.
+		return fmt.Errorf("tool observations are not provider-refreshed")
+	default:
+		return fmt.Errorf("unsupported evidence kind %q", kind)
 	}
 	return nil
 }
@@ -432,7 +529,7 @@ func (p *sourceStatusProvider) Read(ctx context.Context, req EvidenceRequest) ([
 		if err != nil || source == nil {
 			continue
 		}
-		rows, err := cdb.GetSourceStatusByUID(&p.db, source.UID)
+		rows, err := cdb.GetSourceStatusByUIDContext(ctx, &p.db, source.UID)
 		if err != nil {
 			return nil, fmt.Errorf("%w: source status read failed", ErrEvidenceUnavailable)
 		}
@@ -441,10 +538,14 @@ func (p *sourceStatusProvider) Read(ctx context.Context, req EvidenceRequest) ([
 			if req.Selector.Status != "" && status != req.Selector.Status {
 				continue
 			}
+			dataUpdatedAt := parseStatusTime(nullStringValue(row.LastUpdatedAt))
+			if dataUpdatedAt.IsZero() {
+				dataUpdatedAt = parseStatusTime(nullStringValue(row.LastCrawledAt))
+			}
 			out = append(out, EvidenceObservation{
 				Kind: EvidenceSourceStatus, Producer: "db:source_status",
 				SourceIDs: []uint64{id}, SourceUID: source.UID, Operation: "read",
-				ObservedAt: req.Now, Payload: map[string]any{
+				ObservedAt: req.Now, DataUpdatedAt: dataUpdatedAt, Payload: map[string]any{
 					"source_id": id, "uid": source.UID, "status": status,
 					"priority":   nullStringValue(row.Priority),
 					"restricted": row.Restricted, "disabled": row.Disabled,
@@ -474,6 +575,9 @@ func (p *sourceMetadataProvider) Read(ctx context.Context, req EvidenceRequest) 
 		return nil, ErrEvidenceUnavailable
 	}
 	source, err := cdb.GetSourceByID(&p.db, *req.Selector.SourceID)
+	if err == nil && ctx.Err() != nil {
+		return nil, ErrEvidenceUnavailable
+	}
 	if err != nil || source == nil {
 		return nil, ErrEvidenceUnavailable
 	}
@@ -543,7 +647,8 @@ func (p *indexedPageProvider) Read(ctx context.Context, req EvidenceRequest) ([]
 			out = append(out, EvidenceObservation{
 				Kind: EvidenceIndexedPage, Producer: "db:indexed_page",
 				SourceIDs: []uint64{sourceID}, SourceUID: sourceUID, Operation: "read",
-				ObservedAt: req.Now, Payload: map[string]any{
+				ObservedAt: req.Now, DataUpdatedAt: updatedAt.Time,
+				Payload: map[string]any{
 					"index_id": indexID, "source_uid": sourceUID, "page_url": pageURL,
 					"created_at":      nullTimeValue(createdAt),
 					"last_updated_at": nullTimeValue(updatedAt),
@@ -629,7 +734,7 @@ func (p *artifactProvider) Read(ctx context.Context, req EvidenceRequest) ([]Evi
 		out = append(out, EvidenceObservation{
 			Kind: EvidenceArtifact, Producer: "db:artifact",
 			SourceIDs: []uint64{source.ID}, SourceUID: source.UID, Operation: "read",
-			ObservedAt: req.Now, Payload: map[string]any{
+			ObservedAt: req.Now, DataUpdatedAt: row.LastUpdatedAt.Time, Payload: map[string]any{
 				"source_type": row.SourceType, "artifact_id": row.ArtifactID,
 				"source_uid": source.UID, "page_url": nullStringValue(row.PageURL),
 				"created_at":      nullTimeValue(row.CreatedAt),
@@ -643,7 +748,10 @@ func (p *artifactProvider) Read(ctx context.Context, req EvidenceRequest) ([]Evi
 
 // readGoalResources evaluates direct resource_status checks. The evaluator is
 // pure; all trusted reads happen here.
-func readGoalResources(ctx context.Context, db cdb.Handler, spec *AgentGoalSpec) map[string]ResourceObservation {
+func readGoalResources(ctx context.Context, db cdb.Handler, spec *AgentGoalSpec, runID string) map[string]ResourceObservation {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	out := map[string]ResourceObservation{}
 	if spec == nil {
 		return out
@@ -656,47 +764,54 @@ func readGoalResources(ctx context.Context, db cdb.Handler, spec *AgentGoalSpec)
 			}
 			obs := ResourceObservation{
 				Resource: predicate.Resource, ID: predicate.ResourceID,
-				ObservedAt: time.Now().UTC(),
+				ObservedAt: time.Now().UTC(), RunID: runID,
+				GoalID: spec.GoalID, GoalSpecHash: spec.SpecHash,
+			}
+			if ctx != nil && ctx.Err() != nil {
+				obs.Err = "cancelled"
+				out[key] = obs
+				return
+			}
+			if predicate.Resource == "information_seed" {
+				// v1 has no approved Information Seed authorization scope.
+				obs.Err = "information_seed_scope_unsupported"
+				out[key] = obs
+				return
 			}
 			if db == nil {
 				obs.Err = "database unavailable"
 				out[key] = obs
 				return
 			}
-			if predicate.Resource == "source" {
-				source, err := cdb.GetSourceByID(&db, predicate.ResourceID)
-				if err != nil || source == nil {
-					obs.Err = "source_not_found"
-					out[key] = obs
-					return
-				}
-				rows, err := cdb.GetSourceStatusByUID(&db, source.UID)
-				if err != nil {
-					obs.Err = "source_status_unavailable"
-					out[key] = obs
-					return
-				}
-				status := ""
-				last := time.Time{}
-				for _, row := range rows {
-					updated := parseStatusTime(nullStringValue(row.LastUpdatedAt))
-					if status == "" || updated.After(last) {
-						status = nullStringValue(row.Status)
-						last = updated
-					}
-				}
-				obs.Status = status
-				obs.Source = "db:source_status"
-			} else {
-				seed, err := cdb.GetInformationSeedByID(&db, predicate.ResourceID)
-				if err != nil || seed == nil {
-					obs.Err = "information_seed_not_found"
-					out[key] = obs
-					return
-				}
-				obs.Status = seed.Status
-				obs.Source = "db:information_seed"
+			source, err := cdb.GetSourceByID(&db, predicate.ResourceID)
+			if err != nil || source == nil {
+				obs.Err = "source_not_found"
+				out[key] = obs
+				return
 			}
+			rows, err := cdb.GetSourceStatusByUIDContext(ctx, &db, source.UID)
+			if err != nil {
+				obs.Err = "source_status_unavailable"
+				out[key] = obs
+				return
+			}
+			status := ""
+			last := time.Time{}
+			dataUpdated := time.Time{}
+			for _, row := range rows {
+				updated := parseStatusTime(nullStringValue(row.LastUpdatedAt))
+				if updated.IsZero() {
+					updated = parseStatusTime(nullStringValue(row.LastCrawledAt))
+				}
+				if status == "" || updated.After(last) {
+					status = nullStringValue(row.Status)
+					last = updated
+					dataUpdated = updated
+				}
+			}
+			obs.Status = status
+			obs.DataUpdatedAt = dataUpdated
+			obs.Source = "db:source_status"
 			out[key] = obs
 		})
 	}

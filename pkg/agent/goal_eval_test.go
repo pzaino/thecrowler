@@ -1,13 +1,26 @@
 package agent
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"testing"
 	"time"
 )
 
+const (
+	testGoalLedgerID  = "ledger-test"
+	testGoalRunID     = "run-test"
+	testGoalGoalID    = "goal-test"
+	testGoalSpecHash  = "spec-test"
+	testGoalNonceHash = "nonce-test"
+	testGoalAgentID   = "agent-test"
+	testGoalOwner     = "owner-test"
+)
+
 func goalEvalSpec(mode AcceptanceMode, criteria ...CriterionSpec) *AgentGoalSpec {
 	return &AgentGoalSpec{
-		GoalID: "goal", Objective: "objective",
+		GoalID: "goal-test", Objective: "objective", SpecHash: "spec-test",
 		AllowedSources: []uint64{7},
 		Evidence: EvidencePolicy{
 			Allow: []EvidenceKind{
@@ -22,16 +35,44 @@ func goalEvalSpec(mode AcceptanceMode, criteria ...CriterionSpec) *AgentGoalSpec
 }
 
 func goalEvalRecord(kind EvidenceKind, selector EvidenceSelector, payload map[string]any, observedAt time.Time) EvidenceRecord {
-	return EvidenceRecord{
+	record := EvidenceRecord{
 		EvidenceID: "ev_" + string(kind) + "_" + observedAt.Format("150405.000000000"),
-		Kind:       kind, SelectorSHA256: selectorHash(selector),
-		SourceIDs: []uint64{7}, ObservedAt: observedAt,
+		LedgerID:   testGoalLedgerID, RunID: testGoalRunID, RunNonceHash: testGoalNonceHash,
+		GoalID: testGoalGoalID, GoalSpecHash: testGoalSpecHash,
+		AgentID: testGoalAgentID, Owner: testGoalOwner,
+		Kind: kind, Producer: "test", TrustClass: TrustSystemVerified,
+		SelectorSHA256: selectorHash(selector),
+		SourceIDs:      []uint64{7}, ObservedAt: observedAt, DataUpdatedAt: observedAt,
 		ExpiresAt: observedAt.Add(15 * time.Minute), Payload: payload,
+	}
+	return sealEvalRecord(record)
+}
+
+func sealEvalRecord(record EvidenceRecord) EvidenceRecord {
+	encoded, _ := json.Marshal(record.Payload)
+	sum := sha256.Sum256(encoded)
+	record.PayloadSHA256 = hex.EncodeToString(sum[:])
+	record.RecordSHA256 = recordHash(record)
+	return record
+}
+
+func goalEvalResource(resource string, id uint64, status string, observedAt, dataUpdatedAt time.Time) ResourceObservation {
+	return ResourceObservation{
+		Resource: resource, ID: id, Status: status,
+		ObservedAt: observedAt, DataUpdatedAt: dataUpdatedAt,
+		RunID: testGoalRunID, GoalID: testGoalGoalID, GoalSpecHash: testGoalSpecHash,
+		Source: "db:test",
 	}
 }
 
 func goalEvalInput(spec *AgentGoalSpec, records []EvidenceRecord, resources map[string]ResourceObservation) GoalEvalInput {
-	return GoalEvalInput{Spec: spec, Records: records, Resources: resources, Now: time.Now().UTC()}
+	return GoalEvalInput{
+		Spec: spec, Records: records, Resources: resources,
+		Queries: map[string]EvidenceQueryResult{}, Now: time.Now().UTC(),
+		LedgerID: testGoalLedgerID, RunID: testGoalRunID, GoalID: testGoalGoalID,
+		GoalSpecHash: testGoalSpecHash, RunNonceHash: testGoalNonceHash,
+		AgentID: testGoalAgentID, Owner: testGoalOwner,
+	}
 }
 
 func TestGoalEvaluatorAllAndAny(t *testing.T) {
@@ -134,18 +175,13 @@ func TestGoalEvaluatorResourceAndScope(t *testing.T) {
 		Kind: PredicateResourceStatus, Resource: "source", ResourceID: 7, Status: "completed",
 	}}
 	resourceInput := goalEvalInput(goalEvalSpec(AcceptanceAll, resource), nil, map[string]ResourceObservation{
-		resourceObservationKey("source", 7): {
-			Resource: "source", ID: 7, Status: "completed",
-			ObservedAt: now, Source: "db:test",
-		},
+		resourceObservationKey("source", 7): goalEvalResource("source", 7, "completed", now, now),
 	})
 	result, err := EvaluateGoal(resourceInput)
 	if err != nil || result.State != "met" {
 		t.Fatalf("resource status should pass: %+v, %v", result, err)
 	}
-	resourceInput.Resources[resourceObservationKey("source", 7)] = ResourceObservation{
-		Resource: "source", ID: 7, Status: "error", ObservedAt: now, Source: "db:test",
-	}
+	resourceInput.Resources[resourceObservationKey("source", 7)] = goalEvalResource("source", 7, "error", now, now)
 	result, err = EvaluateGoal(resourceInput)
 	if err != nil || result.State != "not_met" {
 		t.Fatalf("resource mismatch must not pass: %+v, %v", result, err)
@@ -160,6 +196,7 @@ func TestGoalEvaluatorResourceAndScope(t *testing.T) {
 		t.Fatalf("scope should pass: %+v, %v", result, err)
 	}
 	record.SourceIDs = []uint64{8}
+	record = sealEvalRecord(record)
 	result, err = EvaluateGoal(goalEvalInput(goalEvalSpec(AcceptanceAll, scope), []EvidenceRecord{record}, nil))
 	if err != nil || result.State == "met" {
 		t.Fatalf("out-of-scope evidence must not pass: %+v, %v", result, err)
@@ -195,8 +232,10 @@ func TestGoalEvaluationConcurrentIsolation(t *testing.T) {
 	spec8.AllowedSources = []uint64{8}
 	record7 := goalEvalRecord(EvidenceIndexedPage, selector7, map[string]any{"page_url": "seven"}, now)
 	record7.SourceIDs = []uint64{7}
+	record7 = sealEvalRecord(record7)
 	record8 := goalEvalRecord(EvidenceIndexedPage, selector8, map[string]any{"page_url": "eight"}, now)
 	record8.SourceIDs = []uint64{8}
+	record8 = sealEvalRecord(record8)
 	type outcome struct {
 		state string
 		err   error

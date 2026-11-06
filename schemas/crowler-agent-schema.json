@@ -1411,6 +1411,7 @@
                                                           }
                                                         },
                                                         "resource": {
+                                                          "description": "Source is supported in v1. Information Seed resource status is reserved but rejected until an approved seed authorization scope exists.",
                                                           "enum": [
                                                             "source",
                                                             "information_seed"

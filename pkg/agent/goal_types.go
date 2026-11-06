@@ -223,6 +223,7 @@ type EvidenceSelector struct {
 // EvidenceRecord is one run-scoped trusted observation.
 type EvidenceRecord struct {
 	EvidenceID     string
+	LedgerID       string
 	RunID          string
 	RunNonceHash   string
 	TraceID        string
@@ -237,6 +238,7 @@ type EvidenceRecord struct {
 	SourceUID      string
 	Operation      string
 	ObservedAt     time.Time
+	DataUpdatedAt  time.Time
 	ExpiresAt      time.Time
 	Payload        map[string]any
 	PayloadSHA256  string
@@ -258,6 +260,7 @@ type EvidenceObservation struct {
 	ArgumentsSHA256 string
 	SelectorSHA256  string
 	ObservedAt      time.Time
+	DataUpdatedAt   time.Time
 }
 
 // EvidenceRequest is one bounded provider read.
@@ -299,20 +302,55 @@ type EvidenceRecorder interface {
 
 // ResourceObservation is a direct trusted resource-status check.
 type ResourceObservation struct {
-	Resource   string
-	ID         uint64
-	Status     string
-	ObservedAt time.Time
-	Source     string
-	Err        string
+	Resource      string
+	ID            uint64
+	Status        string
+	ObservedAt    time.Time // trusted read time
+	DataUpdatedAt time.Time // underlying source/seed update time, if known
+	RunID         string
+	GoalID        string
+	GoalSpecHash  string
+	Source        string
+	Err           string
 }
 
-// GoalEvalInput is the pure evaluator input.
+// EvidenceQueryState describes an operator-defined evidence query.
+type EvidenceQueryState string
+
+const (
+	EvidenceQueryCompleted   EvidenceQueryState = "completed"
+	EvidenceQueryUnavailable EvidenceQueryState = "unavailable"
+	EvidenceQueryFailed      EvidenceQueryState = "failed"
+	EvidenceQueryTruncated   EvidenceQueryState = "truncated"
+)
+
+// EvidenceQueryResult is the explicit completion record for one evidence
+// selector. It lets the evaluator distinguish a successful empty query from
+// an unavailable, failed or truncated read.
+type EvidenceQueryResult struct {
+	Kind           EvidenceKind
+	SelectorSHA256 string
+	State          EvidenceQueryState
+	Count          int
+	Limit          int
+	Reason         string
+}
+
+// GoalEvalInput is the pure evaluator input. The identity fields bind the
+// evaluated records to one trusted run/ledger/spec snapshot.
 type GoalEvalInput struct {
-	Spec      *AgentGoalSpec
-	Records   []EvidenceRecord
-	Resources map[string]ResourceObservation
-	Now       time.Time
+	Spec         *AgentGoalSpec
+	Records      []EvidenceRecord
+	Resources    map[string]ResourceObservation
+	Queries      map[string]EvidenceQueryResult
+	Now          time.Time
+	LedgerID     string
+	RunID        string
+	GoalID       string
+	GoalSpecHash string
+	RunNonceHash string
+	AgentID      string
+	Owner        string
 }
 
 // EvaluationResult is the deterministic acceptance evaluation.

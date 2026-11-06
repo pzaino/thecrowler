@@ -836,6 +836,9 @@ func parseGoalPredicate(raw any, allow map[EvidenceKind]bool, allowedSources []u
 		if resource != "source" && resource != "information_seed" {
 			return predicate, fmt.Errorf("resource_status.resource must be source or information_seed")
 		}
+		if resource == "information_seed" {
+			return predicate, fmt.Errorf("information_seed_scope_unsupported: Information Seed resource observations require an approved authorization scope")
+		}
 		id, err := toSourceIDArg(m["resource_id"])
 		if err != nil {
 			return predicate, fmt.Errorf("resource_status.resource_id must be a positive integer")

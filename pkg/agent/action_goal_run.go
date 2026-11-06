@@ -281,6 +281,7 @@ func RunGoal(config goalRunConfig) (GoalRunResult, error) {
 		run.result.RunID, nonce, run.result.TraceID, config.Spec.GoalID,
 		config.Spec.SpecHash, config.Identity.AgentID, config.Identity.Owner,
 		config.Spec.AllowedSources, config.Spec.Evidence, config.Spec.Budgets, deadline)
+	run.queries = map[string]EvidenceQueryResult{}
 	run.state = &goalRunState{
 		messages: initialGoalMessages(config.Spec),
 		seenIDs:  map[string]bool{},
@@ -297,6 +298,18 @@ func RunGoal(config goalRunConfig) (GoalRunResult, error) {
 
 	if terminal, done := run.refreshAndEvaluate(false); done {
 		return terminal, nil
+	}
+
+	// Provider capability and AI policy gates run after the initial trusted
+	// evidence evaluation (which may prove the goal without a model call) and
+	// before any provider HTTP request.
+	if ProviderCapabilitiesFor(config.Provider, config.Spec.Model).ToolCalls == LLMCapabilityUnsupported {
+		emitGoalAudit(run.result.RunID, run.result.TraceID, config.Identity.AgentID, config.Identity.Name, config.Identity.Owner, config.Spec.GoalID, "", auditOutcomeDenied, "provider_tool_calls_unsupported", "provider does not support tool calls", nil)
+		return run.finish(GoalDenied, "provider_tool_calls_unsupported", "provider does not support tool calls"), nil
+	}
+	if err := enforceAIUsagePolicyForIdentity(config.Identity, LLMRequest{Provider: config.Spec.Provider, Model: config.Spec.Model}); err != nil {
+		emitGoalAudit(run.result.RunID, run.result.TraceID, config.Identity.AgentID, config.Identity.Name, config.Identity.Owner, config.Spec.GoalID, "", auditOutcomeDenied, "ai_policy_denied", "provider or model denied by policy", nil)
+		return run.finish(GoalDenied, "ai_policy_denied", "provider or model denied by policy"), nil
 	}
 
 	advertised := advertiseTools(config.Registry, auth.Allowlist)
@@ -495,7 +508,7 @@ func (r *goalRunner) refreshAndEvaluate(modelRound bool) (GoalRunResult, bool) {
 	if err := r.ctx.Err(); err != nil {
 		return r.finish(r.timeoutStatus(), r.timeoutReason(), "goal loop expired"), true
 	}
-	if err := refreshGoalEvidence(r.ctx, r.config.Spec, r.config.EvidenceRegistry, r.ledger, time.Now().UTC()); err != nil {
+	if err := refreshGoalEvidence(r.ctx, r.config.Spec, r.config.EvidenceRegistry, r.ledger, r.queries, time.Now().UTC()); err != nil {
 		switch {
 		case errors.Is(err, ErrEvidenceBudget):
 			return r.finish(GoalBudgetExhausted, "budget_evidence", "evidence budget exhausted"), true
@@ -507,10 +520,13 @@ func (r *goalRunner) refreshAndEvaluate(modelRound bool) (GoalRunResult, bool) {
 			return r.finish(GoalVerificationError, "evidence_refresh_failed", "evidence could not be verified"), true
 		}
 	}
-	resources := readGoalResources(r.ctx, r.config.DB, r.config.Spec)
+	resources := readGoalResources(r.ctx, r.config.DB, r.config.Spec, r.result.RunID)
 	evaluation, err := EvaluateGoal(GoalEvalInput{
 		Spec: r.config.Spec, Records: r.ledger.Snapshot(),
-		Resources: resources, Now: time.Now().UTC(),
+		Resources: resources, Queries: r.queries, Now: time.Now().UTC(),
+		LedgerID: r.ledger.ID(), RunID: r.result.RunID, GoalID: r.config.Spec.GoalID,
+		GoalSpecHash: r.config.Spec.SpecHash, RunNonceHash: r.ledger.RunNonceHash(),
+		AgentID: r.config.Identity.AgentID, Owner: r.config.Identity.Owner,
 	})
 	if err != nil {
 		return r.finish(GoalVerificationError, "verification_error", "criteria could not be evaluated"), true
@@ -534,7 +550,7 @@ func (r *goalRunner) evaluateTerminal(modelFinal bool) GoalRunResult {
 	if r.ctx.Err() != nil {
 		return r.finish(r.timeoutStatus(), r.timeoutReason(), "goal loop expired")
 	}
-	if err := refreshGoalEvidence(r.ctx, r.config.Spec, r.config.EvidenceRegistry, r.ledger, time.Now().UTC()); err != nil {
+	if err := refreshGoalEvidence(r.ctx, r.config.Spec, r.config.EvidenceRegistry, r.ledger, r.queries, time.Now().UTC()); err != nil {
 		switch {
 		case errors.Is(err, ErrEvidenceBudget):
 			return r.finish(GoalBudgetExhausted, "budget_evidence", "evidence budget exhausted")
@@ -544,10 +560,13 @@ func (r *goalRunner) evaluateTerminal(modelFinal bool) GoalRunResult {
 			return r.finish(GoalVerificationError, "evidence_refresh_failed", "evidence could not be verified")
 		}
 	}
-	resources := readGoalResources(r.ctx, r.config.DB, r.config.Spec)
+	resources := readGoalResources(r.ctx, r.config.DB, r.config.Spec, r.result.RunID)
 	evaluation, err := EvaluateGoal(GoalEvalInput{
 		Spec: r.config.Spec, Records: r.ledger.Snapshot(),
-		Resources: resources, Now: time.Now().UTC(),
+		Resources: resources, Queries: r.queries, Now: time.Now().UTC(),
+		LedgerID: r.ledger.ID(), RunID: r.result.RunID, GoalID: r.config.Spec.GoalID,
+		GoalSpecHash: r.config.Spec.SpecHash, RunNonceHash: r.ledger.RunNonceHash(),
+		AgentID: r.config.Identity.AgentID, Owner: r.config.Identity.Owner,
 	})
 	if err != nil {
 		return r.finish(GoalVerificationError, "verification_error", "criteria could not be evaluated")
@@ -637,6 +656,7 @@ type goalRunner struct {
 	result     GoalRunResult
 	state      *goalRunState
 	ledger     *goalEvidenceLedger
+	queries    map[string]EvidenceQueryResult
 	auth       ToolAuthContext
 	evaluation EvaluationResult
 	ctx        context.Context

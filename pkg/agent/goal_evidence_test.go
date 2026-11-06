@@ -111,7 +111,7 @@ func TestGoalEvidenceLedgerRedactsAndHashes(t *testing.T) {
 
 func TestRefreshGoalEvidenceFromProvider(t *testing.T) {
 	spec := &AgentGoalSpec{
-		GoalID: "goal", Objective: "obj", AllowedSources: []uint64{7},
+		GoalID: "goal", Objective: "obj", SpecHash: "spec", AllowedSources: []uint64{7},
 		Evidence: EvidencePolicy{Allow: []EvidenceKind{EvidenceIndexedPage}, DefaultMaxAge: 15 * time.Minute, MaxPayloadBytes: 1024},
 		Budgets:  GoalBudgets{MaxEvidenceRecords: 8, MaxEvidenceBytes: 4096},
 		Acceptance: AcceptanceSpec{Mode: AcceptanceAll, Criteria: []CriterionSpec{{
@@ -129,13 +129,19 @@ func TestRefreshGoalEvidenceFromProvider(t *testing.T) {
 		t.Fatalf("register: %v", err)
 	}
 	ledger := NewGoalEvidenceLedger("run", "nonce", "trace", "goal", "spec", "agent", "owner", []uint64{7}, spec.Evidence, spec.Budgets, time.Now().Add(time.Hour))
-	if err := refreshGoalEvidence(context.Background(), spec, registry, ledger, time.Now().UTC()); err != nil {
+	if err := refreshGoalEvidence(context.Background(), spec, registry, ledger, map[string]EvidenceQueryResult{}, time.Now().UTC()); err != nil {
 		t.Fatalf("refresh: %v", err)
 	}
 	if ledger.Count() != 1 {
 		t.Fatalf("expected one record, got %d", ledger.Count())
 	}
-	result, err := EvaluateGoal(GoalEvalInput{Spec: spec, Records: ledger.Snapshot(), Now: time.Now().UTC()})
+	result, err := EvaluateGoal(GoalEvalInput{
+		Spec: spec, Records: ledger.Snapshot(), Now: time.Now().UTC(),
+		Queries:  map[string]EvidenceQueryResult{},
+		LedgerID: ledger.ID(), RunID: "run", GoalID: spec.GoalID,
+		GoalSpecHash: spec.SpecHash, RunNonceHash: ledger.RunNonceHash(),
+		AgentID: "agent", Owner: "owner",
+	})
 	if err != nil || result.State != "met" {
 		t.Fatalf("provider evidence should satisfy: %+v, %v", result, err)
 	}
@@ -153,7 +159,7 @@ func TestRefreshGoalEvidenceMissingProviderFailsClosed(t *testing.T) {
 		}}},
 	}
 	ledger := NewGoalEvidenceLedger("run", "nonce", "trace", "goal", "spec", "agent", "owner", []uint64{7}, spec.Evidence, spec.Budgets, time.Now().Add(time.Hour))
-	if err := refreshGoalEvidence(context.Background(), spec, NewGoalEvidenceRegistry(), ledger, time.Now().UTC()); err == nil {
+	if err := refreshGoalEvidence(context.Background(), spec, NewGoalEvidenceRegistry(), ledger, map[string]EvidenceQueryResult{}, time.Now().UTC()); err == nil {
 		t.Fatalf("missing provider accepted")
 	}
 }
