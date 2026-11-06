@@ -18,6 +18,16 @@ carry the `delegate` capability, and `CreateEvent` steps use numeric sources.
   the `https://api.openai.com/...` URLs and `${...}` placeholders are
   intentionally non-functional without them.
 
+## Local Ollama examples
+
+- `tool-loop-reader.agent.yaml` uses `provider: ollama` with a base URL and
+  the two vetted read tools. Attest tool-capable models with
+  `CROWLER_OLLAMA_TOOL_MODELS` before relying on tool execution.
+- `ai-tool-calling-probe.agent.yaml` uses `provider: ollama` for inert
+  tool-call proposals. Nothing it returns is executed.
+- See `docs/crowler-agents/local-llm-providers.md` for endpoint rules,
+  capability reporting and the live smoke test.
+
 ## New advanced scenarios
 
 - `soc-autonomous-triage-v2.agent.yaml`

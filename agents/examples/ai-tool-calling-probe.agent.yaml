@@ -2,9 +2,10 @@
 # structured tool-call proposals return as INERT DATA. Nothing here executes
 # a returned call, and no follow-up model request is made.
 #
-# Operator setup: point url at an OpenAI-compatible endpoint (for example a
-# LAN Ollama host at http://OLLAMA_LAN_IP:11434/v1/chat/completions), install
-# a tool-capable model, and provide credentials only if your proxy needs them.
+# Operator setup: install Ollama locally or on the LAN and point url at its
+# base URL (for example http://OLLAMA_LAN_IP:11434). Install a tool-capable
+# model and provide credentials only if your proxy needs them. See
+# docs/crowler-agents/local-llm-providers.md.
 format_version: v2
 agent_identity:
   agent_id: tool-call-probe
@@ -28,7 +29,8 @@ jobs:
     steps:
       - action: AIInteraction
         params:
-          url: "http://OLLAMA_LAN_IP:11434/v1/chat/completions"
+          provider: ollama
+          url: "http://OLLAMA_LAN_IP:11434"
           model: "tool-capable-model"
           messages:
             - role: user

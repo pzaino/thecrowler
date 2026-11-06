@@ -17,6 +17,9 @@ cspell.json
 
 # Test binary, built with `go test -c`
 *.test
+TESTING.md
+artifacts/
+deploy.sh
 
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out

@@ -36,6 +36,34 @@ const (
 	llmHTTPTimeout = 30 * time.Second
 )
 
+// OpenAIProvider registers the long-documented "openai" spelling as an
+// alias of the OpenAI-compatible transport. It adds no new wire behaviour;
+// it exists so shipped manifests and documentation that use
+// `provider: openai` keep working.
+type OpenAIProvider struct {
+	OpenAICompatibleProvider
+}
+
+// Name returns the documented alias.
+func (p *OpenAIProvider) Name() string { return "openai" }
+
+// Capabilities reports the alias name with the shared transport features.
+func (p *OpenAIProvider) Capabilities() LLMProviderCapabilities {
+	caps := p.OpenAICompatibleProvider.Capabilities()
+	caps.Provider = "openai"
+	return caps
+}
+
+// ExecuteWithContext implements ContextAwareProvider for the alias.
+func (p *OpenAIProvider) ExecuteWithContext(ctx context.Context, req LLMRequest) (map[string]interface{}, error) {
+	return p.OpenAICompatibleProvider.ExecuteWithContext(ctx, req)
+}
+
+// Execute performs one non-context provider call.
+func (p *OpenAIProvider) Execute(req LLMRequest) (map[string]interface{}, error) {
+	return p.ExecuteWithContext(context.Background(), req)
+}
+
 // LLMRequest is a normalized provider-agnostic AI request used by AIInteraction.
 // Tools/ToolChoice carry inert declarations (Phase 2 never executes them).
 // OutputMode is CROWler-side ("raw" default, "normalized" opt-in) and is
@@ -74,6 +102,27 @@ func (p *OpenAICompatibleProvider) Execute(req LLMRequest) (map[string]interface
 	return p.ExecuteWithContext(context.Background(), req)
 }
 
+// Capabilities describes the shared OpenAI-compatible transport. Tool-call
+// support stays unknown because the model behind a compatible endpoint may or
+// may not implement tool calling; callers must not infer it from the provider
+// name. Providers with model-level knowledge implement
+// ModelCapabilityReporter.
+func (p *OpenAICompatibleProvider) Capabilities() LLMProviderCapabilities {
+	return normalizeLLMCapabilities(LLMProviderCapabilities{
+		Provider:           defaultLLMProvider,
+		NativeProtocol:     "openai-compatible",
+		Chat:               LLMCapabilitySupported,
+		ToolCalls:          LLMCapabilityUnknown,
+		StructuredOutput:   LLMCapabilityUnknown,
+		Streaming:          LLMCapabilitySupported,
+		ToolResultMessages: LLMCapabilitySupported,
+		Cancellation:       LLMCapabilitySupported,
+		Notes: []string{
+			"Model-specific tool support is not inferred from the provider name.",
+		},
+	})
+}
+
 // ExecuteWithContext implements ContextAwareProvider for the built-in
 // OpenAI-compatible transport. Cancellation and deadlines bound the
 // in-flight request while connecting, awaiting headers, and reading the
@@ -83,8 +132,8 @@ func (p *OpenAICompatibleProvider) ExecuteWithContext(ctx context.Context, req L
 	if strings.TrimSpace(req.URL) == "" {
 		return nil, fmt.Errorf("missing 'url' parameter")
 	}
-	if !cmn.IsURLValid(req.URL) {
-		return nil, fmt.Errorf("invalid URL: %s", cmn.SafeEscapeJSONString(req.URL))
+	if err := ValidateLLMEndpoint(req.URL); err != nil {
+		return nil, fmt.Errorf("invalid provider endpoint: %v", err)
 	}
 
 	requestBody := buildLLMRequestBody(req)
@@ -206,14 +255,21 @@ func postLLMRequest(ctx context.Context, rawURL string, headers map[string]inter
 			TLSHandshakeTimeout: 10 * time.Second,
 		},
 		// Same redirect contract as the shared client: cap the chain and
-		// never forward credentials across hosts.
+		// never forward credentials across origins. Comparing scheme and
+		// host:port (not just the hostname) also blocks a redirect to a
+		// different service on the same host, which is the safer default for
+		// an operator-configured inference endpoint.
 		CheckRedirect: func(r *http.Request, via []*http.Request) error {
 			if len(via) >= 5 {
 				return fmt.Errorf("stopped after 5 redirects")
 			}
-			if len(via) > 0 && !strings.EqualFold(r.URL.Hostname(), via[0].URL.Hostname()) {
-				r.Header.Del("Authorization")
-				return fmt.Errorf("redirect to different host blocked")
+			if len(via) > 0 {
+				origin := via[0].URL
+				if !strings.EqualFold(r.URL.Scheme, origin.Scheme) ||
+					!strings.EqualFold(r.URL.Host, origin.Host) {
+					r.Header.Del("Authorization")
+					return fmt.Errorf("redirect to different origin blocked")
+				}
 			}
 			return nil
 		},
@@ -282,6 +338,7 @@ var (
 
 func init() {
 	RegisterLLMProvider(&OpenAICompatibleProvider{})
+	RegisterLLMProvider(&OpenAIProvider{})
 }
 
 // RegisterLLMProvider adds or replaces a provider implementation.
@@ -309,8 +366,25 @@ func getLLMProvider(name string) (LLMProvider, bool) {
 	return provider, ok
 }
 
+// canonicalLLMProviderName collapses the documented provider aliases so
+// contracts cannot be bypassed by choosing one spelling over another.
+func canonicalLLMProviderName(name string) string {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "", defaultLLMProvider, "openai":
+		return defaultLLMProvider
+	default:
+		return strings.ToLower(strings.TrimSpace(name))
+	}
+}
+
 func resetLLMProvidersForTest() {
 	llmProvidersMu.Lock()
 	defer llmProvidersMu.Unlock()
-	llmProviders = map[string]LLMProvider{}
+	// Restore the built-in set so tests that reset the registry still see
+	// the same provider names production registers at init.
+	llmProviders = map[string]LLMProvider{
+		defaultLLMProvider: &OpenAICompatibleProvider{},
+		"openai":           &OpenAIProvider{},
+		ollamaProviderName: NewOllamaProvider(nil),
+	}
 }

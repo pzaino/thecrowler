@@ -974,7 +974,13 @@ text, budget exhaustion, cancellation, or provider error.
 Policy fields (`allowlist`, `limits`, `allowed_sources`) must be statically
 declared — input references there are rejected — and `AgentToolLoop`
 requires the `tool_execution` capability plus identity enforcement (`all`
-without enforcement still refuses). See `agents/examples/tool-loop-reader.agent.yaml`.
+without enforcement still refuses). The inference-endpoint fields
+(`provider`, `url`, `auth`, `model`) are equally static: `$response`,
+`$event` and `{{...}}` references are rejected before the provider is
+resolved. If a provider explicitly reports that its model lacks tool-call
+support (see `CROWLER_OLLAMA_TOOL_MODELS`), the loop denies before any HTTP
+call; providers that report unknown keep the historical permissive
+behaviour. See `agents/examples/tool-loop-reader.agent.yaml`.
 
 ### 11.3 `DBQuery`
 
@@ -1269,7 +1275,14 @@ Authoring guidance:
 
 ## 14. AI provider model
 
-`AIInteraction` uses a provider abstraction. The code supports `provider: openai` by default, plus additional providers such as `gemini`, `grok`, and `mock` in tests/integration paths.
+`AIInteraction` and `AgentToolLoop` use a provider abstraction. The built-in
+provider is `openai-compatible`; `openai` is a registered alias with identical
+transport behaviour (kept for shipped manifests and earlier documentation).
+A first-class `ollama` provider reuses the same transport with
+Ollama-specific endpoint handling and capability reporting. Additional
+providers can register through the Go `RegisterLLMProvider` API (tests use
+mock providers this way). See
+`docs/crowler-agents/local-llm-providers.md` for the extension contract.
 
 Provider settings may be resolved in this precedence order:
 
@@ -1293,7 +1306,57 @@ Normalized AI inputs may include:
 * `frequency_penalty`,
 * other provider extras.
 
-### 14.1 OpenAI-compatible endpoint path
+Provider endpoints are operator configuration. In `AgentToolLoop`, the
+`provider`, `url`, `auth` and `model` fields must be statically declared; any
+`$response`, `$event` or `{{...}}` reference in them is rejected before the
+provider is resolved. A prior model response or event can therefore never
+select the inference endpoint or its credential. `AIInteraction` keeps its
+legacy dataflow behaviour for compatibility.
+
+### 14.1 Ollama (first-class local provider)
+
+Set `provider: ollama` and point `url` at the Ollama server. A base URL is
+enough; the provider appends `/v1/chat/completions`:
+
+```yaml
+- action: AgentToolLoop
+  params:
+    provider: ollama
+    url: "http://ollama:11434"
+    model: "qwen3:8b"
+    prompt: "Summarize source 7."
+    allowlist:
+      - get_source_status
+```
+
+Rules:
+
+* Only `http` and `https` endpoints are accepted. `localhost`,
+  single-label container names (`ollama`, `crowler-ollama`) and IP literals
+  are valid; embedded credentials and fragments are rejected.
+* `/api/chat` is not implemented. The provider rejects it explicitly instead
+  of sending an incompatible payload.
+* Redirects are capped at five, and a redirect to a different scheme or
+  `host:port` is blocked without forwarding `Authorization`.
+* Tool support is model-dependent and is **not** inferred from the provider
+  name. Operators attest tool-capable models with
+  `CROWLER_OLLAMA_TOOL_MODELS` (comma-separated model names, or `*` for all):
+  * unset: capability unknown; historical permissive behaviour is preserved;
+  * set but empty: tool calls explicitly unsupported; `AgentToolLoop` fails
+    before any HTTP call;
+  * set with names: only those models are attested; other models fail before
+    any HTTP call.
+* The opt-in live smoke test is
+  `CROWLER_OLLAMA_SMOKE_URL=http://host:11434 CROWLER_OLLAMA_SMOKE_MODEL=qwen3:8b go test ./pkg/agent -run TestOllamaSmokeOptional -v`.
+  A skipped test is not evidence of live Ollama support.
+
+Capability metadata is available through the optional
+`ProviderCapabilityReporter` and `ModelCapabilityReporter` interfaces. The
+descriptor covers chat, tool calls, structured output, streaming, tool-result
+messages, cancellation and optional context/output limits. Providers that do
+not implement either interface are reported as unknown for every capability.
+
+### 14.2 OpenAI-compatible endpoint path
 
 Recommended current pattern:
 
@@ -1311,7 +1374,7 @@ Recommended current pattern:
         content: "Analyze: $response"
 ```
 
-### 14.2 Claude-style or other backend via gateway
+### 14.3 Claude-style or other backend via gateway
 
 If a backend does not natively match the expected request or response shape, use a gateway/proxy:
 
@@ -1320,7 +1383,7 @@ If a backend does not natively match the expected request or response shape, use
 3. Have the gateway translate between CROWler’s expected shape and the backend provider.
 4. Preserve stable manifest shape while swapping backends internally.
 
-### 14.3 AI step design rules
+### 14.4 AI step design rules
 
 For production use:
 

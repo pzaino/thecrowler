@@ -402,7 +402,7 @@ func matchAIContractToken(token string, req LLMRequest) error {
 	case normalized == "aiinteraction":
 		return fmt.Errorf("AI policy denied: agent contract forbids AIInteraction")
 	case strings.HasPrefix(normalized, "provider:"):
-		if matchesPolicyPattern(strings.TrimPrefix(normalized, "provider:"), strings.ToLower(req.Provider)) {
+		if matchesPolicyPattern(canonicalLLMProviderName(strings.TrimPrefix(normalized, "provider:")), canonicalLLMProviderName(req.Provider)) {
 			return fmt.Errorf("AI policy denied provider %q by contract", req.Provider)
 		}
 	case strings.HasPrefix(normalized, "model:"):
@@ -432,7 +432,7 @@ func enforceAIUsagePolicy(config map[string]interface{}, req LLMRequest) error {
 		case normalized == "aiinteraction":
 			return fmt.Errorf("AI policy denied: agent contract forbids AIInteraction")
 		case strings.HasPrefix(normalized, "provider:"):
-			if matchesPolicyPattern(strings.TrimPrefix(normalized, "provider:"), strings.ToLower(req.Provider)) {
+			if matchesPolicyPattern(canonicalLLMProviderName(strings.TrimPrefix(normalized, "provider:")), canonicalLLMProviderName(req.Provider)) {
 				return fmt.Errorf("AI policy denied provider %q by contract", req.Provider)
 			}
 		case strings.HasPrefix(normalized, "model:"):

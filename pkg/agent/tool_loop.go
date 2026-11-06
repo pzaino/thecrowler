@@ -255,6 +255,14 @@ func RunToolLoop(config ToolLoopConfig) (ToolLoopResult, error) {
 				fmt.Errorf("tool loop denied: allowlisted tool %q is not registered", name))
 		}
 	}
+	// Provider capability gate: only an explicit "unsupported" denies here.
+	// Unknown keeps historical behaviour for legacy and gateway providers;
+	// supported is an operator attestation. No HTTP request has been made.
+	if ProviderCapabilitiesFor(config.Provider, config.Model).ToolCalls == LLMCapabilityUnsupported {
+		emitToolAudit(result.RunID, result.TraceID, config.Identity.AgentID, config.Identity.Name, config.Identity.Owner, "", auditOutcomeDenied, "provider_tool_calls_unsupported")
+		return fail(ToolLoopDenied, "provider does not support tool calls",
+			fmt.Errorf("tool loop denied: provider does not support tool calls"))
+	}
 
 	auth := ToolAuthContext{
 		Identity:       config.Identity,

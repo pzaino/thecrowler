@@ -238,10 +238,9 @@ func TestProviderRejectsOversizedBodies(t *testing.T) {
 }
 
 // TestOllamaSmokeOptional is an opt-in manual smoke test against a real
-// LAN Ollama host exposing /v1/chat/completions. It sends one tool
-// declaration, prints the returned tool calls for inspection, and asserts
-// nothing was executed and no follow-up call occurs (the provider performs
-// exactly one HTTP exchange by construction). It never runs in CI: both
+// Ollama host. It exercises the first-class ollama provider (base URL
+// normalization included), sends one tool declaration, then returns a
+// correlated tool result for a second model turn. It never runs in CI: both
 // CROWLER_OLLAMA_SMOKE_URL and CROWLER_OLLAMA_SMOKE_MODEL must be set.
 func TestOllamaSmokeOptional(t *testing.T) {
 	baseURL := strings.TrimSpace(os.Getenv("CROWLER_OLLAMA_SMOKE_URL"))
@@ -249,10 +248,9 @@ func TestOllamaSmokeOptional(t *testing.T) {
 	if baseURL == "" || model == "" {
 		t.Skip("set CROWLER_OLLAMA_SMOKE_URL and CROWLER_OLLAMA_SMOKE_MODEL to run the live Ollama smoke test")
 	}
-	endpoint := strings.TrimRight(baseURL, "/") + "/v1/chat/completions"
-	provider := &OpenAICompatibleProvider{}
-	resp, err := provider.Execute(LLMRequest{
-		URL:      endpoint,
+	provider := NewOllamaProvider(nil)
+	req := LLMRequest{
+		URL:      baseURL,
 		Model:    model,
 		Messages: []any{map[string]any{"role": "user", "content": "Reply with one tool call to ping."}},
 		Tools: []LLMToolDefinition{{
@@ -261,7 +259,8 @@ func TestOllamaSmokeOptional(t *testing.T) {
 		}},
 		ToolChoice:    LLMToolChoice{Mode: "auto"},
 		HasToolChoice: true,
-	})
+	}
+	resp, err := provider.Execute(req)
 	if err != nil {
 		t.Fatalf("smoke request failed: %v", err)
 	}
@@ -270,11 +269,39 @@ func TestOllamaSmokeOptional(t *testing.T) {
 		t.Fatalf("smoke payload: %v", err)
 	}
 	normalized, err := NormalizeChatCompletion(payload)
-	if err != nil {
-		t.Logf("model returned no tool calls (valid text reply): content=%q", normalized.Content)
+	if err != nil || len(normalized.ToolCalls) == 0 {
+		t.Logf("model returned no tool calls (valid text reply): err=%v content=%q", err, normalized.Content)
 		return
 	}
-	t.Logf("smoke tool calls (inert, not executed): %+v", normalized.ToolCalls)
+	t.Logf("smoke tool calls (inert, not executed here): %+v", normalized.ToolCalls)
+	// Return a synthetic correlated result and require a second response.
+	callID := normalized.ToolCalls[0].ID
+	if strings.TrimSpace(callID) == "" {
+		callID = "local-r1-c0"
+	}
+	req.Messages = append(req.Messages,
+		map[string]any{"role": "assistant", "content": normalized.Content,
+			"tool_calls": []any{map[string]any{
+				"id": callID, "type": "function",
+				"function": map[string]any{"name": normalized.ToolCalls[0].Name, "arguments": "{}"},
+			}}},
+		map[string]any{"role": "tool", "tool_call_id": callID, "content": `{"ok":true}`},
+	)
+	req.Tools = nil
+	req.HasToolChoice = false
+	finalResp, err := provider.Execute(req)
+	if err != nil {
+		t.Fatalf("smoke follow-up failed: %v", err)
+	}
+	finalPayload, err := ExtractChatPayload(finalResp)
+	if err != nil {
+		t.Fatalf("smoke follow-up payload: %v", err)
+	}
+	finalNormalized, err := NormalizeChatCompletion(finalPayload)
+	if err != nil {
+		t.Fatalf("smoke follow-up normalization: %v", err)
+	}
+	t.Logf("smoke final model content: %q", finalNormalized.Content)
 }
 
 // TestProviderKeepsRawBodyCompatibility pins that raw mode still returns

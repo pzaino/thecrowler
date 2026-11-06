@@ -4,9 +4,11 @@
 # registry tools only, and every proposal passes capability, trust,
 # contract, argument-schema, scope, and budget gates before execution.
 #
-# Operator setup: point url at an OpenAI-compatible endpoint (for example a
-# LAN Ollama host at http://OLLAMA_HOST:11434/v1/chat/completions) with a
-# tool-capable model installed. Auth depends on proxy setup.
+# Operator setup: install Ollama locally or on the LAN, install a
+# tool-capable model, and point url at the Ollama base URL (for example
+# http://ollama:11434 or http://localhost:11434). Attest tool-capable models
+# with CROWLER_OLLAMA_TOOL_MODELS so the loop can fail closed for models that
+# do not support tools. See docs/crowler-agents/local-llm-providers.md.
 format_version: v2
 agent_identity:
   agent_id: tool-loop-reader
@@ -32,7 +34,8 @@ jobs:
     steps:
       - action: AgentToolLoop
         params:
-          url: "http://OLLAMA_HOST:11434/v1/chat/completions"
+          provider: ollama
+          url: "http://OLLAMA_HOST:11434"
           model: "tool-capable-model"
           prompt: "Summarize the status of source 7 in one sentence."
           allowlist:

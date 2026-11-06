@@ -124,6 +124,14 @@ func normalizeToolLoopConfig(params, config map[string]interface{}, ictx InputCo
 		loop.TraceID = uuid.NewString()
 	}
 
+	// Endpoint and credential selection are authority-bearing. They must be
+	// statically declared in the manifest so neither a prior model response
+	// ($response) nor event data can steer inference. Environment
+	// interpolation (${VAR}) already happened at manifest load time.
+	if err := rejectLoopProviderMarkers(params); err != nil {
+		return loop, err
+	}
+
 	// Provider endpoint triple, resolved with normal dataflow (never from
 	// tool results by construction: the loop has not run yet).
 	provider, err := resolveLoopString(params, config, ictx, "provider", "provider")
@@ -340,6 +348,29 @@ func rejectInputMarkers(value any) error {
 	default:
 		return nil
 	}
+}
+
+// loopProviderPolicyFields are the fields that select the inference endpoint
+// and its credential. They are authorization-relevant and therefore static.
+var loopProviderPolicyFields = []string{"provider", "url", "auth", "model"}
+
+// rejectLoopProviderMarkers refuses dataflow references in provider
+// selection so a prior model response or event cannot choose the endpoint or
+// credential.
+func rejectLoopProviderMarkers(params map[string]interface{}) error {
+	if params == nil {
+		return nil
+	}
+	for _, key := range loopProviderPolicyFields {
+		raw, ok := params[key]
+		if !ok || raw == nil {
+			continue
+		}
+		if err := rejectInputMarkers(raw); err != nil {
+			return fmt.Errorf("tool loop denied: %s must be statically declared", key)
+		}
+	}
+	return nil
 }
 
 // normalizeLoopAllowlist reads the explicit trusted tool allowlist.
