@@ -988,6 +988,12 @@ missing source is reported as `scope_denied`; database failures are generic tool
 errors without driver text. The new search tools use bound field/value
 parameters and never construct SQL from model input.
 
+State-changing crawl scheduling is **not** exposed as a tool in WP-03B1. The
+internal approved scheduling contract, durable idempotency semantics, request
+versus execution states and approval boundary are documented in
+[`crawl_scheduling_foundation.md`](crawl_scheduling_foundation.md). The legacy
+`ScheduleSourceCrawl()` path remains unchanged for existing internal callers.
+
 Every proposed call passes, in order: explicit opt-in, valid identity with
 enforcement on, trusted registry membership, explicit run allowlist (the
 `all` wildcard never satisfies it), required capabilities (or `all`),
