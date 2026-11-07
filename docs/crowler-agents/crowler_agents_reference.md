@@ -457,7 +457,7 @@ Action-to-capability mapping enforced with identity enforcement on:
 | `Decision` local branching | none |
 | `Decision` delegation | `delegate` |
 | `AgentToolLoop` | `tool_execution` |
-| `AgentGoalRun` | `goal_execution` |
+| `AgentGoalRun` | `goal_execution` entry; `db_read` for database evidence/resource status; `ai_reasoning` before model execution |
 
 Notes:
 
@@ -997,7 +997,12 @@ behaviour. See `agents/examples/tool-loop-reader.agent.yaml`.
 machine-checkable acceptance criteria pass. It does **not** change
 `AgentToolLoop` or `AIInteraction` semantics. It requires `format_version: v2`,
 identity enforcement, trust level `trusted` or above, and the
-`goal_execution` capability.
+`goal_execution` capability. The capability is an entry gate, not a blanket
+grant: database-backed evidence and source `resource_status` require `db_read`,
+and any model invocation requires `ai_reasoning`. A goal whose criteria are
+already proven by trusted initial evidence may finish without `ai_reasoning` or
+a model call. Tool calls still require their own tool capabilities, the
+explicit run allowlist, trust/contract checks and source scope.
 
 The action freezes its authority at manifest load: objective, criteria,
 evidence policy, budgets, allowlist, source scope, provider, URL and model are
@@ -1040,14 +1045,24 @@ integrity is checked in addition to the trust class; a hash alone is not
 authority. Model text is recorded as an untrusted claim, never as proof.
 
 Selector and source binding are enforced: a provider must return the requested
-kind and an explicit source identity matching the selector and run scope.
-Missing, wrong-kind, wrong-source and mixed-source observations are rejected
-before admission. A request for source 7 cannot be satisfied by source 8.
+kind, an explicit source identity matching the selector and run scope, and
+matching selector fields where applicable. `page_url`, `status`,
+`json_field`/selected field and the selected value are checked against the
+observation; provider-supplied selector hashes are ignored. Missing,
+wrong-kind, wrong-field, wrong-value, wrong-source and mixed-source
+observations are rejected before admission. A request for source 7 cannot be
+satisfied by source 8.
 
-Freshness applies to both the trusted read time and, when supplied, the
-underlying record update time. A fresh read of an old crawl cannot satisfy a
-freshness-bound criterion. For `resource_status`, a missing underlying update
-time is unavailable, not fresh.
+Freshness applies to both the trusted read time and the underlying data time.
+`source_status`, `indexed_page`, `scraped_field` and `artifact` evidence
+require a meaningful underlying timestamp when a freshness bound applies; a
+missing or malformed timestamp is unavailable/stale, never fresh.
+`source_metadata` and `tool_observation` are point-in-time checks of the
+current verified read/observation; their read/observation time is authoritative.
+A fresh read of an old crawl cannot satisfy a freshness-bound criterion.
+Query-completion records are run/ledger/spec bound, timestamped, and must have
+consistent kind, selector, count and limit; fabricated, stale, failed or
+truncated completion records cannot prove zero matches.
 
 Before any model request, `AgentGoalRun` rejects an explicitly
 tool-incompatible provider and applies the agent contract's provider/model

@@ -1236,6 +1236,38 @@ func setGoalRuntimeSpec(params map[string]any, spec *AgentGoalSpec, stepIndex in
 	runtime["goal_trace_id"] = execCtx.TraceID
 }
 
+// goalSpecRequiresDBEvidence reports whether initial/provider evidence or a
+// resource-status check needs the database. Tool observations are governed by
+// the tool's own required capabilities.
+func goalSpecRequiresDBEvidence(spec *AgentGoalSpec) bool {
+	if spec == nil {
+		return false
+	}
+	requires := false
+	for _, criterion := range spec.Acceptance.Criteria {
+		walkGoalPredicates(criterion.Predicate, func(predicate Predicate) {
+			switch predicate.Kind {
+			case PredicateEvidenceExists, PredicateEvidenceCount, PredicateFieldEquals,
+				PredicateFieldIn, PredicateFieldNumber, PredicateEvidenceScope:
+				switch predicate.Evidence {
+				case EvidenceSourceStatus, EvidenceSourceMetadata, EvidenceIndexedPage, EvidenceScrapedField, EvidenceArtifact:
+					requires = true
+				}
+			case PredicateResourceStatus:
+				requires = true
+			}
+		})
+	}
+	return requires
+}
+
+func walkGoalPredicates(predicate Predicate, fn func(Predicate)) {
+	fn(predicate)
+	for _, child := range predicate.Predicates {
+		walkGoalPredicates(child, fn)
+	}
+}
+
 // validateGoalTools checks the allowlist against the trusted registry and
 // verifies that criteria-bearing tool observations name a read-only,
 // evidence-capable tool that is explicitly allowlisted.

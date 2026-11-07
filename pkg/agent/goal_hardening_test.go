@@ -40,6 +40,20 @@ func hardeningSpec(evidence EvidenceKind, selector EvidenceSelector, counts ...C
 	return spec
 }
 
+func testGoalQuery(kind EvidenceKind, selector EvidenceSelector, state EvidenceQueryState, count, limit int, reason string) EvidenceQueryResult {
+	query := EvidenceQueryResult{
+		Kind: kind, SelectorSHA256: selectorHash(selector), State: state,
+		Count: count, Limit: limit, Reason: reason,
+		LedgerID: testGoalLedgerID, RunID: testGoalRunID, GoalID: testGoalGoalID,
+		GoalSpecHash: testGoalSpecHash, AgentID: testGoalAgentID, Owner: testGoalOwner,
+		CompletedAt: time.Now().UTC(),
+	}
+	query.QuerySHA256 = goalQueryHash(query)
+	return query
+}
+
+func ptrQuery(query EvidenceQueryResult) *EvidenceQueryResult { return &query }
+
 func TestZeroEvidenceRequiresCompletedQuery(t *testing.T) {
 	criterion := CriterionSpec{ID: "zero", Description: "zero", Predicate: Predicate{
 		Kind: PredicateEvidenceCount, Evidence: EvidenceIndexedPage,
@@ -56,10 +70,10 @@ func TestZeroEvidenceRequiresCompletedQuery(t *testing.T) {
 		want  string
 	}{
 		{"no query completion", nil, "incomplete"},
-		{"completed empty", &EvidenceQueryResult{Kind: EvidenceIndexedPage, SelectorSHA256: selectorHash(selector), State: EvidenceQueryCompleted, Count: 0, Limit: 16}, "met"},
-		{"provider unavailable", &EvidenceQueryResult{Kind: EvidenceIndexedPage, SelectorSHA256: selectorHash(selector), State: EvidenceQueryUnavailable, Reason: "evidence_query_unavailable"}, "incomplete"},
-		{"query failed", &EvidenceQueryResult{Kind: EvidenceIndexedPage, SelectorSHA256: selectorHash(selector), State: EvidenceQueryFailed, Reason: "evidence_query_failed"}, "error"},
-		{"query truncated", &EvidenceQueryResult{Kind: EvidenceIndexedPage, SelectorSHA256: selectorHash(selector), State: EvidenceQueryTruncated, Count: 16, Limit: 16, Reason: "evidence_query_truncated"}, "error"},
+		{"completed empty", ptrQuery(testGoalQuery(EvidenceIndexedPage, selector, EvidenceQueryCompleted, 0, 16, "evidence_query_completed")), "met"},
+		{"provider unavailable", ptrQuery(testGoalQuery(EvidenceIndexedPage, selector, EvidenceQueryUnavailable, 0, 16, "evidence_query_unavailable")), "incomplete"},
+		{"query failed", ptrQuery(testGoalQuery(EvidenceIndexedPage, selector, EvidenceQueryFailed, 0, 16, "evidence_query_failed")), "error"},
+		{"query truncated", ptrQuery(testGoalQuery(EvidenceIndexedPage, selector, EvidenceQueryTruncated, 16, 16, "evidence_query_truncated")), "error"},
 	}
 	for _, tc := range cases {
 		input := goalEvalInput(spec, nil, nil)
@@ -484,5 +498,361 @@ func TestRefreshGoalEvidenceCancellationStopsReads(t *testing.T) {
 	if len(resources) != 0 {
 		// A resource criterion was not present in this spec; no reads expected.
 		t.Fatalf("unexpected resources: %+v", resources)
+	}
+}
+
+func TestGoalCapabilityGates(t *testing.T) {
+	t.Run("db_read required before database evidence", func(t *testing.T) {
+		resetLLMProvidersForTest()
+		provider := &scriptedProvider{name: "goal-scripted", responses: []any{chatWithText("done")}}
+		RegisterLLMProvider(provider)
+		t.Cleanup(func() { resetLLMProvidersForTest() })
+		identity := goalTestIdentity()
+		identity.Capabilities = []string{"goal_execution", "ai_reasoning"}
+		criterion := map[string]any{
+			"id": "zero", "description": "zero",
+			"predicate": map[string]any{
+				"kind": "evidence_count", "evidence": "source_status",
+				"where": map[string]any{"source_id": float64(7)},
+				"op":    "eq", "value": float64(0),
+			},
+		}
+		spec := goalActionSpec(t, []any{criterion}, []any{"source_status"}, nil)
+		var handler cdb.Handler = &panicOnReadDBHandler{}
+		result, err := (&AgentGoalRunAction{}).Execute(goalActionParams(spec, identity, handler, nil))
+		if err == nil {
+			t.Fatalf("missing db_read must deny")
+		}
+		output := result[StrResponse].(map[string]any)
+		if output["reason_code"] != "missing_db_read" {
+			t.Fatalf("unexpected reason: %v", output)
+		}
+		if provider.providerCalls() != 0 {
+			t.Fatalf("model was called without db_read")
+		}
+	})
+
+	t.Run("ai_reasoning required before model", func(t *testing.T) {
+		resetLLMProvidersForTest()
+		provider := &scriptedProvider{name: "goal-scripted", responses: []any{chatWithText("done")}}
+		RegisterLLMProvider(provider)
+		t.Cleanup(func() { resetLLMProvidersForTest() })
+		identity := goalTestIdentity()
+		identity.Capabilities = []string{"goal_execution", "db_read"}
+		spec := goalActionSpec(t, []any{pinnedStatusCriterion(t, map[string]any{"source_id": float64(7)})}, []any{"tool_observation"}, nil)
+		result, err := (&AgentGoalRunAction{}).Execute(goalActionParams(spec, identity, nil, nil))
+		if err == nil {
+			t.Fatalf("missing ai_reasoning must deny model execution")
+		}
+		output := result[StrResponse].(map[string]any)
+		if output["reason_code"] != "missing_ai_reasoning" {
+			t.Fatalf("unexpected reason: %v", output)
+		}
+		if provider.providerCalls() != 0 {
+			t.Fatalf("model was called without ai_reasoning")
+		}
+	})
+
+	t.Run("evidence-only goal needs no ai_reasoning", func(t *testing.T) {
+		resetLLMProvidersForTest()
+		provider := &scriptedProvider{name: "goal-scripted", responses: []any{chatWithText("should not run")}}
+		RegisterLLMProvider(provider)
+		t.Cleanup(func() { resetLLMProvidersForTest() })
+		identity := goalTestIdentity()
+		identity.Capabilities = []string{"goal_execution", "db_read"}
+		fake := &fakeGoalEvidenceProvider{kind: EvidenceSourceStatus, observations: []EvidenceObservation{{
+			Kind: EvidenceSourceStatus, Producer: "fake", SourceIDs: []uint64{7},
+			Payload: map[string]any{"status": "completed"}, DataUpdatedAt: time.Now().UTC(),
+		}}}
+		registry := NewGoalEvidenceRegistry()
+		if err := registry.Register(fake); err != nil {
+			t.Fatalf("register: %v", err)
+		}
+		criterion := map[string]any{
+			"id": "status", "description": "status",
+			"predicate": map[string]any{
+				"kind": "evidence_count", "evidence": "source_status",
+				"where": map[string]any{"source_id": float64(7)},
+				"op":    "gte", "value": float64(1),
+			},
+		}
+		spec := goalActionSpec(t, []any{criterion}, []any{"source_status"}, nil)
+		result, err := (&AgentGoalRunAction{}).Execute(goalActionParams(spec, identity, nil, registry))
+		if err != nil {
+			t.Fatalf("initial evidence should succeed: %v (%v)", err, result[StrMessage])
+		}
+		if result[StrResponse].(map[string]any)["status"] != string(GoalCriteriaMet) {
+			t.Fatalf("unexpected result: %v", result[StrResponse])
+		}
+		if provider.providerCalls() != 0 {
+			t.Fatalf("evidence-only goal called the model")
+		}
+	})
+
+	t.Run("tool capability still enforced without db_read", func(t *testing.T) {
+		resetLLMProvidersForTest()
+		provider := &scriptedProvider{name: "goal-scripted", responses: []any{
+			chatWithCalls(stringCall("", "get_source_status", `{"source_id":7}`)),
+			chatWithText("done"),
+		}}
+		RegisterLLMProvider(provider)
+		t.Cleanup(func() { resetLLMProvidersForTest() })
+		identity := goalTestIdentity()
+		identity.Capabilities = []string{"goal_execution", "ai_reasoning"}
+		spec := goalActionSpec(t, []any{pinnedStatusCriterion(t, map[string]any{"source_id": float64(7)})}, []any{"tool_observation"}, nil)
+		var handler cdb.Handler = &panicOnReadDBHandler{}
+		result, err := (&AgentGoalRunAction{}).Execute(goalActionParams(spec, identity, handler, nil))
+		if err == nil {
+			t.Fatalf("missing tool db_read must not succeed")
+		}
+		output := result[StrResponse].(map[string]any)
+		if output["status"] == string(GoalCriteriaMet) {
+			t.Fatalf("denied tool call produced success: %v", output)
+		}
+	})
+}
+
+func TestProviderObservationSelectorValues(t *testing.T) {
+	cases := []struct {
+		name     string
+		kind     EvidenceKind
+		selector EvidenceSelector
+		payload  map[string]any
+		matched  string
+		wantErr  bool
+	}{
+		{
+			name: "page url mismatch", kind: EvidenceIndexedPage,
+			selector: EvidenceSelector{SourceID: uint64Ptr(7), PageURL: "https://expected/"},
+			payload:  map[string]any{"page_url": "https://other/"},
+			wantErr:  true,
+		},
+		{
+			name: "page url missing", kind: EvidenceIndexedPage,
+			selector: EvidenceSelector{SourceID: uint64Ptr(7), PageURL: "https://expected/"},
+			payload:  map[string]any{"index_id": 1},
+			wantErr:  true,
+		},
+		{
+			name: "status mismatch", kind: EvidenceSourceStatus,
+			selector: EvidenceSelector{SourceID: uint64Ptr(7), Status: "completed"},
+			payload:  map[string]any{"status": "error"},
+			wantErr:  true,
+		},
+		{
+			name: "field mismatch", kind: EvidenceScrapedField,
+			selector: EvidenceSelector{SourceID: uint64Ptr(7), Field: "price", Value: "42"},
+			payload:  map[string]any{"json_field": "other"},
+			matched:  "42",
+			wantErr:  true,
+		},
+		{
+			name: "value mismatch", kind: EvidenceScrapedField,
+			selector: EvidenceSelector{SourceID: uint64Ptr(7), Field: "price", Value: "42"},
+			payload:  map[string]any{"json_field": "price"},
+			matched:  "41",
+			wantErr:  true,
+		},
+		{
+			name: "artifact value mismatch", kind: EvidenceArtifact,
+			selector: EvidenceSelector{SourceID: uint64Ptr(7), Field: "kind", Value: "expected"},
+			payload:  map[string]any{"json_field": "kind"},
+			matched:  "other",
+			wantErr:  true,
+		},
+		{
+			name: "matching scraped field", kind: EvidenceScrapedField,
+			selector: EvidenceSelector{SourceID: uint64Ptr(7), Field: "price", Value: "42"},
+			payload:  map[string]any{"json_field": "price"},
+			matched:  "42",
+		},
+		{
+			name: "matching artifact field", kind: EvidenceArtifact,
+			selector: EvidenceSelector{SourceID: uint64Ptr(7), Field: "kind", Value: "expected"},
+			payload:  map[string]any{"json_field": "kind"},
+			matched:  "expected",
+		},
+	}
+	for _, tc := range cases {
+		spec := &AgentGoalSpec{
+			GoalID: "goal", SpecHash: "spec", AllowedSources: []uint64{7},
+			Evidence: EvidencePolicy{Allow: []EvidenceKind{tc.kind}, DefaultMaxAge: 15 * time.Minute, MaxPayloadBytes: 4096},
+			Budgets:  GoalBudgets{MaxEvidenceRecords: 8, MaxEvidenceBytes: 4096},
+			Acceptance: AcceptanceSpec{Mode: AcceptanceAll, Criteria: []CriterionSpec{{
+				ID: "criterion", Description: "criterion",
+				Predicate: Predicate{Kind: PredicateEvidenceExists, Evidence: tc.kind, Where: &tc.selector},
+			}}},
+		}
+		provider := &countingGoalProvider{kind: tc.kind, observations: []EvidenceObservation{{
+			Kind: tc.kind, Producer: "fake", SourceIDs: []uint64{7},
+			Payload: tc.payload, MatchedValue: tc.matched,
+		}}}
+		registry := NewGoalEvidenceRegistry()
+		if err := registry.Register(provider); err != nil {
+			t.Fatalf("%s: register: %v", tc.name, err)
+		}
+		ledger := NewGoalEvidenceLedger("run", "nonce", "trace", "goal", "spec", "agent", "owner", []uint64{7}, spec.Evidence, spec.Budgets, time.Now().Add(time.Hour))
+		err := refreshGoalEvidence(context.Background(), spec, registry, ledger, map[string]EvidenceQueryResult{}, time.Now().UTC())
+		if tc.wantErr {
+			if err == nil || !errors.Is(err, ErrEvidenceInvalid) {
+				t.Fatalf("%s: selector mismatch accepted: %v", tc.name, err)
+			}
+			if ledger.Count() != 0 {
+				t.Fatalf("%s: rejected observation admitted", tc.name)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("%s: valid observation rejected: %v", tc.name, err)
+		}
+		if ledger.Count() != 1 {
+			t.Fatalf("%s: valid observation not admitted: %d", tc.name, ledger.Count())
+		}
+	}
+}
+
+func TestGoalFreshnessKindSemantics(t *testing.T) {
+	now := time.Now().UTC()
+	selector := EvidenceSelector{SourceID: uint64Ptr(7)}
+	cases := []struct {
+		name     string
+		kind     EvidenceKind
+		trust    TrustClass
+		payload  map[string]any
+		zeroData bool
+		wantPass bool
+	}{
+		{"source status missing timestamp", EvidenceSourceStatus, TrustSystemVerified, map[string]any{"status": "completed"}, true, false},
+		{"indexed page missing timestamp", EvidenceIndexedPage, TrustSystemVerified, map[string]any{"page_url": "x"}, true, false},
+		{"scraped field missing timestamp", EvidenceScrapedField, TrustSystemVerified, map[string]any{"json_field": "f"}, true, false},
+		{"artifact missing timestamp", EvidenceArtifact, TrustSystemVerified, map[string]any{"artifact_id": 1}, true, false},
+		{"source metadata point in time", EvidenceSourceMetadata, TrustSystemVerified, map[string]any{"name": "source"}, true, true},
+		{"tool observation point in time", EvidenceToolObservation, TrustToolObservation, map[string]any{"ok": true}, true, true},
+	}
+	for _, tc := range cases {
+		criterion := CriterionSpec{ID: "c", Description: "c", Predicate: Predicate{
+			Kind: PredicateEvidenceExists, Evidence: tc.kind, Where: &selector,
+		}}
+		spec := goalEvalSpec(AcceptanceAll, criterion)
+		spec.Evidence.Allow = []EvidenceKind{tc.kind}
+		record := goalEvalRecord(tc.kind, selector, tc.payload, now)
+		record.TrustClass = tc.trust
+		if tc.zeroData {
+			record.DataUpdatedAt = time.Time{}
+		}
+		record = sealEvalRecord(record)
+		result, err := EvaluateGoal(goalEvalInput(spec, []EvidenceRecord{record}, nil))
+		if err != nil {
+			t.Fatalf("%s: evaluate: %v", tc.name, err)
+		}
+		if (result.State == "met") != tc.wantPass {
+			t.Fatalf("%s: got state %q, want pass=%v (%+v)", tc.name, result.State, tc.wantPass, result)
+		}
+	}
+}
+
+func TestGoalQueryCompletionHardening(t *testing.T) {
+	selector := EvidenceSelector{SourceID: uint64Ptr(7)}
+	criterion := CriterionSpec{ID: "zero", Description: "zero", Predicate: Predicate{
+		Kind: PredicateEvidenceCount, Evidence: EvidenceIndexedPage,
+		Where: &selector, Op: CompareEq, Value: float64(0),
+	}}
+	spec := goalEvalSpec(AcceptanceAll, criterion)
+	key := evidenceQueryKey(EvidenceIndexedPage, selector)
+	cases := []struct {
+		name   string
+		mutate func(*EvidenceQueryResult)
+	}{
+		{"wrong kind", func(q *EvidenceQueryResult) { q.Kind = EvidenceArtifact }},
+		{"wrong selector", func(q *EvidenceQueryResult) { q.SelectorSHA256 = strings.Repeat("a", 64) }},
+		{"wrong ledger", func(q *EvidenceQueryResult) { q.LedgerID = "other" }},
+		{"wrong run", func(q *EvidenceQueryResult) { q.RunID = "other" }},
+		{"wrong goal", func(q *EvidenceQueryResult) { q.GoalID = "other" }},
+		{"wrong spec", func(q *EvidenceQueryResult) { q.GoalSpecHash = "other" }},
+		{"wrong agent", func(q *EvidenceQueryResult) { q.AgentID = "other" }},
+		{"wrong owner", func(q *EvidenceQueryResult) { q.Owner = "other" }},
+		{"missing completion time", func(q *EvidenceQueryResult) { q.CompletedAt = time.Time{} }},
+		{"stale completion", func(q *EvidenceQueryResult) { q.CompletedAt = time.Now().UTC().Add(-time.Hour) }},
+		{"completed at limit", func(q *EvidenceQueryResult) { q.Count = q.Limit }},
+		{"truncated count mismatch", func(q *EvidenceQueryResult) { q.State = EvidenceQueryTruncated; q.Count = 3 }},
+		{"failed with count", func(q *EvidenceQueryResult) { q.State = EvidenceQueryFailed; q.Count = 1 }},
+		{"zero limit", func(q *EvidenceQueryResult) { q.Limit = 0 }},
+	}
+	for _, tc := range cases {
+		query := testGoalQuery(EvidenceIndexedPage, selector, EvidenceQueryCompleted, 0, 16, "completed")
+		tc.mutate(&query)
+		// Reseal the mutated query so each case exercises its intended
+		// validation rather than failing early on the original hash.
+		query.QuerySHA256 = goalQueryHash(query)
+		input := goalEvalInput(spec, nil, nil)
+		input.Queries[key] = query
+		result, err := EvaluateGoal(input)
+		if err != nil {
+			t.Fatalf("%s: evaluate: %v", tc.name, err)
+		}
+		if result.State == "met" || result.Criteria[0].Result == string(CriterionPass) {
+			t.Fatalf("%s: invalid query completion proved zero: %+v", tc.name, result)
+		}
+	}
+}
+
+func TestToolObservationBinding(t *testing.T) {
+	selector := EvidenceSelector{
+		Tool: "get_source_status", ArgumentsSHA256: strings.Repeat("a", 64),
+	}
+	criterion := CriterionSpec{ID: "tool", Description: "tool", Predicate: Predicate{
+		Kind: PredicateEvidenceExists, Evidence: EvidenceToolObservation, Where: &selector,
+	}}
+	spec := goalEvalSpec(AcceptanceAll, criterion)
+	spec.Evidence.Allow = []EvidenceKind{EvidenceToolObservation}
+	now := time.Now().UTC()
+	record := goalEvalRecord(EvidenceToolObservation, selector, map[string]any{"ok": true}, now)
+	record.TrustClass = TrustToolObservation
+	record.Tool = "other_tool"
+	record.ArgumentsSHA256 = strings.Repeat("b", 64)
+	record = sealEvalRecord(record)
+	result, err := EvaluateGoal(goalEvalInput(spec, []EvidenceRecord{record}, nil))
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if result.State == "met" || result.Criteria[0].Result == string(CriterionPass) {
+		t.Fatalf("tool name/argument mismatch satisfied criterion: %+v", result)
+	}
+	record.Tool = selector.Tool
+	record.ArgumentsSHA256 = selector.ArgumentsSHA256
+	record = sealEvalRecord(record)
+	result, err = EvaluateGoal(goalEvalInput(spec, []EvidenceRecord{record}, nil))
+	if err != nil || result.State != "met" {
+		t.Fatalf("matching pinned tool observation should pass: %+v, %v", result, err)
+	}
+}
+
+type dbmsAliasHandler struct {
+	fakeDBHandler
+	dbms string
+}
+
+func (h *dbmsAliasHandler) DBMS() string { return h.dbms }
+
+func TestGoalEvidenceAcceptsConnectedPostgresDBMSAlias(t *testing.T) {
+	cases := []struct {
+		dbms string
+		want bool
+	}{
+		{"postgres", true},
+		{"PostgreSQL", true},
+		{"POSTGRESQL", true},
+		{"  postgres  ", true},
+		{"sqlite", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		handler := &dbmsAliasHandler{dbms: tc.dbms}
+		if got := goalEvidencePostgresDBMS(handler); got != tc.want {
+			t.Fatalf("goalEvidencePostgresDBMS(%q) = %v, want %v", tc.dbms, got, tc.want)
+		}
+	}
+	if goalEvidencePostgresDBMS(nil) {
+		t.Fatal("nil handler must not be treated as PostgreSQL")
 	}
 }

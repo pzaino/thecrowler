@@ -58,7 +58,7 @@ func goalTestParams() map[string]any {
 func goalTestIdentity() *AgentIdentity {
 	return &AgentIdentity{
 		AgentID: "goal-agent", Name: "Goal Agent", TrustLevel: "trusted",
-		Capabilities: []string{"goal_execution", "db_read"},
+		Capabilities: []string{"goal_execution", "db_read", "ai_reasoning"},
 	}
 }
 

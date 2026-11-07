@@ -222,29 +222,31 @@ type EvidenceSelector struct {
 
 // EvidenceRecord is one run-scoped trusted observation.
 type EvidenceRecord struct {
-	EvidenceID     string
-	LedgerID       string
-	RunID          string
-	RunNonceHash   string
-	TraceID        string
-	GoalID         string
-	GoalSpecHash   string
-	AgentID        string
-	Owner          string
-	Kind           EvidenceKind
-	Producer       string
-	TrustClass     TrustClass
-	SourceIDs      []uint64
-	SourceUID      string
-	Operation      string
-	ObservedAt     time.Time
-	DataUpdatedAt  time.Time
-	ExpiresAt      time.Time
-	Payload        map[string]any
-	PayloadSHA256  string
-	SelectorSHA256 string
-	RecordSHA256   string
-	Redacted       bool
+	EvidenceID      string
+	LedgerID        string
+	RunID           string
+	RunNonceHash    string
+	TraceID         string
+	GoalID          string
+	GoalSpecHash    string
+	AgentID         string
+	Owner           string
+	Kind            EvidenceKind
+	Producer        string
+	TrustClass      TrustClass
+	Tool            string
+	ArgumentsSHA256 string
+	SourceIDs       []uint64
+	SourceUID       string
+	Operation       string
+	ObservedAt      time.Time
+	DataUpdatedAt   time.Time
+	ExpiresAt       time.Time
+	Payload         map[string]any
+	PayloadSHA256   string
+	SelectorSHA256  string
+	RecordSHA256    string
+	Redacted        bool
 }
 
 // EvidenceObservation is what a provider/tool supplies to the recorder. It
@@ -261,6 +263,7 @@ type EvidenceObservation struct {
 	SelectorSHA256  string
 	ObservedAt      time.Time
 	DataUpdatedAt   time.Time
+	MatchedValue    string // provider-side selector value, validated but not stored
 }
 
 // EvidenceRequest is one bounded provider read.
@@ -334,6 +337,14 @@ type EvidenceQueryResult struct {
 	Count          int
 	Limit          int
 	Reason         string
+	LedgerID       string
+	RunID          string
+	GoalID         string
+	GoalSpecHash   string
+	AgentID        string
+	Owner          string
+	CompletedAt    time.Time
+	QuerySHA256    string
 }
 
 // GoalEvalInput is the pure evaluator input. The identity fields bind the

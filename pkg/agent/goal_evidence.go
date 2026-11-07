@@ -230,6 +230,7 @@ func (l *goalEvidenceLedger) Record(ctx context.Context, obs EvidenceObservation
 		GoalID: l.goalID, GoalSpecHash: l.specHash,
 		AgentID: l.agentID, Owner: l.owner,
 		Kind: obs.Kind, Producer: obs.Producer, TrustClass: trustForEvidence(obs),
+		Tool: obs.Tool, ArgumentsSHA256: obs.ArgumentsSHA256,
 		SourceIDs: sourceCopy, SourceUID: obs.SourceUID,
 		Operation: obs.Operation, ObservedAt: observedAt, DataUpdatedAt: dataUpdatedAt,
 		ExpiresAt: expiresAt,
@@ -317,6 +318,8 @@ func recordHash(record EvidenceRecord) string {
 		Kind                                                EvidenceKind
 		Producer                                            string
 		TrustClass                                          TrustClass
+		Tool                                                string
+		ArgumentsSHA256                                     string
 		SourceIDs                                           []uint64
 		ObservedAt, DataUpdatedAt                           time.Time
 		PayloadSHA256                                       string
@@ -324,7 +327,8 @@ func recordHash(record EvidenceRecord) string {
 	}{
 		record.LedgerID, record.RunID, record.RunNonceHash, record.GoalID, record.GoalSpecHash,
 		record.AgentID, record.Owner, record.Kind, record.Producer,
-		record.TrustClass, record.SourceIDs, record.ObservedAt, record.DataUpdatedAt,
+		record.TrustClass, record.Tool, record.ArgumentsSHA256, record.SourceIDs,
+		record.ObservedAt, record.DataUpdatedAt,
 		record.PayloadSHA256, record.SelectorSHA256,
 	})
 	sum := sha256.Sum256(data)
@@ -410,10 +414,7 @@ func refreshGoalEvidence(ctx context.Context, spec *AgentGoalSpec, registry *Goa
 				state = EvidenceQueryUnavailable
 				reason = "evidence_query_unavailable"
 			}
-			queries[queryKey] = EvidenceQueryResult{
-				Kind: kind, SelectorSHA256: selectorHash(selector),
-				State: state, Limit: limit, Reason: reason,
-			}
+			queries[queryKey] = newGoalQueryResult(ledger, kind, selector, state, 0, limit, reason, now)
 			continue
 		}
 		state := EvidenceQueryCompleted
@@ -422,10 +423,7 @@ func refreshGoalEvidence(ctx context.Context, spec *AgentGoalSpec, registry *Goa
 			state = EvidenceQueryTruncated
 			reason = "evidence_query_truncated"
 		}
-		queries[queryKey] = EvidenceQueryResult{
-			Kind: kind, SelectorSHA256: selectorHash(selector),
-			State: state, Count: len(observations), Limit: limit, Reason: reason,
-		}
+		queries[queryKey] = newGoalQueryResult(ledger, kind, selector, state, len(observations), limit, reason, now)
 		for _, obs := range observations {
 			if err := validateProviderObservation(kind, selector, spec.AllowedSources, obs); err != nil {
 				return fmt.Errorf("%w: %v", ErrEvidenceInvalid, err)
@@ -447,6 +445,43 @@ func refreshGoalEvidence(ctx context.Context, spec *AgentGoalSpec, registry *Goa
 
 func evidenceQueryKey(kind EvidenceKind, selector EvidenceSelector) string {
 	return string(kind) + "|" + selectorHash(selector)
+}
+
+func newGoalQueryResult(ledger *goalEvidenceLedger, kind EvidenceKind, selector EvidenceSelector, state EvidenceQueryState, count, limit int, reason string, now time.Time) EvidenceQueryResult {
+	result := EvidenceQueryResult{
+		Kind: kind, SelectorSHA256: selectorHash(selector), State: state,
+		Count: count, Limit: limit, Reason: reason, CompletedAt: now.UTC(),
+	}
+	if ledger != nil {
+		result.LedgerID = ledger.ledgerID
+		result.RunID = ledger.runID
+		result.GoalID = ledger.goalID
+		result.GoalSpecHash = ledger.specHash
+		result.AgentID = ledger.agentID
+		result.Owner = ledger.owner
+	}
+	result.QuerySHA256 = goalQueryHash(result)
+	return result
+}
+
+func goalQueryHash(query EvidenceQueryResult) string {
+	data, _ := json.Marshal(struct {
+		Kind, SelectorSHA256 string
+		State                EvidenceQueryState
+		Count, Limit         int
+		Reason               string
+		LedgerID, RunID      string
+		GoalID, GoalSpecHash string
+		AgentID, Owner       string
+		CompletedAt          time.Time
+	}{
+		string(query.Kind), query.SelectorSHA256, query.State, query.Count,
+		query.Limit, query.Reason, query.LedgerID, query.RunID,
+		query.GoalID, query.GoalSpecHash, query.AgentID, query.Owner,
+		query.CompletedAt,
+	})
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 // validateProviderObservation enforces that a provider returned the requested
@@ -474,6 +509,27 @@ func validateProviderObservation(kind EvidenceKind, selector EvidenceSelector, a
 		return fmt.Errorf("tool observations are not provider-refreshed")
 	default:
 		return fmt.Errorf("unsupported evidence kind %q", kind)
+	}
+	if selector.Status != "" {
+		value, _ := obs.Payload["status"].(string)
+		if value != selector.Status {
+			return fmt.Errorf("provider returned status %q for requested %q", value, selector.Status)
+		}
+	}
+	if selector.PageURL != "" {
+		value, _ := obs.Payload["page_url"].(string)
+		if value != selector.PageURL {
+			return fmt.Errorf("provider returned page_url %q for requested %q", value, selector.PageURL)
+		}
+	}
+	if selector.Field != "" {
+		value, _ := obs.Payload["json_field"].(string)
+		if value != selector.Field {
+			return fmt.Errorf("provider returned field %q for requested %q", value, selector.Field)
+		}
+	}
+	if selector.Value != "" && obs.MatchedValue != selector.Value {
+		return fmt.Errorf("provider returned a value that does not match the requested selector")
 	}
 	return nil
 }
@@ -593,6 +649,21 @@ func (p *sourceMetadataProvider) Read(ctx context.Context, req EvidenceRequest) 
 	}}, nil
 }
 
+// goalEvidencePostgresDBMS accepts both DBMS spellings used by the database
+// layer: NewHandler reports "postgres" while PostgresHandler.Connect records
+// "PostgreSQL". Comparing only one spelling makes every connected production
+// handler look unsupported and turns indexed-page evidence into unavailable.
+func goalEvidencePostgresDBMS(db cdb.Handler) bool {
+	if db == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(db.DBMS())) {
+	case cdb.DBPostgresStr, "postgresql":
+		return true
+	}
+	return false
+}
+
 type indexedPageProvider struct{ db cdb.Handler }
 
 func (p *indexedPageProvider) Kind() EvidenceKind { return EvidenceIndexedPage }
@@ -601,7 +672,7 @@ func (p *indexedPageProvider) Read(ctx context.Context, req EvidenceRequest) ([]
 	if p == nil || p.db == nil {
 		return nil, ErrEvidenceUnavailable
 	}
-	if !strings.EqualFold(p.db.DBMS(), cdb.DBPostgresStr) {
+	if !goalEvidencePostgresDBMS(p.db) {
 		return nil, ErrEvidenceUnavailable
 	}
 	ids := req.SourceIDs
@@ -693,7 +764,8 @@ func (p *scrapedFieldProvider) Read(ctx context.Context, req EvidenceRequest) ([
 		out = append(out, EvidenceObservation{
 			Kind: EvidenceScrapedField, Producer: "db:scraped_field",
 			SourceIDs: []uint64{source.ID}, SourceUID: source.UID, Operation: "read",
-			ObservedAt: req.Now, Payload: map[string]any{
+			ObservedAt: req.Now, DataUpdatedAt: row.LastUpdatedAt.Time,
+			MatchedValue: nullStringValue(row.JSONValue), Payload: map[string]any{
 				"source_uid": source.UID, "page_url": nullStringValue(row.PageURL),
 				"json_field":      nullStringValue(row.JSONField),
 				"created_at":      nullTimeValue(row.CreatedAt),
@@ -734,9 +806,11 @@ func (p *artifactProvider) Read(ctx context.Context, req EvidenceRequest) ([]Evi
 		out = append(out, EvidenceObservation{
 			Kind: EvidenceArtifact, Producer: "db:artifact",
 			SourceIDs: []uint64{source.ID}, SourceUID: source.UID, Operation: "read",
-			ObservedAt: req.Now, DataUpdatedAt: row.LastUpdatedAt.Time, Payload: map[string]any{
+			ObservedAt: req.Now, DataUpdatedAt: row.LastUpdatedAt.Time,
+			MatchedValue: nullStringValue(row.JSONValue), Payload: map[string]any{
 				"source_type": row.SourceType, "artifact_id": row.ArtifactID,
 				"source_uid": source.UID, "page_url": nullStringValue(row.PageURL),
+				"json_field":      row.JSONField.String,
 				"created_at":      nullTimeValue(row.CreatedAt),
 				"last_updated_at": nullTimeValue(row.LastUpdatedAt),
 				"rank":            row.Rank,

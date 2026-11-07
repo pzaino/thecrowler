@@ -1619,6 +1619,23 @@ func isRetryable(err error) bool {
 	return false
 }
 
+// agentInputConfig builds the trusted runtime context for an agent triggered by
+// an event. Rollout flags come from process configuration, never from the event
+// payload, so an event producer cannot relax identity or contract enforcement.
+func agentInputConfig(event cdb.Event, metaData map[string]interface{}) map[string]interface{} {
+	iCfg := make(map[string]interface{})
+	iCfg["vdi_hook"] = nil
+	iCfg["db_handler"] = dbHandler
+	iCfg["plugins_register"] = PluginRegister
+	iCfg["event"] = event
+	iCfg["meta_data"] = metaData
+	configMutex.Lock()
+	runtimeFlags := config.Agent
+	configMutex.Unlock()
+	iCfg["agent_runtime"] = runtimeFlags
+	return iCfg
+}
+
 // Process the "external" event
 func processEvent(event cdb.Event) {
 
@@ -1750,12 +1767,7 @@ func processEvent(event cdb.Event) {
 
 	if aExists {
 		// generate the minimal iCfg
-		iCfg := make(map[string]interface{})
-		iCfg["vdi_hook"] = nil
-		iCfg["db_handler"] = dbHandler
-		iCfg["plugins_register"] = PluginRegister
-		iCfg["event"] = event
-		iCfg["meta_data"] = metaData
+		iCfg := agentInputConfig(event, metaData)
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-ProcessEvent] Source Config: %v", configMap)
 
 		for _, ac := range a {

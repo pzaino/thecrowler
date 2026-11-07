@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 )
@@ -223,7 +224,7 @@ func TestAgentGoalRunProviderEvidenceWithoutModel(t *testing.T) {
 	evidenceKind := EvidenceIndexedPage
 	fake := &fakeGoalEvidenceProvider{kind: evidenceKind, observations: []EvidenceObservation{{
 		Kind: evidenceKind, Producer: "fake", SourceIDs: []uint64{7},
-		Payload: map[string]any{"page_url": "https://fixture/"},
+		DataUpdatedAt: time.Now().UTC(), Payload: map[string]any{"page_url": "https://fixture/"},
 	}}}
 	registry := NewGoalEvidenceRegistry()
 	if err := registry.Register(fake); err != nil {

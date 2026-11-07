@@ -259,8 +259,8 @@ func TestOllamaConnectivityOptional(t *testing.T) {
 	response, err := provider.Execute(LLMRequest{
 		URL:       baseURL,
 		Model:     model,
-		Prompt:    "Reply with the single word ready.",
-		MaxTokens: intPtr(32),
+		Prompt:    "Reply with one short sentence containing the word ready.",
+		MaxTokens: intPtr(512),
 	})
 	if err != nil {
 		t.Fatalf("connectivity request failed: %v", err)
@@ -335,7 +335,7 @@ func TestOllamaToolCallingSmokeOptional(t *testing.T) {
 		Model: model,
 		Messages: []any{map[string]any{
 			"role":    "user",
-			"content": `Call the ping tool with value "smoke". Do not answer with text.`,
+			"content": `Call the ping tool with value "smoke". After the tool result, reply with the single word done.`,
 		}},
 		Tools: []LLMToolDefinition{{
 			Type: "function",
@@ -402,6 +402,7 @@ func TestOllamaToolCallingSmokeOptional(t *testing.T) {
 	)
 	request.Tools = nil
 	request.HasToolChoice = false
+	request.MaxTokens = intPtr(512)
 	finalResponse, err := provider.Execute(request)
 	if err != nil {
 		t.Fatalf("tool-result follow-up failed: %v", err)

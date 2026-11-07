@@ -78,6 +78,9 @@ func (a *AgentGoalRunAction) Execute(params map[string]interface{}) (map[string]
 
 	dbHandler, _ := config["db_handler"].(cdb.Handler)
 	registry, err := DefaultToolRegistry()
+	if custom, ok := config["goal_tool_registry"].(*AgentToolRegistry); ok && custom != nil {
+		registry = custom
+	}
 	if err != nil {
 		rval[StrStatus] = StatusError
 		rval[StrMessage] = "goal run denied: tool registry unavailable"
@@ -248,6 +251,12 @@ func RunGoal(config goalRunConfig) (GoalRunResult, error) {
 	if strings.TrimSpace(run.result.TraceID) == "" {
 		run.result.TraceID = uuid.NewString()
 	}
+	if !identityGrants(config.Identity, "goal_execution") || trustLevelRank(config.Identity.TrustLevel) < minToolTrustRank {
+		return run.finish(GoalDenied, "goal_execution_required", "goal_execution capability and trusted standing are required"), nil
+	}
+	if goalSpecRequiresDBEvidence(config.Spec) && !identityGrants(config.Identity, "db_read") {
+		return run.finish(GoalDenied, "missing_db_read", "db_read capability is required for database-backed evidence"), nil
+	}
 	nonce, err := newGoalRunNonce()
 	if err != nil {
 		return run.finish(GoalVerificationError, "run_nonce_failed", "could not initialize run"), nil
@@ -298,6 +307,9 @@ func RunGoal(config goalRunConfig) (GoalRunResult, error) {
 
 	if terminal, done := run.refreshAndEvaluate(false); done {
 		return terminal, nil
+	}
+	if !identityGrants(config.Identity, "ai_reasoning") {
+		return run.finish(GoalDenied, "missing_ai_reasoning", "ai_reasoning capability is required before model execution"), nil
 	}
 
 	// Provider capability and AI policy gates run after the initial trusted

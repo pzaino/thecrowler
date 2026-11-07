@@ -168,7 +168,10 @@ func evalEvidencePredicate(predicate Predicate, input GoalEvalInput, now time.Ti
 		if value, ok := goalToFloat(predicate.Value); ok {
 			want = int(value)
 		}
-		query, hasQuery := evidenceQueryResultFor(input, predicate.Evidence, predicate.Where)
+		query, hasQuery, queryOutcome := evidenceQueryResultFor(input, predicate.Evidence, predicate.Where, now, maxAge)
+		if queryOutcome.state != "" {
+			return queryOutcome
+		}
 		if count == 0 {
 			if predicate.Op == CompareEq && want == 0 {
 				if !hasQuery {
@@ -202,9 +205,13 @@ func evalEvidencePredicate(predicate Predicate, input GoalEvalInput, now time.Ti
 		}
 		return evidenceOutcome(CriterionFail, "evidence_count_not_satisfied", records)
 	case PredicateFieldEquals, PredicateFieldIn, PredicateFieldNumber:
-		return evalFieldPredicate(predicate, records, input)
+		return evalFieldPredicate(predicate, records, input, now, maxAge)
 	case PredicateEvidenceScope:
-		if query, hasQuery := evidenceQueryResultFor(input, predicate.Evidence, predicate.Where); hasQuery && query.State == EvidenceQueryTruncated {
+		query, hasQuery, queryOutcome := evidenceQueryResultFor(input, predicate.Evidence, predicate.Where, now, maxAge)
+		if queryOutcome.state != "" {
+			return queryOutcome
+		}
+		if hasQuery && query.State == EvidenceQueryTruncated {
 			return outcome(CriterionError, "evidence_query_truncated")
 		}
 		if len(records) == 0 {
@@ -226,7 +233,7 @@ func evalEvidencePredicate(predicate Predicate, input GoalEvalInput, now time.Ti
 	}
 }
 
-func evalFieldPredicate(predicate Predicate, records []EvidenceRecord, input GoalEvalInput) predicateOutcome {
+func evalFieldPredicate(predicate Predicate, records []EvidenceRecord, input GoalEvalInput, now time.Time, maxAge time.Duration) predicateOutcome {
 	if len(records) == 0 {
 		return outcome(CriterionUnavailable, "no_matching_evidence")
 	}
@@ -271,7 +278,11 @@ func evalFieldPredicate(predicate Predicate, records []EvidenceRecord, input Goa
 	if quantifier == "" {
 		quantifier = "any"
 	}
-	if query, hasQuery := evidenceQueryResultFor(input, predicate.Evidence, predicate.Where); hasQuery && query.State == EvidenceQueryTruncated && quantifier == "all" {
+	query, hasQuery, queryOutcome := evidenceQueryResultFor(input, predicate.Evidence, predicate.Where, now, maxAge)
+	if queryOutcome.state != "" {
+		return queryOutcome
+	}
+	if hasQuery && query.State == EvidenceQueryTruncated && quantifier == "all" {
 		return outcome(CriterionError, "evidence_query_truncated")
 	}
 	if quantifier == "all" {
@@ -342,7 +353,10 @@ func matchingEvidence(kind EvidenceKind, selector *EvidenceSelector, input GoalE
 	}
 	hash := selectorHash(filter)
 	cutoff := now.Add(-maxAge)
-	query, hasQuery := evidenceQueryResultFor(input, kind, selector)
+	query, hasQuery, queryOutcome := evidenceQueryResultFor(input, kind, selector, now, maxAge)
+	if queryOutcome.state != "" {
+		return nil, queryOutcome.state, queryOutcome.reason
+	}
 	if hasQuery && query.State != EvidenceQueryCompleted && query.State != EvidenceQueryTruncated {
 		if query.State == EvidenceQueryUnavailable {
 			return nil, CriterionUnavailable, query.Reason
@@ -365,6 +379,11 @@ func matchingEvidence(kind EvidenceKind, selector *EvidenceSelector, input GoalE
 				return nil, CriterionDenied, "evidence_source_mismatch"
 			}
 		}
+		if kind == EvidenceToolObservation && (filter.Tool != "" || filter.ArgumentsSHA256 != "") {
+			if record.Tool != filter.Tool || record.ArgumentsSHA256 != filter.ArgumentsSHA256 {
+				return nil, CriterionDenied, "evidence_tool_mismatch"
+			}
+		}
 		if !record.ExpiresAt.IsZero() && !record.ExpiresAt.After(now) {
 			stale = append(stale, record)
 			continue
@@ -373,9 +392,15 @@ func matchingEvidence(kind EvidenceKind, selector *EvidenceSelector, input GoalE
 			stale = append(stale, record)
 			continue
 		}
-		if maxAge > 0 && !record.DataUpdatedAt.IsZero() && record.DataUpdatedAt.Before(cutoff) {
-			stale = append(stale, record)
-			continue
+		if maxAge > 0 {
+			if kindRequiresDataTimestamp(kind) && record.DataUpdatedAt.IsZero() {
+				stale = append(stale, record)
+				continue
+			}
+			if !record.DataUpdatedAt.IsZero() && record.DataUpdatedAt.Before(cutoff) {
+				stale = append(stale, record)
+				continue
+			}
 		}
 		fresh = append(fresh, record)
 	}
@@ -394,13 +419,57 @@ func matchingEvidence(kind EvidenceKind, selector *EvidenceSelector, input GoalE
 	return nil, "", ""
 }
 
-func evidenceQueryResultFor(input GoalEvalInput, kind EvidenceKind, selector *EvidenceSelector) (EvidenceQueryResult, bool) {
+func evidenceQueryResultFor(input GoalEvalInput, kind EvidenceKind, selector *EvidenceSelector, now time.Time, maxAge time.Duration) (EvidenceQueryResult, bool, predicateOutcome) {
 	filter := EvidenceSelector{}
 	if selector != nil {
 		filter = *selector
 	}
 	query, ok := input.Queries[evidenceQueryKey(kind, filter)]
-	return query, ok
+	if !ok {
+		return EvidenceQueryResult{}, false, predicateOutcome{}
+	}
+	if problem := validateEvidenceQueryResult(query, input, kind, filter, now, maxAge); problem.state != "" {
+		return query, true, problem
+	}
+	return query, true, predicateOutcome{}
+}
+
+func validateEvidenceQueryResult(query EvidenceQueryResult, input GoalEvalInput, kind EvidenceKind, selector EvidenceSelector, now time.Time, maxAge time.Duration) predicateOutcome {
+	if query.Kind != kind || query.SelectorSHA256 != selectorHash(selector) {
+		return outcome(CriterionError, "evidence_query_selector_mismatch")
+	}
+	if input.LedgerID == "" || query.LedgerID != input.LedgerID ||
+		query.RunID != input.RunID || query.GoalID != input.GoalID ||
+		query.GoalSpecHash != input.GoalSpecHash ||
+		query.AgentID != input.AgentID || query.Owner != input.Owner {
+		return outcome(CriterionError, "evidence_query_provenance_invalid")
+	}
+	if query.CompletedAt.IsZero() || query.QuerySHA256 == "" || query.QuerySHA256 != goalQueryHash(query) {
+		return outcome(CriterionError, "evidence_query_completion_invalid")
+	}
+	if maxAge > 0 && query.CompletedAt.Before(now.Add(-maxAge)) {
+		return outcome(CriterionStale, "evidence_query_stale")
+	}
+	if query.Limit <= 0 || query.Count < 0 {
+		return outcome(CriterionError, "evidence_query_invalid")
+	}
+	switch query.State {
+	case EvidenceQueryCompleted:
+		if query.Count >= query.Limit {
+			return outcome(CriterionError, "evidence_query_invalid")
+		}
+	case EvidenceQueryTruncated:
+		if query.Count != query.Limit {
+			return outcome(CriterionError, "evidence_query_invalid")
+		}
+	case EvidenceQueryUnavailable, EvidenceQueryFailed:
+		if query.Count != 0 {
+			return outcome(CriterionError, "evidence_query_invalid")
+		}
+	default:
+		return outcome(CriterionError, "evidence_query_invalid")
+	}
+	return predicateOutcome{}
 }
 
 func queryFailureOutcome(query EvidenceQueryResult) predicateOutcome {
@@ -443,6 +512,17 @@ func validateEvidenceRecord(record EvidenceRecord, input GoalEvalInput) error {
 		return fmt.Errorf("evidence record integrity check failed")
 	}
 	return nil
+}
+
+// kindRequiresDataTimestamp distinguishes historical extraction evidence
+// from point-in-time metadata/observation checks.
+func kindRequiresDataTimestamp(kind EvidenceKind) bool {
+	switch kind {
+	case EvidenceSourceStatus, EvidenceIndexedPage, EvidenceScrapedField, EvidenceArtifact:
+		return true
+	default:
+		return false
+	}
 }
 
 func recordWithinScope(record EvidenceRecord, allowed []uint64) bool {

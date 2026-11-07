@@ -122,7 +122,7 @@ func TestRefreshGoalEvidenceFromProvider(t *testing.T) {
 	}
 	provider := &fakeGoalEvidenceProvider{kind: EvidenceIndexedPage, observations: []EvidenceObservation{{
 		Kind: EvidenceIndexedPage, Producer: "fake", SourceIDs: []uint64{7},
-		Payload: map[string]any{"page_url": "https://fixture/"},
+		DataUpdatedAt: time.Now().UTC(), Payload: map[string]any{"page_url": "https://fixture/"},
 	}}}
 	registry := NewGoalEvidenceRegistry()
 	if err := registry.Register(provider); err != nil {
