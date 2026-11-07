@@ -387,6 +387,9 @@ func refreshGoalEvidence(ctx context.Context, spec *AgentGoalSpec, registry *Goa
 			continue
 		}
 		seen[key] = true
+		if selector.SourceID != nil && len(spec.AllowedSources) > 0 && !containsSource(spec.AllowedSources, *selector.SourceID) {
+			return fmt.Errorf("%w: selector source is outside the run scope", ErrEvidenceDenied)
+		}
 		provider, ok := registry.Get(kind)
 		if !ok {
 			return fmt.Errorf("%w: no provider for evidence kind %q", ErrEvidenceInvalid, kind)
@@ -561,6 +564,20 @@ func collectPredicateSelectors(predicate Predicate, selectors *[]EvidenceSelecto
 
 // --- v1 providers ---
 
+// goalSourceLookupError maps a source lookup failure to the evidence layer's
+// established categories without exposing database details. A missing source is
+// an invalid evidence request; an operational failure or cancellation is
+// unavailable. Neither category can prove a zero-result query.
+func goalSourceLookupError(ctx context.Context, err error) error {
+	if ctx != nil && ctx.Err() != nil {
+		return fmt.Errorf("%w: source lookup cancelled", ErrEvidenceUnavailable)
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("%w: source not found", ErrEvidenceInvalid)
+	}
+	return fmt.Errorf("%w: source lookup unavailable", ErrEvidenceUnavailable)
+}
+
 type sourceStatusProvider struct{ db cdb.Handler }
 
 func (p *sourceStatusProvider) Kind() EvidenceKind { return EvidenceSourceStatus }
@@ -581,9 +598,12 @@ func (p *sourceStatusProvider) Read(ctx context.Context, req EvidenceRequest) ([
 		if err := ctx.Err(); err != nil {
 			return nil, ErrEvidenceUnavailable
 		}
-		source, err := cdb.GetSourceByID(&p.db, id)
-		if err != nil || source == nil {
-			continue
+		source, err := cdb.GetSourceByIDContext(ctx, &p.db, id)
+		if err != nil {
+			return nil, goalSourceLookupError(ctx, err)
+		}
+		if source == nil {
+			return nil, fmt.Errorf("%w: source lookup returned no record", ErrEvidenceUnavailable)
 		}
 		rows, err := cdb.GetSourceStatusByUIDContext(ctx, &p.db, source.UID)
 		if err != nil {
@@ -630,12 +650,12 @@ func (p *sourceMetadataProvider) Read(ctx context.Context, req EvidenceRequest) 
 	if err := ctx.Err(); err != nil {
 		return nil, ErrEvidenceUnavailable
 	}
-	source, err := cdb.GetSourceByID(&p.db, *req.Selector.SourceID)
-	if err == nil && ctx.Err() != nil {
-		return nil, ErrEvidenceUnavailable
+	source, err := cdb.GetSourceByIDContext(ctx, &p.db, *req.Selector.SourceID)
+	if err != nil {
+		return nil, goalSourceLookupError(ctx, err)
 	}
-	if err != nil || source == nil {
-		return nil, ErrEvidenceUnavailable
+	if source == nil {
+		return nil, fmt.Errorf("%w: source lookup returned no record", ErrEvidenceUnavailable)
 	}
 	return []EvidenceObservation{{
 		Kind: EvidenceSourceMetadata, Producer: "db:source_metadata",
@@ -746,9 +766,15 @@ func (p *scrapedFieldProvider) Read(ctx context.Context, req EvidenceRequest) ([
 	if req.Selector.Field == "" || req.Selector.Value == "" || req.Selector.SourceID == nil {
 		return nil, ErrEvidenceInvalid
 	}
-	source, err := cdb.GetSourceByID(&p.db, *req.Selector.SourceID)
-	if err != nil || source == nil {
+	if err := ctx.Err(); err != nil {
 		return nil, ErrEvidenceUnavailable
+	}
+	source, err := cdb.GetSourceByIDContext(ctx, &p.db, *req.Selector.SourceID)
+	if err != nil {
+		return nil, goalSourceLookupError(ctx, err)
+	}
+	if source == nil {
+		return nil, fmt.Errorf("%w: source lookup returned no record", ErrEvidenceUnavailable)
 	}
 	limit := req.Limit
 	if limit <= 0 || limit > hardGoalEvidenceRecords {
@@ -788,9 +814,15 @@ func (p *artifactProvider) Read(ctx context.Context, req EvidenceRequest) ([]Evi
 	if req.Selector.Field == "" || req.Selector.Value == "" || req.Selector.SourceID == nil {
 		return nil, ErrEvidenceInvalid
 	}
-	source, err := cdb.GetSourceByID(&p.db, *req.Selector.SourceID)
-	if err != nil || source == nil {
+	if err := ctx.Err(); err != nil {
 		return nil, ErrEvidenceUnavailable
+	}
+	source, err := cdb.GetSourceByIDContext(ctx, &p.db, *req.Selector.SourceID)
+	if err != nil {
+		return nil, goalSourceLookupError(ctx, err)
+	}
+	if source == nil {
+		return nil, fmt.Errorf("%w: source lookup returned no record", ErrEvidenceUnavailable)
 	}
 	limit := req.Limit
 	if limit <= 0 || limit > hardGoalEvidenceRecords {
@@ -852,14 +884,31 @@ func readGoalResources(ctx context.Context, db cdb.Handler, spec *AgentGoalSpec,
 				out[key] = obs
 				return
 			}
+			if len(spec.AllowedSources) > 0 && !containsSource(spec.AllowedSources, predicate.ResourceID) {
+				obs.Err = "out_of_scope"
+				out[key] = obs
+				return
+			}
 			if db == nil {
 				obs.Err = "database unavailable"
 				out[key] = obs
 				return
 			}
-			source, err := cdb.GetSourceByID(&db, predicate.ResourceID)
-			if err != nil || source == nil {
-				obs.Err = "source_not_found"
+			source, err := cdb.GetSourceByIDContext(ctx, &db, predicate.ResourceID)
+			if err != nil {
+				switch {
+				case ctx.Err() != nil:
+					obs.Err = "cancelled"
+				case errors.Is(err, sql.ErrNoRows):
+					obs.Err = "source_not_found"
+				default:
+					obs.Err = "source_lookup_unavailable"
+				}
+				out[key] = obs
+				return
+			}
+			if source == nil {
+				obs.Err = "source_lookup_unavailable"
 				out[key] = obs
 				return
 			}

@@ -28,14 +28,39 @@ import (
 )
 
 // GetSourceByID retrieves a source from the database by its ID.
+//
+// This compatibility wrapper intentionally keeps the historical "not found"
+// error text. Callers that must distinguish a missing source from a database
+// failure should use GetSourceByIDContext.
 func GetSourceByID(db *Handler, sourceID uint64) (*Source, error) {
-	source := &Source{}
-
-	// Query the database
-	err := (*db).QueryRow(`SELECT source_id, source_uid, url, name, priority,
-        sub_priority, category_id, usr_id, restricted, flags, config FROM Sources WHERE source_id = $1`, sourceID).Scan(&source.ID, &source.UID, &source.URL, &source.Name, &source.Priority, &source.SubPriority, &source.CategoryID, &source.UsrID, &source.Restricted, &source.Flags, &source.Config)
+	source, err := GetSourceByIDContext(context.Background(), db, sourceID)
 	if err != nil {
 		return nil, fmt.Errorf("no source found with ID %d", sourceID)
+	}
+	return source, nil
+}
+
+// GetSourceByIDContext retrieves a source using the caller's context and
+// preserves the underlying lookup error. A missing row remains detectable with
+// errors.Is(err, sql.ErrNoRows); connection, timeout and query failures retain
+// their original cause. The database handler is checked before use so callers
+// can fail closed without a panic.
+func GetSourceByIDContext(ctx context.Context, db *Handler, sourceID uint64) (*Source, error) {
+	if db == nil || *db == nil {
+		return nil, fmt.Errorf("get source %d: database handler is nil", sourceID)
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("get source %d: %w", sourceID, err)
+	}
+
+	source := &Source{}
+	err := (*db).QueryRowContext(ctx, `SELECT source_id, source_uid, url, name, priority,
+        sub_priority, category_id, usr_id, restricted, flags, config FROM Sources WHERE source_id = $1`, sourceID).Scan(&source.ID, &source.UID, &source.URL, &source.Name, &source.Priority, &source.SubPriority, &source.CategoryID, &source.UsrID, &source.Restricted, &source.Flags, &source.Config)
+	if err != nil {
+		return nil, fmt.Errorf("get source %d: %w", sourceID, err)
 	}
 
 	return source, nil

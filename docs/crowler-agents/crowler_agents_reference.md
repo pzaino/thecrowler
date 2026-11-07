@@ -1028,6 +1028,12 @@ result or a missing completion observation is never treated as proof that the
 count is zero. `evidence_count` with `eq: 0` passes only after a completed,
 untruncated query returned no matches.
 
+Database-backed providers resolve the source with a context-aware lookup. A
+missing source is an invalid evidence request and an operational lookup failure
+is unavailable; neither becomes a completed zero-result query. Only a successful
+source lookup followed by a successful status/field read can prove zero matching
+records.
+
 `any` composition is fail-closed: a passing criterion cannot hide a `denied`
 or verification `error` result in another criterion, at top level or inside a
 nested `any`. A pass may still satisfy `any` when the other criteria are merely

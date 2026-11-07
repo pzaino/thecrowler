@@ -1636,6 +1636,24 @@ func agentInputConfig(event cdb.Event, metaData map[string]interface{}) map[stri
 	return iCfg
 }
 
+// sourceEventMetaData extracts optional source metadata without trusting its
+// shape. Source configs are operator data, but a missing or malformed
+// meta_data object must not panic event processing or block agent dispatch.
+func sourceEventMetaData(configMap map[string]interface{}) map[string]interface{} {
+	metaData := make(map[string]interface{})
+	if configMap == nil {
+		return metaData
+	}
+	raw, ok := configMap["meta_data"]
+	if !ok || raw == nil {
+		return metaData
+	}
+	if parsed, ok := raw.(map[string]interface{}); ok {
+		return parsed
+	}
+	return metaData
+}
+
 // Process the "external" event
 func processEvent(event cdb.Event) {
 
@@ -1674,13 +1692,12 @@ func processEvent(event cdb.Event) {
 		source, err = cdb.GetSourceByID(&dbHandler, event.SourceID)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "Failed to retrieve source details: %v (probably source removed already by the system or the user)", err)
-		} else {
+		} else if source.Config != nil {
 			// extract the source details -> meta_data
 			if err := json.Unmarshal(*source.Config, &configMap); err != nil {
 				cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling config: %v", err)
-				metaData = nil
 			} else {
-				metaData = configMap["meta_data"].(map[string]interface{})
+				metaData = sourceEventMetaData(configMap)
 			}
 		}
 	}
