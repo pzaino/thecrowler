@@ -63,10 +63,13 @@ func TestReadToolsRegister(t *testing.T) {
 	if err := RegisterReadTools(registry); err != nil {
 		t.Fatalf("register read tools: %v", err)
 	}
-	if registry.Len() != 2 {
-		t.Fatalf("expected 2 tools, got %d", registry.Len())
+	if registry.Len() != 5 {
+		t.Fatalf("expected 5 tools, got %d", registry.Len())
 	}
-	for _, name := range []string{"get_source_status", "search_indexed_pages"} {
+	for _, name := range []string{
+		"get_source_status", "search_indexed_pages",
+		"get_source_crawl_status", "find_scraped_field_metadata", "find_artifact_metadata",
+	} {
 		tool, ok := registry.Get(name)
 		if !ok {
 			t.Fatalf("missing tool %s", name)
@@ -76,8 +79,8 @@ func TestReadToolsRegister(t *testing.T) {
 		}
 	}
 	defs := registry.ToolDefinitions()
-	if len(defs) != 2 {
-		t.Fatalf("expected 2 advertised definitions, got %d", len(defs))
+	if len(defs) != 5 {
+		t.Fatalf("expected 5 advertised definitions, got %d", len(defs))
 	}
 }
 

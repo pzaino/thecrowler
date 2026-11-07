@@ -964,10 +964,29 @@ References: <https://docs.ollama.com/api/openai-compatibility>,
 
 Phase 2 tool proposals are inert data. The opt-in `AgentToolLoop` action
 runs a bounded synchronous loop over vetted read-only tools
-(`get_source_status`, `search_indexed_pages`): at most 4 model rounds, 8
-tool calls, 16 KiB per observation, 64 KiB aggregate, 30 s elapsed, with the
-shorter job-group deadline always prevailing. One `AgentToolLoop` step is
-one job-group attempt; internal calls consume independent nested caps.
+(`get_source_status`, `search_indexed_pages`, `get_source_crawl_status`,
+`find_scraped_field_metadata`, `find_artifact_metadata`): at most 4 model
+rounds, 8 tool calls, 16 KiB per observation, 64 KiB aggregate, 30 s elapsed,
+with the shorter job-group deadline always prevailing. One `AgentToolLoop`
+step is one job-group attempt; internal calls consume independent nested caps.
+
+The default read-only catalog is:
+
+| Tool | Arguments | Safe result |
+| --- | --- | --- |
+| `get_source_status` | `source_id` | Source metadata; no config or account linkage. |
+| `search_indexed_pages` | `query`, optional `source_id`, optional `limit` (1..10) | Bounded page metadata and snippets. |
+| `get_source_crawl_status` | `source_id` | Current crawl status, timestamps, engine and safe operational flags; no raw `last_error` text, config or account linkage. Multiple status rows use the latest `last_updated_at`/`last_crawled_at`, matching the resource-status evaluator. |
+| `find_scraped_field_metadata` | `source_id`, `field` (1..128), `value` (1..500), optional `limit` (1..10, default 5) | Source UID, index ID, page URL, matched field, timestamps and rank. Raw `json_val` is never returned. |
+| `find_artifact_metadata` | `source_id`, `field` (1..128), `value` (1..500), optional `limit` (1..10, default 5) | Artifact ID, source type, source UID, page URL, matched field, timestamps and rank. Artifact content is never returned. |
+
+All five require `db_read`, an explicit run allowlist, trusted standing and the
+existing source scope. The `all` capability never satisfies the allowlist or
+scope. Source filtering is performed inside the database search function before
+`LIMIT`; the Go adapters also reject cross-source rows as defense in depth. A
+missing source is reported as `scope_denied`; database failures are generic tool
+errors without driver text. The new search tools use bound field/value
+parameters and never construct SQL from model input.
 
 Every proposed call passes, in order: explicit opt-in, valid identity with
 enforcement on, trusted registry membership, explicit run allowlist (the
@@ -1050,6 +1069,13 @@ expiry; replayed, forged, tampered or cross-run evidence is rejected. Record
 integrity is checked in addition to the trust class; a hash alone is not
 authority. Model text is recorded as an untrusted claim, never as proof.
 
+The new metadata tools emit `tool_observation` evidence with the tool name,
+pinned argument hash, authorized source IDs, observation time, evidence ID and
+a bounded payload hash. Verified paths are limited to authoritative metadata
+(`source_id`, `source_uid`, `status`, safe timestamps and `count`); raw scraped
+values and artifact contents remain untrusted and are not eligible for
+deterministic verification.
+
 Selector and source binding are enforced: a provider must return the requested
 kind, an explicit source identity matching the selector and run scope, and
 matching selector fields where applicable. `page_url`, `status`,
@@ -1122,10 +1148,11 @@ Minimal shape:
             value: 1
 ```
 
-See `agents/examples/goal-source-reader.agent.yaml` and
-`agents/examples/goal-source-any.agent.yaml`. The schema defines the public
-field names; the approved design package under `artifacts/agentic/` documents
-the full contract, evidence model and test plan.
+See `agents/examples/goal-source-reader.agent.yaml`,
+`agents/examples/goal-source-any.agent.yaml` and
+`agents/examples/goal-crawl-metadata-reader.agent.yaml`. The schema defines the
+public field names; the approved design package under `artifacts/agentic/`
+documents the full contract, evidence model and test plan.
 
 ### 11.3 `DBQuery`
 
@@ -1499,6 +1526,11 @@ Rules:
   and a correlated follow-up turn. A text-only reply fails the tool-calling
   test when a model is configured. A skipped test is not evidence of live
   Ollama support.
+* `TestAgentGoalRunLiveOllamaNativeToolOptional` and its scope-denial
+  counterpart additionally require `THECROWLER_POSTGRES_INTEGRATION=1` and
+  the `DOCKER_POSTGRES_*` connection variables. They create and remove a
+  disposable source, then exercise `get_source_crawl_status` through the real
+  model and verifier.
 
 Capability metadata is available through the optional
 `ProviderCapabilityReporter` and `ModelCapabilityReporter` interfaces. The

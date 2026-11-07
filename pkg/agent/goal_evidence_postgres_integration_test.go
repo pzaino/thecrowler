@@ -99,6 +99,7 @@ func TestPostgresDefaultGoalEvidenceProviderSourceLookup(t *testing.T) {
 		t.Skip("set THECROWLER_POSTGRES_INTEGRATION=1 to run PostgreSQL integration tests")
 	}
 	config := integrationDBConfig(t)
+	preflightTestDatabase(t, config)
 	db, err := cdb.NewHandler(config)
 	if err != nil {
 		t.Fatalf("create database handler: %v", err)

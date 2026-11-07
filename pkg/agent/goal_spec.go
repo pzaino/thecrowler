@@ -83,6 +83,18 @@ var goalToolVerifiedFields = map[string]map[string]bool{
 		"priority": true, "category": true, "restricted": true, "flags": true,
 	},
 	"search_indexed_pages": {"count": true, "query": true},
+	"get_source_crawl_status": {
+		"source_id": true, "source_uid": true, "status": true, "priority": true,
+		"engine": true, "created_at": true, "last_updated_at": true,
+		"last_crawled_at": true, "last_error_present": true, "last_error_at": true,
+		"restricted": true, "disabled": true, "flags": true, "status_records": true,
+	},
+	"find_scraped_field_metadata": {
+		"source_id": true, "source_uid": true, "field": true, "count": true,
+	},
+	"find_artifact_metadata": {
+		"source_id": true, "source_uid": true, "field": true, "count": true,
+	},
 }
 
 // freezeGoalSpecs parses and freezes every AgentGoalRun step in this config.

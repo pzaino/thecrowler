@@ -21,13 +21,15 @@ carry the `delegate` capability, and `CreateEvent` steps use numeric sources.
 ## Local Ollama examples
 
 - `tool-loop-reader.agent.yaml` uses `provider: ollama` with a base URL and
-  the two vetted read tools. Attest tool-capable models with
+  the vetted read-tool catalog. Attest tool-capable models with
   `CROWLER_OLLAMA_TOOL_MODELS` before relying on tool execution.
 - `ai-tool-calling-probe.agent.yaml` uses `provider: ollama` for inert
   tool-call proposals. Nothing it returns is executed.
-- `goal-source-reader.agent.yaml` and `goal-source-any.agent.yaml` show
-  evidence-verified `AgentGoalRun` goals. A model's final text is never proof;
-  the deterministic verifier decides completion.
+- `goal-source-reader.agent.yaml`, `goal-source-any.agent.yaml` and
+  `goal-crawl-metadata-reader.agent.yaml` show evidence-verified
+  `AgentGoalRun` goals. The latter uses `get_source_crawl_status`,
+  `find_scraped_field_metadata` and `find_artifact_metadata`. A model's final
+  text is never proof; the deterministic verifier decides completion.
 - See `docs/crowler-agents/local-llm-providers.md` for endpoint rules,
   capability reporting and the live smoke test.
 
