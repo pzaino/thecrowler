@@ -711,10 +711,10 @@ func initAPIv1() {
 	}
 
 	if config.API.EnableConsole {
-		addSourceHandlerWithMiddlewares := withPublicMiddlewares(addSourceHandler)
-		removeSourceHandlerWithMiddlewares := withPublicMiddlewares(removeSourceHandler)
-		updateSourceHandlerWithMiddlewares := withPublicMiddlewares(updateSourceHandler)
-		vacuumSourceHandlerWithMiddlewares := withPublicMiddlewares(vacuumSourceHandler)
+		addSourceHandlerWithMiddlewares := withAuthenticatedPublicMiddlewares(addSourceHandler)
+		removeSourceHandlerWithMiddlewares := withAuthenticatedPublicMiddlewares(removeSourceHandler)
+		updateSourceHandlerWithMiddlewares := withAuthenticatedPublicMiddlewares(updateSourceHandler)
+		vacuumSourceHandlerWithMiddlewares := withAuthenticatedPublicMiddlewares(vacuumSourceHandler)
 		singleURLstatusHandlerWithMiddlewares := withPublicMiddlewares(singleURLstatusHandler)
 		allURLstatusHandlerWithMiddlewares := withPublicMiddlewares(allURLstatusHandler)
 		filteredURLstatusHandlerWithMiddlewares := withPublicMiddlewares(filteredURLstatusHandler)
@@ -737,6 +737,27 @@ func initAPIv1() {
 		vdiConfigHandlerWithMiddlewares := withPublicMiddlewares(vdiConfigHandler)
 
 		registerAuthConsoleRoutes(tagsNone)
+
+		// Durable crawl-approval operator endpoints
+
+		crawlApprovalIssueHandlerWithMiddlewares := withAuthenticatedPublicMiddlewares(crawlApprovalIssueHandler)
+		crawlApprovalRevokeHandlerWithMiddlewares := withAuthenticatedPublicMiddlewares(crawlApprovalRevokeHandler)
+		crawlApprovalStatusHandlerWithMiddlewares := withAuthenticatedPublicMiddlewares(crawlApprovalStatusHandler)
+
+		http.Handle("/v1/console/crawl/approvals/issue", crawlApprovalIssueHandlerWithMiddlewares)
+		cmn.RegisterAPIRoute("/v1/console/crawl/approvals/issue", []string{"POST"},
+			"Issue a durable operator approval for an authorized crawl request (console)", tagsNone,
+			true, false, 200, crawlApprovalIssueRequest{}, nil, crawlApprovalResponse{})
+
+		http.Handle("/v1/console/crawl/approvals/revoke", crawlApprovalRevokeHandlerWithMiddlewares)
+		cmn.RegisterAPIRoute("/v1/console/crawl/approvals/revoke", []string{"POST"},
+			"Revoke a durable operator crawl approval (console)", tagsNone,
+			true, false, 200, crawlApprovalRevokeRequest{}, nil, nil)
+
+		http.Handle("/v1/console/crawl/approvals/status", crawlApprovalStatusHandlerWithMiddlewares)
+		cmn.RegisterAPIRoute("/v1/console/crawl/approvals/status", []string{"GET"},
+			"Read a durable operator crawl approval (console)", tagsNone,
+			true, false, 200, nil, StdAPIBasicQuery{}, crawlApprovalResponse{})
 
 		// Source management endpoints
 
@@ -1153,6 +1174,24 @@ func withPublicMiddlewares(h http.HandlerFunc) http.Handler {
 				SecurityHeadersMiddleware(
 					KeepAliveHeadersMiddleware(
 						RateLimitMiddleware(h),
+					),
+				),
+			),
+		),
+	)
+}
+
+// withAuthenticatedPublicMiddlewares keeps the public console CORS/security
+// behavior but requires a valid bearer token whenever API authentication is
+// enabled. Source mutations use this wrapper so ownership checks always see a
+// trusted authenticated context.
+func withAuthenticatedPublicMiddlewares(h http.HandlerFunc) http.Handler {
+	return RecoverMiddleware(
+		CIDRFilterMiddleware(
+			CORSHeadersMiddleware(
+				SecurityHeadersMiddleware(
+					KeepAliveHeadersMiddleware(
+						RateLimitMiddleware(auth.Middleware(config.API.Auth, dbHandler)(h)),
 					),
 				),
 			),
@@ -1620,8 +1659,8 @@ func addSourceHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		totalSuccess.Add(1)
 	}
-	errCode := http.StatusInternalServerError
-	if isSourceConfigValidationError(err) {
+	errCode := sourceMutationErrorCode(err)
+	if errCode == http.StatusInternalServerError && isSourceConfigValidationError(err) {
 		errCode = http.StatusBadRequest
 	}
 	handleErrorAndRespond(w, err, results, "Error performing addSource: %v", errCode, successCode)
@@ -1648,7 +1687,7 @@ func removeSourceHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		totalSuccess.Add(1)
 	}
-	handleErrorAndRespond(w, err, results, "Error performing removeSource: %v", http.StatusInternalServerError, successCode)
+	handleErrorAndRespond(w, err, results, "Error performing removeSource: %v", sourceMutationErrorCode(err), successCode)
 }
 
 // updateSourceHandler handles the update of sources
@@ -1672,8 +1711,9 @@ func updateSourceHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		totalSuccess.Add(1)
 	}
-	errCode := http.StatusInternalServerError
-	if isSourceConfigValidationError(err) || isSourceRequestValidationError(err) {
+	errCode := sourceMutationErrorCode(err)
+	if errCode == http.StatusInternalServerError &&
+		(isSourceConfigValidationError(err) || isSourceRequestValidationError(err)) {
 		errCode = http.StatusBadRequest
 	}
 	handleErrorAndRespond(w, err, results, "Error performing update Source: %v", errCode, successCode)
@@ -1700,7 +1740,7 @@ func vacuumSourceHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		totalSuccess.Add(1)
 	}
-	handleErrorAndRespond(w, err, results, "Error performing removeSource: %v", http.StatusInternalServerError, successCode)
+	handleErrorAndRespond(w, err, results, "Error performing removeSource: %v", sourceMutationErrorCode(err), successCode)
 }
 
 // singleURLstatusHandler handles the status requests

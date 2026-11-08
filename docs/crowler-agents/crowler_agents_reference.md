@@ -991,15 +991,17 @@ parameters and never construct SQL from model input.
 State-changing crawl scheduling is **not** exposed as a tool. The internal
 approved scheduling contract, durable idempotency semantics, request versus
 execution states and approval boundary are documented in
-[`crawl_scheduling_foundation.md`](crawl_scheduling_foundation.md). WP-03B2A
-adds the trusted principal, source-ownership and approval-authority interfaces
-documented in
+[`crawl_scheduling_foundation.md`](crawl_scheduling_foundation.md). WP-03B2A/WP-03B2B
+add the trusted principal, authoritative source ownership, durable approval
+store, operator approval endpoints, final-mutation revalidation and stable
+proposal lifecycle documented in
 [`crawl_request_authorization.md`](crawl_request_authorization.md). The
 authorizer requires an explicit operation allowlist, trusted source scope,
-source ownership, authenticated principal, positive quota, run-bound approval,
-and verification by a trusted approval authority. A nil verifier or source
-authorizer fails closed. The legacy `ScheduleSourceCrawl()` path remains
-unchanged for existing internal callers.
+source ownership, authenticated principal, positive quota, run-bound durable
+approval, and verification by a trusted approval authority. A nil verifier or
+source authorizer fails closed. Source creation derives `usr_id` from the
+authenticated local user when API authentication is enabled. The legacy
+`ScheduleSourceCrawl()` path remains unchanged for existing internal callers.
 
 Every proposed call passes, in order: explicit opt-in, valid identity with
 enforcement on, trusted registry membership, explicit run allowlist (the

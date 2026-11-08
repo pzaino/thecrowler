@@ -19,6 +19,7 @@ func newSourceOwnershipTestDB(t *testing.T) (*sql.DB, Handler) {
 	t.Cleanup(func() { _ = db.Close() })
 	if _, err := db.Exec(`CREATE TABLE Sources (
 		source_id INTEGER PRIMARY KEY,
+		url TEXT UNIQUE,
 		usr_id INTEGER NOT NULL DEFAULT 0,
 		deleted_at TIMESTAMP
 	)`); err != nil {
@@ -102,4 +103,27 @@ func TestGetSourceOwner(t *testing.T) {
 			t.Fatalf("got %v, want context.Canceled", err)
 		}
 	})
+}
+
+func TestGetSourceOwnerByURL(t *testing.T) {
+	db, handler := newSourceOwnershipTestDB(t)
+	if _, err := db.Exec(`INSERT INTO Sources(source_id, url, usr_id, deleted_at) VALUES
+		(42, 'https://active.example/', 7, NULL),
+		(43, 'https://deleted.example/', 8, CURRENT_TIMESTAMP)`); err != nil {
+		t.Fatalf("insert sources: %v", err)
+	}
+	active, err := GetSourceOwnerByURL(context.Background(), &handler, "https://active.example/", false)
+	if err != nil || !active.Found || active.UserID != 7 || active.Deleted || active.SourceID != 42 {
+		t.Fatalf("active URL owner: %+v, %v", active, err)
+	}
+	if owner, err := GetSourceOwnerByURL(context.Background(), &handler, "https://deleted.example/", false); err != nil || owner.Found {
+		t.Fatalf("deleted source visible through active URL lookup: %+v, %v", owner, err)
+	}
+	deleted, err := GetSourceOwnerByURL(context.Background(), &handler, "https://deleted.example/", true)
+	if err != nil || !deleted.Found || deleted.UserID != 8 || !deleted.Deleted || deleted.SourceID != 43 {
+		t.Fatalf("deleted URL owner: %+v, %v", deleted, err)
+	}
+	if owner, err := GetSourceOwnerByURL(context.Background(), &handler, "https://missing.example/", true); err != nil || owner.Found {
+		t.Fatalf("missing URL owner: %+v, %v", owner, err)
+	}
 }

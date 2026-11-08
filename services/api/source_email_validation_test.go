@@ -248,6 +248,7 @@ func setupSourceAPITestDB(t *testing.T) (cdb.Handler, func()) {
 			details TEXT,
 			disabled BOOLEAN NOT NULL DEFAULT FALSE,
 			status TEXT NOT NULL DEFAULT 'new',
+			deleted_at TIMESTAMP,
 			last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)`); err != nil {
 		db.Close()

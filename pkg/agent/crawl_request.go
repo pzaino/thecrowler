@@ -155,6 +155,7 @@ type CrawlRequestApproval struct {
 	OperationType  string
 	Issuer         string
 	ApprovedBy     string
+	ApproverUserID uint64
 	ApprovedAt     time.Time
 	ExpiresAt      time.Time
 }
@@ -171,11 +172,12 @@ func (a CrawlRequestApproval) Fingerprint() string {
 		OperationType  string
 		Issuer         string
 		ApprovedBy     string
+		ApproverUserID uint64
 		ApprovedAt     time.Time
 		ExpiresAt      time.Time
 	}{
 		a.ApprovalID, a.ProposalSHA256, a.RunID, a.AgentID, a.Owner,
-		a.SourceID, a.OperationType, a.Issuer, a.ApprovedBy,
+		a.SourceID, a.OperationType, a.Issuer, a.ApprovedBy, a.ApproverUserID,
 		a.ApprovedAt.UTC(), a.ExpiresAt.UTC(),
 	})
 }
@@ -583,7 +585,7 @@ func buildCrawlScheduleRequestAt(identity AgentIdentity, proposal CrawlRequestPr
 		OperationType:    proposal.OperationType,
 		ParametersSHA256: decision.proposalSHA256,
 		ApprovalID:       approval.ApprovalID, ApprovalSHA256: decision.approvalSHA256,
-		ApprovedBy: approval.ApprovedBy, ApprovedAt: approval.ApprovedAt,
+		ApprovedBy: approval.ApprovedBy, ApprovedByUserID: approval.ApproverUserID, ApprovedAt: approval.ApprovedAt,
 		ExpiresAt:   expiresAt,
 		MaxRequests: decision.maxRequests, BudgetWindow: decision.budgetWindow,
 	}, nil

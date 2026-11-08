@@ -66,6 +66,45 @@ DBMS-specific behavior and limitations:
   SQLite's database/page-level write locking rather than skipping locked rows.
 
 
+## Durable crawl approvals
+
+`CrawlApprovals` stores operator approvals for the crawl-request authorization
+path. It is an immutable approval record with a separate revocation state:
+
+- `approval_id` (64-hex primary key), proposal fingerprint, request ID, run ID,
+  agent ID, owner, principal user ID, source ID and operation type;
+- issuer and approver user IDs, usernames and authentication issuers;
+- approval fingerprint, proposal expiry, issuance time and expiry;
+- `revoked_at`, revoking user ID/name and revocation reason;
+- lifecycle timestamps.
+
+The logical key is `(request_id, run_id, principal_user_id, source_id,
+operation_type)`. It prevents a second approval from authorizing a modified
+proposal or a new substitution for the same logical request. Indexes cover
+source/expiry, principal/expiry and request lookup. The table intentionally does
+not use foreign keys to `Sources` or `Users`: historical approvals must survive
+source/user lifecycle changes, while issuance validates those references while
+they are live.
+
+Fresh-install PostgreSQL and SQLite setup files include the table. The
+`postgresql-migration-v1.17.pgsql` and `sqlite-migration-v1.17.sqlite3` files are
+the exact additive upgrade proposals. `RequiredSchemaVersion` remains `1.16` in
+this work package so an existing deployment does not start against an
+unmigrated database. Activation requires applying the migration, verifying the
+table and then advancing the writer compatibility constant in the same approved
+deployment. The runtime approval store fails closed with
+`crawl_approval_store_unavailable` when the table is absent.
+
+Rollback is additive and destructive only to approval history:
+
+```sql
+DROP TABLE IF EXISTS CrawlApprovals;
+UPDATE DBSchemaVersion SET is_current = (version = '1.16');
+```
+
+Do not apply the v1.17 migration to an existing persistent deployment database
+without maintainer approval.
+
 ## Source and information seed provenance
 
 `Sources.config` stores the crawler configuration for a source itself: rulesets,

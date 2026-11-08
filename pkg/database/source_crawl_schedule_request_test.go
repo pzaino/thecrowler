@@ -23,9 +23,44 @@ func newCrawlOperationTestDB(t *testing.T) (*sql.DB, Handler) {
 		source_id INTEGER PRIMARY KEY,
 		disabled BOOLEAN NOT NULL DEFAULT FALSE,
 		status TEXT NOT NULL DEFAULT 'new',
+		usr_id INTEGER NOT NULL DEFAULT 0,
+		deleted_at TIMESTAMP,
 		last_updated_at TIMESTAMP
 	)`); err != nil {
 		t.Fatalf("create Sources: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE CrawlApprovals (
+		approval_id CHAR(64) PRIMARY KEY,
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		last_updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		proposal_sha256 CHAR(64) NOT NULL,
+		request_id TEXT NOT NULL,
+		run_id TEXT NOT NULL,
+		agent_id TEXT NOT NULL,
+		owner TEXT NOT NULL,
+		principal_user_id INTEGER NOT NULL,
+		source_id INTEGER NOT NULL,
+		operation_type TEXT NOT NULL,
+		issuer TEXT NOT NULL,
+		issued_by_user_id INTEGER NOT NULL,
+		issued_by TEXT NOT NULL,
+		issued_by_issuer TEXT NOT NULL,
+		approved_by_user_id INTEGER NOT NULL,
+		approved_by TEXT NOT NULL,
+		approved_by_issuer TEXT NOT NULL,
+		approval_sha256 CHAR(64) NOT NULL,
+		proposal_expires_at TIMESTAMP NOT NULL,
+		approved_at TIMESTAMP NOT NULL,
+		expires_at TIMESTAMP NOT NULL,
+		revoked_at TIMESTAMP,
+		revoked_by_user_id INTEGER,
+		revoked_by TEXT,
+		revocation_reason TEXT,
+		UNIQUE (request_id, run_id, principal_user_id, source_id, operation_type),
+		CHECK (expires_at > approved_at),
+		CHECK (julianday(expires_at) - julianday(approved_at) <= 1.0)
+	)`); err != nil {
+		t.Fatalf("create CrawlApprovals: %v", err)
 	}
 	if _, err := db.Exec(`CREATE TABLE Status (
 		status_sha256 CHAR(64) PRIMARY KEY,
@@ -47,9 +82,52 @@ func newCrawlOperationTestDB(t *testing.T) (*sql.DB, Handler) {
 
 func insertCrawlOperationSource(t *testing.T, db *sql.DB, sourceID uint64, status string, disabled bool) {
 	t.Helper()
-	if _, err := db.Exec(`INSERT INTO Sources(source_id, disabled, status) VALUES (?,?,?)`, sourceID, disabled, status); err != nil {
+	insertCrawlOperationSourceWithOwner(t, db, sourceID, status, disabled, 7)
+}
+
+func insertCrawlOperationSourceWithOwner(t *testing.T, db *sql.DB, sourceID uint64, status string, disabled bool, ownerID uint64) {
+	t.Helper()
+	if _, err := db.Exec(`INSERT INTO Sources(source_id, disabled, status, usr_id) VALUES (?,?,?,?)`, sourceID, disabled, status, ownerID); err != nil {
 		t.Fatalf("insert source: %v", err)
 	}
+}
+
+func ensureCrawlApprovalFixture(t *testing.T, db *sql.DB, req CrawlScheduleRequest) {
+	t.Helper()
+	row := CrawlApprovalRow{
+		ApprovalID:        req.ApprovalID,
+		ProposalSHA256:    req.ParametersSHA256,
+		RequestID:         req.RequestID,
+		RunID:             req.RunID,
+		AgentID:           req.AgentID,
+		Owner:             req.Owner,
+		PrincipalUserID:   req.PrincipalUserID,
+		SourceID:          req.SourceID,
+		OperationType:     req.OperationType,
+		Issuer:            "test-authority",
+		IssuedByUserID:    7,
+		IssuedBy:          "owner-1",
+		IssuedByIssuer:    "crowler",
+		ApprovedByUserID:  req.ApprovedByUserID,
+		ApprovedBy:        req.ApprovedBy,
+		ApprovedByIssuer:  "crowler",
+		ApprovalSHA256:    req.ApprovalSHA256,
+		ProposalExpiresAt: req.ExpiresAt,
+		ApprovedAt:        req.ApprovedAt,
+		ExpiresAt:         req.ExpiresAt,
+	}
+	if _, err := InsertCrawlApproval(context.Background(), (*Handler)(nil), row); err == nil {
+		return
+	}
+	// Test fixtures reuse one approval ID across different logical requests.
+	// Replace the row when the request ID changes so the fixture represents a
+	// fresh approval; same-request retries keep the original row unchanged.
+	var existingRequestID string
+	if err := db.QueryRow(`SELECT request_id FROM CrawlApprovals WHERE approval_id = ?`, req.ApprovalID).Scan(&existingRequestID); err == nil && existingRequestID != req.RequestID {
+		_, _ = db.Exec(`DELETE FROM CrawlApprovals WHERE approval_id = ?`, req.ApprovalID)
+	}
+	handler := Handler(&SQLiteHandler{db: db, dbms: DBSQLiteStr})
+	_, _ = InsertCrawlApproval(context.Background(), &handler, row)
 }
 
 func crawlOperationNow() time.Time {
@@ -63,12 +141,15 @@ func crawlOperationRequest(sourceID uint64) CrawlScheduleRequest {
 		SourceID: sourceID, AllowedSources: []uint64{sourceID}, OperationType: CrawlOperationType,
 		ParametersSHA256: strings.Repeat("a", 64),
 		ApprovalID:       "approval-1", ApprovalSHA256: strings.Repeat("b", 64),
-		ApprovedBy: "operator-1", ApprovedAt: now.Add(-time.Minute),
+		ApprovedBy: "operator-1", ApprovedByUserID: 9, ApprovedAt: now.Add(-time.Minute),
 		ExpiresAt: now.Add(time.Hour), MaxRequests: 10, BudgetWindow: time.Hour,
 	}
 }
 
-func scheduleCrawlForTest(ctx context.Context, handler *Handler, req CrawlScheduleRequest) (CrawlScheduleResult, error) {
+func scheduleCrawlForTest(t *testing.T, ctx context.Context, handler *Handler, req CrawlScheduleRequest) (CrawlScheduleResult, error) {
+	if sqlite, ok := (*handler).(*SQLiteHandler); ok && sqlite != nil {
+		ensureCrawlApprovalFixture(t, sqlite.db, req)
+	}
 	return scheduleSourceCrawlRequest(ctx, handler, req, crawlOperationNow())
 }
 
@@ -104,7 +185,7 @@ func TestScheduleSourceCrawlRequestAccepted(t *testing.T) {
 	insertCrawlOperationSource(t, db, 42, "completed", false)
 	req := crawlOperationRequest(42)
 
-	result, err := scheduleCrawlForTest(context.Background(), &handler, req)
+	result, err := scheduleCrawlForTest(t, context.Background(), &handler, req)
 	if err != nil {
 		t.Fatalf("schedule: %v", err)
 	}
@@ -139,7 +220,7 @@ func TestScheduleSourceCrawlRequestUnchangedStates(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			db, handler := newCrawlOperationTestDB(t)
 			insertCrawlOperationSource(t, db, 42, tc.status, tc.disabled)
-			result, err := scheduleCrawlForTest(context.Background(), &handler, crawlOperationRequest(42))
+			result, err := scheduleCrawlForTest(t, context.Background(), &handler, crawlOperationRequest(42))
 			if err != nil {
 				t.Fatalf("schedule: %v", err)
 			}
@@ -159,7 +240,7 @@ func TestScheduleSourceCrawlRequestUnchangedStates(t *testing.T) {
 func TestScheduleSourceCrawlRequestMissingAndExpired(t *testing.T) {
 	t.Run("missing source", func(t *testing.T) {
 		db, handler := newCrawlOperationTestDB(t)
-		result, err := scheduleCrawlForTest(context.Background(), &handler, crawlOperationRequest(404))
+		result, err := scheduleCrawlForTest(t, context.Background(), &handler, crawlOperationRequest(404))
 		if err != nil {
 			t.Fatalf("schedule: %v", err)
 		}
@@ -176,7 +257,7 @@ func TestScheduleSourceCrawlRequestMissingAndExpired(t *testing.T) {
 		insertCrawlOperationSource(t, db, 42, "completed", false)
 		req := crawlOperationRequest(42)
 		req.ExpiresAt = crawlOperationNow()
-		result, err := scheduleCrawlForTest(context.Background(), &handler, req)
+		result, err := scheduleCrawlForTest(t, context.Background(), &handler, req)
 		if err != nil {
 			t.Fatalf("schedule: %v", err)
 		}
@@ -197,11 +278,11 @@ func TestScheduleSourceCrawlRequestIdempotency(t *testing.T) {
 		db, handler := newCrawlOperationTestDB(t)
 		insertCrawlOperationSource(t, db, 42, "completed", false)
 		req := crawlOperationRequest(42)
-		first, err := scheduleCrawlForTest(context.Background(), &handler, req)
+		first, err := scheduleCrawlForTest(t, context.Background(), &handler, req)
 		if err != nil {
 			t.Fatalf("first schedule: %v", err)
 		}
-		second, err := scheduleCrawlForTest(context.Background(), &handler, req)
+		second, err := scheduleCrawlForTest(t, context.Background(), &handler, req)
 		if err != nil {
 			t.Fatalf("second schedule: %v", err)
 		}
@@ -217,13 +298,13 @@ func TestScheduleSourceCrawlRequestIdempotency(t *testing.T) {
 		db, handler := newCrawlOperationTestDB(t)
 		insertCrawlOperationSource(t, db, 42, "completed", false)
 		req := crawlOperationRequest(42)
-		first, err := scheduleCrawlForTest(context.Background(), &handler, req)
+		first, err := scheduleCrawlForTest(t, context.Background(), &handler, req)
 		if err != nil {
 			t.Fatalf("first schedule: %v", err)
 		}
 		changed := req
 		changed.ParametersSHA256 = strings.Repeat("c", 64)
-		second, err := scheduleCrawlForTest(context.Background(), &handler, changed)
+		second, err := scheduleCrawlForTest(t, context.Background(), &handler, changed)
 		if err != nil {
 			t.Fatalf("conflict schedule: %v", err)
 		}
@@ -242,13 +323,16 @@ func TestScheduleSourceCrawlRequestIdempotency(t *testing.T) {
 		db, handler := newCrawlOperationTestDB(t)
 		insertCrawlOperationSource(t, db, 42, "completed", false)
 		firstReq := crawlOperationRequest(42)
-		first, err := scheduleCrawlForTest(context.Background(), &handler, firstReq)
+		first, err := scheduleCrawlForTest(t, context.Background(), &handler, firstReq)
 		if err != nil {
 			t.Fatalf("first schedule: %v", err)
 		}
 		secondReq := firstReq
+		secondReq.RequestID = "request-agent-2"
 		secondReq.AgentID = "agent-2"
-		second, err := scheduleCrawlForTest(context.Background(), &handler, secondReq)
+		secondReq.ApprovalID = "approval-agent-2"
+		secondReq.ApprovalSHA256 = strings.Repeat("d", 64)
+		second, err := scheduleCrawlForTest(t, context.Background(), &handler, secondReq)
 		if err != nil {
 			t.Fatalf("second agent schedule: %v", err)
 		}
@@ -267,13 +351,16 @@ func TestScheduleSourceCrawlRequestIdempotency(t *testing.T) {
 		db, handler := newCrawlOperationTestDB(t)
 		insertCrawlOperationSource(t, db, 42, "completed", false)
 		firstReq := crawlOperationRequest(42)
-		first, err := scheduleCrawlForTest(context.Background(), &handler, firstReq)
+		first, err := scheduleCrawlForTest(t, context.Background(), &handler, firstReq)
 		if err != nil {
 			t.Fatalf("first schedule: %v", err)
 		}
 		secondReq := firstReq
+		secondReq.RequestID = "request-owner-2"
 		secondReq.Owner = "owner-2"
-		second, err := scheduleCrawlForTest(context.Background(), &handler, secondReq)
+		secondReq.ApprovalID = "approval-owner-2"
+		secondReq.ApprovalSHA256 = strings.Repeat("e", 64)
+		second, err := scheduleCrawlForTest(t, context.Background(), &handler, secondReq)
 		if err != nil {
 			t.Fatalf("second owner schedule: %v", err)
 		}
@@ -295,7 +382,7 @@ func TestScheduleSourceCrawlRequestCancellationAndRollback(t *testing.T) {
 		insertCrawlOperationSource(t, db, 42, "completed", false)
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		result, err := scheduleCrawlForTest(ctx, &handler, crawlOperationRequest(42))
+		result, err := scheduleCrawlForTest(t, ctx, &handler, crawlOperationRequest(42))
 		if err == nil {
 			t.Fatal("cancelled request must return an error")
 		}
@@ -315,7 +402,7 @@ func TestScheduleSourceCrawlRequestCancellationAndRollback(t *testing.T) {
 		insertCrawlOperationSource(t, db, 42, "completed", false)
 		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 		defer cancel()
-		result, err := scheduleCrawlForTest(ctx, &handler, crawlOperationRequest(42))
+		result, err := scheduleCrawlForTest(t, ctx, &handler, crawlOperationRequest(42))
 		if !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("got %v, want context.DeadlineExceeded", err)
 		}
@@ -337,7 +424,7 @@ func TestScheduleSourceCrawlRequestCancellationAndRollback(t *testing.T) {
 			BEGIN SELECT RAISE(ABORT, 'boom'); END`); err != nil {
 			t.Fatalf("create trigger: %v", err)
 		}
-		result, err := scheduleCrawlForTest(context.Background(), &handler, crawlOperationRequest(42))
+		result, err := scheduleCrawlForTest(t, context.Background(), &handler, crawlOperationRequest(42))
 		if err == nil {
 			t.Fatal("failed source update must return an error")
 		}
@@ -359,12 +446,12 @@ func TestScheduleSourceCrawlRequestInvalidAndUnsupported(t *testing.T) {
 		insertCrawlOperationSource(t, db, 42, "completed", false)
 		req := crawlOperationRequest(42)
 		req.AllowedSources = nil
-		result, err := scheduleCrawlForTest(context.Background(), &handler, req)
+		result, err := scheduleCrawlForTest(t, context.Background(), &handler, req)
 		if err != nil || result.State != CrawlOperationDenied || result.ReasonCode != CrawlReasonSourceScopeRequired {
 			t.Fatalf("unexpected scope result: %+v, %v", result, err)
 		}
 		req.AllowedSources = []uint64{7}
-		result, err = scheduleCrawlForTest(context.Background(), &handler, req)
+		result, err = scheduleCrawlForTest(t, context.Background(), &handler, req)
 		if err != nil || result.State != CrawlOperationDenied || result.ReasonCode != CrawlReasonSourceOutOfScope {
 			t.Fatalf("unexpected out-of-scope result: %+v, %v", result, err)
 		}
@@ -381,7 +468,7 @@ func TestScheduleSourceCrawlRequestInvalidAndUnsupported(t *testing.T) {
 		insertCrawlOperationSource(t, db, 42, "completed", false)
 		req := crawlOperationRequest(42)
 		req.PrincipalUserID = 0
-		result, err := scheduleCrawlForTest(context.Background(), &handler, req)
+		result, err := scheduleCrawlForTest(t, context.Background(), &handler, req)
 		if err != nil {
 			t.Fatalf("missing principal returned operational error: %v", err)
 		}
@@ -401,7 +488,7 @@ func TestScheduleSourceCrawlRequestInvalidAndUnsupported(t *testing.T) {
 		insertCrawlOperationSource(t, db, 42, "completed", false)
 		req := crawlOperationRequest(42)
 		req.ApprovalSHA256 = "short"
-		result, err := scheduleCrawlForTest(context.Background(), &handler, req)
+		result, err := scheduleCrawlForTest(t, context.Background(), &handler, req)
 		if err != nil {
 			t.Fatalf("invalid request returned operational error: %v", err)
 		}
@@ -422,7 +509,7 @@ func TestScheduleSourceCrawlRequestInvalidAndUnsupported(t *testing.T) {
 		if err := db.Close(); err != nil {
 			t.Fatalf("close database: %v", err)
 		}
-		result, err := scheduleCrawlForTest(context.Background(), &handler, crawlOperationRequest(42))
+		result, err := scheduleCrawlForTest(t, context.Background(), &handler, crawlOperationRequest(42))
 		if err == nil {
 			t.Fatal("closed database must return an operational error")
 		}
@@ -434,7 +521,7 @@ func TestScheduleSourceCrawlRequestInvalidAndUnsupported(t *testing.T) {
 	t.Run("unsupported backend fails closed", func(t *testing.T) {
 		db, _ := newCrawlOperationTestDB(t)
 		handler := Handler(&SQLiteHandler{db: db, dbms: DBMySQLStr})
-		result, err := scheduleCrawlForTest(context.Background(), &handler, crawlOperationRequest(42))
+		result, err := scheduleCrawlForTest(t, context.Background(), &handler, crawlOperationRequest(42))
 		if !errors.Is(err, ErrCrawlSchedulingUnsupported) {
 			t.Fatalf("got %v, want ErrCrawlSchedulingUnsupported", err)
 		}
@@ -451,7 +538,7 @@ func TestScheduleSourceCrawlRequestReplayDoesNotRescheduleCompletedSource(t *tes
 	db, handler := newCrawlOperationTestDB(t)
 	insertCrawlOperationSource(t, db, 42, "completed", false)
 	req := crawlOperationRequest(42)
-	first, err := scheduleCrawlForTest(context.Background(), &handler, req)
+	first, err := scheduleCrawlForTest(t, context.Background(), &handler, req)
 	if err != nil {
 		t.Fatalf("first schedule: %v", err)
 	}
@@ -461,7 +548,7 @@ func TestScheduleSourceCrawlRequestReplayDoesNotRescheduleCompletedSource(t *tes
 	if _, err := db.Exec(`UPDATE Sources SET status='completed', last_updated_at=CURRENT_TIMESTAMP WHERE source_id=42`); err != nil {
 		t.Fatalf("complete source: %v", err)
 	}
-	replay, err := scheduleCrawlForTest(context.Background(), &handler, req)
+	replay, err := scheduleCrawlForTest(t, context.Background(), &handler, req)
 	if err != nil {
 		t.Fatalf("replay: %v", err)
 	}
@@ -482,13 +569,13 @@ func TestScheduleSourceCrawlRequestBudget(t *testing.T) {
 	req := crawlOperationRequest(42)
 	req.MaxRequests = 1
 	req.BudgetWindow = time.Hour
-	first, err := scheduleCrawlForTest(context.Background(), &handler, req)
+	first, err := scheduleCrawlForTest(t, context.Background(), &handler, req)
 	if err != nil || first.State != CrawlOperationAccepted {
 		t.Fatalf("first budgeted request: %+v, %v", first, err)
 	}
 	second := req
 	second.RequestID = "request-2"
-	budgeted, err := scheduleCrawlForTest(context.Background(), &handler, second)
+	budgeted, err := scheduleCrawlForTest(t, context.Background(), &handler, second)
 	if err != nil {
 		t.Fatalf("second budgeted request: %v", err)
 	}
@@ -503,7 +590,7 @@ func TestScheduleSourceCrawlRequestBudget(t *testing.T) {
 	}
 	// A retry of the accepted logical request remains idempotent even when the
 	// budget is exhausted; it must not create a second operation.
-	replay, err := scheduleCrawlForTest(context.Background(), &handler, req)
+	replay, err := scheduleCrawlForTest(t, context.Background(), &handler, req)
 	if err != nil {
 		t.Fatalf("accepted replay: %v", err)
 	}
@@ -518,21 +605,25 @@ func TestScheduleSourceCrawlRequestQuotaIsOwnerIsolated(t *testing.T) {
 	base := crawlOperationRequest(42)
 	base.MaxRequests = 10
 	base.BudgetWindow = time.Hour
-	first, err := scheduleCrawlForTest(context.Background(), &handler, base)
+	first, err := scheduleCrawlForTest(t, context.Background(), &handler, base)
 	if err != nil || first.State != CrawlOperationAccepted {
 		t.Fatalf("owner A first request: %+v, %v", first, err)
 	}
 	ownerB := base
 	ownerB.RequestID = "request-b"
 	ownerB.Owner = "owner-b"
-	ownerBResult, err := scheduleCrawlForTest(context.Background(), &handler, ownerB)
+	ownerB.ApprovalID = "approval-owner-b"
+	ownerB.ApprovalSHA256 = strings.Repeat("f", 64)
+	ownerBResult, err := scheduleCrawlForTest(t, context.Background(), &handler, ownerB)
 	if err != nil {
 		t.Fatalf("owner B request: %v", err)
 	}
 	ownerC := base
 	ownerC.RequestID = "request-c"
 	ownerC.Owner = "owner-c"
-	ownerCResult, err := scheduleCrawlForTest(context.Background(), &handler, ownerC)
+	ownerC.ApprovalID = "approval-owner-c"
+	ownerC.ApprovalSHA256 = strings.Repeat("1", 64)
+	ownerCResult, err := scheduleCrawlForTest(t, context.Background(), &handler, ownerC)
 	if err != nil {
 		t.Fatalf("owner C request: %v", err)
 	}
@@ -549,7 +640,7 @@ func TestScheduleSourceCrawlRequestQuotaIsOwnerIsolated(t *testing.T) {
 	second.RequestID = "request-a-2"
 	second.MaxRequests = 1
 	before := crawlOperationStatusCount(t, db)
-	result, err := scheduleCrawlForTest(context.Background(), &handler, second)
+	result, err := scheduleCrawlForTest(t, context.Background(), &handler, second)
 	if err != nil {
 		t.Fatalf("owner A second request: %v", err)
 	}
@@ -581,7 +672,7 @@ func TestScheduleSourceCrawlRequestRequiresPositiveBoundedQuota(t *testing.T) {
 			insertCrawlOperationSource(t, db, 42, "completed", false)
 			req := crawlOperationRequest(42)
 			tc.mutate(&req)
-			result, err := scheduleCrawlForTest(context.Background(), &handler, req)
+			result, err := scheduleCrawlForTest(t, context.Background(), &handler, req)
 			if err != nil {
 				t.Fatalf("invalid quota returned operational error: %v", err)
 			}
@@ -617,7 +708,7 @@ func TestScheduleSourceCrawlRequestTrustedClockBounds(t *testing.T) {
 			insertCrawlOperationSource(t, db, 42, "completed", false)
 			req := crawlOperationRequest(42)
 			tc.mutate(&req)
-			result, err := scheduleCrawlForTest(context.Background(), &handler, req)
+			result, err := scheduleCrawlForTest(t, context.Background(), &handler, req)
 			if err != nil {
 				t.Fatalf("clock boundary returned operational error: %v", err)
 			}
@@ -639,13 +730,13 @@ func TestScheduleSourceCrawlRequestRunAndApprovalBinding(t *testing.T) {
 		db, handler := newCrawlOperationTestDB(t)
 		insertCrawlOperationSource(t, db, 42, "completed", false)
 		req := crawlOperationRequest(42)
-		first, err := scheduleCrawlForTest(context.Background(), &handler, req)
+		first, err := scheduleCrawlForTest(t, context.Background(), &handler, req)
 		if err != nil {
 			t.Fatalf("first schedule: %v", err)
 		}
 		changed := req
 		changed.RunID = "run-2"
-		result, err := scheduleCrawlForTest(context.Background(), &handler, changed)
+		result, err := scheduleCrawlForTest(t, context.Background(), &handler, changed)
 		if err != nil {
 			t.Fatalf("changed run: %v", err)
 		}
@@ -664,13 +755,13 @@ func TestScheduleSourceCrawlRequestRunAndApprovalBinding(t *testing.T) {
 		db, handler := newCrawlOperationTestDB(t)
 		insertCrawlOperationSource(t, db, 42, "completed", false)
 		req := crawlOperationRequest(42)
-		first, err := scheduleCrawlForTest(context.Background(), &handler, req)
+		first, err := scheduleCrawlForTest(t, context.Background(), &handler, req)
 		if err != nil {
 			t.Fatalf("first schedule: %v", err)
 		}
 		changed := req
 		changed.PrincipalUserID = 8
-		result, err := scheduleCrawlForTest(context.Background(), &handler, changed)
+		result, err := scheduleCrawlForTest(t, context.Background(), &handler, changed)
 		if err != nil {
 			t.Fatalf("changed principal: %v", err)
 		}
@@ -686,13 +777,13 @@ func TestScheduleSourceCrawlRequestRunAndApprovalBinding(t *testing.T) {
 		db, handler := newCrawlOperationTestDB(t)
 		insertCrawlOperationSource(t, db, 42, "completed", false)
 		req := crawlOperationRequest(42)
-		first, err := scheduleCrawlForTest(context.Background(), &handler, req)
+		first, err := scheduleCrawlForTest(t, context.Background(), &handler, req)
 		if err != nil {
 			t.Fatalf("first schedule: %v", err)
 		}
 		changed := req
 		changed.ExpiresAt = req.ExpiresAt.Add(time.Minute)
-		result, err := scheduleCrawlForTest(context.Background(), &handler, changed)
+		result, err := scheduleCrawlForTest(t, context.Background(), &handler, changed)
 		if err != nil {
 			t.Fatalf("changed expiry: %v", err)
 		}
@@ -708,12 +799,12 @@ func TestScheduleSourceCrawlRequestRunAndApprovalBinding(t *testing.T) {
 		db, handler := newCrawlOperationTestDB(t)
 		insertCrawlOperationSource(t, db, 42, "completed", false)
 		req := crawlOperationRequest(42)
-		if _, err := scheduleCrawlForTest(context.Background(), &handler, req); err != nil {
+		if _, err := scheduleCrawlForTest(t, context.Background(), &handler, req); err != nil {
 			t.Fatalf("first schedule: %v", err)
 		}
 		changed := req
 		changed.ApprovalID = "approval-2"
-		result, err := scheduleCrawlForTest(context.Background(), &handler, changed)
+		result, err := scheduleCrawlForTest(t, context.Background(), &handler, changed)
 		if err != nil {
 			t.Fatalf("changed approval id: %v", err)
 		}
@@ -726,13 +817,13 @@ func TestScheduleSourceCrawlRequestRunAndApprovalBinding(t *testing.T) {
 		db, handler := newCrawlOperationTestDB(t)
 		insertCrawlOperationSource(t, db, 42, "completed", false)
 		req := crawlOperationRequest(42)
-		first, err := scheduleCrawlForTest(context.Background(), &handler, req)
+		first, err := scheduleCrawlForTest(t, context.Background(), &handler, req)
 		if err != nil {
 			t.Fatalf("first schedule: %v", err)
 		}
 		changed := req
 		changed.ApprovalSHA256 = strings.Repeat("d", 64)
-		result, err := scheduleCrawlForTest(context.Background(), &handler, changed)
+		result, err := scheduleCrawlForTest(t, context.Background(), &handler, changed)
 		if err != nil {
 			t.Fatalf("changed approval: %v", err)
 		}
@@ -750,7 +841,7 @@ func TestScheduleSourceCrawlRequestQuotaWindowTransition(t *testing.T) {
 	insertCrawlOperationSource(t, db, 42, "completed", false)
 	req := crawlOperationRequest(42)
 	req.MaxRequests = 1
-	first, err := scheduleCrawlForTest(context.Background(), &handler, req)
+	first, err := scheduleCrawlForTest(t, context.Background(), &handler, req)
 	if err != nil || first.State != CrawlOperationAccepted {
 		t.Fatalf("first windowed request: %+v, %v", first, err)
 	}
@@ -766,7 +857,7 @@ func TestScheduleSourceCrawlRequestQuotaWindowTransition(t *testing.T) {
 	}
 	next := req
 	next.RequestID = "request-2"
-	result, err := scheduleCrawlForTest(context.Background(), &handler, next)
+	result, err := scheduleCrawlForTest(t, context.Background(), &handler, next)
 	if err != nil {
 		t.Fatalf("post-window request: %v", err)
 	}
@@ -799,7 +890,7 @@ func TestScheduleSourceCrawlRequestMalformedQuotaRecordsFailClosed(t *testing.T)
 				t.Fatalf("insert malformed record: %v", err)
 			}
 			before := crawlOperationStatusCount(t, db)
-			result, err := scheduleCrawlForTest(context.Background(), &handler, crawlOperationRequest(42))
+			result, err := scheduleCrawlForTest(t, context.Background(), &handler, crawlOperationRequest(42))
 			if err == nil {
 				t.Fatal("malformed quota record did not fail closed")
 			}
@@ -821,7 +912,7 @@ func TestScheduleSourceCrawlRequestFutureDatedQuotaRecordCounts(t *testing.T) {
 	insertCrawlOperationSource(t, db, 42, "completed", false)
 	req := crawlOperationRequest(42)
 	req.MaxRequests = 1
-	first, err := scheduleCrawlForTest(context.Background(), &handler, req)
+	first, err := scheduleCrawlForTest(t, context.Background(), &handler, req)
 	if err != nil || first.State != CrawlOperationAccepted {
 		t.Fatalf("first request: %+v, %v", first, err)
 	}
@@ -831,11 +922,157 @@ func TestScheduleSourceCrawlRequestFutureDatedQuotaRecordCounts(t *testing.T) {
 	}
 	next := req
 	next.RequestID = "request-2"
-	result, err := scheduleCrawlForTest(context.Background(), &handler, next)
+	result, err := scheduleCrawlForTest(t, context.Background(), &handler, next)
 	if err != nil {
 		t.Fatalf("future-dated quota request: %v", err)
 	}
 	if result.State != CrawlOperationDenied || result.ReasonCode != CrawlReasonBudgetExhausted {
 		t.Fatalf("future-dated record bypassed quota: %+v", result)
+	}
+}
+
+func TestScheduleSourceCrawlRequestRejectsRevokedApproval(t *testing.T) {
+	db, handler := newCrawlOperationTestDB(t)
+	insertCrawlOperationSource(t, db, 42, "completed", false)
+	req := crawlOperationRequest(42)
+	ensureCrawlApprovalFixture(t, db, req)
+	if _, err := db.Exec(`UPDATE CrawlApprovals SET revoked_at=CURRENT_TIMESTAMP WHERE approval_id=?`, req.ApprovalID); err != nil {
+		t.Fatalf("revoke approval fixture: %v", err)
+	}
+	result, err := scheduleCrawlForTest(t, context.Background(), &handler, req)
+	if err != nil {
+		t.Fatalf("schedule: %v", err)
+	}
+	if result.State != CrawlOperationDenied || result.ReasonCode != CrawlReasonApprovalRejected {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	if got := crawlOperationSourceStatus(t, db, 42); got != "completed" {
+		t.Fatalf("revoked approval changed source to %q", got)
+	}
+	if got := crawlOperationStatusCount(t, db); got != 0 {
+		t.Fatalf("revoked approval created %d operation rows", got)
+	}
+}
+
+func TestScheduleSourceCrawlRequestRejectsApprovalMetadataMismatch(t *testing.T) {
+	db, handler := newCrawlOperationTestDB(t)
+	insertCrawlOperationSource(t, db, 42, "completed", false)
+	req := crawlOperationRequest(42)
+	ensureCrawlApprovalFixture(t, db, req)
+	if _, err := db.Exec(`UPDATE CrawlApprovals SET approved_by='attacker', approval_sha256=? WHERE approval_id=?`,
+		strings.Repeat("9", 64), req.ApprovalID); err != nil {
+		t.Fatalf("alter approval fixture: %v", err)
+	}
+	result, err := scheduleCrawlForTest(t, context.Background(), &handler, req)
+	if err != nil {
+		t.Fatalf("schedule: %v", err)
+	}
+	if result.State != CrawlOperationDenied || result.ReasonCode != CrawlReasonApprovalRejected {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	if got := crawlOperationStatusCount(t, db); got != 0 {
+		t.Fatalf("mismatched approval created %d operation rows", got)
+	}
+}
+
+func TestScheduleSourceCrawlRequestRejectsExpiredApproval(t *testing.T) {
+	db, handler := newCrawlOperationTestDB(t)
+	insertCrawlOperationSource(t, db, 42, "completed", false)
+	req := crawlOperationRequest(42)
+	ensureCrawlApprovalFixture(t, db, req)
+	if _, err := db.Exec(`UPDATE CrawlApprovals SET approved_at=?, expires_at=? WHERE approval_id=?`,
+		crawlOperationNow().Add(-2*time.Hour), crawlOperationNow().Add(-time.Hour), req.ApprovalID); err != nil {
+		t.Fatalf("expire approval fixture: %v", err)
+	}
+	result, err := scheduleCrawlForTest(t, context.Background(), &handler, req)
+	if err != nil {
+		t.Fatalf("schedule: %v", err)
+	}
+	if result.State != CrawlOperationDenied || result.ReasonCode != CrawlReasonApprovalRejected {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+}
+
+func TestScheduleSourceCrawlRequestRejectsTransferredOrUnownedSource(t *testing.T) {
+	t.Run("transferred", func(t *testing.T) {
+		db, handler := newCrawlOperationTestDB(t)
+		insertCrawlOperationSource(t, db, 42, "completed", false)
+		req := crawlOperationRequest(42)
+		if _, err := db.Exec(`UPDATE Sources SET usr_id=8 WHERE source_id=42`); err != nil {
+			t.Fatalf("transfer source: %v", err)
+		}
+		result, err := scheduleCrawlForTest(t, context.Background(), &handler, req)
+		if err != nil {
+			t.Fatalf("schedule: %v", err)
+		}
+		if result.State != CrawlOperationDenied || result.ReasonCode != CrawlReasonOwnershipRejected {
+			t.Fatalf("unexpected result: %+v", result)
+		}
+		if got := crawlOperationSourceStatus(t, db, 42); got != "completed" {
+			t.Fatalf("transferred source changed to %q", got)
+		}
+		if got := crawlOperationStatusCount(t, db); got != 0 {
+			t.Fatalf("transferred source created %d operation rows", got)
+		}
+	})
+
+	t.Run("zero owner", func(t *testing.T) {
+		db, handler := newCrawlOperationTestDB(t)
+		insertCrawlOperationSourceWithOwner(t, db, 42, "completed", false, 0)
+		result, err := scheduleCrawlForTest(t, context.Background(), &handler, crawlOperationRequest(42))
+		if err != nil {
+			t.Fatalf("schedule: %v", err)
+		}
+		if result.State != CrawlOperationDenied || result.ReasonCode != CrawlReasonOwnershipRejected {
+			t.Fatalf("unexpected result: %+v", result)
+		}
+		if got := crawlOperationStatusCount(t, db); got != 0 {
+			t.Fatalf("unowned source created %d operation rows", got)
+		}
+	})
+}
+
+func TestScheduleSourceCrawlRequestApprovalUnavailableFailsClosed(t *testing.T) {
+	db, handler := newCrawlOperationTestDB(t)
+	insertCrawlOperationSource(t, db, 42, "completed", false)
+	req := crawlOperationRequest(42)
+	if _, err := db.Exec(`DROP TABLE CrawlApprovals`); err != nil {
+		t.Fatalf("drop approvals: %v", err)
+	}
+	result, err := scheduleCrawlForTest(t, context.Background(), &handler, req)
+	if err != nil {
+		t.Fatalf("schedule: %v", err)
+	}
+	if result.State != CrawlOperationDenied || result.ReasonCode != CrawlReasonApprovalUnavailable {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	if got := crawlOperationSourceStatus(t, db, 42); got != "completed" {
+		t.Fatalf("missing approval schema changed source to %q", got)
+	}
+	if got := crawlOperationStatusCount(t, db); got != 0 {
+		t.Fatalf("missing approval schema created %d operation rows", got)
+	}
+}
+
+func TestScheduleSourceCrawlRequestRetrySurvivesApprovalRevocation(t *testing.T) {
+	db, handler := newCrawlOperationTestDB(t)
+	insertCrawlOperationSource(t, db, 42, "completed", false)
+	req := crawlOperationRequest(42)
+	first, err := scheduleCrawlForTest(t, context.Background(), &handler, req)
+	if err != nil || first.State != CrawlOperationAccepted {
+		t.Fatalf("first schedule: %+v, %v", first, err)
+	}
+	if _, err := db.Exec(`UPDATE CrawlApprovals SET revoked_at=CURRENT_TIMESTAMP WHERE approval_id=?`, req.ApprovalID); err != nil {
+		t.Fatalf("revoke approval: %v", err)
+	}
+	replay, err := scheduleCrawlForTest(t, context.Background(), &handler, req)
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if replay.State != CrawlOperationAccepted || !replay.Reused || replay.OperationID != first.OperationID {
+		t.Fatalf("legitimate retry did not reuse operation: %+v", replay)
+	}
+	if got := crawlOperationStatusCount(t, db); got != 1 {
+		t.Fatalf("retry created %d operation rows", got)
 	}
 }

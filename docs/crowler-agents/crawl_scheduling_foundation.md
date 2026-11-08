@@ -1,4 +1,4 @@
-# Crawl scheduling foundation (WP-03B1, hardened by WP-03B2A)
+# Crawl scheduling foundation (WP-03B1, hardened by WP-03B2A/WP-03B2B)
 
 Status: internal foundation, reviewed separately from WP-03A. Not exposed to
 models. No model-facing state-changing tool is registered.
@@ -39,6 +39,7 @@ result, err := cdb.ScheduleSourceCrawlRequest(ctx, &db, cdb.CrawlScheduleRequest
     ApprovalID:       "approval-1",
     ApprovalSHA256:   approvalHash,
     ApprovedBy:       "operator-1",
+    ApprovedByUserID: 9,
     ApprovedAt:       approvedAt,
     ExpiresAt:        expiresAt,
     MaxRequests:      1,          // required trusted quota, 1..100
@@ -176,6 +177,23 @@ database `created_at` column. Deployments should keep the application and
 database clocks synchronized; a future-dated operation record still counts
 against the quota rather than disappearing from the window.
 
+### Approval and ownership revalidation at submission
+
+WP-03B2B revalidates authorization inside the scheduling transaction. After
+the source row is locked and the operation idempotency key is re-read, the
+durable `CrawlApprovals` row is locked on PostgreSQL and checked for proposal,
+run, agent, owner, principal, source, operation, approver-user-ID,
+revocation and expiry. Source `usr_id` and deletion state are rechecked under
+the same source lock. The lock order is source then approval; revocation locks
+only the approval row.
+
+A revoked approval, transferred source, mismatched approval hash or missing
+approval schema is denied before any operation row or source update is
+committed. A legitimate retry of an already accepted logical request still
+returns the existing operation even if the approval was revoked later. SQLite
+provides deterministic test coverage, but production mutation relies on
+PostgreSQL row locking.
+
 The `Status` table is present in the PostgreSQL and SQLite schemas. MySQL's
 current schema does not contain it, so the new API fails closed with
 `crawl_store_unsupported` on MySQL; `ScheduleSourceCrawl()` remains available
@@ -183,7 +201,7 @@ for legacy MySQL callers but does not claim durable idempotency.
 
 No migration is required for this implementation. If maintainers prefer a
 dedicated crawl-request table instead of the generic existing `Status` table,
-that must be a separately approved WP-03B2B migration; the internal API and
+that must be a separately approved WP-03B2C migration; the internal API and
 result contract can be retained.
 
 ## 4. Proposal, allowlist, ownership and approval boundary
@@ -238,12 +256,16 @@ an approval.
 
 ### Trusted approval and ownership
 
-WP-03B2A adds:
+WP-03B2A/WP-03B2B add:
 
 - `CrawlPrincipal` and `CrawlPrincipalFromAuthIdentity()`;
 - `CrawlSourceAuthorizer` and `DatabaseCrawlSourceAuthorizer`;
 - `CrawlApprovalStore`, `CrawlApprovalIssuer`, `CrawlApprovalRevoker`;
-- `StoreBackedCrawlApprovalVerifier`.
+- `StoreBackedCrawlApprovalVerifier`;
+- `DatabaseCrawlApprovalStore` backed by the durable `CrawlApprovals` table;
+- operator approval issue/revoke/status endpoints under the authenticated
+  console;
+- final-mutation approval and ownership revalidation.
 
 A nil source authorizer or approval verifier fails closed. A missing or zero
 source owner fails closed. A database lookup failure is never a permission
@@ -251,12 +273,14 @@ grant. A matching approval structure is not sufficient: the verifier must
 resolve the approval in an authoritative store, match every binding, check
 revocation and verify the approver's source authority.
 
-There is no durable operator approval store, signing service, API or UI in
-this chunk, and `/v1/source/add` still accepts a caller-supplied `usr_id`.
-Those are documented production contracts in
-[`crawl_request_authorization.md`](crawl_request_authorization.md). Until they
-are approved and wired, the model-facing scheduling tool must remain
-unregistered.
+The clean-install PostgreSQL/SQLite setup includes `CrawlApprovals`. The exact
+additive upgrade is prepared as `db_migrations/*-v1.17.*`; it is not applied
+automatically to an existing deployment database and `RequiredSchemaVersion`
+remains `1.16` until maintainers approve the activation. The approval store
+fails closed when the table is absent. Source creation now derives ownership
+from the authenticated local user when API authentication is enabled; the
+remaining agent-principal runtime wiring and external-identity mapping are
+documented in [`crawl_request_authorization.md`](crawl_request_authorization.md).
 
 ### Decision integrity
 
@@ -303,9 +327,9 @@ runtime clock at audit time. In-memory audit events are not durable storage.
 No prompts, model text, credentials, SQL or raw configuration are copied into
 the audit.
 
-## 6. Future WP-03B2B integration
+## 6. Future WP-03B2C integration
 
-WP-03B2B may expose a single model-facing proposal tool only after review. It
+WP-03B2C may expose a single model-facing proposal tool only after review. It
 must:
 
 1. accept only the proposed `source_id`;
@@ -328,7 +352,7 @@ semantics are documented in
 [`crawl_request_authorization.md`](crawl_request_authorization.md). The tool is
 not registered.
 
-Before WP-03B2B, maintainers must also approve:
+Before WP-03B2C, maintainers must also approve:
 
 - the durable `Status`-table reuse or a dedicated migration;
 - a durable, trusted operator approval store, issuer and revocation policy;

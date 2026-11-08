@@ -20,6 +20,8 @@ type CrawlPrincipal struct {
 	UserID   uint64
 	Username string
 	Issuer   string
+	Roles    []string
+	Scopes   []string
 }
 
 // Validate reports whether the principal carries enough trusted identity to
@@ -37,6 +39,38 @@ func (p CrawlPrincipal) Validate() error {
 	return nil
 }
 
+// HasRole reports whether the principal carries one of the exact roles.
+func (p CrawlPrincipal) HasRole(roles ...string) bool {
+	for _, held := range p.Roles {
+		held = strings.ToLower(strings.TrimSpace(held))
+		for _, wanted := range roles {
+			if held == strings.ToLower(strings.TrimSpace(wanted)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// HasScope reports whether the principal carries one of the exact scopes.
+func (p CrawlPrincipal) HasScope(scopes ...string) bool {
+	for _, held := range p.Scopes {
+		held = strings.TrimSpace(held)
+		for _, wanted := range scopes {
+			if held == strings.TrimSpace(wanted) || held == "*" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// IsSourceAdministrator reports whether the principal has an established
+// administrative role that permits managing any source.
+func (p CrawlPrincipal) IsSourceAdministrator() bool {
+	return p.HasRole("superadmin", "admin")
+}
+
 // CrawlPrincipalFromAuthIdentity adapts the authenticated HTTP identity to the
 // crawl authorization principal. The auth subject must be the numeric users
 // row identifier used by the repository's local authentication model.
@@ -49,6 +83,8 @@ func CrawlPrincipalFromAuthIdentity(identity auth.Identity) (CrawlPrincipal, err
 		UserID:   userID,
 		Username: strings.TrimSpace(identity.Username),
 		Issuer:   strings.TrimSpace(identity.Issuer),
+		Roles:    append([]string(nil), identity.Roles...),
+		Scopes:   append([]string(nil), identity.Scopes...),
 	}
 	if err := principal.Validate(); err != nil {
 		return CrawlPrincipal{}, err
@@ -92,7 +128,8 @@ func (l DatabaseSourceOwnerLookup) LookupCrawlSourceOwner(ctx context.Context, s
 // DatabaseCrawlSourceAuthorizer enforces source ownership using the persisted
 // Sources.usr_id value. Missing, zero and unknown ownership fail closed.
 type DatabaseCrawlSourceAuthorizer struct {
-	Lookup CrawlSourceOwnerLookup
+	Lookup     CrawlSourceOwnerLookup
+	AllowAdmin bool
 }
 
 // AuthorizeCrawlSource implements CrawlSourceAuthorizer.
@@ -119,7 +156,7 @@ func (a DatabaseCrawlSourceAuthorizer) AuthorizeCrawlSource(ctx context.Context,
 	if !owner.Found || owner.UserID == 0 {
 		return ErrCrawlSourceOwnershipMissing
 	}
-	if owner.UserID != principal.UserID {
+	if owner.UserID != principal.UserID && !(a.AllowAdmin && principal.IsSourceAdministrator()) {
 		return ErrCrawlSourceForbidden
 	}
 	return nil
@@ -145,6 +182,9 @@ var (
 	// ErrCrawlApprovalLifetime means the approval has an invalid or oversized
 	// issuance-to-expiry interval.
 	ErrCrawlApprovalLifetime = errors.New("crawl approval lifetime is invalid")
+	// ErrCrawlApprovalConflict means a different logical request already owns
+	// the same durable approval key.
+	ErrCrawlApprovalConflict = errors.New("crawl approval conflicts with an existing logical request")
 )
 
 // CrawlApprovalRecord is an authoritative approval record returned by a
@@ -152,8 +192,14 @@ var (
 // is the authenticated operator who issued it.
 type CrawlApprovalRecord struct {
 	Approval          CrawlRequestApproval
+	Proposal          CrawlRequestProposal
+	IssuerPrincipal   CrawlPrincipal
 	ApproverPrincipal CrawlPrincipal
 	Revoked           bool
+	RevokedAt         *time.Time
+	RevokedByUserID   uint64
+	RevokedBy         string
+	RevocationReason  string
 }
 
 // CrawlApprovalStore is the authoritative lookup boundary. It must return only
@@ -161,20 +207,22 @@ type CrawlApprovalRecord struct {
 // issuance and revocation.
 type CrawlApprovalStore interface {
 	LookupCrawlApproval(ctx context.Context, approvalID string) (CrawlApprovalRecord, bool, error)
+	LookupCrawlApprovalByRequest(ctx context.Context, runID, requestID string, principalUserID, sourceID uint64, operationType string) (CrawlApprovalRecord, bool, error)
 }
 
 // CrawlApprovalIssuanceRequest is the trusted input to an approval issuer. The
 // issuer must validate the approver principal and source authority, assign an
 // approval ID, persist the record durably and return the issued approval.
 type CrawlApprovalIssuanceRequest struct {
-	Proposal   CrawlRequestProposal
-	Identity   AgentIdentity
-	Principal  CrawlPrincipal
-	RunID      string
-	Approver   CrawlPrincipal
-	Issuer     string
-	ApprovedAt time.Time
-	ExpiresAt  time.Time
+	Proposal        CrawlRequestProposal
+	Identity        AgentIdentity
+	Principal       CrawlPrincipal
+	RunID           string
+	IssuerPrincipal CrawlPrincipal
+	Approver        CrawlPrincipal
+	Issuer          string
+	ApprovedAt      time.Time
+	ExpiresAt       time.Time
 }
 
 // CrawlApprovalIssuer is the trusted issuance boundary. No production
@@ -186,7 +234,7 @@ type CrawlApprovalIssuer interface {
 
 // CrawlApprovalRevoker is the trusted revocation boundary.
 type CrawlApprovalRevoker interface {
-	RevokeCrawlApproval(ctx context.Context, approvalID, reason string, revokedAt time.Time) error
+	RevokeCrawlApproval(ctx context.Context, principal CrawlPrincipal, approvalID, reason string, revokedAt time.Time) error
 }
 
 // CrawlApprovalVerification is the complete trusted context presented to an
@@ -279,7 +327,7 @@ func (v StoreBackedCrawlApprovalVerifier) VerifyCrawlApproval(ctx context.Contex
 	if err := approver.Validate(); err != nil {
 		return ErrCrawlApprovalApproverUnauthorized
 	}
-	if approver.Username != authoritative.ApprovedBy {
+	if approver.UserID == 0 || approver.UserID != authoritative.ApproverUserID {
 		return ErrCrawlApprovalApproverUnauthorized
 	}
 	if err := v.SourceAuthorizer.AuthorizeCrawlSource(ctx, approver, authoritative.SourceID); err != nil {

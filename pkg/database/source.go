@@ -240,11 +240,10 @@ func createSourcePostgres(ctx context.Context, db *Handler, source preparedSourc
                 ELSE Sources.category_id
             END,
 
-            usr_id = CASE
-                WHEN Sources.status <> 'processing'
-                THEN EXCLUDED.usr_id
-                ELSE Sources.usr_id
-            END,
+            -- Ownership is immutable through the generic source upsert.
+            -- Reassignment requires an explicit administrative migration or
+            -- ownership transfer contract.
+            usr_id = Sources.usr_id,
 
             restricted = CASE
                 WHEN Sources.status <> 'processing'
@@ -330,11 +329,8 @@ func createSourceSQLite(ctx context.Context, db *Handler, source preparedSourceI
 				THEN excluded.category_id
 				ELSE Sources.category_id
 			END,
-			usr_id = CASE
-				WHEN Sources.status <> 'processing'
-				THEN excluded.usr_id
-				ELSE Sources.usr_id
-			END,
+			-- Ownership is immutable through the generic source upsert.
+			usr_id = Sources.usr_id,
 			restricted = CASE
 				WHEN Sources.status <> 'processing'
 				THEN excluded.restricted
@@ -409,11 +405,8 @@ func createSourceMySQL(ctx context.Context, db *Handler, source preparedSourceIn
 				THEN VALUES(category_id)
 				ELSE category_id
 			END,
-			usr_id = CASE
-				WHEN status <> 'processing'
-				THEN VALUES(usr_id)
-				ELSE usr_id
-			END,
+			-- Ownership is immutable through the generic source upsert.
+			usr_id = usr_id,
 			restricted = CASE
 				WHEN status <> 'processing'
 				THEN VALUES(restricted)
@@ -504,12 +497,15 @@ func validateURL(site string) error {
 
 // UpdateSource updates an existing source in the database by ID.
 func UpdateSource(db *Handler, source *Source) error {
+	// Ownership is deliberately excluded. It is established at creation and
+	// may only change through an explicit administrative ownership-transfer
+	// contract, not through a generic source update.
 	query := `
         UPDATE Sources
-        SET url = $1, name = $2, category_id = $3, usr_id = $4, restricted = $5, flags = $6, config = $7, last_updated_at = NOW()
-        WHERE source_id = $8
+        SET url = $1, name = $2, category_id = $3, restricted = $4, flags = $5, config = $6, last_updated_at = NOW()
+        WHERE source_id = $7
     `
-	_, err := (*db).Exec(query, NormalizeSourceURL(source.URL), source.Name, source.CategoryID, source.UsrID, source.Restricted, source.Flags, source.Config, source.ID)
+	_, err := (*db).Exec(query, NormalizeSourceURL(source.URL), source.Name, source.CategoryID, source.Restricted, source.Flags, source.Config, source.ID)
 	if err != nil {
 		return fmt.Errorf("failed to update source with ID %d: %v", source.ID, err)
 	}

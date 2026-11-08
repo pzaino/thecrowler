@@ -22,7 +22,7 @@ The POST request should be in the following format:
 {
   "url": "https://example.com",                     // (required) The URL to crawl (which is also the starting point, hence it's called "source")
   "category_id": "uint64",                          // (optional) This is the category_id (a reference to the categories table)
-  "usr_id": "uint64",                               // (optional) This is the user_id (a generic id that can be used to assign a source to a specific user)
+  "usr_id": "uint64",                               // (ignored when API authentication is enabled; the authenticated user owns the source)
   "status": "string",                               // (optional) This field can be used to specify an initial status for the source, normally it's not used
   "restricted": "int",                              // (optional) This field contains: (default value is "1")
                                                     //  0 - When we want to specify that the CROWler should only crawl the specific source and no other related and found links
@@ -46,6 +46,42 @@ The POST request should be in the following format:
   }
 }
 ```
+
+## Ownership and authentication
+
+When `api.auth.enabled` is true, source mutations require a valid bearer token
+and a local `Users.user_id` mapping:
+
+- The source owner is always the authenticated user's numeric `Users.user_id`.
+  A body or query parameter named `usr_id` is ignored.
+- External token subjects that cannot be mapped to a numeric local user ID are
+  rejected. CROWler does not infer an identity mapping.
+- Disabled or deleted users are rejected even when the token itself is valid.
+- Adding a URL that already belongs to another user is rejected. Adding an
+  existing URL owned by the caller (or by an administrator) updates non-owner
+  fields but never transfers ownership.
+- `/v1/source/update`, `/v1/source/remove`, and `/v1/source/vacuum` require the
+  caller to be the source owner or hold the `admin`/`superadmin` role. A zero or
+  unknown `Sources.usr_id` fails closed for ordinary users.
+- Source ownership cannot be changed through add or update. A future explicit
+  administrative ownership-transfer workflow is required for reassignment.
+
+When API authentication is disabled, the legacy unauthenticated console
+workflow is preserved and a newly created source may still carry the
+request-supplied `usr_id`. That value is **not** considered an authenticated
+principal for agent-originated scheduling. An agent scheduling principal is
+only produced from an authenticated user; historical or caller-supplied
+`usr_id` values therefore do not automatically become eligible for agent
+mutations. Deployments that enable agents with mutation capability must enable
+API authentication and populate source ownership accordingly.
+
+Additional status codes for authenticated source mutations:
+
+- **401** — missing, invalid, disabled, deleted or externally-unmapped identity.
+- **403** — the authenticated user is not the source owner and lacks an
+  administrative role.
+- **503** — the authoritative identity or ownership lookup could not be
+  completed.
 
 Upon success (or failure) insertion the CROWler will return a status JSON document:
 

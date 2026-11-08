@@ -1,10 +1,12 @@
 package agent
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"strconv"
+	"sync"
 	"time"
 
 	cdb "github.com/pzaino/thecrowler/pkg/database"
@@ -67,4 +69,82 @@ func NewCrawlRequestToolResult(result cdb.CrawlScheduleResult, observedAt time.T
 		Reused:      result.Reused,
 		ObservedAt:  observedAt.UTC(),
 	}
+}
+
+// CrawlProposalRegistry keeps one logical proposal identity stable across
+// duplicate tool-call delivery inside a process. It is not durable; after an
+// approval is issued, DatabaseCrawlApprovalStore.LookupCrawlApprovalByRequest
+// provides the restart-safe proposal anchor.
+type CrawlProposalRegistry interface {
+	ResolveCrawlProposal(ctx context.Context, key string, create func() (CrawlRequestProposal, error)) (CrawlRequestProposal, error)
+}
+
+// MemoryCrawlProposalRegistry is a bounded process-local proposal registry for
+// the disabled model-facing tool. It must not be presented as restart-safe.
+type MemoryCrawlProposalRegistry struct {
+	mu        sync.Mutex
+	proposals map[string]CrawlRequestProposal
+}
+
+// NewMemoryCrawlProposalRegistry creates an empty process-local registry.
+func NewMemoryCrawlProposalRegistry() *MemoryCrawlProposalRegistry {
+	return &MemoryCrawlProposalRegistry{proposals: make(map[string]CrawlRequestProposal)}
+}
+
+// ResolveCrawlProposal returns the first proposal for key or creates it.
+func (r *MemoryCrawlProposalRegistry) ResolveCrawlProposal(ctx context.Context, key string, create func() (CrawlRequestProposal, error)) (CrawlRequestProposal, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return CrawlRequestProposal{}, err
+	}
+	if r == nil {
+		return CrawlRequestProposal{}, fmt.Errorf("proposal registry is nil")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if proposal, ok := r.proposals[key]; ok {
+		return proposal, nil
+	}
+	proposal, err := create()
+	if err != nil {
+		return CrawlRequestProposal{}, err
+	}
+	r.proposals[key] = proposal
+	return proposal, nil
+}
+
+// CrawlProposalFactory recreates the same proposal identity and expiry for a
+// duplicate tool call. The model never chooses the request ID or expiry.
+type CrawlProposalFactory struct {
+	Registry CrawlProposalRegistry
+	TTL      time.Duration
+	Now      func() time.Time
+}
+
+// Proposal returns the stable proposal for one logical tool invocation.
+func (f CrawlProposalFactory) Proposal(ctx context.Context, runID, toolCallID string, sourceID uint64) (CrawlRequestProposal, error) {
+	requestID, err := CrawlToolRequestID(runID, toolCallID, sourceID)
+	if err != nil {
+		return CrawlRequestProposal{}, err
+	}
+	if f.Registry == nil {
+		return CrawlRequestProposal{}, fmt.Errorf("proposal registry is required")
+	}
+	ttl := f.TTL
+	if ttl <= 0 || ttl > maxCrawlProposalLifetime {
+		ttl = maxCrawlProposalLifetime
+	}
+	now := time.Now
+	if f.Now != nil {
+		now = f.Now
+	}
+	return f.Registry.ResolveCrawlProposal(ctx, requestID, func() (CrawlRequestProposal, error) {
+		return CrawlRequestProposal{
+			RequestID: requestID, SourceID: sourceID,
+			OperationType: cdb.CrawlOperationType,
+			ExpiresAt:     now().UTC().Add(ttl),
+		}, nil
+	})
 }

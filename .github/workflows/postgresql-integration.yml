@@ -144,8 +144,95 @@ jobs:
 
           test "$current_version" = "1.16"
 
+      - name: Verify v1.17 crawl-approval migration
+        run: |
+          PGPASSWORD="$POSTGRES_PASSWORD" \
+          psql \
+            -v ON_ERROR_STOP=1 \
+            --host 127.0.0.1 \
+            --port 5432 \
+            --username "$POSTGRES_USER" \
+            --dbname "$POSTGRES_DB" \
+            --command "DROP DATABASE IF EXISTS crowler_v117 WITH (FORCE)" \
+            --command "CREATE DATABASE crowler_v117"
+
+          PGPASSWORD="$POSTGRES_PASSWORD" \
+          psql \
+            -v ON_ERROR_STOP=1 \
+            -v POSTGRES_DB=crowler_v117 \
+            -v CROWLER_DB_USER="$CROWLER_DB_USER" \
+            -v CROWLER_DB_PASSWORD="$CROWLER_DB_PASSWORD" \
+            -v DB_SHARED_BUFFERS="$CROWLER_DB_SHARED_BUFFERS" \
+            -v DB_WORK_MEM="$CROWLER_DB_WORK_MEM" \
+            -v DB_MAINTENANCE_WORK_MEM="$CROWLER_DB_MAINTENANCE_WORK_MEM" \
+            -v DB_EFFECTIVE_CACHE_SIZE="$CROWLER_DB_EFFECTIVE_CACHE_SIZE" \
+            -v DB_AUTOVACUUM_WORK_MEM="$CROWLER_DB_AUTOVACUUM_WORK_MEM" \
+            -v DB_MAX_WAL_SIZE="$CROWLER_DB_MAX_WAL_SIZE" \
+            -v DB_MAX_CONNECTIONS="$CROWLER_DB_MAX_CONNECTIONS" \
+            --host 127.0.0.1 \
+            --port 5432 \
+            --username "$POSTGRES_USER" \
+            --dbname crowler_v117 \
+            --file pkg/database/postgresql-setup.pgsql
+
+          # Simulate an existing v1.16 deployment that predates the approvals table.
+          PGPASSWORD="$POSTGRES_PASSWORD" \
+          psql \
+            -v ON_ERROR_STOP=1 \
+            --host 127.0.0.1 \
+            --port 5432 \
+            --username "$POSTGRES_USER" \
+            --dbname crowler_v117 \
+            --command "DROP TABLE CrawlApprovals" \
+            --command "UPDATE DBSchemaVersion SET is_current = (version = '1.16')"
+
+          PGPASSWORD="$POSTGRES_PASSWORD" \
+          psql \
+            -v ON_ERROR_STOP=1 \
+            -v CROWLER_DB_USER="$CROWLER_DB_USER" \
+            --host 127.0.0.1 \
+            --port 5432 \
+            --username "$POSTGRES_USER" \
+            --dbname crowler_v117 \
+            --file pkg/database/db_migrations/postgresql-migration-v1.17.pgsql
+
+          current_version="$(
+            PGPASSWORD="$POSTGRES_PASSWORD" \
+            psql \
+              -v ON_ERROR_STOP=1 \
+              -At \
+              --host 127.0.0.1 \
+              --port 5432 \
+              --username "$POSTGRES_USER" \
+              --dbname crowler_v117 \
+              --command "SELECT version FROM DBSchemaVersion WHERE is_current"
+          )"
+          test "$current_version" = "1.17"
+
+          table_name="$(
+            PGPASSWORD="$POSTGRES_PASSWORD" \
+            psql \
+              -v ON_ERROR_STOP=1 \
+              -At \
+              --host 127.0.0.1 \
+              --port 5432 \
+              --username "$POSTGRES_USER" \
+              --dbname crowler_v117 \
+              --command "SELECT to_regclass('public.crawlapprovals')"
+          )"
+          test "$table_name" = "crawlapprovals"
+
+          PGPASSWORD="$POSTGRES_PASSWORD" \
+          psql \
+            -v ON_ERROR_STOP=1 \
+            --host 127.0.0.1 \
+            --port 5432 \
+            --username "$POSTGRES_USER" \
+            --dbname "$POSTGRES_DB" \
+            --command "DROP DATABASE crowler_v117 WITH (FORCE)"
+
       - name: Run PostgreSQL integration suite
         env:
           THECROWLER_POSTGRES_INTEGRATION: "1"
         run: |
-          go test -tags=integration ./pkg/database/... ./pkg/crawler/... ./pkg/agent/...
+          go test -tags=integration ./pkg/database/... ./pkg/crawler/... ./pkg/agent/... ./services/api/...

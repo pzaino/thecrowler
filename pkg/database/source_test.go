@@ -74,7 +74,7 @@ func TestCreateSourceSQLiteUpsertPreservesProcessingRows(t *testing.T) {
 		t.Fatalf("expected existing id %d, got %d", firstID, secondID)
 	}
 
-	assertSourceRow(t, db, firstID, "second", "low", 10, 20, 30, 40, true, "new")
+	assertSourceRow(t, db, firstID, "second", "low", 10, 2, 30, 40, true, "new")
 
 	_, err = db.Exec(`UPDATE Sources SET status = 'processing' WHERE source_id = ?`, firstID)
 	if err != nil {
@@ -98,7 +98,7 @@ func TestCreateSourceSQLiteUpsertPreservesProcessingRows(t *testing.T) {
 		t.Fatalf("expected processing row id %d, got %d", firstID, thirdID)
 	}
 
-	assertSourceRow(t, db, firstID, "second", "low", 10, 20, 30, 40, true, "processing")
+	assertSourceRow(t, db, firstID, "second", "low", 10, 2, 30, 40, true, "processing")
 }
 
 func TestNormalizeSourceURLMakesNestedURLsSearchable(t *testing.T) {

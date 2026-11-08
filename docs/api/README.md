@@ -90,6 +90,29 @@ Internet.
 | GET | `/v1/source/status` | Return status for one URL/source. |
 | GET | `/v1/source/statuses` | Return statuses for all known URLs/sources. |
 
+Source mutations (`add`, `update`, `remove`, `vacuum`) use the authenticated
+principal when `api.auth.enabled` is true. The authenticated local
+`Users.user_id` owns newly created sources; caller-supplied `usr_id` is ignored.
+Updates and removals require the source owner or the `admin`/`superadmin` role.
+See [addsource](./api/addsource.md) for the ownership rules.
+
+## Crawl-approval administration
+
+Durable operator approvals are registered only when `api.enable_console` is
+true and require enabled API authentication. The approval table is a v1.17
+migration proposal; a deployment that has not applied it receives a fail-closed
+503 rather than an unpersisted approval.
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| POST | `/v1/console/crawl/approvals/issue` | Issue a bounded approval for an agent, run, source and proposal. |
+| POST | `/v1/console/crawl/approvals/revoke` | Revoke an approval by ID. |
+| GET | `/v1/console/crawl/approvals/status` | Read an approval visible to the authenticated source owner or an administrator. |
+
+The issue body contains only the proposal identity, source, agent, run and
+expiry timestamps. The approver, owner, principal user ID and issuer are derived
+from the authenticated request. The model never supplies these fields.
+
 ## Information seed administration
 
 The canonical namespace is `/v1/information_seed/*` (underscore).

@@ -4,6 +4,8 @@ package database
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"sync"
@@ -17,7 +19,7 @@ func createCrawlSchedulingSource(t *testing.T, db *Handler, priority string) uin
 	t.Helper()
 	source := &Source{
 		URL:  fmt.Sprintf("https://wp03b1-%d.example/", time.Now().UnixNano()),
-		Name: "wp03b1-scheduling", Priority: priority, Restricted: 1,
+		Name: "wp03b1-scheduling", Priority: priority, Restricted: 1, UsrID: 7,
 	}
 	id, err := CreateSourceContext(context.Background(), db, source, cfg.SourceConfig{})
 	if err != nil {
@@ -44,9 +46,56 @@ func crawlSchedulingRequest(sourceID uint64) CrawlScheduleRequest {
 		SourceID: sourceID, AllowedSources: []uint64{sourceID}, OperationType: CrawlOperationType,
 		ParametersSHA256: strings.Repeat("a", 64),
 		ApprovalID:       "wp03b1-approval", ApprovalSHA256: strings.Repeat("b", 64),
-		ApprovedBy: "wp03b1-operator", ApprovedAt: now.Add(-time.Minute),
+		ApprovedBy: "wp03b1-operator", ApprovedByUserID: 9, ApprovedAt: now.Add(-time.Minute),
 		ExpiresAt: now.Add(time.Hour), MaxRequests: 10, BudgetWindow: time.Hour,
 	}
+}
+
+func postgresApprovalID(req CrawlScheduleRequest) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s|%s|%d|%d|%s",
+		req.RequestID, req.RunID, req.PrincipalUserID, req.SourceID, req.OperationType)))
+	return hex.EncodeToString(sum[:])
+}
+
+func preparePostgresApprovalRequest(req CrawlScheduleRequest) CrawlScheduleRequest {
+	req.ApprovalID = postgresApprovalID(req)
+	return req
+}
+
+func ensurePostgresCrawlApproval(t *testing.T, db *Handler, req CrawlScheduleRequest) {
+	t.Helper()
+	row := CrawlApprovalRow{
+		ApprovalID:        req.ApprovalID,
+		ProposalSHA256:    req.ParametersSHA256,
+		RequestID:         req.RequestID,
+		RunID:             req.RunID,
+		AgentID:           req.AgentID,
+		Owner:             req.Owner,
+		PrincipalUserID:   req.PrincipalUserID,
+		SourceID:          req.SourceID,
+		OperationType:     req.OperationType,
+		Issuer:            "test-authority",
+		IssuedByUserID:    7,
+		IssuedBy:          "wp03b1-owner",
+		IssuedByIssuer:    "crowler",
+		ApprovedByUserID:  req.ApprovedByUserID,
+		ApprovedBy:        req.ApprovedBy,
+		ApprovedByIssuer:  "crowler",
+		ApprovalSHA256:    req.ApprovalSHA256,
+		ProposalExpiresAt: req.ExpiresAt,
+		ApprovedAt:        req.ApprovedAt,
+		ExpiresAt:         req.ExpiresAt,
+	}
+	if _, err := InsertCrawlApproval(context.Background(), db, row); err != nil {
+		t.Fatalf("insert postgres approval: %v", err)
+	}
+}
+
+func schedulePostgresWithApproval(t *testing.T, db *Handler, req CrawlScheduleRequest) (CrawlScheduleResult, error) {
+	t.Helper()
+	req = preparePostgresApprovalRequest(req)
+	ensurePostgresCrawlApproval(t, db, req)
+	return ScheduleSourceCrawlRequest(context.Background(), db, req)
 }
 
 func TestPostgresCrawlSchedulingFoundation(t *testing.T) {
@@ -55,7 +104,7 @@ func TestPostgresCrawlSchedulingFoundation(t *testing.T) {
 
 	sourceID := createCrawlSchedulingSource(t, db, priority)
 	setCrawlSchedulingSourceState(t, db, sourceID, "completed", "", false)
-	result, err := ScheduleSourceCrawlRequest(context.Background(), db, crawlSchedulingRequest(sourceID))
+	result, err := schedulePostgresWithApproval(t, db, crawlSchedulingRequest(sourceID))
 	if err != nil {
 		t.Fatalf("schedule: %v", err)
 	}
@@ -102,7 +151,7 @@ func TestPostgresCrawlSchedulingFoundation(t *testing.T) {
 	// A processing source must not be reset by another request.
 	processingRequest := crawlSchedulingRequest(sourceID)
 	processingRequest.RequestID = "wp03b1-processing"
-	processing, err := ScheduleSourceCrawlRequest(context.Background(), db, processingRequest)
+	processing, err := schedulePostgresWithApproval(t, db, processingRequest)
 	if err != nil {
 		t.Fatalf("processing request: %v", err)
 	}
@@ -119,7 +168,7 @@ func TestPostgresCrawlSchedulingFoundation(t *testing.T) {
 	// A disabled source must not be scheduled.
 	disabledID := createCrawlSchedulingSource(t, db, priority)
 	setCrawlSchedulingSourceState(t, db, disabledID, "completed", "", true)
-	disabled, err := ScheduleSourceCrawlRequest(context.Background(), db, crawlSchedulingRequest(disabledID))
+	disabled, err := schedulePostgresWithApproval(t, db, crawlSchedulingRequest(disabledID))
 	if err != nil {
 		t.Fatalf("disabled request: %v", err)
 	}
@@ -135,7 +184,7 @@ func TestPostgresCrawlSchedulingFoundation(t *testing.T) {
 	}
 
 	// A missing source is distinct from a database failure.
-	missing, err := ScheduleSourceCrawlRequest(context.Background(), db, crawlSchedulingRequest(sourceID+1000000))
+	missing, err := schedulePostgresWithApproval(t, db, crawlSchedulingRequest(sourceID+1000000))
 	if err != nil {
 		t.Fatalf("missing source request: %v", err)
 	}
@@ -149,7 +198,8 @@ func TestPostgresCrawlSchedulingConcurrentIdempotency(t *testing.T) {
 	priority := fmt.Sprintf("wp03b1-concurrent-%d", time.Now().UnixNano())
 	sourceID := createCrawlSchedulingSource(t, db, priority)
 	setCrawlSchedulingSourceState(t, db, sourceID, "completed", "", false)
-	req := crawlSchedulingRequest(sourceID)
+	req := preparePostgresApprovalRequest(crawlSchedulingRequest(sourceID))
+	ensurePostgresCrawlApproval(t, db, req)
 
 	type outcome struct {
 		result CrawlScheduleResult
@@ -244,6 +294,8 @@ func TestPostgresCrawlSchedulingBudgetConcurrency(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		request := base
 		request.RequestID = fmt.Sprintf("wp03b1-budget-request-%d", i)
+		request = preparePostgresApprovalRequest(request)
+		ensurePostgresCrawlApproval(t, db, request)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -287,19 +339,19 @@ func TestPostgresCrawlSchedulingQuotaIsOwnerIsolated(t *testing.T) {
 	base := crawlSchedulingRequest(sourceID)
 	base.MaxRequests = 1
 	base.BudgetWindow = time.Hour
-	ownerA, err := ScheduleSourceCrawlRequest(context.Background(), db, base)
+	ownerA, err := schedulePostgresWithApproval(t, db, base)
 	if err != nil || ownerA.State != CrawlOperationAccepted {
 		t.Fatalf("owner A first request: %+v, %v", ownerA, err)
 	}
 	ownerB := base
 	ownerB.RequestID, ownerB.Owner, ownerB.MaxRequests = "owner-b-request", "owner-b", 10
-	ownerBResult, err := ScheduleSourceCrawlRequest(context.Background(), db, ownerB)
+	ownerBResult, err := schedulePostgresWithApproval(t, db, ownerB)
 	if err != nil {
 		t.Fatalf("owner B request: %v", err)
 	}
 	ownerC := base
 	ownerC.RequestID, ownerC.Owner, ownerC.MaxRequests = "owner-c-request", "owner-c", 10
-	ownerCResult, err := ScheduleSourceCrawlRequest(context.Background(), db, ownerC)
+	ownerCResult, err := schedulePostgresWithApproval(t, db, ownerC)
 	if err != nil {
 		t.Fatalf("owner C request: %v", err)
 	}
@@ -313,7 +365,7 @@ func TestPostgresCrawlSchedulingQuotaIsOwnerIsolated(t *testing.T) {
 	}
 	secondA := base
 	secondA.RequestID = "owner-a-request-2"
-	result, err := ScheduleSourceCrawlRequest(context.Background(), db, secondA)
+	result, err := schedulePostgresWithApproval(t, db, secondA)
 	if err != nil {
 		t.Fatalf("owner A second request: %v", err)
 	}
@@ -344,6 +396,8 @@ func TestPostgresCrawlSchedulingConcurrentOwners(t *testing.T) {
 		request.RequestID = fmt.Sprintf("concurrent-request-%d", index)
 		request.Owner = owner
 		request.MaxRequests = 1
+		request = preparePostgresApprovalRequest(request)
+		ensurePostgresCrawlApproval(t, db, request)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -392,9 +446,10 @@ func TestPostgresCrawlSchedulingConcurrentRetryWithQuota(t *testing.T) {
 	db, sqlDB := openPostgresIntegrationTestDB(t)
 	sourceID := createCrawlSchedulingSource(t, db, fmt.Sprintf("wp03b1-retry-quota-%d", time.Now().UnixNano()))
 	setCrawlSchedulingSourceState(t, db, sourceID, "completed", "", false)
-	request := crawlSchedulingRequest(sourceID)
+	request := preparePostgresApprovalRequest(crawlSchedulingRequest(sourceID))
 	request.MaxRequests = 1
 	request.BudgetWindow = time.Hour
+	ensurePostgresCrawlApproval(t, db, request)
 
 	type outcome struct {
 		result CrawlScheduleResult
@@ -458,7 +513,7 @@ func TestPostgresCrawlSchedulingMalformedQuotaRecordFailsClosed(t *testing.T) {
 		`{"request_id":"malformed","owner":7,"operation_type":"crawl"}`); err != nil {
 		t.Fatalf("insert malformed operation: %v", err)
 	}
-	result, err := ScheduleSourceCrawlRequest(context.Background(), db, crawlSchedulingRequest(sourceID))
+	result, err := schedulePostgresWithApproval(t, db, crawlSchedulingRequest(sourceID))
 	if err == nil {
 		t.Fatal("malformed quota record did not fail closed")
 	}
@@ -485,6 +540,9 @@ func TestPostgresSourceOwnerLookup(t *testing.T) {
 	db, sqlDB := openPostgresIntegrationTestDB(t)
 	sourceID := createCrawlSchedulingSource(t, db, fmt.Sprintf("wp03b2a-owner-%d", time.Now().UnixNano()))
 
+	if _, err := sqlDB.Exec(`UPDATE Sources SET usr_id=0 WHERE source_id=$1`, sourceID); err != nil {
+		t.Fatalf("clear source owner: %v", err)
+	}
 	owner, err := GetSourceOwner(context.Background(), db, sourceID)
 	if err != nil {
 		t.Fatalf("default owner lookup: %v", err)

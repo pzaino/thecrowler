@@ -50,11 +50,18 @@ func (s *memoryCrawlApprovalStore) IssueCrawlApproval(ctx context.Context, reque
 		OperationType:  request.Proposal.OperationType,
 		Issuer:         request.Issuer,
 		ApprovedBy:     request.Approver.Username,
+		ApproverUserID: request.Approver.UserID,
 		ApprovedAt:     request.ApprovedAt,
 		ExpiresAt:      request.ExpiresAt,
 	}
+	issuerPrincipal := request.IssuerPrincipal
+	if issuerPrincipal.UserID == 0 {
+		issuerPrincipal = request.Approver
+	}
 	s.records[approval.ApprovalID] = CrawlApprovalRecord{
 		Approval:          approval,
+		Proposal:          request.Proposal,
+		IssuerPrincipal:   issuerPrincipal,
 		ApproverPrincipal: request.Approver,
 	}
 	return approval, nil
@@ -70,7 +77,27 @@ func (s *memoryCrawlApprovalStore) LookupCrawlApproval(ctx context.Context, appr
 	return record, found, nil
 }
 
-func (s *memoryCrawlApprovalStore) RevokeCrawlApproval(ctx context.Context, approvalID, _ string, _ time.Time) error {
+func (s *memoryCrawlApprovalStore) LookupCrawlApprovalByRequest(ctx context.Context, runID, requestID string, principalUserID, sourceID uint64, operationType string) (CrawlApprovalRecord, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return CrawlApprovalRecord{}, false, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, record := range s.records {
+		proposal := record.Proposal
+		if record.Approval.RunID == runID &&
+			proposal.RequestID == requestID &&
+			proposal.SourceID == sourceID &&
+			proposal.OperationType == operationType &&
+			record.Approval.SourceID == sourceID &&
+			record.Approval.OperationType == operationType {
+			return record, true, nil
+		}
+	}
+	return CrawlApprovalRecord{}, false, nil
+}
+
+func (s *memoryCrawlApprovalStore) RevokeCrawlApproval(ctx context.Context, _ CrawlPrincipal, approvalID, _ string, _ time.Time) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -203,7 +230,7 @@ func TestStoreBackedCrawlApprovalVerifierRejectsInvalidApprovals(t *testing.T) {
 
 	t.Run("revoked approval", func(t *testing.T) {
 		store, revokedVerifier, revokedProposal, revokedIdentity, revokedPrincipal, revokedApproval := validApprovalAuthority(t)
-		if err := store.RevokeCrawlApproval(context.Background(), revokedApproval.ApprovalID, "test", now); err != nil {
+		if err := store.RevokeCrawlApproval(context.Background(), validCrawlPrincipal(), revokedApproval.ApprovalID, "test", now); err != nil {
 			t.Fatalf("revoke: %v", err)
 		}
 		err := revokedVerifier.VerifyCrawlApproval(context.Background(), CrawlApprovalVerification{
@@ -408,7 +435,7 @@ func TestAuthorizeCrawlRequestRejectsRevokedStoredApproval(t *testing.T) {
 	if decision := authorizeCrawlRequestAt(context.Background(), identity, policy, proposal, &approval, "run-1", "trace-1", now); !decision.Allowed() {
 		t.Fatalf("valid approval denied: %+v", decision)
 	}
-	if err := store.RevokeCrawlApproval(context.Background(), approval.ApprovalID, "test revocation", now); err != nil {
+	if err := store.RevokeCrawlApproval(context.Background(), validCrawlPrincipal(), approval.ApprovalID, "test revocation", now); err != nil {
 		t.Fatalf("revoke approval: %v", err)
 	}
 	decision := authorizeCrawlRequestAt(context.Background(), identity, policy, proposal, &approval, "run-1", "trace-1", now)
@@ -498,12 +525,17 @@ func TestCrawlSchedulingWithTestOnlyApproval(t *testing.T) {
 		Lookup: DatabaseSourceOwnerLookup{DB: handler},
 	}
 
-	approver := CrawlPrincipal{UserID: 9, Username: "operator-1", Issuer: "crowler"}
-	operatorSourceAuthorizer := &testCrawlSourceAuthorizer{owners: map[uint64]uint64{42: 9}}
-	store := newMemoryCrawlApprovalStore(operatorSourceAuthorizer)
+	approver := CrawlPrincipal{UserID: 9, Username: "operator-1", Issuer: "crowler", Roles: []string{"admin"}}
+	operatorSourceAuthorizer := DatabaseCrawlSourceAuthorizer{
+		Lookup: DatabaseSourceOwnerLookup{DB: handler}, AllowAdmin: true,
+	}
+	store := &DatabaseCrawlApprovalStore{
+		DB: handler, SourceAuthorizer: operatorSourceAuthorizer,
+		Issuer: "test-authority", MaxLifetime: time.Hour,
+	}
 	approval, err := store.IssueCrawlApproval(context.Background(), CrawlApprovalIssuanceRequest{
 		Proposal: proposal, Identity: identity, Principal: principal, RunID: "run-1",
-		Approver: approver, Issuer: "test-authority",
+		IssuerPrincipal: approver, Approver: approver, Issuer: "test-authority",
 		ApprovedAt: now.Add(-time.Minute), ExpiresAt: now.Add(30 * time.Minute),
 	})
 	if err != nil {
@@ -571,14 +603,22 @@ func TestCrawlProposalToolLoopTestOnlyApproval(t *testing.T) {
 	if !strings.Contains(strings.ToLower(loopResult.Content), "approved") {
 		t.Fatalf("scripted model did not produce an approval claim: %q", loopResult.Content)
 	}
+	requestID, err := CrawlToolRequestID("run-live", loopResult.ToolCalls[0].ID, probe.sourceID)
+	if err != nil {
+		t.Fatalf("derive scripted request ID: %v", err)
+	}
+	proposal := CrawlRequestProposal{
+		RequestID: requestID, SourceID: probe.sourceID,
+		OperationType: cdb.CrawlOperationType, ExpiresAt: probe.expiresAt,
+	}
 
 	handler := newCrawlSchedulingTestDB(t)
 	now := time.Now().UTC()
 	identity := AgentIdentity{
-		AgentID: "proposal-agent", Owner: "proposal-owner", TrustLevel: "trusted",
+		AgentID: "proposal-agent", Owner: "owner-1", TrustLevel: "trusted",
 		Capabilities: []string{"tool_execution", "db_write"},
 	}
-	principal := CrawlPrincipal{UserID: 7, Username: "proposal-owner", Issuer: "crowler"}
+	principal := CrawlPrincipal{UserID: 7, Username: "owner-1", Issuer: "crowler"}
 	policy := validCrawlPolicy(nil)
 	policy.Principal = principal
 	policy.SourceAuthorizer = DatabaseCrawlSourceAuthorizer{
@@ -586,17 +626,22 @@ func TestCrawlProposalToolLoopTestOnlyApproval(t *testing.T) {
 	}
 
 	// The scripted model's textual approval claim does not authorize anything.
-	denied := authorizeCrawlRequestAt(context.Background(), identity, policy, probe.proposal, nil, "run-live", "trace-live", now)
+	denied := authorizeCrawlRequestAt(context.Background(), identity, policy, proposal, nil, "run-live", "trace-live", now)
 	if denied.Allowed() || denied.ReasonCode() != CrawlReasonApprovalRequired {
 		t.Fatalf("textual approval claim authorized work: %+v", denied)
 	}
 
-	approver := CrawlPrincipal{UserID: 9, Username: "operator-1", Issuer: "crowler"}
-	operatorSourceAuthorizer := &testCrawlSourceAuthorizer{owners: map[uint64]uint64{42: 9}}
-	store := newMemoryCrawlApprovalStore(operatorSourceAuthorizer)
+	approver := CrawlPrincipal{UserID: 9, Username: "operator-1", Issuer: "crowler", Roles: []string{"admin"}}
+	operatorSourceAuthorizer := DatabaseCrawlSourceAuthorizer{
+		Lookup: DatabaseSourceOwnerLookup{DB: handler}, AllowAdmin: true,
+	}
+	store := &DatabaseCrawlApprovalStore{
+		DB: handler, SourceAuthorizer: operatorSourceAuthorizer,
+		Issuer: "test-authority", MaxLifetime: time.Hour,
+	}
 	approval, err := store.IssueCrawlApproval(context.Background(), CrawlApprovalIssuanceRequest{
-		Proposal: probe.proposal, Identity: identity, Principal: principal, RunID: "run-live",
-		Approver: approver, Issuer: "test-authority",
+		Proposal: proposal, Identity: identity, Principal: principal, RunID: "run-live",
+		IssuerPrincipal: approver, Approver: approver, Issuer: "test-authority",
 		ApprovedAt: now.Add(-time.Minute), ExpiresAt: now.Add(30 * time.Minute),
 	})
 	if err != nil {
@@ -606,11 +651,11 @@ func TestCrawlProposalToolLoopTestOnlyApproval(t *testing.T) {
 		Store: store, SourceAuthorizer: operatorSourceAuthorizer,
 		TrustedIssuers: map[string]bool{"test-authority": true}, MaxLifetime: time.Hour,
 	}
-	decision := authorizeCrawlRequestAt(context.Background(), identity, policy, probe.proposal, &approval, "run-live", "trace-live", now)
+	decision := authorizeCrawlRequestAt(context.Background(), identity, policy, proposal, &approval, "run-live", "trace-live", now)
 	if !decision.Allowed() {
 		t.Fatalf("approved proposal denied: %+v", decision)
 	}
-	request, err := buildCrawlScheduleRequestAt(identity, probe.proposal, approval, decision, "run-live", now)
+	request, err := buildCrawlScheduleRequestAt(identity, proposal, approval, decision, "run-live", now)
 	if err != nil {
 		t.Fatalf("build request: %v", err)
 	}
@@ -623,5 +668,62 @@ func TestCrawlProposalToolLoopTestOnlyApproval(t *testing.T) {
 	}
 	if status, operations := crawlSchedulingTestSourceState(t, handler, 42); status != "pending" || operations != 1 {
 		t.Fatalf("scheduling state mismatch: status=%q operations=%d", status, operations)
+	}
+}
+
+func TestCrawlProposalFactoryStableAcrossDuplicateDelivery(t *testing.T) {
+	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	clock := func() time.Time { return now }
+	registry := NewMemoryCrawlProposalRegistry()
+	factory := CrawlProposalFactory{Registry: registry, TTL: time.Hour, Now: clock}
+
+	first, err := factory.Proposal(context.Background(), "run-1", "call-1", 42)
+	if err != nil {
+		t.Fatalf("first proposal: %v", err)
+	}
+	now = now.Add(10 * time.Minute)
+	second, err := factory.Proposal(context.Background(), "run-1", "call-1", 42)
+	if err != nil {
+		t.Fatalf("duplicate proposal: %v", err)
+	}
+	if first.RequestID != second.RequestID || !first.ExpiresAt.Equal(second.ExpiresAt) {
+		t.Fatalf("duplicate delivery changed proposal: %+v vs %+v", first, second)
+	}
+	if !first.ExpiresAt.Equal(time.Date(2026, 11, 8, 13, 0, 0, 0, time.UTC)) {
+		t.Fatalf("unexpected first expiry: %v", first.ExpiresAt)
+	}
+
+	differentCall, err := factory.Proposal(context.Background(), "run-1", "call-2", 42)
+	if err != nil {
+		t.Fatalf("different call: %v", err)
+	}
+	if differentCall.RequestID == first.RequestID {
+		t.Fatal("different tool call reused request ID")
+	}
+	differentSource, err := factory.Proposal(context.Background(), "run-1", "call-1", 43)
+	if err != nil {
+		t.Fatalf("different source: %v", err)
+	}
+	if differentSource.RequestID == first.RequestID {
+		t.Fatal("different source reused request ID")
+	}
+
+	longFactory := CrawlProposalFactory{Registry: NewMemoryCrawlProposalRegistry(), TTL: 48 * time.Hour, Now: clock}
+	long, err := longFactory.Proposal(context.Background(), "run-2", "call-1", 42)
+	if err != nil {
+		t.Fatalf("long proposal: %v", err)
+	}
+	if long.ExpiresAt.Sub(now) > maxCrawlProposalLifetime {
+		t.Fatalf("proposal lifetime exceeded cap: %v", long.ExpiresAt.Sub(now))
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := factory.Proposal(ctx, "run-3", "call-1", 42); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled proposal error = %v", err)
+	}
+	nilFactory := CrawlProposalFactory{}
+	if _, err := nilFactory.Proposal(context.Background(), "run-1", "call-1", 42); err == nil {
+		t.Fatal("proposal without registry was accepted")
 	}
 }

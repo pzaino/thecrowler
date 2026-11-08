@@ -80,7 +80,7 @@ func validCrawlPolicyApproval(proposal CrawlRequestProposal) CrawlRequestApprova
 		ApprovalID: "approval-1", ProposalSHA256: proposal.Fingerprint(),
 		RunID: "run-1", AgentID: "agent-1", Owner: "owner-1", SourceID: 42,
 		OperationType: cdb.CrawlOperationType, Issuer: "test-authority",
-		ApprovedBy: "operator-1", ApprovedAt: now.Add(-time.Minute),
+		ApprovedBy: "operator-1", ApproverUserID: 9, ApprovedAt: now.Add(-time.Minute),
 		ExpiresAt: now.Add(30 * time.Minute),
 	}
 }

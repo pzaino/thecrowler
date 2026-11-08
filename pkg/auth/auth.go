@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -70,6 +71,45 @@ func Login(ctx context.Context, db Store, c cfg.AuthConfig, username, password s
 	}
 	roles, scopes := LoadGrants(ctx, db, id)
 	return IssueToken(c, Identity{Subject: id, Username: username, Issuer: "crowler", Roles: roles, Scopes: scopes}, "")
+}
+
+// ResolveActiveIdentity turns an authenticated token identity into the
+// current authoritative local user identity. It rejects non-numeric external
+// subjects, deleted users, disabled users and missing user rows. Roles and
+// scopes are reloaded from the database so revoked grants take effect without
+// waiting for token expiry.
+func ResolveActiveIdentity(ctx context.Context, db Store, identity Identity) (Identity, error) {
+	userID, err := strconv.ParseUint(strings.TrimSpace(identity.Subject), 10, 64)
+	if err != nil || userID == 0 {
+		return Identity{}, ErrUnauthorized
+	}
+	qs, ok := db.(queryRowStore)
+	if !ok || qs == nil {
+		return Identity{}, ErrUnauthorized
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	var username string
+	var disabled bool
+	var deletedAt sql.NullTime
+	if err := qs.QueryRowContext(ctx,
+		`SELECT username, disabled, deleted_at FROM Users WHERE user_id = $1`,
+		userID).Scan(&username, &disabled, &deletedAt); err != nil {
+		return Identity{}, ErrUnauthorized
+	}
+	if disabled || deletedAt.Valid {
+		return Identity{}, ErrUnauthorized
+	}
+	subject := strconv.FormatUint(userID, 10)
+	roles, scopes := LoadGrants(ctx, db, subject)
+	issuer := strings.TrimSpace(identity.Issuer)
+	if issuer == "" {
+		issuer = "crowler"
+	}
+	return Identity{
+		Subject: subject, Username: username, Issuer: issuer, TokenID: identity.TokenID,
+		Roles: roles, Scopes: scopes, ExpiresAt: identity.ExpiresAt,
+	}, nil
 }
 
 func LoadGrants(ctx context.Context, db Store, userID string) ([]string, []string) {

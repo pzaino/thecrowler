@@ -795,6 +795,20 @@ func performAddSourceContext(ctx context.Context, query string, qType int, db *c
 		}
 	}
 
+	access, err := authorizeSourceURL(ctx, *db, params.URL, true)
+	if err != nil {
+		return ConsoleResponse{Message: "Source mutation is not authorized"}, err
+	}
+	if access.Authenticated {
+		if access.Existing {
+			// Never transfer ownership through the source upsert. Admins may
+			// update an existing source but its persisted owner is preserved.
+			params.UsrID = access.OwnerID
+		} else {
+			params.UsrID = access.UserID
+		}
+	}
+
 	// Validate & reformat config (same as your logic)
 	if !params.Config.IsEmpty() {
 		if err := validateAndReformatConfig(&params.Config); err != nil {
@@ -927,6 +941,11 @@ func performRemoveSourceContext(ctx context.Context, query string, qType int, db
 		// Handle extraction from a JSON document or other POST data
 		// Assuming you have a method or logic to extract the URL from the POST body
 		return ConsoleResponse{Message: "Invalid request"}, nil
+	}
+
+	sourceURL = cdb.NormalizeSourceURL(sourceURL)
+	if _, err := authorizeSourceURL(ctx, *db, sourceURL, false); err != nil {
+		return ConsoleResponse{Message: "Source mutation is not authorized"}, err
 	}
 
 	// Start a transaction bounded by database.transaction_timeout; the HTTP
@@ -1256,6 +1275,12 @@ func performUpdateSourceContext(ctx context.Context, query string, qType int, db
 		return ConsoleResponse{Message: "Source ID or URL must be provided"}, fmt.Errorf("missing Source ID or URL")
 	}
 
+	access, accessErr := authorizeSourceID(ctx, *db, uint64(sqlParams.SourceID))
+	if accessErr != nil {
+		return ConsoleResponse{Message: "Source mutation is not authorized"}, accessErr
+	}
+	_ = access
+
 	// Retrieve existing data for the source
 	var existingData cdb.UpdateSourceRequest
 	selectQuery := `
@@ -1398,6 +1423,10 @@ func performVacuumSourceContext(ctx context.Context, query string, qType int, db
 		filter.SourceID = int64(sourceID) //nolint:gosec // This is a controlled value
 	} else if filter.SourceID == 0 {
 		return ConsoleResponse{Message: "Source ID or URL must be provided"}, fmt.Errorf("missing Source ID or URL")
+	}
+
+	if _, err := authorizeSourceID(ctx, *db, uint64(filter.SourceID)); err != nil {
+		return ConsoleResponse{Message: "Source mutation is not authorized"}, err
 	}
 
 	// Start a transaction bounded by database.transaction_timeout; the HTTP

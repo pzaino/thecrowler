@@ -71,6 +71,9 @@ const (
 	CrawlReasonBudgetExhausted     = "crawl_request_budget_exhausted"
 	CrawlReasonSourceScopeRequired = "crawl_source_scope_required"
 	CrawlReasonSourceOutOfScope    = "crawl_source_out_of_scope"
+	CrawlReasonApprovalRejected    = "crawl_approval_rejected"
+	CrawlReasonApprovalUnavailable = "crawl_approval_unavailable"
+	CrawlReasonOwnershipRejected   = "crawl_source_ownership_rejected"
 )
 
 var (
@@ -107,6 +110,7 @@ type CrawlScheduleRequest struct {
 	ApprovalID       string
 	ApprovalSHA256   string
 	ApprovedBy       string
+	ApprovedByUserID uint64
 	ApprovedAt       time.Time
 	ExpiresAt        time.Time
 	MaxRequests      int
@@ -144,6 +148,7 @@ type crawlOperationDetails struct {
 	ApprovalID        string `json:"approval_id,omitempty"`
 	ApprovalSHA256    string `json:"approval_sha256"`
 	ApprovedBy        string `json:"approved_by,omitempty"`
+	ApprovedByUserID  uint64 `json:"approved_by_user_id,omitempty"`
 	ApprovedAt        string `json:"approved_at,omitempty"`
 	ExpiresAt         string `json:"expires_at"`
 	SourceStateBefore string `json:"source_state_before,omitempty"`
@@ -168,6 +173,15 @@ func scheduleSourceCrawlRequest(ctx context.Context, db *Handler, req CrawlSched
 	}
 	if now.IsZero() {
 		now = time.Now().UTC()
+	}
+	// PostgreSQL TIMESTAMPTZ has microsecond precision. Normalize the trusted
+	// request timestamps so a value reconstructed after a database read
+	// compares equal instead of failing on sub-microsecond drift.
+	if !req.ExpiresAt.IsZero() {
+		req.ExpiresAt = req.ExpiresAt.UTC().Truncate(time.Microsecond)
+	}
+	if !req.ApprovedAt.IsZero() {
+		req.ApprovedAt = req.ApprovedAt.UTC().Truncate(time.Microsecond)
 	}
 	result := newCrawlScheduleResult(req, "", now)
 	if err := validateCrawlScheduleRequest(req, now); err != nil {
@@ -237,6 +251,15 @@ func scheduleSourceCrawlRequest(ctx context.Context, db *Handler, req CrawlSched
 	}
 	if found {
 		return resolveExistingCrawlOperation(txCtx, tx, *db, req, result, existing, now)
+	}
+	approvalReason, err := validateCrawlApprovalForScheduling(txCtx, tx, *db, req, now)
+	if err != nil {
+		return crawlOperationFailure(result, txCtx, err)
+	}
+	if approvalReason != "" {
+		result.State = CrawlOperationDenied
+		result.ReasonCode = approvalReason
+		return result, nil
 	}
 	withinBudget, err := crawlRequestWithinBudget(txCtx, tx, *db, req, now)
 	if err != nil {
@@ -350,6 +373,9 @@ func validateCrawlScheduleRequest(req CrawlScheduleRequest, now time.Time) error
 	if req.PrincipalUserID == 0 {
 		return fmt.Errorf("principal_user_id is required")
 	}
+	if req.ApprovedByUserID == 0 {
+		return fmt.Errorf("approved_by_user_id is required")
+	}
 	if req.OperationType != CrawlOperationType {
 		return fmt.Errorf("operation_type must be %q", CrawlOperationType)
 	}
@@ -430,7 +456,8 @@ func crawlOperationDetailsFor(req CrawlScheduleRequest) (crawlOperationDetails, 
 		SourceID: req.SourceID, OperationType: req.OperationType,
 		ParametersSHA256: req.ParametersSHA256, ApprovalID: req.ApprovalID,
 		ApprovalSHA256: req.ApprovalSHA256, ApprovedBy: req.ApprovedBy,
-		ExpiresAt: req.ExpiresAt.UTC().Format(time.RFC3339Nano),
+		ApprovedByUserID: req.ApprovedByUserID,
+		ExpiresAt:        req.ExpiresAt.UTC().Format(time.RFC3339Nano),
 	}
 	if !req.ApprovedAt.IsZero() {
 		details.ApprovedAt = req.ApprovedAt.UTC().Format(time.RFC3339Nano)
@@ -507,6 +534,7 @@ func sameCrawlOperation(details crawlOperationDetails, req CrawlScheduleRequest)
 		details.ApprovalID == req.ApprovalID &&
 		details.ApprovalSHA256 == req.ApprovalSHA256 &&
 		details.ApprovedBy == req.ApprovedBy &&
+		details.ApprovedByUserID == req.ApprovedByUserID &&
 		details.ApprovedAt == req.ApprovedAt.UTC().Format(time.RFC3339Nano) &&
 		details.ExpiresAt == req.ExpiresAt.UTC().Format(time.RFC3339Nano)
 }
@@ -540,6 +568,87 @@ func finishCrawlOperation(ctx context.Context, tx *sql.Tx, db Handler, req Crawl
 		return crawlOperationFailure(result, ctx, err)
 	}
 	return result, nil
+}
+
+// validateCrawlApprovalForScheduling revalidates the authoritative approval
+// and source ownership inside the same transaction that mutates the source.
+// This closes the check-to-mutation race: a revocation or ownership transfer
+// that commits before this transaction takes its locks is observed and denied.
+// On PostgreSQL the approval row is locked after the source row, giving a
+// consistent lock order (source, then approval).
+func validateCrawlApprovalForScheduling(ctx context.Context, tx *sql.Tx, db Handler, req CrawlScheduleRequest, now time.Time) (string, error) {
+	if req.ApprovalID == "" || req.ApprovalSHA256 == "" || req.ParametersSHA256 == "" {
+		return CrawlReasonApprovalRejected, nil
+	}
+	if !supportsCrawlApprovalStore(db) {
+		return CrawlReasonApprovalUnavailable, nil
+	}
+	p := func(n int) string { return crawlPlaceholder(db, n) }
+	query := `SELECT proposal_sha256, request_id, run_id, agent_id, owner,
+		principal_user_id, source_id, operation_type, approval_sha256,
+		approved_by, approved_by_user_id, approved_at, expires_at, revoked_at
+		FROM CrawlApprovals WHERE approval_id = ` + p(1)
+	if normalizeInformationSeedDBMS(db.DBMS()) == DBPostgresStr {
+		query += ` FOR UPDATE`
+	}
+	var (
+		proposalSHA256, requestID, runID, agentID, owner string
+		operationType, approvalSHA256, approvedBy        string
+		principalUserID, sourceID, approvedByUserID      uint64
+		approvedAt, expiresAt                            time.Time
+		revokedAt                                        sql.NullTime
+	)
+	err := tx.QueryRowContext(ctx, query, req.ApprovalID).Scan(
+		&proposalSHA256, &requestID, &runID, &agentID, &owner,
+		&principalUserID, &sourceID, &operationType, &approvalSHA256,
+		&approvedBy, &approvedByUserID, &approvedAt, &expiresAt, &revokedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return CrawlReasonApprovalRejected, nil
+	}
+	if err != nil {
+		if errors.Is(err, ErrCrawlApprovalSchemaUnavailable) ||
+			strings.Contains(strings.ToLower(err.Error()), "no such table") ||
+			strings.Contains(strings.ToLower(err.Error()), "does not exist") {
+			return CrawlReasonApprovalUnavailable, nil
+		}
+		return "", err
+	}
+	if revokedAt.Valid ||
+		proposalSHA256 != req.ParametersSHA256 ||
+		requestID != req.RequestID ||
+		runID != req.RunID ||
+		agentID != req.AgentID ||
+		owner != req.Owner ||
+		principalUserID != req.PrincipalUserID ||
+		sourceID != req.SourceID ||
+		operationType != req.OperationType ||
+		approvalSHA256 != req.ApprovalSHA256 ||
+		approvedBy != req.ApprovedBy ||
+		approvedByUserID != req.ApprovedByUserID ||
+		approvedAt.IsZero() || approvedAt.After(now) ||
+		!expiresAt.After(now) ||
+		req.ExpiresAt.After(expiresAt) ||
+		req.ExpiresAt.After(approvedAt.Add(maxCrawlRequestLifetime)) ||
+		expiresAt.Sub(approvedAt) > maxCrawlRequestLifetime {
+		return CrawlReasonApprovalRejected, nil
+	}
+
+	// Source ownership is revalidated under the source row lock already held by
+	// the caller. A missing source is left to the normal not-found path.
+	ownerQuery := `SELECT usr_id, deleted_at FROM Sources WHERE source_id = ` + p(1)
+	var ownerID uint64
+	var deletedAt sql.NullTime
+	if err := tx.QueryRowContext(ctx, ownerQuery, req.SourceID).Scan(&ownerID, &deletedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return "", err
+	}
+	if deletedAt.Valid || ownerID == 0 || ownerID != req.PrincipalUserID {
+		return CrawlReasonOwnershipRejected, nil
+	}
+	return "", nil
 }
 
 // lockCrawlSource serializes scheduling decisions for one source on

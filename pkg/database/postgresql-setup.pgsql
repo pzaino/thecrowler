@@ -208,6 +208,77 @@ $$;
 
 
 ----------------------------------------------------------------
+
+----------------------------------------------------------------
+-- Durable operator approvals for the crawl-request authorization path.
+-- The table is an immutable audit record plus a revocation state. It is
+-- intentionally not foreign-keyed to Sources/Users so historical approvals
+-- survive source/user lifecycle changes; issuance validates those references
+-- while they are live.
+CREATE TABLE IF NOT EXISTS CrawlApprovals (
+    approval_id CHAR(64) PRIMARY KEY,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    proposal_sha256 CHAR(64) NOT NULL,
+    request_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    owner TEXT NOT NULL,
+    principal_user_id BIGINT NOT NULL,
+    source_id BIGINT NOT NULL,
+    operation_type TEXT NOT NULL,
+
+    issuer TEXT NOT NULL,
+    issued_by_user_id BIGINT NOT NULL,
+    issued_by TEXT NOT NULL,
+    issued_by_issuer TEXT NOT NULL,
+    approved_by_user_id BIGINT NOT NULL,
+    approved_by TEXT NOT NULL,
+    approved_by_issuer TEXT NOT NULL,
+    approval_sha256 CHAR(64) NOT NULL,
+
+    proposal_expires_at TIMESTAMPTZ NOT NULL,
+    approved_at TIMESTAMPTZ NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+
+    revoked_at TIMESTAMPTZ,
+    revoked_by_user_id BIGINT,
+    revoked_by TEXT,
+    revocation_reason TEXT,
+
+    CONSTRAINT uq_crawlapprovals_logical UNIQUE
+        (request_id, run_id, principal_user_id, source_id, operation_type),
+    CONSTRAINT chk_crawlapprovals_hashes CHECK (
+        approval_id ~ '^[0-9a-f]{64}$' AND
+        proposal_sha256 ~ '^[0-9a-f]{64}$' AND
+        approval_sha256 ~ '^[0-9a-f]{64}$'
+    ),
+    CONSTRAINT chk_crawlapprovals_lifetime CHECK (expires_at > approved_at),
+    CONSTRAINT chk_crawlapprovals_max_lifetime
+        CHECK (expires_at <= approved_at + INTERVAL '24 hours')
+);
+
+CREATE INDEX IF NOT EXISTS idx_crawlapprovals_source
+ON CrawlApprovals(source_id, expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_crawlapprovals_principal
+ON CrawlApprovals(principal_user_id, expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_crawlapprovals_request
+ON CrawlApprovals(run_id, request_id);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_update_crawlapprovals_last_updated_before_update') THEN
+        CREATE TRIGGER trg_update_crawlapprovals_last_updated_before_update
+        BEFORE UPDATE ON CrawlApprovals
+        FOR EACH ROW
+        EXECUTE FUNCTION update_last_updated_at_column();
+    END IF;
+END
+$$;
+
 -- InformationSeeds table stores the seed information for the crawler
 CREATE TABLE IF NOT EXISTS InformationSeed (
     information_seed_id BIGSERIAL PRIMARY KEY,
