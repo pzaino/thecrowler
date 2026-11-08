@@ -9,9 +9,9 @@ import (
 
 const (
 	// RequiredSchemaVersion is the oldest (and only) database schema this writer understands.
-	RequiredSchemaVersion = "1.16"
+	RequiredSchemaVersion = "1.17"
 	// WriterGeneration changes whenever two writer implementations may not safely share a database.
-	WriterGeneration = "reservation-v1.15"
+	WriterGeneration = "verified-ownership-v1.17"
 )
 
 var reservationColumns = map[string][]string{
@@ -36,12 +36,33 @@ func CheckStartupCompatibility(ctx context.Context, db Handler) error {
 	}
 
 	required := cloneColumns(reservationColumns)
+	// Authenticated source mutations and agent scheduling require verified
+	// ownership provenance, not only a numeric Sources.usr_id. Every supported
+	// backend must therefore expose the v1.17 provenance table.
+	required["SourceOwnership"] = []string{
+		"source_id", "user_id", "verified_at", "verified_by_user_id",
+		"verified_by", "verification_method",
+	}
 	switch normalizeDBMS(db.DBMS()) {
 	case "postgres":
+		required["CrawlApprovals"] = []string{
+			"approval_id", "proposal_sha256", "request_id", "run_id", "agent_id",
+			"owner", "principal_user_id", "source_id", "operation_type",
+			"approval_sha256", "expires_at", "revoked_at",
+		}
 		required["TimeSeriesCardinalityTokens"] = []string{"token_number"}
 		required["TimeSeriesSeriesSlots"] = []string{"metric_id", "slot_number", "series_hash", "identity_value"}
 		required["TimeSeriesDimensionSlots"] = []string{"metric_id", "dimension_key", "slot_number", "value_hash", "identity_value"}
-	case "mysql", "sqlite":
+	case "sqlite":
+		required["CrawlApprovals"] = []string{
+			"approval_id", "proposal_sha256", "request_id", "run_id", "agent_id",
+			"owner", "principal_user_id", "source_id", "operation_type",
+			"approval_sha256", "expires_at", "revoked_at",
+		}
+		required["TimeSeriesCardinalityMaintenanceLock"] = []string{"lock_id"}
+	case "mysql":
+		// MySQL keeps ownership provenance but does not support durable crawl
+		// approvals in this release.
 		required["TimeSeriesCardinalityMaintenanceLock"] = []string{"lock_id"}
 	default:
 		missing = append(missing, "supported database metadata provider")

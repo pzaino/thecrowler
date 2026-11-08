@@ -127,14 +127,14 @@ CREATE TABLE IF NOT EXISTS DBSchemaVersion (
 DO $$
 BEGIN
     IF NOT EXISTS (
-        SELECT 1 FROM DBSchemaVersion WHERE version = '1.16'
+        SELECT 1 FROM DBSchemaVersion WHERE version = '1.17'
     ) THEN
         INSERT INTO DBSchemaVersion (version, description)
-        VALUES ('1.16', 'CROWler DB schema version 1.16');
+        VALUES ('1.17', 'CROWler DB schema version 1.17');
     END IF;
 END
 $$;
-UPDATE DBSchemaVersion SET is_current = (version = '1.16');
+UPDATE DBSchemaVersion SET is_current = (version = '1.17');
 CREATE UNIQUE INDEX IF NOT EXISTS uq_dbschemaversion_one_current
     ON DBSchemaVersion (is_current) WHERE is_current = TRUE;
 ----------------------------------------------------------------
@@ -383,6 +383,40 @@ CREATE TABLE IF NOT EXISTS Sources (
 
 CREATE INDEX IF NOT EXISTS idx_sources_priority_sub_priority
 ON Sources(priority, sub_priority DESC, source_id ASC);
+
+----------------------------------------------------------------
+-- SourceOwnership records verified, authoritative source ownership.
+-- Sources.usr_id remains the persisted owner identifier, but a source is only
+-- eligible for authenticated owner mutations and agent scheduling when this
+-- table contains a matching verified row. Historical rows without a provenance
+-- record remain legacy/unverified until an administrator verifies them.
+CREATE TABLE IF NOT EXISTS SourceOwnership (
+    source_id BIGINT PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    verified_at TIMESTAMPTZ NOT NULL,
+    verified_by_user_id BIGINT NOT NULL,
+    verified_by TEXT NOT NULL,
+    verification_method TEXT NOT NULL,
+    verification_reason TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_sourceownership_user CHECK (user_id > 0),
+    CONSTRAINT chk_sourceownership_verifier CHECK (verified_by_user_id > 0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sourceownership_user
+ON SourceOwnership(user_id);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_update_sourceownership_last_updated_before_update') THEN
+        CREATE TRIGGER trg_update_sourceownership_last_updated_before_update
+        BEFORE UPDATE ON SourceOwnership
+        FOR EACH ROW
+        EXECUTE FUNCTION update_last_updated_at_column();
+    END IF;
+END
+$$;
 
 --------------------------------------------------------------------------------
 
@@ -2354,7 +2388,7 @@ CREATE TABLE IF NOT EXISTS TimeSeriesDimensionSlots (
 CREATE TABLE IF NOT EXISTS DatabaseWriterCompatibility (
     lock_id INTEGER PRIMARY KEY CHECK(lock_id = 1), writer_generation TEXT NOT NULL
 );
-INSERT INTO DatabaseWriterCompatibility(lock_id,writer_generation) VALUES (1,'reservation-v1.15')
+INSERT INTO DatabaseWriterCompatibility(lock_id,writer_generation) VALUES (1,'verified-ownership-v1.17')
 ON CONFLICT (lock_id) DO UPDATE SET writer_generation=EXCLUDED.writer_generation;
 
 CREATE TABLE IF NOT EXISTS TimeSeriesAggregates (
@@ -3812,6 +3846,8 @@ ALTER TABLE httpinfo OWNER TO :CROWLER_DB_USER;
 ALTER TABLE webobjects OWNER TO :CROWLER_DB_USER;
 ALTER TABLE metatags OWNER TO :CROWLER_DB_USER;
 ALTER TABLE sources OWNER TO :CROWLER_DB_USER;
+ALTER TABLE sourceownership OWNER TO :CROWLER_DB_USER;
+ALTER TABLE crawlapprovals OWNER TO :CROWLER_DB_USER;
 ALTER TABLE owners OWNER TO :CROWLER_DB_USER;
 ALTER TABLE screenshots OWNER TO :CROWLER_DB_USER;
 ALTER TABLE keywords OWNER TO :CROWLER_DB_USER;

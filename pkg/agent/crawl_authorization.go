@@ -115,18 +115,21 @@ type CrawlSourceOwnerLookup interface {
 	LookupCrawlSourceOwner(ctx context.Context, sourceID uint64) (cdb.SourceOwner, error)
 }
 
-// DatabaseSourceOwnerLookup reads the persisted owner from Sources.usr_id.
+// DatabaseSourceOwnerLookup reads verified source ownership from the v1.17
+// SourceOwnership provenance table. A legacy nonzero Sources.usr_id without a
+// matching provenance row is treated as unknown ownership.
 type DatabaseSourceOwnerLookup struct {
 	DB *cdb.Handler
 }
 
 // LookupCrawlSourceOwner implements CrawlSourceOwnerLookup.
 func (l DatabaseSourceOwnerLookup) LookupCrawlSourceOwner(ctx context.Context, sourceID uint64) (cdb.SourceOwner, error) {
-	return cdb.GetSourceOwner(ctx, l.DB, sourceID)
+	return cdb.GetVerifiedSourceOwner(ctx, l.DB, sourceID)
 }
 
-// DatabaseCrawlSourceAuthorizer enforces source ownership using the persisted
-// Sources.usr_id value. Missing, zero and unknown ownership fail closed.
+// DatabaseCrawlSourceAuthorizer enforces source ownership using verified
+// provenance returned by its lookup. Missing, zero, legacy and unknown
+// ownership fail closed.
 type DatabaseCrawlSourceAuthorizer struct {
 	Lookup     CrawlSourceOwnerLookup
 	AllowAdmin bool
@@ -154,6 +157,9 @@ func (a DatabaseCrawlSourceAuthorizer) AuthorizeCrawlSource(ctx context.Context,
 		return ErrCrawlSourceAuthorizationUnavailable
 	}
 	if !owner.Found || owner.UserID == 0 {
+		return ErrCrawlSourceOwnershipMissing
+	}
+	if !owner.Verified && !(a.AllowAdmin && principal.IsSourceAdministrator()) {
 		return ErrCrawlSourceOwnershipMissing
 	}
 	if owner.UserID != principal.UserID && !(a.AllowAdmin && principal.IsSourceAdministrator()) {

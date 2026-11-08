@@ -183,7 +183,9 @@ WP-03B2B revalidates authorization inside the scheduling transaction. After
 the source row is locked and the operation idempotency key is re-read, the
 durable `CrawlApprovals` row is locked on PostgreSQL and checked for proposal,
 run, agent, owner, principal, source, operation, approver-user-ID,
-revocation and expiry. Source `usr_id` and deletion state are rechecked under
+revocation and expiry. The approver account must still be active, and a
+non-owner approver must still hold an administrative role. Source `usr_id`,
+verified `SourceOwnership` provenance and deletion state are rechecked under
 the same source lock. The lock order is source then approval; revocation locks
 only the approval row.
 
@@ -199,10 +201,12 @@ current schema does not contain it, so the new API fails closed with
 `crawl_store_unsupported` on MySQL; `ScheduleSourceCrawl()` remains available
 for legacy MySQL callers but does not claim durable idempotency.
 
-No migration is required for this implementation. If maintainers prefer a
-dedicated crawl-request table instead of the generic existing `Status` table,
-that must be a separately approved WP-03B2C migration; the internal API and
-result contract can be retained.
+The scheduling foundation itself uses the existing `Status` table. The v1.17
+migration adds the approval and verified-ownership tables required by the
+authorization path, not a second scheduling queue. If maintainers later prefer
+a dedicated crawl-request table instead of `Status`, that must remain inside a
+separately approved schema contract; the internal API and result contract can
+be retained.
 
 ## 4. Proposal, allowlist, ownership and approval boundary
 
@@ -273,14 +277,17 @@ grant. A matching approval structure is not sufficient: the verifier must
 resolve the approval in an authoritative store, match every binding, check
 revocation and verify the approver's source authority.
 
-The clean-install PostgreSQL/SQLite setup includes `CrawlApprovals`. The exact
-additive upgrade is prepared as `db_migrations/*-v1.17.*`; it is not applied
-automatically to an existing deployment database and `RequiredSchemaVersion`
-remains `1.16` until maintainers approve the activation. The approval store
-fails closed when the table is absent. Source creation now derives ownership
-from the authenticated local user when API authentication is enabled; the
-remaining agent-principal runtime wiring and external-identity mapping are
-documented in [`crawl_request_authorization.md`](crawl_request_authorization.md).
+The clean-install PostgreSQL/SQLite setup includes `CrawlApprovals` and
+`SourceOwnership`; the v1.17 migrations add them to existing databases.
+`RequiredSchemaVersion` is `1.17` and the writer generation is
+`verified-ownership-v1.17`. Source creation derives ownership from the
+authenticated local user when API authentication is enabled and records
+verified provenance. Historical `usr_id` values remain unverified until an
+administrator uses the ownership-verification endpoint. MySQL keeps the
+ownership table but does not support durable approvals or authenticated atomic
+source mutation. The remaining agent-principal runtime wiring and
+external-identity mapping are documented in
+[`crawl_request_authorization.md`](crawl_request_authorization.md).
 
 ### Decision integrity
 

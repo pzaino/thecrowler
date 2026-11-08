@@ -25,8 +25,35 @@ func createCrawlSchedulingSource(t *testing.T, db *Handler, priority string) uin
 	if err != nil {
 		t.Fatalf("create source: %v", err)
 	}
+	if _, err := (*db).Exec(`INSERT INTO AuthRoles(name, description) VALUES
+		('admin', 'test administrator'), ('user', 'test user')
+		ON CONFLICT (name) DO NOTHING`); err != nil {
+		t.Fatalf("ensure scheduling roles: %v", err)
+	}
+	if _, err := (*db).Exec(`INSERT INTO Users(user_id, username, disabled, deleted_at) VALUES
+		(7, 'wp03b1-owner', FALSE, NULL), (9, 'wp03b1-operator', FALSE, NULL)
+		ON CONFLICT (user_id) DO UPDATE SET username=EXCLUDED.username, disabled=FALSE, deleted_at=NULL`); err != nil {
+		t.Fatalf("ensure scheduling users: %v", err)
+	}
+	if _, err := (*db).Exec(`INSERT INTO UserRoles(user_id, role_id)
+		SELECT 7, role_id FROM AuthRoles WHERE name='user'
+		ON CONFLICT DO NOTHING`); err != nil {
+		t.Fatalf("grant scheduling user role: %v", err)
+	}
+	if _, err := (*db).Exec(`INSERT INTO UserRoles(user_id, role_id)
+		SELECT 9, role_id FROM AuthRoles WHERE name='admin'
+		ON CONFLICT DO NOTHING`); err != nil {
+		t.Fatalf("grant scheduling admin role: %v", err)
+	}
+	if _, err := (*db).Exec(`INSERT INTO SourceOwnership
+		(source_id, user_id, verified_at, verified_by_user_id, verified_by, verification_method)
+		VALUES ($1, 7, NOW(), 7, 'wp03b1-fixture', 'admin_verification')
+		ON CONFLICT (source_id) DO UPDATE SET user_id=EXCLUDED.user_id, verified_at=EXCLUDED.verified_at`, id); err != nil {
+		t.Fatalf("record scheduling ownership: %v", err)
+	}
 	t.Cleanup(func() {
 		_, _ = (*db).Exec(`DELETE FROM Status WHERE source_id=$1`, id)
+		_, _ = (*db).Exec(`DELETE FROM SourceOwnership WHERE source_id=$1`, id)
 		_, _ = (*db).Exec(`DELETE FROM Sources WHERE source_id=$1`, id)
 	})
 	return id

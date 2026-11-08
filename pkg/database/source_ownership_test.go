@@ -6,6 +6,8 @@ import (
 	"errors"
 	"testing"
 
+	cfg "github.com/pzaino/thecrowler/pkg/config"
+
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -22,6 +24,14 @@ func newSourceOwnershipTestDB(t *testing.T) (*sql.DB, Handler) {
 		url TEXT UNIQUE,
 		usr_id INTEGER NOT NULL DEFAULT 0,
 		deleted_at TIMESTAMP
+	); CREATE TABLE SourceOwnership (
+		source_id INTEGER PRIMARY KEY,
+		user_id INTEGER NOT NULL,
+		verified_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		verified_by_user_id INTEGER NOT NULL,
+		verified_by TEXT NOT NULL,
+		verification_method TEXT NOT NULL,
+		verification_reason TEXT
 	)`); err != nil {
 		t.Fatalf("create Sources: %v", err)
 	}
@@ -29,7 +39,27 @@ func newSourceOwnershipTestDB(t *testing.T) (*sql.DB, Handler) {
 }
 
 func TestGetSourceOwner(t *testing.T) {
-	t.Run("owned source", func(t *testing.T) {
+	t.Run("verified owned source", func(t *testing.T) {
+		db, handler := newSourceOwnershipTestDB(t)
+		if _, err := db.Exec(`INSERT INTO Sources(source_id, usr_id) VALUES (42, 7);
+			INSERT INTO SourceOwnership(source_id, user_id, verified_by_user_id, verified_by, verification_method)
+			VALUES (42, 7, 9, 'admin', 'admin_verification')`); err != nil {
+			t.Fatalf("insert source: %v", err)
+		}
+		owner, err := GetSourceOwner(context.Background(), &handler, 42)
+		if err != nil {
+			t.Fatalf("get owner: %v", err)
+		}
+		if !owner.Found || owner.SourceID != 42 || owner.UserID != 7 || !owner.Verified {
+			t.Fatalf("unexpected owner: %+v", owner)
+		}
+		verified, err := GetVerifiedSourceOwner(context.Background(), &handler, 42)
+		if err != nil || !verified.Found || !verified.Verified || verified.UserID != 7 {
+			t.Fatalf("verified owner lookup: %+v, %v", verified, err)
+		}
+	})
+
+	t.Run("legacy owner without provenance", func(t *testing.T) {
 		db, handler := newSourceOwnershipTestDB(t)
 		if _, err := db.Exec(`INSERT INTO Sources(source_id, usr_id) VALUES (42, 7)`); err != nil {
 			t.Fatalf("insert source: %v", err)
@@ -38,8 +68,12 @@ func TestGetSourceOwner(t *testing.T) {
 		if err != nil {
 			t.Fatalf("get owner: %v", err)
 		}
-		if !owner.Found || owner.SourceID != 42 || owner.UserID != 7 {
-			t.Fatalf("unexpected owner: %+v", owner)
+		if !owner.Found || owner.UserID != 7 || owner.Verified {
+			t.Fatalf("legacy owner should be unverified: %+v", owner)
+		}
+		verified, err := GetVerifiedSourceOwner(context.Background(), &handler, 42)
+		if err != nil || verified.Found || verified.UserID != 0 {
+			t.Fatalf("legacy source exposed as verified: %+v, %v", verified, err)
 		}
 	})
 
@@ -125,5 +159,23 @@ func TestGetSourceOwnerByURL(t *testing.T) {
 	}
 	if owner, err := GetSourceOwnerByURL(context.Background(), &handler, "https://missing.example/", true); err != nil || owner.Found {
 		t.Fatalf("missing URL owner: %+v, %v", owner, err)
+	}
+}
+
+func TestAuthenticatedSourceMutationUnsupportedBackend(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+	handler := Handler(&SQLiteHandler{db: db, dbms: DBMySQLStr})
+	if _, _, err := UpsertAuthenticatedSourceContext(context.Background(), &handler,
+		&Source{URL: "https://unsupported.example/"}, cfg.SourceConfig{}, 7, "owner", false); !errors.Is(err, ErrAuthenticatedSourceUnsupported) {
+		t.Fatalf("unsupported authenticated upsert error = %v", err)
+	}
+	if _, err := VerifySourceOwnershipContext(context.Background(), &handler, SourceOwnershipVerification{
+		SourceID: 1, UserID: 7, VerifiedByUserID: 9,
+	}); !errors.Is(err, ErrAuthenticatedSourceUnsupported) {
+		t.Fatalf("unsupported ownership verification error = %v", err)
 	}
 }

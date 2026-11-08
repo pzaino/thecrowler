@@ -48,6 +48,8 @@ or query mechanics should remain behind the abstractions exposed by `pkg/databas
 
 - `docs/database/database_architecture.md` — schema layout and migration
   coverage.
-- `docs/database/high_churn_hardening.md` — schema v1.16: bounded
-  transactions (`transaction_timeout`), `ObjectAttributes` autovacuum tuning,
-  and statement-level artifact cleanup triggers.
+- `docs/database/high_churn_hardening.md` — historical schema v1.16 hardening:
+  bounded transactions (`transaction_timeout`), `ObjectAttributes` autovacuum
+  tuning, and statement-level artifact cleanup triggers.
+- `docs/database/database_architecture.md` — current schema v1.17, durable crawl
+  approvals and verified source-ownership provenance.

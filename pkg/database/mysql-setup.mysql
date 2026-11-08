@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS DBSchemaVersion (
 ) ENGINE=InnoDB;
 UPDATE DBSchemaVersion SET is_current = FALSE;
 INSERT INTO DBSchemaVersion(version,description,is_current)
-VALUES ('1.16','CROWler DB schema version 1.16',TRUE)
+VALUES ('1.17','CROWler DB schema version 1.17',TRUE)
 ON DUPLICATE KEY UPDATE description=VALUES(description),is_current=TRUE;
 
 -- InformationSeeds table stores the seed information for the crawler
@@ -132,6 +132,23 @@ CREATE TABLE IF NOT EXISTS Sources (
 
 CREATE INDEX idx_sources_priority_sub_priority
 ON Sources(priority, sub_priority DESC, source_id ASC);
+
+-- Verified source ownership provenance. Sources.usr_id remains the stored owner,
+-- but only a matching row here makes that ownership authoritative.
+CREATE TABLE IF NOT EXISTS SourceOwnership (
+    source_id BIGINT PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    verified_at TIMESTAMP NOT NULL,
+    verified_by_user_id BIGINT NOT NULL,
+    verified_by VARCHAR(255) NOT NULL,
+    verification_method VARCHAR(64) NOT NULL,
+    verification_reason TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (user_id > 0),
+    CHECK (verified_by_user_id > 0),
+    INDEX idx_sourceownership_user (user_id)
+) ENGINE=InnoDB;
 
 --------------------------------------------------------------------------------
 
@@ -867,7 +884,7 @@ INSERT IGNORE INTO TimeSeriesCardinalityMaintenanceLock(lock_id) VALUES (1);
 CREATE TABLE IF NOT EXISTS DatabaseWriterCompatibility (
     lock_id INTEGER NOT NULL PRIMARY KEY, writer_generation VARCHAR(64) NOT NULL, CHECK(lock_id = 1)
 ) ENGINE=InnoDB;
-INSERT INTO DatabaseWriterCompatibility(lock_id,writer_generation) VALUES(1,'reservation-v1.15')
+INSERT INTO DatabaseWriterCompatibility(lock_id,writer_generation) VALUES(1,'verified-ownership-v1.17')
 ON DUPLICATE KEY UPDATE writer_generation=VALUES(writer_generation);
 
 CREATE TABLE IF NOT EXISTS TimeSeriesAggregates (

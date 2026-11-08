@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
@@ -17,6 +18,7 @@ var (
 	errSourceForbidden                = errors.New("source mutation is not authorized")
 	errSourceOwnerUnknown             = errors.New("source ownership is unknown")
 	errSourceNotFound                 = errors.New("source not found")
+	errSourceDeleted                  = errors.New("source is deleted")
 	errSourceAuthorizationUnavailable = errors.New("source authorization is unavailable")
 )
 
@@ -25,9 +27,6 @@ type sourceMutationAccess struct {
 	UserID        uint64
 	Username      string
 	Admin         bool
-	Existing      bool
-	OwnerID       uint64
-	Deleted       bool
 }
 
 func resolveSourceMutationIdentity(ctx context.Context, db cdb.Handler) (auth.Identity, bool, error) {
@@ -57,75 +56,79 @@ func sourceMutationPageAdmin(id auth.Identity) bool {
 	return hasRole(id.Roles, roleAdmin, roleSuperAdmin)
 }
 
-func authorizeSourceID(ctx context.Context, db cdb.Handler, sourceID uint64) (sourceMutationAccess, error) {
-	id, authenticated, err := resolveSourceMutationIdentity(ctx, db)
-	if err != nil || !authenticated {
-		return sourceMutationAccess{Authenticated: authenticated}, err
-	}
+func sourceMutationAccessFromIdentity(id auth.Identity) (sourceMutationAccess, error) {
 	userID, err := sourceMutationUserID(id)
 	if err != nil {
 		return sourceMutationAccess{Authenticated: true}, err
 	}
-	owner, err := cdb.GetSourceOwner(ctx, &db, sourceID)
-	if err != nil {
-		return sourceMutationAccess{Authenticated: true}, errSourceAuthorizationUnavailable
-	}
-	if !owner.Found {
-		return sourceMutationAccess{Authenticated: true}, errSourceNotFound
-	}
-	access := sourceMutationAccess{
-		Authenticated: true, UserID: userID, Username: id.Username,
-		Admin: sourceMutationPageAdmin(id), Existing: true, OwnerID: owner.UserID,
-	}
-	if owner.UserID == 0 && !access.Admin {
-		return access, errSourceOwnerUnknown
-	}
-	if owner.UserID != 0 && owner.UserID != userID && !access.Admin {
-		return access, errSourceForbidden
-	}
-	return access, nil
+	return sourceMutationAccess{
+		Authenticated: true,
+		UserID:        userID,
+		Username:      id.Username,
+		Admin:         sourceMutationPageAdmin(id),
+	}, nil
 }
 
-func authorizeSourceURL(ctx context.Context, db cdb.Handler, sourceURL string, includeDeleted bool) (sourceMutationAccess, error) {
-	id, authenticated, err := resolveSourceMutationIdentity(ctx, db)
-	if err != nil || !authenticated {
-		return sourceMutationAccess{Authenticated: authenticated}, err
+// authorizeSourceMutationTx locks the source row and rechecks verified
+// ownership and, for administrators, the current administrative grant inside
+// the same transaction that mutates the source.
+func authorizeSourceMutationTx(ctx context.Context, tx *sql.Tx, db cdb.Handler, sourceID uint64, access sourceMutationAccess) (cdb.SourceOwner, error) {
+	if !access.Authenticated {
+		return cdb.SourceOwner{}, nil
 	}
-	userID, err := sourceMutationUserID(id)
+	owner, err := cdb.AuthorizeSourceMutationTx(ctx, tx, db, sourceID, access.UserID, access.Admin)
 	if err != nil {
-		return sourceMutationAccess{Authenticated: true}, err
+		return owner, sourceMutationAuthorizationError(err)
 	}
-	owner, err := cdb.GetSourceOwnerByURL(ctx, &db, sourceURL, includeDeleted)
+	return owner, nil
+}
+
+func authorizeSourceMutationByURLTx(ctx context.Context, tx *sql.Tx, db cdb.Handler, sourceURL string, access sourceMutationAccess) (cdb.SourceOwner, error) {
+	if !access.Authenticated {
+		return cdb.SourceOwner{}, nil
+	}
+	owner, err := cdb.AuthorizeSourceMutationByURLTx(ctx, tx, db, sourceURL, access.UserID, access.Admin)
 	if err != nil {
-		return sourceMutationAccess{Authenticated: true}, errSourceAuthorizationUnavailable
+		return owner, sourceMutationAuthorizationError(err)
 	}
-	access := sourceMutationAccess{
-		Authenticated: true, UserID: userID, Username: id.Username,
-		Admin: sourceMutationPageAdmin(id),
+	return owner, nil
+}
+
+func sourceMutationAuthorizationError(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, cdb.ErrSourceMutationNotFound):
+		return errSourceNotFound
+	case errors.Is(err, cdb.ErrSourceMutationDeleted):
+		return errSourceDeleted
+	case errors.Is(err, cdb.ErrSourceMutationUnverified):
+		return fmt.Errorf("%w: verified source ownership is required", errSourceForbidden)
+	case errors.Is(err, cdb.ErrSourceMutationForbidden):
+		return errSourceForbidden
+	case errors.Is(err, cdb.ErrSourceOwnershipAdminRequired):
+		return errSourceForbidden
+	default:
+		return errSourceAuthorizationUnavailable
 	}
-	if !owner.Found {
-		return access, nil
-	}
-	access.Existing = true
-	access.OwnerID = owner.UserID
-	access.Deleted = owner.Deleted
-	if owner.UserID == 0 && !access.Admin {
-		return access, errSourceOwnerUnknown
-	}
-	if owner.UserID != 0 && owner.UserID != userID && !access.Admin {
-		return access, errSourceForbidden
-	}
-	return access, nil
 }
 
 func sourceMutationErrorCode(err error) int {
 	switch {
 	case errors.Is(err, errSourceUnauthenticated):
 		return http.StatusUnauthorized
-	case errors.Is(err, errSourceForbidden), errors.Is(err, errSourceOwnerUnknown):
+	case errors.Is(err, errSourceForbidden), errors.Is(err, errSourceOwnerUnknown),
+		errors.Is(err, cdb.ErrSourceMutationForbidden),
+		errors.Is(err, cdb.ErrSourceMutationUnverified):
 		return http.StatusForbidden
-	case errors.Is(err, errSourceNotFound):
+	case errors.Is(err, errSourceNotFound), errors.Is(err, cdb.ErrSourceMutationNotFound):
 		return http.StatusNotFound
+	case errors.Is(err, errSourceDeleted), errors.Is(err, cdb.ErrSourceMutationDeleted):
+		return http.StatusConflict
+	case errors.Is(err, cdb.ErrAuthenticatedSourceConflict):
+		return http.StatusForbidden
+	case errors.Is(err, cdb.ErrAuthenticatedSourceUnsupported):
+		return http.StatusServiceUnavailable
 	case errors.Is(err, errSourceAuthorizationUnavailable):
 		return http.StatusServiceUnavailable
 	default:
@@ -141,4 +144,66 @@ func sourceMutationError(err error) error {
 		return err
 	}
 	return fmt.Errorf("source mutation failed: %w", err)
+}
+
+type sourceOwnershipVerifyRequest struct {
+	SourceID uint64 `json:"source_id"`
+	UserID   uint64 `json:"user_id"`
+	Reason   string `json:"reason,omitempty"`
+}
+
+func sourceOwnershipVerifyHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !auth.Enabled(config.API.Auth) {
+		handleErrorAndRespond(w, errSourceUnauthenticated, nil, "Source ownership verification failed", http.StatusUnauthorized, 0)
+		return
+	}
+	identity, authenticated, err := resolveSourceMutationIdentity(r.Context(), dbHandler)
+	if err != nil || !authenticated {
+		handleErrorAndRespond(w, errSourceUnauthenticated, nil, "Source ownership verification failed", http.StatusUnauthorized, 0)
+		return
+	}
+	if !sourceMutationPageAdmin(identity) {
+		handleErrorAndRespond(w, errSourceForbidden, nil, "Source ownership verification failed", http.StatusForbidden, 0)
+		return
+	}
+	var request sourceOwnershipVerifyRequest
+	if err := decodeJSON(r, &request); err != nil {
+		handleErrorAndRespond(w, err, nil, "Invalid source ownership verification request", http.StatusBadRequest, 0)
+		return
+	}
+	request.Reason = strings.TrimSpace(request.Reason)
+	if request.SourceID == 0 || request.UserID == 0 {
+		handleErrorAndRespond(w, errors.New("source_id and user_id are required"), nil, "Invalid source ownership verification request", http.StatusBadRequest, 0)
+		return
+	}
+	if len(request.Reason) > 512 {
+		handleErrorAndRespond(w, errors.New("reason is too long"), nil, "Invalid source ownership verification request", http.StatusBadRequest, 0)
+		return
+	}
+	verifierID, err := sourceMutationUserID(identity)
+	if err != nil {
+		handleErrorAndRespond(w, errSourceUnauthenticated, nil, "Source ownership verification failed", http.StatusUnauthorized, 0)
+		return
+	}
+	owner, err := cdb.VerifySourceOwnershipContext(r.Context(), &dbHandler, cdb.SourceOwnershipVerification{
+		SourceID:           request.SourceID,
+		UserID:             request.UserID,
+		VerifiedByUserID:   verifierID,
+		VerifiedBy:         identity.Username,
+		VerificationMethod: "admin_verification",
+		Reason:             request.Reason,
+	})
+	if err != nil {
+		handleErrorAndRespond(w, sourceMutationAuthorizationError(err), nil, "Source ownership verification failed", sourceMutationErrorCode(sourceMutationAuthorizationError(err)), 0)
+		return
+	}
+	handleErrorAndRespond(w, nil, map[string]any{
+		"source_id": owner.SourceID,
+		"user_id":   owner.UserID,
+		"verified":  owner.Verified,
+	}, "", 0, http.StatusOK)
 }

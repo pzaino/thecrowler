@@ -94,6 +94,35 @@ func scanCrawlApprovalRow(scanner interface {
 	return row, err
 }
 
+func crawlApprovalInsertSQL(db Handler) string {
+	p := func(n int) string { return crawlApprovalPlaceholder(db, n) }
+	conflict := "ON CONFLICT DO NOTHING"
+	if normalizeInformationSeedDBMS(db.DBMS()) == DBPostgresStr {
+		conflict = "ON CONFLICT (request_id, run_id, principal_user_id, source_id, operation_type) DO NOTHING"
+	}
+	return `INSERT INTO CrawlApprovals
+		(approval_id, proposal_sha256, request_id, run_id, agent_id, owner,
+		 principal_user_id, source_id, operation_type, issuer,
+		 issued_by_user_id, issued_by, issued_by_issuer,
+		 approved_by_user_id, approved_by, approved_by_issuer,
+		 approval_sha256, proposal_expires_at, approved_at, expires_at)
+		VALUES (` + p(1) + `, ` + p(2) + `, ` + p(3) + `, ` + p(4) + `, ` + p(5) + `, ` + p(6) + `,
+		 ` + p(7) + `, ` + p(8) + `, ` + p(9) + `, ` + p(10) + `,
+		 ` + p(11) + `, ` + p(12) + `, ` + p(13) + `, ` + p(14) + `, ` + p(15) + `, ` + p(16) + `,
+		 ` + p(17) + `, ` + p(18) + `, ` + p(19) + `, ` + p(20) + `)
+		` + conflict
+}
+
+func crawlApprovalInsertArgs(row CrawlApprovalRow) []any {
+	return []any{
+		row.ApprovalID, row.ProposalSHA256, row.RequestID, row.RunID, row.AgentID,
+		row.Owner, row.PrincipalUserID, row.SourceID, row.OperationType,
+		row.Issuer, row.IssuedByUserID, row.IssuedBy, row.IssuedByIssuer,
+		row.ApprovedByUserID, row.ApprovedBy, row.ApprovedByIssuer,
+		row.ApprovalSHA256, row.ProposalExpiresAt, row.ApprovedAt, row.ExpiresAt,
+	}
+}
+
 // InsertCrawlApproval inserts one approval unless the logical approval key
 // already exists. It returns true when this call created the row.
 func InsertCrawlApproval(ctx context.Context, db *Handler, row CrawlApprovalRow) (bool, error) {
@@ -106,35 +135,88 @@ func InsertCrawlApproval(ctx context.Context, db *Handler, row CrawlApprovalRow)
 	if !supportsCrawlApprovalStore(*db) {
 		return false, ErrCrawlApprovalStoreUnsupported
 	}
-	p := func(n int) string { return crawlApprovalPlaceholder(*db, n) }
-	conflict := "ON CONFLICT DO NOTHING"
-	if normalizeInformationSeedDBMS((*db).DBMS()) == DBPostgresStr {
-		conflict = "ON CONFLICT (request_id, run_id, principal_user_id, source_id, operation_type) DO NOTHING"
-	}
-	query := `INSERT INTO CrawlApprovals
-		(approval_id, proposal_sha256, request_id, run_id, agent_id, owner,
-		 principal_user_id, source_id, operation_type, issuer,
-		 issued_by_user_id, issued_by, issued_by_issuer,
-		 approved_by_user_id, approved_by, approved_by_issuer,
-		 approval_sha256, proposal_expires_at, approved_at, expires_at)
-		VALUES (` + p(1) + `, ` + p(2) + `, ` + p(3) + `, ` + p(4) + `, ` + p(5) + `, ` + p(6) + `,
-		 ` + p(7) + `, ` + p(8) + `, ` + p(9) + `, ` + p(10) + `,
-		 ` + p(11) + `, ` + p(12) + `, ` + p(13) + `, ` + p(14) + `, ` + p(15) + `, ` + p(16) + `,
-		 ` + p(17) + `, ` + p(18) + `, ` + p(19) + `, ` + p(20) + `)
-		` + conflict
-	result, err := (*db).ExecContext(ctx, query,
-		row.ApprovalID, row.ProposalSHA256, row.RequestID, row.RunID, row.AgentID,
-		row.Owner, row.PrincipalUserID, row.SourceID, row.OperationType,
-		row.Issuer, row.IssuedByUserID, row.IssuedBy, row.IssuedByIssuer,
-		row.ApprovedByUserID, row.ApprovedBy, row.ApprovedByIssuer,
-		row.ApprovalSHA256, row.ProposalExpiresAt, row.ApprovedAt, row.ExpiresAt,
-	)
+	result, err := (*db).ExecContext(ctx, crawlApprovalInsertSQL(*db), crawlApprovalInsertArgs(row)...)
 	if err != nil {
 		return false, crawlApprovalStoreError(err)
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
 		return false, err
+	}
+	return affected > 0, nil
+}
+
+// InsertCrawlApprovalAuthorized performs approval issuance in one transaction
+// that locks the source row, rechecks verified ownership/provenance and the
+// approver's current account state and administrative grant (when the approver
+// is not the owner), then inserts the approval. This prevents an ownership or
+// permission change from committing between the permission check and approval
+// persistence.
+func InsertCrawlApprovalAuthorized(ctx context.Context, db *Handler, row CrawlApprovalRow) (bool, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if db == nil || *db == nil {
+		return false, fmt.Errorf("database handler is nil")
+	}
+	if !supportsCrawlApprovalStore(*db) {
+		return false, ErrCrawlApprovalStoreUnsupported
+	}
+	txCtx, cancel := TransactionContextForHandler(ctx, db)
+	defer cancel()
+	tx, err := (*db).BeginTx(txCtx, nil)
+	if err != nil {
+		return false, NormalizeTransactionError(txCtx, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	owner, err := lockSourceOwnerTx(txCtx, tx, *db, row.SourceID)
+	if err != nil {
+		return false, err
+	}
+	if !owner.Found {
+		return false, ErrSourceMutationNotFound
+	}
+	if owner.Deleted {
+		return false, ErrSourceMutationDeleted
+	}
+	if !owner.Verified || owner.UserID == 0 {
+		return false, ErrSourceMutationUnverified
+	}
+	active, err := activeUserTx(txCtx, tx, *db, row.ApprovedByUserID)
+	if err != nil {
+		return false, err
+	}
+	if !active {
+		return false, ErrSourceMutationForbidden
+	}
+	if row.ApprovedByUserID != owner.UserID {
+		admin, err := activeUserHasAnyRoleTx(txCtx, tx, *db, row.ApprovedByUserID, []string{"admin", "superadmin"})
+		if err != nil {
+			return false, err
+		}
+		if !admin {
+			return false, ErrSourceMutationForbidden
+		}
+	}
+	active, err = activeUserTx(txCtx, tx, *db, row.IssuedByUserID)
+	if err != nil {
+		return false, err
+	}
+	if !active {
+		return false, ErrSourceMutationForbidden
+	}
+
+	result, err := tx.ExecContext(txCtx, crawlApprovalInsertSQL(*db), crawlApprovalInsertArgs(row)...)
+	if err != nil {
+		return false, crawlApprovalStoreError(err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, NormalizeTransactionError(txCtx, err)
 	}
 	return affected > 0, nil
 }

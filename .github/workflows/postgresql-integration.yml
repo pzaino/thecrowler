@@ -118,7 +118,7 @@ jobs:
 
           test "$runtime_user" = "$CROWLER_DB_USER"
 
-      - name: Verify repeatable current migration
+      - name: Verify repeatable v1.17 migration
         run: |
           PGPASSWORD="$POSTGRES_PASSWORD" \
           psql \
@@ -128,7 +128,7 @@ jobs:
             --port 5432 \
             --username "$POSTGRES_USER" \
             --dbname "$POSTGRES_DB" \
-            --file pkg/database/db_migrations/postgresql-migration-v1.16.pgsql
+            --file pkg/database/db_migrations/postgresql-migration-v1.17.pgsql
 
           current_version="$(
             PGPASSWORD="$POSTGRES_PASSWORD" \
@@ -142,7 +142,21 @@ jobs:
               --command "SELECT version FROM DBSchemaVersion WHERE is_current"
           )"
 
-          test "$current_version" = "1.16"
+          test "$current_version" = "1.17"
+
+          writer_generation="$(
+            PGPASSWORD="$POSTGRES_PASSWORD" \
+            psql \
+              -v ON_ERROR_STOP=1 \
+              -At \
+              --host 127.0.0.1 \
+              --port 5432 \
+              --username "$POSTGRES_USER" \
+              --dbname "$POSTGRES_DB" \
+              --command "SELECT writer_generation FROM DatabaseWriterCompatibility WHERE lock_id = 1"
+          )"
+
+          test "$writer_generation" = "verified-ownership-v1.17"
 
       - name: Verify v1.17 crawl-approval migration
         run: |
@@ -175,7 +189,7 @@ jobs:
             --dbname crowler_v117 \
             --file pkg/database/postgresql-setup.pgsql
 
-          # Simulate an existing v1.16 deployment that predates the approvals table.
+          # Simulate an existing v1.16 deployment that predates v1.17.
           PGPASSWORD="$POSTGRES_PASSWORD" \
           psql \
             -v ON_ERROR_STOP=1 \
@@ -183,8 +197,10 @@ jobs:
             --port 5432 \
             --username "$POSTGRES_USER" \
             --dbname crowler_v117 \
-            --command "DROP TABLE CrawlApprovals" \
-            --command "UPDATE DBSchemaVersion SET is_current = (version = '1.16')"
+            --command "DROP TABLE IF EXISTS CrawlApprovals" \
+            --command "DROP TABLE IF EXISTS SourceOwnership" \
+            --command "UPDATE DBSchemaVersion SET is_current = (version = '1.16')" \
+            --command "UPDATE DatabaseWriterCompatibility SET writer_generation = 'reservation-v1.15' WHERE lock_id = 1"
 
           PGPASSWORD="$POSTGRES_PASSWORD" \
           psql \
@@ -218,9 +234,42 @@ jobs:
               --port 5432 \
               --username "$POSTGRES_USER" \
               --dbname crowler_v117 \
-              --command "SELECT to_regclass('public.crawlapprovals')"
+              --command "SELECT to_regclass('public.crawlapprovals'), to_regclass('public.sourceownership')"
           )"
-          test "$table_name" = "crawlapprovals"
+          test "$table_name" = "crawlapprovals|sourceownership"
+
+          writer_generation="$(
+            PGPASSWORD="$POSTGRES_PASSWORD" \
+            psql \
+              -v ON_ERROR_STOP=1 \
+              -At \
+              --host 127.0.0.1 \
+              --port 5432 \
+              --username "$POSTGRES_USER" \
+              --dbname crowler_v117 \
+              --command "SELECT writer_generation FROM DatabaseWriterCompatibility WHERE lock_id = 1"
+          )"
+          test "$writer_generation" = "verified-ownership-v1.17"
+
+          # Re-running the migration must converge and preserve history.
+          PGPASSWORD="$POSTGRES_PASSWORD" \
+          psql \
+            -v ON_ERROR_STOP=1 \
+            -v CROWLER_DB_USER="$CROWLER_DB_USER" \
+            --host 127.0.0.1 \
+            --port 5432 \
+            --username "$POSTGRES_USER" \
+            --dbname crowler_v117 \
+            --file pkg/database/db_migrations/postgresql-migration-v1.17.pgsql
+
+          # Exercise the real runtime compatibility check and API handlers
+          # against the migrated database, not only SQL queries.
+          THECROWLER_POSTGRES_INTEGRATION=1 DOCKER_POSTGRES_DB_NAME=crowler_v117 \
+          go test -tags=integration ./pkg/database -run TestPostgresV117RuntimeCompatibility -count=1
+          THECROWLER_POSTGRES_INTEGRATION=1 DOCKER_POSTGRES_DB_NAME=crowler_v117 \
+          go test -tags=integration ./services/api \
+            -run 'TestPostgresAuthenticatedSourceCreateAndUpdate|TestPostgresAdministrativeOwnershipVerification' \
+            -count=1
 
           PGPASSWORD="$POSTGRES_PASSWORD" \
           psql \
@@ -235,4 +284,7 @@ jobs:
         env:
           THECROWLER_POSTGRES_INTEGRATION: "1"
         run: |
-          go test -tags=integration ./pkg/database/... ./pkg/crawler/... ./pkg/agent/... ./services/api/...
+          # Run packages serially: the keyword suppression integration test has
+          # a real 30-second database window that is sensitive to CPU/IO
+          # contention when several integration packages run at once.
+          go test -p 1 -tags=integration ./pkg/database/... ./pkg/crawler/... ./pkg/agent/... ./services/api/...

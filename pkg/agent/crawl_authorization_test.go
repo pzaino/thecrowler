@@ -302,13 +302,14 @@ func TestDatabaseCrawlSourceAuthorizer(t *testing.T) {
 		principal  CrawlPrincipal
 		want       error
 	}{
-		{"valid owner", DatabaseCrawlSourceAuthorizer{Lookup: &testSourceOwnerLookup{owner: cdb.SourceOwner{SourceID: 42, UserID: 7, Found: true}}}, principal, nil},
-		{"wrong owner", DatabaseCrawlSourceAuthorizer{Lookup: &testSourceOwnerLookup{owner: cdb.SourceOwner{SourceID: 42, UserID: 8, Found: true}}}, principal, ErrCrawlSourceForbidden},
+		{"valid owner", DatabaseCrawlSourceAuthorizer{Lookup: &testSourceOwnerLookup{owner: cdb.SourceOwner{SourceID: 42, UserID: 7, Found: true, Verified: true}}}, principal, nil},
+		{"wrong owner", DatabaseCrawlSourceAuthorizer{Lookup: &testSourceOwnerLookup{owner: cdb.SourceOwner{SourceID: 42, UserID: 8, Found: true, Verified: true}}}, principal, ErrCrawlSourceForbidden},
 		{"missing ownership", DatabaseCrawlSourceAuthorizer{Lookup: &testSourceOwnerLookup{owner: cdb.SourceOwner{SourceID: 42, UserID: 0, Found: true}}}, principal, ErrCrawlSourceOwnershipMissing},
 		{"missing source", DatabaseCrawlSourceAuthorizer{Lookup: &testSourceOwnerLookup{owner: cdb.SourceOwner{SourceID: 42}}}, principal, ErrCrawlSourceOwnershipMissing},
+		{"legacy unverified owner", DatabaseCrawlSourceAuthorizer{Lookup: &testSourceOwnerLookup{owner: cdb.SourceOwner{SourceID: 42, UserID: 7, Found: true}}}, principal, ErrCrawlSourceOwnershipMissing},
 		{"lookup error", DatabaseCrawlSourceAuthorizer{Lookup: &testSourceOwnerLookup{err: errors.New("database unavailable")}}, principal, ErrCrawlSourceAuthorizationUnavailable},
 		{"nil lookup", DatabaseCrawlSourceAuthorizer{}, principal, ErrCrawlSourceAuthorizationUnavailable},
-		{"invalid principal", DatabaseCrawlSourceAuthorizer{Lookup: &testSourceOwnerLookup{owner: cdb.SourceOwner{SourceID: 42, UserID: 7, Found: true}}}, CrawlPrincipal{}, ErrCrawlSourceAuthorizationUnavailable},
+		{"invalid principal", DatabaseCrawlSourceAuthorizer{Lookup: &testSourceOwnerLookup{owner: cdb.SourceOwner{SourceID: 42, UserID: 7, Found: true, Verified: true}}}, CrawlPrincipal{}, ErrCrawlSourceAuthorizationUnavailable},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -322,7 +323,7 @@ func TestDatabaseCrawlSourceAuthorizer(t *testing.T) {
 	t.Run("cancelled context", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		authorizer := DatabaseCrawlSourceAuthorizer{Lookup: &testSourceOwnerLookup{owner: cdb.SourceOwner{SourceID: 42, UserID: 7, Found: true}}}
+		authorizer := DatabaseCrawlSourceAuthorizer{Lookup: &testSourceOwnerLookup{owner: cdb.SourceOwner{SourceID: 42, UserID: 7, Found: true, Verified: true}}}
 		if err := authorizer.AuthorizeCrawlSource(ctx, principal, 42); !errors.Is(err, context.Canceled) {
 			t.Fatalf("got %v, want context.Canceled", err)
 		}
@@ -495,7 +496,7 @@ func TestAuthorizeCrawlRequestConcurrentSameApproval(t *testing.T) {
 }
 
 func TestDatabaseCrawlSourceAuthorizerOwnershipRevocation(t *testing.T) {
-	lookup := &mutableSourceOwnerLookup{owner: cdb.SourceOwner{SourceID: 42, UserID: 7, Found: true}}
+	lookup := &mutableSourceOwnerLookup{owner: cdb.SourceOwner{SourceID: 42, UserID: 7, Found: true, Verified: true}}
 	authorizer := DatabaseCrawlSourceAuthorizer{Lookup: lookup}
 	principal := validCrawlPrincipal()
 	if err := authorizer.AuthorizeCrawlSource(context.Background(), principal, 42); err != nil {
@@ -674,7 +675,7 @@ func TestCrawlProposalToolLoopTestOnlyApproval(t *testing.T) {
 func TestCrawlProposalFactoryStableAcrossDuplicateDelivery(t *testing.T) {
 	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
 	clock := func() time.Time { return now }
-	registry := NewMemoryCrawlProposalRegistry()
+	registry := NewMemoryCrawlProposalRegistryWithOptions(DefaultCrawlProposalRegistryCapacity, time.Hour, clock)
 	factory := CrawlProposalFactory{Registry: registry, TTL: time.Hour, Now: clock}
 
 	first, err := factory.Proposal(context.Background(), "run-1", "call-1", 42)
@@ -708,7 +709,7 @@ func TestCrawlProposalFactoryStableAcrossDuplicateDelivery(t *testing.T) {
 		t.Fatal("different source reused request ID")
 	}
 
-	longFactory := CrawlProposalFactory{Registry: NewMemoryCrawlProposalRegistry(), TTL: 48 * time.Hour, Now: clock}
+	longFactory := CrawlProposalFactory{Registry: NewMemoryCrawlProposalRegistryWithOptions(DefaultCrawlProposalRegistryCapacity, 48*time.Hour, clock), TTL: 48 * time.Hour, Now: clock}
 	long, err := longFactory.Proposal(context.Background(), "run-2", "call-1", 42)
 	if err != nil {
 		t.Fatalf("long proposal: %v", err)

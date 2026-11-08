@@ -2,6 +2,7 @@ package database
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -596,28 +597,63 @@ func TestPostgresStatementLevelCleanupTriggerContract(t *testing.T) {
 	}
 }
 
-// TestPostgresSchemaVersion116LedgerCoverage keeps every base setup and
-// v1.16 migration file advertising the same schema version the writer
-// requires, so fresh installs, upgrades, and the compatibility check agree.
-func TestPostgresSchemaVersion116LedgerCoverage(t *testing.T) {
+// TestSchemaVersion117LedgerCoverage keeps every base setup and v1.17
+// migration file advertising the same schema version the writer requires, so
+// fresh installs, upgrades, and the compatibility check agree.
+func TestSchemaVersion117LedgerCoverage(t *testing.T) {
 	t.Parallel()
 
 	files := []string{
 		"postgresql-setup.pgsql", "mysql-setup.mysql", "sqlite-setup.sqlite3",
-		"db_migrations/postgresql-migration-v1.16.pgsql",
-		"db_migrations/mysql-migration-v1.16.mysql",
-		"db_migrations/sqlite-migration-v1.16.sqlite3",
+		"db_migrations/postgresql-migration-v1.17.pgsql",
+		"db_migrations/mysql-migration-v1.17.mysql",
+		"db_migrations/sqlite-migration-v1.17.sqlite3",
 	}
 	for _, file := range files {
 		content, err := os.ReadFile(file)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(string(content), "'1.16'") && !strings.Contains(string(content), "\"1.16\"") {
-			t.Errorf("%s missing schema version 1.16 stamp", file)
+		if !strings.Contains(string(content), "'1.17'") && !strings.Contains(string(content), "\"1.17\"") {
+			t.Errorf("%s missing schema version 1.17 stamp", file)
+		}
+		if !strings.Contains(string(content), SourceOwnershipTable) {
+			t.Errorf("%s missing %s table", file, SourceOwnershipTable)
 		}
 	}
-	if RequiredSchemaVersion != "1.16" {
-		t.Fatalf("RequiredSchemaVersion = %q, want 1.16", RequiredSchemaVersion)
+	if RequiredSchemaVersion != "1.17" {
+		t.Fatalf("RequiredSchemaVersion = %q, want 1.17", RequiredSchemaVersion)
+	}
+	if WriterGeneration != "verified-ownership-v1.17" {
+		t.Fatalf("WriterGeneration = %q, want verified-ownership-v1.17", WriterGeneration)
+	}
+}
+
+// TestNoSchemaVersionAfter117 prevents accidental schema releases beyond the
+// master-plan target while allowing historical migration files to remain.
+func TestNoSchemaVersionAfter117(t *testing.T) {
+	t.Parallel()
+
+	matches, err := filepath.Glob("db_migrations/*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range matches {
+		name := filepath.Base(file)
+		if strings.Contains(name, "v1.18") || strings.Contains(name, "v1.19") || strings.Contains(name, "v2.") {
+			t.Errorf("unexpected schema migration beyond 1.17: %s", name)
+		}
+	}
+	setupFiles := []string{"postgresql-setup.pgsql", "mysql-setup.mysql", "sqlite-setup.sqlite3"}
+	for _, file := range setupFiles {
+		content, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, forbidden := range []string{"'1.18'", "\"1.18\"", "'1.19'", "\"1.19\""} {
+			if strings.Contains(string(content), forbidden) {
+				t.Errorf("%s advertises schema version beyond 1.17: %s", file, forbidden)
+			}
+		}
 	}
 }

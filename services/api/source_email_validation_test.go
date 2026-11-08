@@ -69,6 +69,7 @@ func TestSourceHandlersValidateEmailRequests(t *testing.T) {
 		dbHandler = &sourceAPITestHandler{db: db}
 		dbAdmission = newDBAdmissionGate(1)
 
+		mock.ExpectBegin()
 		mock.ExpectQuery(`SELECT url, sub_priority, status, restricted, disabled, flags, config, details`).
 			WithArgs(int64(41)).
 			WillReturnRows(sqlmock.NewRows([]string{"url", "sub_priority", "status", "restricted", "disabled", "flags", "config", "details"}).
@@ -76,6 +77,7 @@ func TestSourceHandlersValidateEmailRequests(t *testing.T) {
 		mock.ExpectExec(`UPDATE Sources`).
 			WithArgs("https://source.example.test", 0, "new", 2, false, 0, sqlmock.AnyArg(), sqlmock.AnyArg(), int64(41)).
 			WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectCommit()
 
 		body := `{"source_id":41,"config":` + emailSourceConfig("imap", "imaps://mail.example.test", "") + `}`
 		recorder := httptest.NewRecorder()
@@ -250,6 +252,17 @@ func setupSourceAPITestDB(t *testing.T) (cdb.Handler, func()) {
 			status TEXT NOT NULL DEFAULT 'new',
 			deleted_at TIMESTAMP,
 			last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE TABLE SourceOwnership (
+			source_id INTEGER PRIMARY KEY,
+			user_id INTEGER NOT NULL,
+			verified_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			verified_by_user_id INTEGER NOT NULL,
+			verified_by TEXT NOT NULL,
+			verification_method TEXT NOT NULL,
+			verification_reason TEXT,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			last_updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`); err != nil {
 		db.Close()
 		t.Fatalf("create Sources table: %v", err)

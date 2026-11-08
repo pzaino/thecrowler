@@ -759,6 +759,15 @@ func initAPIv1() {
 			"Read a durable operator crawl approval (console)", tagsNone,
 			true, false, 200, nil, StdAPIBasicQuery{}, crawlApprovalResponse{})
 
+		// Administrative source-ownership verification. This is the only
+		// authenticated path that can turn a legacy usr_id into verified
+		// provenance; it is never derived from model or request-body claims.
+		sourceOwnershipVerifyHandlerWithMiddlewares := withAuthenticatedPublicMiddlewares(sourceOwnershipVerifyHandler)
+		http.Handle("/v1/console/source/ownership/verify", sourceOwnershipVerifyHandlerWithMiddlewares)
+		cmn.RegisterAPIRoute("/v1/console/source/ownership/verify", []string{"POST"},
+			"Verify or explicitly transfer source ownership (console, administrator)", tagsNone,
+			true, false, 200, sourceOwnershipVerifyRequest{}, nil, nil)
+
 		// Source management endpoints
 
 		http.Handle("/v1/source/add", addSourceHandlerWithMiddlewares)

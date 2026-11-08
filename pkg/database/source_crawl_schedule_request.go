@@ -586,7 +586,8 @@ func validateCrawlApprovalForScheduling(ctx context.Context, tx *sql.Tx, db Hand
 	p := func(n int) string { return crawlPlaceholder(db, n) }
 	query := `SELECT proposal_sha256, request_id, run_id, agent_id, owner,
 		principal_user_id, source_id, operation_type, approval_sha256,
-		approved_by, approved_by_user_id, approved_at, expires_at, revoked_at
+		issued_by_user_id, approved_by, approved_by_user_id,
+		proposal_expires_at, approved_at, expires_at, revoked_at
 		FROM CrawlApprovals WHERE approval_id = ` + p(1)
 	if normalizeInformationSeedDBMS(db.DBMS()) == DBPostgresStr {
 		query += ` FOR UPDATE`
@@ -595,13 +596,15 @@ func validateCrawlApprovalForScheduling(ctx context.Context, tx *sql.Tx, db Hand
 		proposalSHA256, requestID, runID, agentID, owner string
 		operationType, approvalSHA256, approvedBy        string
 		principalUserID, sourceID, approvedByUserID      uint64
-		approvedAt, expiresAt                            time.Time
+		issuedByUserID                                   uint64
+		proposalExpiresAt, approvedAt, expiresAt         time.Time
 		revokedAt                                        sql.NullTime
 	)
 	err := tx.QueryRowContext(ctx, query, req.ApprovalID).Scan(
 		&proposalSHA256, &requestID, &runID, &agentID, &owner,
 		&principalUserID, &sourceID, &operationType, &approvalSHA256,
-		&approvedBy, &approvedByUserID, &approvedAt, &expiresAt, &revokedAt,
+		&issuedByUserID, &approvedBy, &approvedByUserID,
+		&proposalExpiresAt, &approvedAt, &expiresAt, &revokedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return CrawlReasonApprovalRejected, nil
@@ -626,16 +629,46 @@ func validateCrawlApprovalForScheduling(ctx context.Context, tx *sql.Tx, db Hand
 		approvalSHA256 != req.ApprovalSHA256 ||
 		approvedBy != req.ApprovedBy ||
 		approvedByUserID != req.ApprovedByUserID ||
+		proposalExpiresAt.IsZero() || !proposalExpiresAt.After(now) ||
 		approvedAt.IsZero() || approvedAt.After(now) ||
 		!expiresAt.After(now) ||
 		req.ExpiresAt.After(expiresAt) ||
+		req.ExpiresAt.After(proposalExpiresAt) ||
 		req.ExpiresAt.After(approvedAt.Add(maxCrawlRequestLifetime)) ||
 		expiresAt.Sub(approvedAt) > maxCrawlRequestLifetime {
 		return CrawlReasonApprovalRejected, nil
 	}
 
+	// The approver must still be an active account. If the approver is not the
+	// source owner, the administrative grant that allowed issuance must still
+	// be present at submission time.
+	approverActive, err := activeUserTx(ctx, tx, db, approvedByUserID)
+	if err != nil {
+		return "", err
+	}
+	if !approverActive {
+		return CrawlReasonApprovalRejected, nil
+	}
+	issuerActive, err := activeUserTx(ctx, tx, db, issuedByUserID)
+	if err != nil {
+		return "", err
+	}
+	if !issuerActive {
+		return CrawlReasonApprovalRejected, nil
+	}
+	if approvedByUserID != principalUserID {
+		admin, err := activeUserHasAnyRoleTx(ctx, tx, db, approvedByUserID, []string{"admin", "superadmin"})
+		if err != nil {
+			return "", err
+		}
+		if !admin {
+			return CrawlReasonApprovalRejected, nil
+		}
+	}
+
 	// Source ownership is revalidated under the source row lock already held by
-	// the caller. A missing source is left to the normal not-found path.
+	// the caller. Verified provenance is required; a legacy nonzero usr_id is
+	// not sufficient. A missing source is left to the normal not-found path.
 	ownerQuery := `SELECT usr_id, deleted_at FROM Sources WHERE source_id = ` + p(1)
 	var ownerID uint64
 	var deletedAt sql.NullTime
@@ -646,6 +679,17 @@ func validateCrawlApprovalForScheduling(ctx context.Context, tx *sql.Tx, db Hand
 		return "", err
 	}
 	if deletedAt.Valid || ownerID == 0 || ownerID != req.PrincipalUserID {
+		return CrawlReasonOwnershipRejected, nil
+	}
+	provenanceQuery := `SELECT user_id FROM SourceOwnership WHERE source_id = ` + p(1)
+	var verifiedUserID uint64
+	if err := tx.QueryRowContext(ctx, provenanceQuery, req.SourceID).Scan(&verifiedUserID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return CrawlReasonOwnershipRejected, nil
+		}
+		return "", err
+	}
+	if verifiedUserID != ownerID || verifiedUserID != req.PrincipalUserID {
 		return CrawlReasonOwnershipRejected, nil
 	}
 	return "", nil

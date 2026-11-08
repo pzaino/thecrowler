@@ -93,15 +93,25 @@ Internet.
 Source mutations (`add`, `update`, `remove`, `vacuum`) use the authenticated
 principal when `api.auth.enabled` is true. The authenticated local
 `Users.user_id` owns newly created sources; caller-supplied `usr_id` is ignored.
-Updates and removals require the source owner or the `admin`/`superadmin` role.
-See [addsource](./api/addsource.md) for the ownership rules.
+Updates, removals and vacuum operations require verified source ownership or
+the `admin`/`superadmin` role. Historical sources without `SourceOwnership`
+provenance are legacy/unverified until an administrator explicitly verifies
+them. See [addsource](./api/addsource.md) for the ownership rules.
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| POST | `/v1/console/source/ownership/verify` | Explicitly verify or transfer source ownership (administrator). |
+
+The verification body is `{"source_id":42,"user_id":7,"reason":"audit"}`. The
+verifier is derived from the authenticated request; model or request-body
+claims cannot grant administrative authority.
 
 ## Crawl-approval administration
 
 Durable operator approvals are registered only when `api.enable_console` is
-true and require enabled API authentication. The approval table is a v1.17
-migration proposal; a deployment that has not applied it receives a fail-closed
-503 rather than an unpersisted approval.
+true and require enabled API authentication. Schema 1.17 is the runtime
+contract; a deployment that has not applied the v1.17 migration receives a
+fail-closed 503 rather than an unpersisted approval.
 
 | Method | Endpoint | Purpose |
 | --- | --- | --- |

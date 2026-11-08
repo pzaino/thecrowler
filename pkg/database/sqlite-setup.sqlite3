@@ -178,6 +178,28 @@ CREATE TABLE IF NOT EXISTS Sources (
 CREATE INDEX IF NOT EXISTS idx_sources_priority_sub_priority
 ON Sources(priority, sub_priority DESC, source_id ASC);
 
+---------------------------------------------------------------------------------
+-- Verified source ownership provenance. Sources.usr_id remains the stored owner,
+-- but only a matching row here makes that ownership authoritative. Historical
+-- sources without a provenance row stay legacy/unverified until an administrator
+-- explicitly verifies them.
+CREATE TABLE IF NOT EXISTS SourceOwnership (
+    source_id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    verified_at TIMESTAMP NOT NULL,
+    verified_by_user_id INTEGER NOT NULL,
+    verified_by TEXT NOT NULL,
+    verification_method TEXT NOT NULL,
+    verification_reason TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (user_id > 0),
+    CHECK (verified_by_user_id > 0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sourceownership_user
+ON SourceOwnership(user_id);
+
 --------------------------------------------------------------------------------
 
 --------------------------------------------------------------------------------
@@ -701,7 +723,7 @@ CREATE TABLE IF NOT EXISTS HTTPInfoIndex (
 
 UPDATE DBSchemaVersion SET is_current = 0;
 INSERT INTO DBSchemaVersion (version, description, is_current)
-VALUES ('1.16', 'CROWler DB schema version 1.16', 1)
+VALUES ('1.17', 'CROWler DB schema version 1.17', 1)
 ON CONFLICT(version) DO UPDATE SET description=excluded.description,is_current=1;
 
 --------------------------------------------------------------------------------
@@ -983,7 +1005,7 @@ INSERT OR IGNORE INTO TimeSeriesCardinalityMaintenanceLock(lock_id) VALUES (1);
 CREATE TABLE IF NOT EXISTS DatabaseWriterCompatibility (
     lock_id INTEGER NOT NULL PRIMARY KEY CHECK(lock_id = 1), writer_generation TEXT NOT NULL
 );
-INSERT INTO DatabaseWriterCompatibility(lock_id,writer_generation) VALUES(1,'reservation-v1.15')
+INSERT INTO DatabaseWriterCompatibility(lock_id,writer_generation) VALUES(1,'verified-ownership-v1.17')
 ON CONFLICT(lock_id) DO UPDATE SET writer_generation=excluded.writer_generation;
 
 CREATE TABLE IF NOT EXISTS TimeSeriesAggregates (

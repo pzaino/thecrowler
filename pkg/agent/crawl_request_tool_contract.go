@@ -80,18 +80,67 @@ type CrawlProposalRegistry interface {
 }
 
 // MemoryCrawlProposalRegistry is a bounded process-local proposal registry for
-// the disabled model-facing tool. It must not be presented as restart-safe.
+// the disabled model-facing tool. Entries are pruned when their proposal
+// expiry passes, and the least-recently-expiring entry is evicted when the
+// configured capacity is reached. It is not durable and must not be presented
+// as restart-safe.
 type MemoryCrawlProposalRegistry struct {
 	mu        sync.Mutex
-	proposals map[string]CrawlRequestProposal
+	proposals map[string]crawlProposalEntry
+	capacity  int
+	ttl       time.Duration
+	now       func() time.Time
 }
 
-// NewMemoryCrawlProposalRegistry creates an empty process-local registry.
+type crawlProposalEntry struct {
+	proposal  CrawlRequestProposal
+	expiresAt time.Time
+}
+
+// DefaultCrawlProposalRegistryCapacity bounds process-local proposal retention
+// for a long-running agent process. Durable approval lookup remains the
+// restart-safe anchor once an approval has been issued.
+const DefaultCrawlProposalRegistryCapacity = 1024
+
+// NewMemoryCrawlProposalRegistry creates an empty process-local registry with
+// bounded capacity and proposal-lifetime-aware eviction.
 func NewMemoryCrawlProposalRegistry() *MemoryCrawlProposalRegistry {
-	return &MemoryCrawlProposalRegistry{proposals: make(map[string]CrawlRequestProposal)}
+	return NewMemoryCrawlProposalRegistryWithOptions(DefaultCrawlProposalRegistryCapacity, 0, nil)
 }
 
-// ResolveCrawlProposal returns the first proposal for key or creates it.
+// NewMemoryCrawlProposalRegistryWithOptions creates a registry with explicit
+// capacity, fallback TTL and clock. Invalid capacity or TTL values fall back to
+// safe bounded defaults; the clock is injectable for deterministic tests.
+func NewMemoryCrawlProposalRegistryWithOptions(capacity int, ttl time.Duration, now func() time.Time) *MemoryCrawlProposalRegistry {
+	if capacity <= 0 {
+		capacity = DefaultCrawlProposalRegistryCapacity
+	}
+	if ttl <= 0 || ttl > maxCrawlProposalLifetime {
+		ttl = maxCrawlProposalLifetime
+	}
+	if now == nil {
+		now = time.Now
+	}
+	return &MemoryCrawlProposalRegistry{
+		proposals: make(map[string]crawlProposalEntry),
+		capacity:  capacity,
+		ttl:       ttl,
+		now:       now,
+	}
+}
+
+// Len returns the number of retained proposals. It is intended for bounded
+// retention tests and diagnostics.
+func (r *MemoryCrawlProposalRegistry) Len() int {
+	if r == nil {
+		return 0
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.proposals)
+}
+
+// ResolveCrawlProposal returns the first live proposal for key or creates it.
 func (r *MemoryCrawlProposalRegistry) ResolveCrawlProposal(ctx context.Context, key string, create func() (CrawlRequestProposal, error)) (CrawlRequestProposal, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -104,15 +153,56 @@ func (r *MemoryCrawlProposalRegistry) ResolveCrawlProposal(ctx context.Context, 
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if proposal, ok := r.proposals[key]; ok {
-		return proposal, nil
+	now := r.now().UTC()
+	r.pruneExpiredLocked(now)
+	if entry, ok := r.proposals[key]; ok {
+		if entry.expiresAt.After(now) {
+			return entry.proposal, nil
+		}
+		delete(r.proposals, key)
 	}
 	proposal, err := create()
 	if err != nil {
 		return CrawlRequestProposal{}, err
 	}
-	r.proposals[key] = proposal
+	expiresAt := proposal.ExpiresAt.UTC()
+	if expiresAt.IsZero() || !expiresAt.After(now) {
+		expiresAt = now.Add(r.ttl)
+	}
+	if expiresAt.Sub(now) > maxCrawlProposalLifetime {
+		expiresAt = now.Add(maxCrawlProposalLifetime)
+	}
+	if !proposal.ExpiresAt.Equal(expiresAt) {
+		proposal.ExpiresAt = expiresAt
+	}
+	if len(r.proposals) >= r.capacity {
+		r.evictEarliestLocked()
+	}
+	r.proposals[key] = crawlProposalEntry{proposal: proposal, expiresAt: expiresAt}
 	return proposal, nil
+}
+
+func (r *MemoryCrawlProposalRegistry) pruneExpiredLocked(now time.Time) {
+	for key, entry := range r.proposals {
+		if !entry.expiresAt.After(now) {
+			delete(r.proposals, key)
+		}
+	}
+}
+
+func (r *MemoryCrawlProposalRegistry) evictEarliestLocked() {
+	var victimKey string
+	var victimExpiry time.Time
+	for key, entry := range r.proposals {
+		if victimKey == "" || entry.expiresAt.Before(victimExpiry) ||
+			(entry.expiresAt.Equal(victimExpiry) && key < victimKey) {
+			victimKey = key
+			victimExpiry = entry.expiresAt
+		}
+	}
+	if victimKey != "" {
+		delete(r.proposals, victimKey)
+	}
 }
 
 // CrawlProposalFactory recreates the same proposal identity and expiry for a

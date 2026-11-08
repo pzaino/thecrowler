@@ -4,12 +4,12 @@ Status: production-shaped internal authorization infrastructure. The
 model-facing `request_source_crawl` tool is **not registered** and no model can
 approve or schedule work.
 
-WP-03B2B adds authoritative authenticated source ownership, a durable
-PostgreSQL/SQLite approval store, issuer and revoker adapters, operator API
-endpoints, final-mutation revalidation and stable proposal identity. The
-approval schema is present in clean-install setup files and prepared as a
-separate v1.17 upgrade migration; it is not applied automatically to existing
-persistent deployment databases.
+WP-03B2B adds authoritative authenticated source ownership, verified ownership
+provenance, a durable PostgreSQL/SQLite approval store, issuer and revoker
+adapters, operator API endpoints, final-mutation revalidation and stable
+proposal identity. Schema **1.17** is the runtime contract for the remaining
+agentic plan; clean installs and the v1.17 upgrade create both
+`CrawlApprovals` and `SourceOwnership`.
 
 ## 1. Identity and source ownership
 
@@ -63,6 +63,32 @@ explicit agent-to-user mapping table remains a future contract decision.
 - disabled or deleted users are rejected even when their token is otherwise
   valid.
 
+### Verified ownership provenance
+
+`Sources.usr_id` alone is not proof of ownership because legacy unauthenticated
+source creation accepted a caller-supplied value. Schema 1.17 adds
+`SourceOwnership`:
+
+- `source_id` is the provenance primary key;
+- `user_id` must match `Sources.usr_id` to be authoritative;
+- `verified_at`, `verified_by_user_id`, `verified_by`,
+  `verification_method` and `verification_reason` record the explicit
+  verification event;
+- a missing row means **legacy/unverified**, even when `usr_id` is nonzero.
+
+Authenticated source creation writes a provenance row with method
+`authenticated_creation` in the same transaction that creates the source.
+Legacy and internal source creation do not claim verification. Agent scheduling
+and ordinary authenticated owner mutations require a matching verified row;
+administrators may manage an unverified source but cannot turn the claim into
+verified ownership except through the explicit verification endpoint.
+
+`POST /v1/console/source/ownership/verify` is the administrative verification
+or transfer operation. It requires an authenticated `admin`/`superadmin`
+principal, locks the source row, updates `Sources.usr_id`, upserts
+`SourceOwnership`, and records the verifier and reason. It is never derived from
+model arguments, source add, source update or a request-body `usr_id`.
+
 `Owners` and `SourceOwnerIndex` are not maintained by the source lifecycle and
 are not treated as authoritative. The console owner handler also writes a
 `parent_id` column that is not in the current `Owners` schema. They remain
@@ -96,12 +122,14 @@ type CrawlSourceAuthorizer interface {
 }
 ```
 
-`DatabaseCrawlSourceAuthorizer` reads `Sources.source_id`, `usr_id` and
-`deleted_at`. It grants access only when:
+`DatabaseCrawlSourceAuthorizer` reads `Sources.source_id`, `usr_id`,
+`deleted_at` and matching `SourceOwnership` provenance. It grants access only
+when:
 
 1. the principal is valid;
 2. the source exists and is not deleted;
-3. `Sources.usr_id` is non-zero;
+3. `Sources.usr_id` is non-zero and has a matching verified `SourceOwnership`
+   row;
 4. `Sources.usr_id == principal.UserID`, or the authorizer is configured with
    `AllowAdmin` and the principal holds `admin`/`superadmin`.
 
@@ -250,29 +278,39 @@ validates those references while they are live.
 
 ### Migration status
 
-`pkg/database/db_migrations/postgresql-migration-v1.17.pgsql` and
-`pkg/database/db_migrations/sqlite-migration-v1.17.sqlite3` are the exact
-additive upgrade proposals. They:
+`pkg/database/db_migrations/postgresql-migration-v1.17.pgsql`,
+`pkg/database/db_migrations/sqlite-migration-v1.17.sqlite3` and
+`pkg/database/db_migrations/mysql-migration-v1.17.mysql` are the additive,
+re-runnable v1.17 upgrades. They:
 
-- are transactional and idempotent;
-- create the table and indexes;
-- assign PostgreSQL ownership to the runtime role;
-- advance `DBSchemaVersion` to `1.17`.
+- are transactional where the backend supports it;
+- create `CrawlApprovals` (PostgreSQL/SQLite) and `SourceOwnership`
+  (all three backends);
+- create the required indexes and PostgreSQL triggers/ownership grants;
+- advance `DBSchemaVersion` and `DatabaseWriterCompatibility` together.
 
-`RequiredSchemaVersion` remains `1.16` in this work package. This prevents an
-existing deployment from starting against an unmigrated database. Applying the
-v1.17 migration to an existing persistent deployment database requires
-maintainer approval and a coordinated writer-compatibility bump.
+`RequiredSchemaVersion` is `1.17` and `WriterGeneration` is
+`verified-ownership-v1.17`. A v1.16 database must stop old writers, apply the
+v1.17 migration, and only then start v1.17 writers. Applying the migration to an
+existing persistent deployment database requires maintainer authorization.
 
-Until migration, the approval store fails closed with
-`crawl_approval_store_unavailable`; the API approval endpoints return `503`.
-The model-facing tool remains unregistered.
+The migration never bulk-marks existing `usr_id` values as verified. Existing
+sources remain legacy until an administrator verifies each one. Approval and
+ownership history is preserved by `IF NOT EXISTS`/upsert semantics and by
+re-running the same v1.17 migration, which safely converges partially migrated
+databases.
 
-Rollback is additive and destructive only to approval history:
+MySQL keeps the ownership-provenance table for schema compatibility but does
+not support durable crawl approvals or the authenticated atomic source-mutation
+contract; those features fail closed with an explicit unsupported result.
+
+Rollback is additive and destructive only to approval/ownership provenance:
 
 ```sql
 DROP TABLE IF EXISTS CrawlApprovals;
+DROP TABLE IF EXISTS SourceOwnership;
 UPDATE DBSchemaVersion SET is_current = (version = '1.16');
+UPDATE DatabaseWriterCompatibility SET writer_generation = 'reservation-v1.15' WHERE lock_id = 1;
 ```
 
 ### Operator API
@@ -284,10 +322,20 @@ The console registers:
 | POST | `/v1/console/crawl/approvals/issue` | Issue an approval. |
 | POST | `/v1/console/crawl/approvals/revoke` | Revoke an approval. |
 | GET | `/v1/console/crawl/approvals/status` | Read an approval. |
+| POST | `/v1/console/source/ownership/verify` | Verify or explicitly transfer source ownership (admin). |
 
 All require `api.enable_console: true` and enabled API authentication. The
 approver/issuer/owner/principal are derived from the authenticated request, not
 the body.
+
+The current issue endpoint binds the authenticated operator as both approver
+and run principal, and requires the agent owner to match that principal. An
+administrator can therefore inspect and revoke another owner's approval, and
+can issue an approval tied to their own principal, but cannot yet issue a
+schedulable approval on behalf of another owner's agent run. Binding an
+approval to someone else's principal requires the authoritative run/agent
+execution context planned for WP-03B2C; the API deliberately does not accept a
+caller-supplied principal user ID.
 
 Issue request:
 
@@ -404,9 +452,14 @@ identity and expiry stable across duplicate tool-call delivery inside one
 process. A duplicate call does not extend the original proposal lifetime. A
 changed source, operation or tool call produces a different request ID.
 
-Before approval, the registry is process-local; restart-safe proposal
-reconstruction is not claimed. After approval, the durable approval row stores
-the request ID and proposal expiry. `DatabaseCrawlApprovalStore.LookupCrawlApprovalByRequest()`
+Before approval, the registry is process-local, capacity-bounded and expiry-
+aware. Expired entries are pruned, and the earliest-expiring entry is evicted
+when the configured capacity is reached; a very old proposal may therefore need
+to be proposed again if it was evicted before approval. This is not restart-safe
+and is not claimed to be. After approval, the durable approval row stores the
+request ID and proposal expiry. Proposal and approval fingerprints normalize
+timestamps to the database's microsecond precision, so a row reconstructed after
+a restart remains comparable. `DatabaseCrawlApprovalStore.LookupCrawlApprovalByRequest()`
 returns the exact stored proposal and is the restart-safe anchor for retries.
 
 A retry of an already accepted logical request remains idempotent even if the
@@ -489,10 +542,13 @@ audit.
 
 ## 10. Outstanding decisions before WP-03B2C
 
-1. Approve and apply the v1.17 approval migration to existing deployments,
-   then advance writer compatibility with it.
+1. Apply the approved v1.17 migration to existing deployments during a
+   stop-old-writers window, then verify the v1.17 runtime contract and
+   administrator-verify any historical source ownership that must be
+   authoritative.
 2. Wire the agent runtime to resolve and pass the authenticated principal for
-   the agent's run.
+   the agent's run. Until then, approval issuance binds the operator as the run
+   principal, so cross-owner administrative approvals are not schedulable.
 3. Decide the mapping for external identity subjects that are not local
    numeric user IDs.
 4. Decide whether approval issuance must additionally validate the agent

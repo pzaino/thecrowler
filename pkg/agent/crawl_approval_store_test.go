@@ -216,3 +216,42 @@ func TestDatabaseCrawlApprovalStoreRevokesWhenApproverDisabled(t *testing.T) {
 		t.Fatalf("raw revoked approval: %+v found=%v err=%v", raw, found, err)
 	}
 }
+
+func TestDatabaseCrawlApprovalStoreRejectsUnverifiedSource(t *testing.T) {
+	store, _ := newDatabaseApprovalStore(t)
+	now := time.Now().UTC()
+	if _, err := (*store.DB).Exec(`DELETE FROM SourceOwnership WHERE source_id=42`); err != nil {
+		t.Fatalf("remove source provenance: %v", err)
+	}
+	if _, err := store.IssueCrawlApproval(context.Background(), databaseApprovalRequest(now)); !errors.Is(err, ErrCrawlApprovalApproverUnauthorized) {
+		t.Fatalf("unverified source approval error = %v", err)
+	}
+	var count int
+	if err := (*store.DB).QueryRow(`SELECT COUNT(*) FROM CrawlApprovals`).Scan(&count); err != nil {
+		t.Fatalf("count approvals: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("unverified source persisted %d approvals", count)
+	}
+}
+
+func TestDatabaseCrawlApprovalStoreRestartSafeProposalFingerprint(t *testing.T) {
+	store, _ := newDatabaseApprovalStore(t)
+	now := time.Now().UTC()
+	request := databaseApprovalRequest(now)
+	request.Proposal.ExpiresAt = now.Add(time.Hour + 321*time.Nanosecond)
+	approval, err := store.IssueCrawlApproval(context.Background(), request)
+	if err != nil {
+		t.Fatalf("issue approval with sub-microsecond proposal expiry: %v", err)
+	}
+	record, found, err := store.LookupCrawlApprovalByRequest(context.Background(),
+		request.RunID, request.Proposal.RequestID, request.Principal.UserID,
+		request.Proposal.SourceID, request.Proposal.OperationType)
+	if err != nil || !found {
+		t.Fatalf("lookup by request: found=%v err=%v", found, err)
+	}
+	if record.Proposal.Fingerprint() != approval.ProposalSHA256 {
+		t.Fatalf("restart-safe proposal fingerprint mismatch: %s vs %s",
+			record.Proposal.Fingerprint(), approval.ProposalSHA256)
+	}
+}

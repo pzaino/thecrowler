@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -631,4 +632,30 @@ func TestCrawlRequestLifetimeBoundsAndExpiry(t *testing.T) {
 			t.Fatalf("cancelled context was not denied: %+v", decision)
 		}
 	})
+}
+
+func TestCrawlFingerprintsIgnoreSubMicrosecondDrift(t *testing.T) {
+	base := time.Date(2026, 11, 8, 12, 0, 0, 123456000, time.UTC)
+	first := CrawlRequestProposal{
+		RequestID: "request-1", SourceID: 42, OperationType: cdb.CrawlOperationType,
+		ExpiresAt: base.Add(789 * time.Nanosecond),
+	}
+	second := first
+	second.ExpiresAt = base.Truncate(time.Microsecond)
+	if first.Fingerprint() != second.Fingerprint() {
+		t.Fatal("proposal fingerprint changed on sub-microsecond drift")
+	}
+	approvalA := CrawlRequestApproval{
+		ApprovalID: strings.Repeat("a", 64), ProposalSHA256: first.Fingerprint(),
+		RunID: "run-1", AgentID: "agent-1", Owner: "owner-1", SourceID: 42,
+		OperationType: cdb.CrawlOperationType, Issuer: "crowler-api",
+		ApprovedBy: "owner-1", ApproverUserID: 7,
+		ApprovedAt: base.Add(111 * time.Nanosecond), ExpiresAt: base.Add(time.Hour + 222*time.Nanosecond),
+	}
+	approvalB := approvalA
+	approvalB.ApprovedAt = approvalA.ApprovedAt.Truncate(time.Microsecond)
+	approvalB.ExpiresAt = approvalA.ExpiresAt.Truncate(time.Microsecond)
+	if approvalA.Fingerprint() != approvalB.Fingerprint() {
+		t.Fatal("approval fingerprint changed on sub-microsecond drift")
+	}
 }

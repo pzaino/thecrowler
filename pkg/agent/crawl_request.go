@@ -139,7 +139,8 @@ func (p CrawlRequestProposal) Fingerprint() string {
 		SourceID      uint64
 		OperationType string
 		ExpiresAt     time.Time
-	}{p.RequestID, p.SourceID, p.OperationType, p.ExpiresAt.UTC()})
+	}{p.RequestID, p.SourceID, p.OperationType,
+		p.ExpiresAt.UTC().Truncate(time.Microsecond)})
 }
 
 // CrawlRequestApproval is an approval record presented for verification. The
@@ -178,7 +179,8 @@ func (a CrawlRequestApproval) Fingerprint() string {
 	}{
 		a.ApprovalID, a.ProposalSHA256, a.RunID, a.AgentID, a.Owner,
 		a.SourceID, a.OperationType, a.Issuer, a.ApprovedBy, a.ApproverUserID,
-		a.ApprovedAt.UTC(), a.ExpiresAt.UTC(),
+		a.ApprovedAt.UTC().Truncate(time.Microsecond),
+		a.ExpiresAt.UTC().Truncate(time.Microsecond),
 	})
 }
 

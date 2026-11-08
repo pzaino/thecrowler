@@ -27,6 +27,8 @@ func startupFixture(t *testing.T, version string, complete bool, generation stri
 		`CREATE TABLE TimeSeriesObservationSeries(observation_id INTEGER REFERENCES TimeSeriesObservations(observation_id),metric_id INTEGER,series_hash TEXT,PRIMARY KEY(observation_id,metric_id,series_hash),FOREIGN KEY(metric_id,series_hash) REFERENCES TimeSeriesActiveSeries(metric_id,series_hash))`,
 		`CREATE TABLE TimeSeriesObservationDimensions(observation_id INTEGER REFERENCES TimeSeriesObservations(observation_id),metric_id INTEGER,dimension_key TEXT,value_hash TEXT,PRIMARY KEY(observation_id,metric_id,dimension_key,value_hash),FOREIGN KEY(metric_id,dimension_key,value_hash) REFERENCES TimeSeriesActiveDimensionValues(metric_id,dimension_key,value_hash))`,
 		`CREATE TABLE TimeSeriesCardinalityMaintenanceLock(lock_id INTEGER PRIMARY KEY)`,
+		`CREATE TABLE SourceOwnership(source_id INTEGER PRIMARY KEY,user_id INTEGER NOT NULL,verified_at TIMESTAMP NOT NULL,verified_by_user_id INTEGER NOT NULL,verified_by TEXT NOT NULL,verification_method TEXT NOT NULL)`,
+		`CREATE TABLE CrawlApprovals(approval_id TEXT PRIMARY KEY,proposal_sha256 TEXT,request_id TEXT,run_id TEXT,agent_id TEXT,owner TEXT,principal_user_id INTEGER,source_id INTEGER,operation_type TEXT,approval_sha256 TEXT,expires_at TIMESTAMP,revoked_at TIMESTAMP)`,
 		`CREATE TABLE DatabaseWriterCompatibility(lock_id INTEGER PRIMARY KEY,writer_generation TEXT NOT NULL)`,
 		`INSERT INTO DatabaseWriterCompatibility VALUES(1,'` + generation + `')`,
 		`CREATE INDEX idx_ts_observation_series_identity ON TimeSeriesObservationSeries(metric_id,series_hash)`,
@@ -42,28 +44,28 @@ func startupFixture(t *testing.T, version string, complete bool, generation stri
 	return &SQLiteHandler{db: db, dbms: DBSQLiteStr}
 }
 
-func TestStartupCompatibilityRejectsV115(t *testing.T) {
-	err := CheckStartupCompatibility(context.Background(), startupFixture(t, "1.15", true, WriterGeneration))
-	if err == nil || !strings.Contains(err.Error(), "required schema=1.16") || !strings.Contains(err.Error(), "detected schema=1.15") || !strings.Contains(err.Error(), "stop all old writers") {
+func TestStartupCompatibilityRejectsV116(t *testing.T) {
+	err := CheckStartupCompatibility(context.Background(), startupFixture(t, "1.16", true, WriterGeneration))
+	if err == nil || !strings.Contains(err.Error(), "required schema=1.17") || !strings.Contains(err.Error(), "detected schema=1.16") || !strings.Contains(err.Error(), "stop all old writers") {
 		t.Fatalf("unexpected diagnostic: %v", err)
 	}
 }
 
-func TestStartupCompatibilityRejectsFalselyLabeledIncompleteV116(t *testing.T) {
-	err := CheckStartupCompatibility(context.Background(), startupFixture(t, "1.16", false, WriterGeneration))
+func TestStartupCompatibilityRejectsFalselyLabeledIncompleteV117(t *testing.T) {
+	err := CheckStartupCompatibility(context.Background(), startupFixture(t, "1.17", false, WriterGeneration))
 	if err == nil || !strings.Contains(err.Error(), "idx_ts_observation_dimensions_identity") {
 		t.Fatalf("unexpected diagnostic: %v", err)
 	}
 }
 
-func TestStartupCompatibilityAcceptsValidV116(t *testing.T) {
-	if err := CheckStartupCompatibility(context.Background(), startupFixture(t, "1.16", true, WriterGeneration)); err != nil {
+func TestStartupCompatibilityAcceptsValidV117(t *testing.T) {
+	if err := CheckStartupCompatibility(context.Background(), startupFixture(t, "1.17", true, WriterGeneration)); err != nil {
 		t.Fatalf("valid schema rejected: %v", err)
 	}
 }
 
 func TestStartupCompatibilityRejectsIncompatibleActiveWriterGeneration(t *testing.T) {
-	err := CheckStartupCompatibility(context.Background(), startupFixture(t, "1.16", true, "reservation-v1.14"))
+	err := CheckStartupCompatibility(context.Background(), startupFixture(t, "1.17", true, "reservation-v1.14"))
 	if err == nil || !strings.Contains(err.Error(), `incompatible active writer generation "reservation-v1.14"`) {
 		t.Fatalf("unexpected diagnostic: %v", err)
 	}

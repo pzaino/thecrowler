@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	auth "github.com/pzaino/thecrowler/pkg/auth"
@@ -78,6 +79,31 @@ func insertOwnedSource(t *testing.T, handler cdb.Handler, sourceID int64, source
 		VALUES (?, ?, ?, 'owned', 'new', FALSE, ?)`, sourceID, fmt.Sprintf("uid-%d", sourceID), sourceURL, ownerID); err != nil {
 		t.Fatalf("insert owned source: %v", err)
 	}
+	if ownerID != 0 {
+		if _, err := db.Exec(`INSERT INTO SourceOwnership(source_id, user_id, verified_at, verified_by_user_id, verified_by, verification_method)
+			VALUES (?, ?, CURRENT_TIMESTAMP, ?, 'test-fixture', 'admin_verification')`, sourceID, ownerID, ownerID); err != nil {
+			t.Fatalf("insert source ownership: %v", err)
+		}
+	}
+}
+
+func insertLegacySource(t *testing.T, handler cdb.Handler, sourceID int64, sourceURL string, ownerID uint64) {
+	t.Helper()
+	db := handler.(*sourceAPITestHandler).db
+	if _, err := db.Exec(`INSERT INTO Sources(source_id, source_uid, url, name, status, disabled, usr_id)
+		VALUES (?, ?, ?, 'legacy', 'new', FALSE, ?)`, sourceID, fmt.Sprintf("uid-%d", sourceID), sourceURL, ownerID); err != nil {
+		t.Fatalf("insert legacy source: %v", err)
+	}
+}
+
+func sourceHasVerifiedOwnership(t *testing.T, handler cdb.Handler, sourceID int64) bool {
+	t.Helper()
+	var count int
+	if err := handler.(*sourceAPITestHandler).db.QueryRow(
+		`SELECT COUNT(*) FROM SourceOwnership WHERE source_id = ?`, sourceID).Scan(&count); err != nil {
+		t.Fatalf("read source ownership: %v", err)
+	}
+	return count > 0
 }
 
 func readSourceOwner(t *testing.T, handler cdb.Handler, sourceID int64) uint64 {
@@ -248,6 +274,9 @@ func TestAuthDisabledPreservesLegacySourceWorkflow(t *testing.T) {
 	if owner := readSourceOwner(t, handler, sourceID); owner != 5 {
 		t.Fatalf("legacy owner = %d, want 5", owner)
 	}
+	if sourceHasVerifiedOwnership(t, handler, sourceID) {
+		t.Fatal("legacy unauthenticated creation claimed verified ownership")
+	}
 }
 
 func TestSourceRemoveCrossUserRejected(t *testing.T) {
@@ -314,5 +343,237 @@ func TestAuthenticatedSourceMutationMiddleware(t *testing.T) {
 	wrapped.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusNoContent || !called {
 		t.Fatalf("authenticated request got %d, called=%v: %s", recorder.Code, called, recorder.Body.String())
+	}
+}
+
+func TestLegacyUnverifiedSourceRequiresAdministrativeVerification(t *testing.T) {
+	handler := setupSourceOwnershipTest(t)
+	insertLegacySource(t, handler, 42, "https://legacy.example/", 7)
+	owner := sourceOwnershipIdentity(7, "owner-1", "user")
+	admin := sourceOwnershipIdentity(9, "admin-1", "admin")
+
+	request := sourceMutationRequest(http.MethodPost, "/v1/source/update",
+		`{"source_id":42,"status":"pending"}`, &owner)
+	recorder := httptest.NewRecorder()
+	updateSourceHandler(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("legacy owner update got %d, want 403: %s", recorder.Code, recorder.Body.String())
+	}
+	if status := readSourceStatus(t, handler, 42); status != "new" {
+		t.Fatalf("legacy owner update changed status to %q", status)
+	}
+	if sourceHasVerifiedOwnership(t, handler, 42) {
+		t.Fatal("legacy source unexpectedly has verified provenance")
+	}
+
+	// Administrators may manage a legacy source without silently claiming it.
+	request = sourceMutationRequest(http.MethodPost, "/v1/source/update",
+		`{"source_id":42,"disabled":true}`, &admin)
+	recorder = httptest.NewRecorder()
+	updateSourceHandler(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("admin legacy update got %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if ownerID := readSourceOwner(t, handler, 42); ownerID != 7 {
+		t.Fatalf("admin update transferred ownership to %d", ownerID)
+	}
+
+	// Explicit administrative verification makes the existing claim
+	// authoritative and records the verifier.
+	request = sourceMutationRequest(http.MethodPost, "/v1/console/source/ownership/verify",
+		`{"source_id":42,"user_id":7,"reason":"historical ownership audit"}`, &admin)
+	recorder = httptest.NewRecorder()
+	sourceOwnershipVerifyHandler(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("admin verification got %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if !sourceHasVerifiedOwnership(t, handler, 42) {
+		t.Fatal("admin verification did not persist provenance")
+	}
+	var verifier uint64
+	var method string
+	if err := handler.(*sourceAPITestHandler).db.QueryRow(
+		`SELECT verified_by_user_id, verification_method FROM SourceOwnership WHERE source_id = 42`).
+		Scan(&verifier, &method); err != nil {
+		t.Fatalf("read provenance: %v", err)
+	}
+	if verifier != 9 || method != "admin_verification" {
+		t.Fatalf("unexpected provenance verifier=%d method=%q", verifier, method)
+	}
+
+	request = sourceMutationRequest(http.MethodPost, "/v1/source/update",
+		`{"source_id":42,"status":"pending"}`, &owner)
+	recorder = httptest.NewRecorder()
+	updateSourceHandler(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("verified owner update got %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if status := readSourceStatus(t, handler, 42); status != "pending" {
+		t.Fatalf("verified owner update status = %q", status)
+	}
+}
+
+func TestSourceOwnershipVerificationAuthorizationFailures(t *testing.T) {
+	handler := setupSourceOwnershipTest(t)
+	insertLegacySource(t, handler, 42, "https://verify.example/", 7)
+	owner := sourceOwnershipIdentity(7, "owner-1", "user")
+	admin := sourceOwnershipIdentity(9, "admin-1", "admin")
+
+	for name, test := range map[string]struct {
+		identity *auth.Identity
+		body     string
+		want     int
+	}{
+		"missing auth":        {nil, `{"source_id":42,"user_id":7}`, http.StatusUnauthorized},
+		"ordinary user":       {&owner, `{"source_id":42,"user_id":7}`, http.StatusForbidden},
+		"unknown source":      {&admin, `{"source_id":999,"user_id":7}`, http.StatusNotFound},
+		"unknown target user": {&admin, `{"source_id":42,"user_id":999}`, http.StatusForbidden},
+	} {
+		t.Run(name, func(t *testing.T) {
+			request := sourceMutationRequest(http.MethodPost, "/v1/console/source/ownership/verify", test.body, test.identity)
+			recorder := httptest.NewRecorder()
+			sourceOwnershipVerifyHandler(recorder, request)
+			if recorder.Code != test.want {
+				t.Fatalf("got %d, want %d: %s", recorder.Code, test.want, recorder.Body.String())
+			}
+			if sourceHasVerifiedOwnership(t, handler, 42) {
+				t.Fatal("failed verification persisted provenance")
+			}
+		})
+	}
+
+	oldAuth := config.API.Auth
+	config.API.Auth = cfg.AuthConfig{Enabled: false}
+	request := sourceMutationRequest(http.MethodPost, "/v1/console/source/ownership/verify",
+		`{"source_id":42,"user_id":7}`, &admin)
+	recorder := httptest.NewRecorder()
+	sourceOwnershipVerifyHandler(recorder, request)
+	config.API.Auth = oldAuth
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("auth-disabled verification got %d, want 401", recorder.Code)
+	}
+}
+
+func TestConcurrentSameURLCreationByTwoUsers(t *testing.T) {
+	handler := setupSourceOwnershipTest(t)
+	ownerOne := sourceOwnershipIdentity(7, "owner-1", "user")
+	ownerTwo := sourceOwnershipIdentity(8, "owner-2", "user")
+	url := "https://concurrent.example/"
+	type outcome struct {
+		code int
+		body string
+	}
+	results := make(chan outcome, 2)
+	var wg sync.WaitGroup
+	for _, identity := range []auth.Identity{ownerOne, ownerTwo} {
+		identity := identity
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			request := sourceMutationRequest(http.MethodPost, "/v1/source/add",
+				`{"url":"`+url+`","usr_id":999}`, &identity)
+			recorder := httptest.NewRecorder()
+			addSourceHandler(recorder, request)
+			results <- outcome{code: recorder.Code, body: recorder.Body.String()}
+		}()
+	}
+	wg.Wait()
+	close(results)
+
+	successes, conflicts := 0, 0
+	for result := range results {
+		switch result.code {
+		case http.StatusCreated:
+			successes++
+		case http.StatusForbidden:
+			conflicts++
+		default:
+			t.Fatalf("unexpected concurrent add status %d: %s", result.code, result.body)
+		}
+	}
+	if successes != 1 || conflicts != 1 {
+		t.Fatalf("concurrent add results successes=%d conflicts=%d", successes, conflicts)
+	}
+	var owner uint64
+	if err := handler.(*sourceAPITestHandler).db.QueryRow(
+		`SELECT usr_id FROM Sources WHERE url = ?`, url).Scan(&owner); err != nil {
+		t.Fatalf("read concurrent source owner: %v", err)
+	}
+	if owner != 7 && owner != 8 {
+		t.Fatalf("unexpected concurrent source owner %d", owner)
+	}
+	var sourceID int64
+	if err := handler.(*sourceAPITestHandler).db.QueryRow(`SELECT source_id FROM Sources WHERE url = ?`, url).Scan(&sourceID); err != nil {
+		t.Fatalf("read concurrent source ID: %v", err)
+	}
+	if !sourceHasVerifiedOwnership(t, handler, sourceID) {
+		t.Fatal("concurrent creation did not persist verified provenance")
+	}
+}
+
+func TestSourceVacuumCrossUserRejected(t *testing.T) {
+	handler := setupSourceOwnershipTest(t)
+	insertOwnedSource(t, handler, 42, "https://vacuum.example/", 8)
+	identity := sourceOwnershipIdentity(7, "owner-1", "user")
+	request := sourceMutationRequest(http.MethodGet, "/v1/source/vacuum?q=https://vacuum.example/", "", &identity)
+	recorder := httptest.NewRecorder()
+	vacuumSourceHandler(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("cross-user vacuum got %d, want 403: %s", recorder.Code, recorder.Body.String())
+	}
+	var count int
+	if err := handler.(*sourceAPITestHandler).db.QueryRow(`SELECT COUNT(*) FROM Sources WHERE source_id = 42`).Scan(&count); err != nil {
+		t.Fatalf("count source: %v", err)
+	}
+	if count != 1 {
+		t.Fatal("cross-user vacuum removed the source")
+	}
+}
+
+func TestAuthenticatedSameOwnerSourceUpsertRemainsValid(t *testing.T) {
+	handler := setupSourceOwnershipTest(t)
+	owner := sourceOwnershipIdentity(7, "owner-1", "user")
+	sourceURL := "https://same-owner.example/"
+	for i := 0; i < 2; i++ {
+		request := sourceMutationRequest(http.MethodPost, "/v1/source/add",
+			`{"url":"`+sourceURL+`","usr_id":999,"disabled":false}`, &owner)
+		recorder := httptest.NewRecorder()
+		addSourceHandler(recorder, request)
+		if recorder.Code != http.StatusCreated {
+			t.Fatalf("same-owner upsert %d got %d: %s", i, recorder.Code, recorder.Body.String())
+		}
+	}
+	var sourceID int64
+	var ownerID uint64
+	if err := handler.(*sourceAPITestHandler).db.QueryRow(
+		`SELECT source_id, usr_id FROM Sources WHERE url = ?`, sourceURL).Scan(&sourceID, &ownerID); err != nil {
+		t.Fatalf("read same-owner source: %v", err)
+	}
+	if ownerID != 7 {
+		t.Fatalf("same-owner upsert changed owner to %d", ownerID)
+	}
+	var provenanceRows int
+	if err := handler.(*sourceAPITestHandler).db.QueryRow(
+		`SELECT COUNT(*) FROM SourceOwnership WHERE source_id = ? AND user_id = 7`, sourceID).Scan(&provenanceRows); err != nil {
+		t.Fatalf("count same-owner provenance: %v", err)
+	}
+	if provenanceRows != 1 {
+		t.Fatalf("same-owner provenance rows = %d, want 1", provenanceRows)
+	}
+}
+
+func TestAdministratorCanAddExistingOtherOwnerURLWithoutTransfer(t *testing.T) {
+	handler := setupSourceOwnershipTest(t)
+	insertOwnedSource(t, handler, 42, "https://admin-add.example/", 8)
+	admin := sourceOwnershipIdentity(9, "admin-1", "admin")
+	request := sourceMutationRequest(http.MethodPost, "/v1/source/add",
+		`{"url":"https://admin-add.example/","usr_id":7,"disabled":true}`, &admin)
+	recorder := httptest.NewRecorder()
+	addSourceHandler(recorder, request)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("admin add got %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if owner := readSourceOwner(t, handler, 42); owner != 8 {
+		t.Fatalf("admin add transferred ownership to %d", owner)
 	}
 }

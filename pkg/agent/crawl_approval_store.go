@@ -163,8 +163,14 @@ func (s *DatabaseCrawlApprovalStore) IssueCrawlApproval(ctx context.Context, req
 		ApprovedAt:        approval.ApprovedAt,
 		ExpiresAt:         approval.ExpiresAt,
 	}
-	inserted, err := cdb.InsertCrawlApproval(ctx, s.DB, row)
+	inserted, err := cdb.InsertCrawlApprovalAuthorized(ctx, s.DB, row)
 	if err != nil {
+		if errors.Is(err, cdb.ErrSourceMutationNotFound) ||
+			errors.Is(err, cdb.ErrSourceMutationDeleted) ||
+			errors.Is(err, cdb.ErrSourceMutationUnverified) ||
+			errors.Is(err, cdb.ErrSourceMutationForbidden) {
+			return CrawlRequestApproval{}, ErrCrawlApprovalApproverUnauthorized
+		}
 		return CrawlRequestApproval{}, ErrCrawlApprovalStoreUnavailable
 	}
 	if inserted {

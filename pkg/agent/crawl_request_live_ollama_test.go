@@ -108,6 +108,19 @@ func newCrawlSchedulingTestDB(t *testing.T) *cdb.Handler {
 	)`); err != nil {
 		t.Fatalf("create live scheduling Status table: %v", err)
 	}
+	if _, err := handler.Exec(`CREATE TABLE IF NOT EXISTS SourceOwnership (
+		source_id INTEGER PRIMARY KEY,
+		user_id INTEGER NOT NULL,
+		verified_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		verified_by_user_id INTEGER NOT NULL,
+		verified_by TEXT NOT NULL DEFAULT 'fixture',
+		verification_method TEXT NOT NULL DEFAULT 'admin_verification',
+		verification_reason TEXT,
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		last_updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`); err != nil {
+		t.Fatalf("create live SourceOwnership table: %v", err)
+	}
 	if _, err := handler.Exec(`CREATE TABLE IF NOT EXISTS CrawlApprovals (
 		approval_id CHAR(64) PRIMARY KEY,
 		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -167,6 +180,10 @@ func newCrawlSchedulingTestDB(t *testing.T) *cdb.Handler {
 		(source_id, source_uid, url, name, priority, status, disabled, usr_id)
 		VALUES (42, 'live-source-uid', 'https://live.example/', 'live', '', 'completed', FALSE, 7)`); err != nil {
 		t.Fatalf("insert live scheduling source: %v", err)
+	}
+	if _, err := handler.Exec(`INSERT INTO SourceOwnership(source_id, user_id, verified_by_user_id)
+		VALUES (42, 7, 7)`); err != nil {
+		t.Fatalf("insert live source ownership: %v", err)
 	}
 	return &handler
 }

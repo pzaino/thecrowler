@@ -60,11 +60,17 @@ and a local `Users.user_id` mapping:
 - Adding a URL that already belongs to another user is rejected. Adding an
   existing URL owned by the caller (or by an administrator) updates non-owner
   fields but never transfers ownership.
-- `/v1/source/update`, `/v1/source/remove`, and `/v1/source/vacuum` require the
-  caller to be the source owner or hold the `admin`/`superadmin` role. A zero or
-  unknown `Sources.usr_id` fails closed for ordinary users.
-- Source ownership cannot be changed through add or update. A future explicit
-  administrative ownership-transfer workflow is required for reassignment.
+- `/v1/source/update`, `/v1/source/remove`, and `/v1/source/vacuum` require
+  verified source ownership (`SourceOwnership`) or the `admin`/`superadmin`
+  role. A zero, unknown or legacy-unverified `Sources.usr_id` fails closed for
+  ordinary users.
+- Source ownership cannot be changed through add or update. Reassignment or
+  legacy-ownership verification requires
+  `POST /v1/console/source/ownership/verify` by an administrator, which records
+  the verifier and reason.
+- Source add, update and remove lock and recheck ownership in the same
+  transaction as the mutation, so a concurrent ownership transfer cannot be
+  bypassed by an earlier authorization check.
 
 When API authentication is disabled, the legacy unauthenticated console
 workflow is preserved and a newly created source may still carry the
@@ -80,8 +86,10 @@ Additional status codes for authenticated source mutations:
 - **401** — missing, invalid, disabled, deleted or externally-unmapped identity.
 - **403** — the authenticated user is not the source owner and lacks an
   administrative role.
+- **409** — the source is soft-deleted or a concurrent state conflict prevents
+  the mutation.
 - **503** — the authoritative identity or ownership lookup could not be
-  completed.
+  completed, or the backend cannot enforce the authenticated mutation contract.
 
 Upon success (or failure) insertion the CROWler will return a status JSON document:
 

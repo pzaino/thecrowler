@@ -11,3 +11,12 @@ Each migration script should be executed in the order of their version numbers t
 If you encounter any issues during the migration process, consult the migration script for details on the changes being applied and check the database logs for any errors. It is recommended to test the migration on a staging environment before applying it to the production database.
 
 BEFORE you run a migration script open it and read it, sometimes I have to leave special instructions or notes that are crucial for the migration to succeed.
+
+Current schema target: **1.17**. The v1.17 migration adds durable crawl
+approvals (PostgreSQL/SQLite) and verified source-ownership provenance (all
+supported backends), and advances the writer-generation marker. Stop every old
+writer before applying it, then start only v1.17-compatible services. The
+PostgreSQL migration is transactional and safe to re-run; SQLite is transactional
+and re-runnable as well. Neither migration bulk-verifies historical `usr_id`
+values. MySQL keeps the ownership table but does not support durable approvals or
+authenticated atomic source mutation in this release.

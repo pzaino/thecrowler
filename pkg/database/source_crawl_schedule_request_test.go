@@ -29,6 +29,39 @@ func newCrawlOperationTestDB(t *testing.T) (*sql.DB, Handler) {
 	)`); err != nil {
 		t.Fatalf("create Sources: %v", err)
 	}
+	if _, err := db.Exec(`CREATE TABLE SourceOwnership (
+		source_id INTEGER PRIMARY KEY,
+		user_id INTEGER NOT NULL,
+		verified_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		verified_by_user_id INTEGER NOT NULL,
+		verified_by TEXT NOT NULL DEFAULT 'fixture',
+		verification_method TEXT NOT NULL DEFAULT 'admin_verification',
+		verification_reason TEXT,
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		last_updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`); err != nil {
+		t.Fatalf("create SourceOwnership: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE Users (
+		user_id INTEGER PRIMARY KEY,
+		username TEXT NOT NULL,
+		disabled BOOLEAN NOT NULL DEFAULT FALSE,
+		deleted_at TIMESTAMP
+	)`); err != nil {
+		t.Fatalf("create Users: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE AuthRoles (role_id INTEGER PRIMARY KEY, name TEXT NOT NULL)`); err != nil {
+		t.Fatalf("create AuthRoles: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE UserRoles (user_id INTEGER NOT NULL, role_id INTEGER NOT NULL, PRIMARY KEY (user_id, role_id))`); err != nil {
+		t.Fatalf("create UserRoles: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO Users(user_id, username, disabled, deleted_at) VALUES
+		(7, 'owner-1', FALSE, NULL), (9, 'admin-1', FALSE, NULL);
+		INSERT INTO AuthRoles(role_id, name) VALUES (1, 'admin'), (2, 'user');
+		INSERT INTO UserRoles(user_id, role_id) VALUES (7, 2), (9, 1);`); err != nil {
+		t.Fatalf("seed scheduling users: %v", err)
+	}
 	if _, err := db.Exec(`CREATE TABLE CrawlApprovals (
 		approval_id CHAR(64) PRIMARY KEY,
 		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -89,6 +122,12 @@ func insertCrawlOperationSourceWithOwner(t *testing.T, db *sql.DB, sourceID uint
 	t.Helper()
 	if _, err := db.Exec(`INSERT INTO Sources(source_id, disabled, status, usr_id) VALUES (?,?,?,?)`, sourceID, disabled, status, ownerID); err != nil {
 		t.Fatalf("insert source: %v", err)
+	}
+	if ownerID != 0 {
+		if _, err := db.Exec(`INSERT INTO SourceOwnership(source_id, user_id, verified_by_user_id) VALUES (?,?,?)`,
+			sourceID, ownerID, ownerID); err != nil {
+			t.Fatalf("insert source ownership: %v", err)
+		}
 	}
 }
 
@@ -1074,5 +1113,109 @@ func TestScheduleSourceCrawlRequestRetrySurvivesApprovalRevocation(t *testing.T)
 	}
 	if got := crawlOperationStatusCount(t, db); got != 1 {
 		t.Fatalf("retry created %d operation rows", got)
+	}
+}
+
+func TestScheduleSourceCrawlRequestRejectsUnverifiedLegacyOwnership(t *testing.T) {
+	db, handler := newCrawlOperationTestDB(t)
+	insertCrawlOperationSourceWithOwner(t, db, 42, "completed", false, 7)
+	if _, err := db.Exec(`DELETE FROM SourceOwnership WHERE source_id=42`); err != nil {
+		t.Fatalf("remove source provenance: %v", err)
+	}
+	result, err := scheduleCrawlForTest(t, context.Background(), &handler, crawlOperationRequest(42))
+	if err != nil {
+		t.Fatalf("schedule: %v", err)
+	}
+	if result.State != CrawlOperationDenied || result.ReasonCode != CrawlReasonOwnershipRejected {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	if got := crawlOperationSourceStatus(t, db, 42); got != "completed" {
+		t.Fatalf("unverified ownership changed source to %q", got)
+	}
+	if got := crawlOperationStatusCount(t, db); got != 0 {
+		t.Fatalf("unverified ownership created %d operation rows", got)
+	}
+}
+
+func TestScheduleSourceCrawlRequestRejectsInactiveOrDemotedApprover(t *testing.T) {
+	t.Run("disabled approver", func(t *testing.T) {
+		db, handler := newCrawlOperationTestDB(t)
+		insertCrawlOperationSource(t, db, 42, "completed", false)
+		req := crawlOperationRequest(42)
+		ensureCrawlApprovalFixture(t, db, req)
+		if _, err := db.Exec(`UPDATE Users SET disabled=TRUE WHERE user_id=9`); err != nil {
+			t.Fatalf("disable approver: %v", err)
+		}
+		result, err := scheduleCrawlForTest(t, context.Background(), &handler, req)
+		if err != nil {
+			t.Fatalf("schedule: %v", err)
+		}
+		if result.State != CrawlOperationDenied || result.ReasonCode != CrawlReasonApprovalRejected {
+			t.Fatalf("unexpected result: %+v", result)
+		}
+		if got := crawlOperationStatusCount(t, db); got != 0 {
+			t.Fatalf("disabled approver created %d operation rows", got)
+		}
+	})
+
+	t.Run("disabled issuer", func(t *testing.T) {
+		db, handler := newCrawlOperationTestDB(t)
+		insertCrawlOperationSource(t, db, 42, "completed", false)
+		req := crawlOperationRequest(42)
+		ensureCrawlApprovalFixture(t, db, req)
+		if _, err := db.Exec(`UPDATE Users SET disabled=TRUE WHERE user_id=7`); err != nil {
+			t.Fatalf("disable issuer: %v", err)
+		}
+		result, err := scheduleCrawlForTest(t, context.Background(), &handler, req)
+		if err != nil {
+			t.Fatalf("schedule: %v", err)
+		}
+		if result.State != CrawlOperationDenied || result.ReasonCode != CrawlReasonApprovalRejected {
+			t.Fatalf("unexpected result: %+v", result)
+		}
+		if got := crawlOperationStatusCount(t, db); got != 0 {
+			t.Fatalf("disabled issuer created %d operation rows", got)
+		}
+	})
+
+	t.Run("revoked administrator role", func(t *testing.T) {
+		db, handler := newCrawlOperationTestDB(t)
+		insertCrawlOperationSource(t, db, 42, "completed", false)
+		req := crawlOperationRequest(42)
+		ensureCrawlApprovalFixture(t, db, req)
+		if _, err := db.Exec(`DELETE FROM UserRoles WHERE user_id=9 AND role_id=1`); err != nil {
+			t.Fatalf("revoke administrator role: %v", err)
+		}
+		result, err := scheduleCrawlForTest(t, context.Background(), &handler, req)
+		if err != nil {
+			t.Fatalf("schedule: %v", err)
+		}
+		if result.State != CrawlOperationDenied || result.ReasonCode != CrawlReasonApprovalRejected {
+			t.Fatalf("unexpected result: %+v", result)
+		}
+		if got := crawlOperationStatusCount(t, db); got != 0 {
+			t.Fatalf("demoted approver created %d operation rows", got)
+		}
+	})
+}
+
+func TestScheduleSourceCrawlRequestRejectsExpiredProposalBinding(t *testing.T) {
+	db, handler := newCrawlOperationTestDB(t)
+	insertCrawlOperationSource(t, db, 42, "completed", false)
+	req := crawlOperationRequest(42)
+	ensureCrawlApprovalFixture(t, db, req)
+	if _, err := db.Exec(`UPDATE CrawlApprovals SET proposal_expires_at=? WHERE approval_id=?`,
+		crawlOperationNow().Add(-time.Minute), req.ApprovalID); err != nil {
+		t.Fatalf("expire proposal binding: %v", err)
+	}
+	result, err := scheduleCrawlForTest(t, context.Background(), &handler, req)
+	if err != nil {
+		t.Fatalf("schedule: %v", err)
+	}
+	if result.State != CrawlOperationDenied || result.ReasonCode != CrawlReasonApprovalRejected {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	if got := crawlOperationStatusCount(t, db); got != 0 {
+		t.Fatalf("expired proposal binding created %d operation rows", got)
 	}
 }

@@ -63,6 +63,11 @@ func setupCrawlApprovalPostgresUsers(t *testing.T, db *cdb.Handler) (ownerID, ad
 	adminID = ownerID + 1
 	ownerName := fmt.Sprintf("wp03b2b-owner-%d", ownerID)
 	adminName := fmt.Sprintf("wp03b2b-admin-%d", adminID)
+	if _, err := (*db).Exec(`INSERT INTO AuthRoles(name, description) VALUES
+		('admin', 'test administrator'), ('user', 'test user')
+		ON CONFLICT (name) DO NOTHING`); err != nil {
+		t.Fatalf("ensure approval roles: %v", err)
+	}
 	if _, err := (*db).Exec(`INSERT INTO Users(user_id, username, disabled, deleted_at) VALUES
 		($1, $2, FALSE, NULL), ($3, $4, FALSE, NULL)
 		ON CONFLICT (user_id) DO UPDATE SET username=EXCLUDED.username, disabled=FALSE, deleted_at=NULL`,
@@ -100,9 +105,16 @@ func createCrawlApprovalPostgresSource(t *testing.T, db *cdb.Handler, ownerID ui
 	if _, err := (*db).Exec(`UPDATE Sources SET status='completed', last_updated_at=NOW() WHERE source_id=$1`, sourceID); err != nil {
 		t.Fatalf("complete source: %v", err)
 	}
+	if _, err := (*db).Exec(`INSERT INTO SourceOwnership
+		(source_id, user_id, verified_at, verified_by_user_id, verified_by, verification_method)
+		VALUES ($1, $2, NOW(), $2, 'wp03b2b-fixture', 'admin_verification')
+		ON CONFLICT (source_id) DO UPDATE SET user_id=EXCLUDED.user_id, verified_at=EXCLUDED.verified_at`, sourceID, ownerID); err != nil {
+		t.Fatalf("record approval source ownership: %v", err)
+	}
 	t.Cleanup(func() {
 		_, _ = (*db).Exec(`DELETE FROM Status WHERE source_id=$1`, sourceID)
 		_, _ = (*db).Exec(`DELETE FROM CrawlApprovals WHERE source_id=$1`, sourceID)
+		_, _ = (*db).Exec(`DELETE FROM SourceOwnership WHERE source_id=$1`, sourceID)
 		_, _ = (*db).Exec(`DELETE FROM Sources WHERE source_id=$1`, sourceID)
 	})
 	return sourceID
@@ -211,7 +223,8 @@ func TestPostgresCrawlApprovalPersistenceAndScheduling(t *testing.T) {
 	// An admin may issue for another owner's source.
 	admin := CrawlPrincipal{UserID: adminID, Username: fmt.Sprintf("wp03b2b-admin-%d", adminID), Issuer: "crowler"}
 	adminProposal := postgresApprovalProposal(sourceID, fmt.Sprintf("wp03b2b-admin-request-%d", now.UnixNano()), now)
-	adminRequest := postgresApprovalRequest(adminProposal, identity, principal, now)
+	adminIdentity := AgentIdentity{AgentID: "wp03b2b-agent", Owner: admin.Username, TrustLevel: "trusted"}
+	adminRequest := postgresApprovalRequest(adminProposal, adminIdentity, admin, now)
 	adminRequest.IssuerPrincipal = admin
 	adminRequest.Approver = admin
 	approvedByAdmin, err := store.IssueCrawlApproval(context.Background(), adminRequest)
@@ -220,6 +233,17 @@ func TestPostgresCrawlApprovalPersistenceAndScheduling(t *testing.T) {
 	}
 	if approvedByAdmin.ApproverUserID != adminID {
 		t.Fatalf("admin approval user ID = %d", approvedByAdmin.ApproverUserID)
+	}
+	// The console binds the authenticated operator as the run principal. An
+	// administrator approving for their own principal cannot schedule another
+	// owner's source; cross-owner run-principal binding awaits WP-03B2C.
+	adminSchedule := postgresScheduleRequest(adminProposal, adminIdentity, admin, approvedByAdmin, now)
+	denied, err = cdb.ScheduleSourceCrawlRequest(context.Background(), db, adminSchedule)
+	if err != nil {
+		t.Fatalf("admin schedule: %v", err)
+	}
+	if denied.State != cdb.CrawlOperationDenied || denied.ReasonCode != cdb.CrawlReasonOwnershipRejected {
+		t.Fatalf("cross-owner admin principal was not denied ownership: %+v", denied)
 	}
 }
 

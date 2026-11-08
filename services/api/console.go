@@ -795,18 +795,9 @@ func performAddSourceContext(ctx context.Context, query string, qType int, db *c
 		}
 	}
 
-	access, err := authorizeSourceURL(ctx, *db, params.URL, true)
+	identity, authenticated, err := resolveSourceMutationIdentity(ctx, *db)
 	if err != nil {
 		return ConsoleResponse{Message: "Source mutation is not authorized"}, err
-	}
-	if access.Authenticated {
-		if access.Existing {
-			// Never transfer ownership through the source upsert. Admins may
-			// update an existing source but its persisted owner is preserved.
-			params.UsrID = access.OwnerID
-		} else {
-			params.UsrID = access.UserID
-		}
 	}
 
 	// Validate & reformat config (same as your logic)
@@ -830,12 +821,29 @@ func performAddSourceContext(ctx context.Context, query string, qType int, db *c
 		// Status is intentionally NOT set from console
 	}
 
-	// Use your new SAFE CreateSource() logic
-	sourceID, err := cdb.CreateSourceContext(ctx, db, &dbSource, params.Config)
-	if err != nil {
-		return ConsoleResponse{
-			Message: "Failed to add the source",
-		}, err
+	var sourceID uint64
+	if authenticated {
+		access, err := sourceMutationAccessFromIdentity(identity)
+		if err != nil {
+			return ConsoleResponse{Message: "Source mutation is not authorized"}, err
+		}
+		// The authenticated path performs the insert-or-authorize decision and
+		// the source mutation in a single transaction. A caller-supplied usr_id
+		// is never used here.
+		sourceID, _, err = cdb.UpsertAuthenticatedSourceContext(
+			ctx, db, &dbSource, params.Config, access.UserID, access.Username, access.Admin,
+		)
+		if err != nil {
+			return ConsoleResponse{Message: "Failed to add the source"}, sourceMutationError(err)
+		}
+	} else {
+		// Legacy unauthenticated deployments retain the historical behavior,
+		// including a request-supplied usr_id. Such ownership has no verified
+		// provenance and is not eligible for agent scheduling.
+		sourceID, err = cdb.CreateSourceContext(ctx, db, &dbSource, params.Config)
+		if err != nil {
+			return ConsoleResponse{Message: "Failed to add the source"}, err
+		}
 	}
 
 	msg := fmt.Sprintf("Website inserted successfully with ID: %d", sourceID)
@@ -944,8 +952,16 @@ func performRemoveSourceContext(ctx context.Context, query string, qType int, db
 	}
 
 	sourceURL = cdb.NormalizeSourceURL(sourceURL)
-	if _, err := authorizeSourceURL(ctx, *db, sourceURL, false); err != nil {
+	identity, authenticated, err := resolveSourceMutationIdentity(ctx, *db)
+	if err != nil {
 		return ConsoleResponse{Message: "Source mutation is not authorized"}, err
+	}
+	var access sourceMutationAccess
+	if authenticated {
+		access, err = sourceMutationAccessFromIdentity(identity)
+		if err != nil {
+			return ConsoleResponse{Message: "Source mutation is not authorized"}, err
+		}
 	}
 
 	// Start a transaction bounded by database.transaction_timeout; the HTTP
@@ -964,8 +980,14 @@ func performRemoveSourceContext(ctx context.Context, query string, qType int, db
 		cdb.LogTransactionOutcome("removeSource", txStarted, retErr)
 	}()
 
+	if authenticated {
+		if _, err := authorizeSourceMutationByURLTx(txCtx, tx, *db, sourceURL, access); err != nil {
+			return ConsoleResponse{Message: "Source mutation is not authorized"}, err
+		}
+	}
+
 	// Proceed with deleting the source using the obtained source_id
-	results, err = removeSourceContext(ctx, tx, sourceURL)
+	results, err = removeSourceContext(txCtx, tx, sourceURL)
 	if err != nil {
 		return ConsoleResponse{Message: "Failed to remove source and related data"}, err
 	}
@@ -1230,7 +1252,7 @@ func performUpdateSource(query string, qType int, db *cdb.Handler) (ConsoleRespo
 	return performUpdateSourceContext(context.Background(), query, qType, db)
 }
 
-func performUpdateSourceContext(ctx context.Context, query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
+func performUpdateSourceContext(ctx context.Context, query string, qType int, db *cdb.Handler) (consoleResponse ConsoleResponse, retErr error) {
 	var sqlParams updateSourceRequest
 	var sourceConfig *string
 	var sourceDetails *string
@@ -1264,31 +1286,72 @@ func performUpdateSourceContext(ctx context.Context, query string, qType int, db
 		requestedConfig = &validated
 	}
 
-	// Resolve sourceID if only URL is provided
-	if sqlParams.SourceID == 0 && sqlParams.URL != nil {
-		sourceID, err := cdb.GetSourceIDContext(ctx, cdb.SourceFilter{URL: *sqlParams.URL}, db)
-		if err != nil {
-			return ConsoleResponse{Message: "Failed to resolve Source ID"}, err
+	identity, authenticated, err := resolveSourceMutationIdentity(ctx, *db)
+	if err != nil {
+		return ConsoleResponse{Message: "Source mutation is not authorized"}, err
+	}
+
+	// Legacy unauthenticated callers keep the historical URL-to-ID resolution.
+	// Authenticated callers resolve and lock by URL inside the transaction so a
+	// concurrent URL change cannot redirect the update.
+	if !authenticated && sqlParams.SourceID == 0 && sqlParams.URL != nil {
+		sourceID, resolveErr := cdb.GetSourceIDContext(ctx, cdb.SourceFilter{URL: *sqlParams.URL}, db)
+		if resolveErr != nil {
+			return ConsoleResponse{Message: "Failed to resolve Source ID"}, resolveErr
 		}
 		sqlParams.SourceID = int64(sourceID) //nolint:gosec // This is a controlled value
-	} else if sqlParams.SourceID == 0 {
+	}
+	if sqlParams.SourceID == 0 && sqlParams.URL == nil {
 		return ConsoleResponse{Message: "Source ID or URL must be provided"}, fmt.Errorf("missing Source ID or URL")
 	}
 
-	access, accessErr := authorizeSourceID(ctx, *db, uint64(sqlParams.SourceID))
-	if accessErr != nil {
-		return ConsoleResponse{Message: "Source mutation is not authorized"}, accessErr
+	var access sourceMutationAccess
+	if authenticated {
+		access, err = sourceMutationAccessFromIdentity(identity)
+		if err != nil {
+			return ConsoleResponse{Message: "Source mutation is not authorized"}, err
+		}
 	}
-	_ = access
 
-	// Retrieve existing data for the source
+	txCtx, cancelTx := cdb.TransactionContextForHandler(ctx, db)
+	defer cancelTx()
+	tx, err := (*db).BeginTx(txCtx, nil)
+	if err != nil {
+		return ConsoleResponse{Message: errFailedToStartTransaction}, cdb.NormalizeTransactionError(txCtx, err)
+	}
+	txStarted := time.Now()
+	defer func() {
+		_ = tx.Rollback()
+		retErr = cdb.NormalizeTransactionError(txCtx, retErr)
+		cdb.LogTransactionOutcome("updateSource", txStarted, retErr)
+	}()
+
+	if authenticated {
+		var owner cdb.SourceOwner
+		if sqlParams.SourceID != 0 {
+			owner, err = authorizeSourceMutationTx(txCtx, tx, *db, uint64(sqlParams.SourceID), access)
+		} else {
+			owner, err = authorizeSourceMutationByURLTx(txCtx, tx, *db, *sqlParams.URL, access)
+		}
+		if err != nil {
+			return ConsoleResponse{Message: "Source mutation is not authorized"}, err
+		}
+		sqlParams.SourceID = int64(owner.SourceID) //nolint:gosec // This is a controlled value
+	} else if sqlParams.SourceID == 0 {
+		if err := tx.QueryRowContext(txCtx, `SELECT source_id FROM Sources WHERE url = $1`, cdb.NormalizeSourceURL(*sqlParams.URL)).Scan(&sqlParams.SourceID); err != nil {
+			return ConsoleResponse{Message: "Failed to resolve Source ID"}, err
+		}
+	}
+
+	// Retrieve existing data for the source inside the same transaction that
+	// will perform the mutation.
 	var existingData cdb.UpdateSourceRequest
 	selectQuery := `
         SELECT url, sub_priority, status, restricted, disabled, flags, config, details
         FROM Sources
         WHERE source_id = $1
     `
-	err := (*db).QueryRowContext(ctx, selectQuery, sqlParams.SourceID).Scan(
+	if err := tx.QueryRowContext(txCtx, selectQuery, sqlParams.SourceID).Scan(
 		&existingData.URL,
 		&existingData.SubPriority,
 		&existingData.Status,
@@ -1297,8 +1360,7 @@ func performUpdateSourceContext(ctx context.Context, query string, qType int, db
 		&existingData.Flags,
 		&sourceConfig,
 		&sourceDetails,
-	)
-	if err != nil {
+	); err != nil {
 		return ConsoleResponse{Message: "Failed to retrieve source data"}, fmt.Errorf("error querying existing source data: %w", err)
 	}
 	// extract free JSON form Details:
@@ -1362,7 +1424,7 @@ func performUpdateSourceContext(ctx context.Context, query string, qType int, db
 		configParam = []byte(*sourceConfig)
 	}
 
-	// Perform the update
+	// Perform the update. Ownership is deliberately excluded from the SET list.
 	updateQuery := `
         UPDATE Sources
         SET url = $1,
@@ -1378,7 +1440,7 @@ func performUpdateSourceContext(ctx context.Context, query string, qType int, db
 	if (*db).DBMS() == cdb.DBSQLiteStr {
 		updateQuery = strings.ReplaceAll(updateQuery, "::jsonb", "")
 	}
-	_, err = (*db).ExecContext(ctx, updateQuery,
+	if _, err := tx.ExecContext(txCtx, updateQuery,
 		mergedData.URL,
 		mergedData.SubPriority,
 		mergedData.Status,
@@ -1388,9 +1450,11 @@ func performUpdateSourceContext(ctx context.Context, query string, qType int, db
 		configParam,
 		mergedData.Details,
 		mergedData.SourceID,
-	)
-	if err != nil {
+	); err != nil {
 		return ConsoleResponse{Message: "Failed to update source"}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ConsoleResponse{Message: errFailedToCommitTransaction}, cdb.NormalizeTransactionError(txCtx, err)
 	}
 
 	return ConsoleResponse{Message: "Source updated successfully"}, nil
@@ -1414,19 +1478,28 @@ func performVacuumSourceContext(ctx context.Context, query string, qType int, db
 		}
 	}
 
-	// Resolve sourceID if only URL is provided
-	if filter.SourceID == 0 && filter.URL != "" {
+	identity, authenticated, err := resolveSourceMutationIdentity(ctx, *db)
+	if err != nil {
+		return ConsoleResponse{Message: "Source mutation is not authorized"}, err
+	}
+	var access sourceMutationAccess
+	if authenticated {
+		access, err = sourceMutationAccessFromIdentity(identity)
+		if err != nil {
+			return ConsoleResponse{Message: "Source mutation is not authorized"}, err
+		}
+	}
+	// Legacy unauthenticated callers keep the historical resolution. The
+	// authenticated path resolves and locks by URL inside the transaction.
+	if !authenticated && filter.SourceID == 0 && filter.URL != "" {
 		sourceID, err := cdb.GetSourceIDContext(ctx, filter, db)
 		if err != nil {
 			return ConsoleResponse{Message: "Failed to resolve Source ID"}, err
 		}
 		filter.SourceID = int64(sourceID) //nolint:gosec // This is a controlled value
-	} else if filter.SourceID == 0 {
-		return ConsoleResponse{Message: "Source ID or URL must be provided"}, fmt.Errorf("missing Source ID or URL")
 	}
-
-	if _, err := authorizeSourceID(ctx, *db, uint64(filter.SourceID)); err != nil {
-		return ConsoleResponse{Message: "Source mutation is not authorized"}, err
+	if filter.SourceID == 0 && filter.URL == "" {
+		return ConsoleResponse{Message: "Source ID or URL must be provided"}, fmt.Errorf("missing Source ID or URL")
 	}
 
 	// Start a transaction bounded by database.transaction_timeout; the HTTP
@@ -1445,6 +1518,23 @@ func performVacuumSourceContext(ctx context.Context, query string, qType int, db
 		cdb.LogTransactionOutcome("vacuumSource", txStarted, retErr)
 	}()
 
+	if authenticated {
+		var owner cdb.SourceOwner
+		if filter.SourceID != 0 {
+			owner, err = authorizeSourceMutationTx(txCtx, tx, *db, uint64(filter.SourceID), access)
+		} else {
+			owner, err = authorizeSourceMutationByURLTx(txCtx, tx, *db, filter.URL, access)
+		}
+		if err != nil {
+			return ConsoleResponse{Message: "Source mutation is not authorized"}, err
+		}
+		filter.SourceID = int64(owner.SourceID) //nolint:gosec // This is a controlled value
+	} else if filter.SourceID == 0 {
+		if err := tx.QueryRowContext(txCtx, `SELECT source_id FROM Sources WHERE url = $1`, cdb.NormalizeSourceURL(filter.URL)).Scan(&filter.SourceID); err != nil {
+			return ConsoleResponse{Message: "Failed to resolve Source ID"}, err
+		}
+	}
+
 	// Deleting indexed data
 	queries := []string{
 		"DELETE FROM KeywordIndex WHERE index_id IN (SELECT index_id FROM SourceSearchIndex WHERE source_id = $1)",
@@ -1456,7 +1546,7 @@ func performVacuumSourceContext(ctx context.Context, query string, qType int, db
 	}
 
 	for _, query := range queries {
-		_, err = tx.ExecContext(ctx, query, filter.SourceID)
+		_, err = tx.ExecContext(txCtx, query, filter.SourceID)
 		if err != nil {
 			err2 := tx.Rollback() // Rollback if any query fails
 			if err2 != nil {

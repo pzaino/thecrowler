@@ -86,24 +86,53 @@ not use foreign keys to `Sources` or `Users`: historical approvals must survive
 source/user lifecycle changes, while issuance validates those references while
 they are live.
 
-Fresh-install PostgreSQL and SQLite setup files include the table. The
-`postgresql-migration-v1.17.pgsql` and `sqlite-migration-v1.17.sqlite3` files are
-the exact additive upgrade proposals. `RequiredSchemaVersion` remains `1.16` in
-this work package so an existing deployment does not start against an
-unmigrated database. Activation requires applying the migration, verifying the
-table and then advancing the writer compatibility constant in the same approved
-deployment. The runtime approval store fails closed with
-`crawl_approval_store_unavailable` when the table is absent.
+Fresh-install PostgreSQL, SQLite and MySQL setup files include the v1.17
+ownership-provenance table. PostgreSQL and SQLite also include
+`CrawlApprovals`; MySQL does not support durable approvals and fails closed with
+an explicit unsupported result. The v1.17 migration files create
+`SourceOwnership` on every backend and `CrawlApprovals` on PostgreSQL/SQLite,
+then advance both `DBSchemaVersion` and `DatabaseWriterCompatibility`.
 
-Rollback is additive and destructive only to approval history:
+`RequiredSchemaVersion` is `1.17` and `WriterGeneration` is
+`verified-ownership-v1.17`. The upgrade procedure is: stop every old writer,
+apply the v1.17 migration, verify the current version and writer generation,
+then start only v1.17-compatible services. Re-running the v1.17 migration is
+safe and preserves existing approval and ownership history. The migration does
+not bulk-verify historical `usr_id` values.
+
+Rollback is additive and destructive only to approval/ownership history:
 
 ```sql
 DROP TABLE IF EXISTS CrawlApprovals;
+DROP TABLE IF EXISTS SourceOwnership;
 UPDATE DBSchemaVersion SET is_current = (version = '1.16');
+UPDATE DatabaseWriterCompatibility SET writer_generation = 'reservation-v1.15' WHERE lock_id = 1;
 ```
 
 Do not apply the v1.17 migration to an existing persistent deployment database
-without maintainer approval.
+without maintainer authorization.
+
+## Verified source ownership
+
+`Sources.usr_id` is the stored owner identifier, but only a matching
+`SourceOwnership` row with a non-null verification timestamp makes that value
+authoritative:
+
+- `source_id` primary key;
+- `user_id` must equal `Sources.usr_id` for the owner to be verified;
+- `verified_at`, `verified_by_user_id`, `verified_by`,
+  `verification_method` and `verification_reason` describe the explicit
+  verification event;
+- no row means legacy/unverified ownership, including a nonzero `usr_id`.
+
+Authenticated source creation writes provenance with method
+`authenticated_creation` in the same transaction as the source insert. Legacy
+unauthenticated creation never claims verification. The administrative
+ownership-verification endpoint locks the source row, updates `usr_id` and
+upserts provenance, recording the verifier and reason. Ordinary authenticated
+owner mutations and agent scheduling require verified provenance;
+administrators may manage unverified sources but cannot silently mark them
+verified through add/update.
 
 ## Source and information seed provenance
 

@@ -47,6 +47,9 @@ func openSourceOwnershipPostgresHandler(t *testing.T) cdb.Handler {
 		t.Fatalf("connect postgres: %v", err)
 	}
 	t.Cleanup(func() { _ = handler.Close() })
+	if err := cdb.CheckStartupCompatibility(context.Background(), handler); err != nil {
+		t.Fatalf("postgres v1.17 runtime compatibility: %v", err)
+	}
 	return handler
 }
 
@@ -121,6 +124,7 @@ func TestPostgresAuthenticatedSourceCreateAndUpdate(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		_, _ = handler.Exec(`DELETE FROM Status WHERE source_id=$1`, sourceID)
+		_, _ = handler.Exec(`DELETE FROM SourceOwnership WHERE source_id=$1`, sourceID)
 		_, _ = handler.Exec(`DELETE FROM Sources WHERE source_id=$1`, sourceID)
 	})
 
@@ -153,5 +157,23 @@ func TestPostgresAuthenticatedSourceCreateAndUpdate(t *testing.T) {
 	}
 	if status != "pending" || owner != ownerID {
 		t.Fatalf("owner update result status=%q owner=%d", status, owner)
+	}
+
+	// A same-owner authenticated add of the existing URL remains valid and
+	// exercises the PostgreSQL ownership-aware update path.
+	sameOwnerBody := fmt.Sprintf(`{"url":%q,"usr_id":999999,"disabled":true}`, sourceURL)
+	sameOwnerRequest := httptest.NewRequest(http.MethodPost, "/v1/source/add", strings.NewReader(sameOwnerBody))
+	sameOwnerRequest = sameOwnerRequest.WithContext(auth.ContextWithIdentity(context.Background(), ownerIdentity))
+	sameOwnerRecorder := httptest.NewRecorder()
+	addSourceHandler(sameOwnerRecorder, sameOwnerRequest)
+	if sameOwnerRecorder.Code != http.StatusCreated {
+		t.Fatalf("same-owner add status %d: %s", sameOwnerRecorder.Code, sameOwnerRecorder.Body.String())
+	}
+	var sameOwnerDisabled bool
+	if err := handler.QueryRow(`SELECT usr_id, disabled FROM Sources WHERE source_id=$1`, sourceID).Scan(&owner, &sameOwnerDisabled); err != nil {
+		t.Fatalf("read same-owner add result: %v", err)
+	}
+	if owner != ownerID || !sameOwnerDisabled {
+		t.Fatalf("same-owner add returned owner=%d disabled=%v", owner, sameOwnerDisabled)
 	}
 }
