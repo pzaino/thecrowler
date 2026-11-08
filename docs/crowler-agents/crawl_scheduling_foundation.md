@@ -1,4 +1,4 @@
-# Crawl scheduling foundation (WP-03B1)
+# Crawl scheduling foundation (WP-03B1, hardened by WP-03B2A)
 
 Status: internal foundation, reviewed separately from WP-03A. Not exposed to
 models. No model-facing state-changing tool is registered.
@@ -29,6 +29,7 @@ Observed source states are `new`, `pending`, `processing`, `completed`,
 result, err := cdb.ScheduleSourceCrawlRequest(ctx, &db, cdb.CrawlScheduleRequest{
     RequestID:        "logical-request-1",
     RunID:            "run-1",
+    PrincipalUserID:  7,
     AgentID:          "agent-1",
     Owner:            "owner-1",
     SourceID:         42,
@@ -62,7 +63,8 @@ range. There is no way for a model or caller to disable the quota with
 `CrawlScheduleResult` carries:
 
 - `OperationID` — deterministic durable operation identity;
-- `RequestID`, `RunID`, `AgentID`, `Owner`, `SourceID`, `OperationType`;
+- `RequestID`, `RunID`, `PrincipalUserID`, `AgentID`, `Owner`, `SourceID`,
+  `OperationType`;
 - `State` — scheduling-request state;
 - `ReasonCode` — stable machine-readable code;
 - `SourceState` — the source row observed during this operation;
@@ -74,7 +76,7 @@ Operation states include: `proposed`, `denied`, `accepted`,
 `expired`, `disabled`, `not_found`, `conflict`, `unsupported`.
 
 `completed` and `failed` are reserved for future observation of the crawl
-execution; WP-03B1 does not claim crawl completion from a scheduling
+execution; the scheduling foundation does not claim crawl completion from a scheduling
 acknowledgment. The operation state and source state are intentionally separate.
 
 Common scheduling reason codes:
@@ -90,17 +92,26 @@ Common scheduling reason codes:
 | quota exhausted | `crawl_request_budget_exhausted` |
 | source scope missing | `crawl_source_scope_required` |
 | source outside scope | `crawl_source_out_of_scope` |
+| source authorizer unavailable | `crawl_source_authorizer_unavailable` |
+| source ownership missing | `crawl_source_ownership_missing` |
+| source owned by another principal | `crawl_source_forbidden` |
+| other source authorization failure | `crawl_source_authorization_error` |
 | request lifetime expired | `crawl_request_expired` |
 | invalid request | `crawl_request_invalid` |
 | cancelled/deadline | `crawl_request_cancelled` / `crawl_transaction_timeout` |
 | database failure | `crawl_database_error` (sanitized) |
 | backend without durable store | `crawl_store_unsupported` |
+| approval unknown to authority | `crawl_approval_unknown` |
+| approval issuer untrusted | `crawl_approval_issuer_untrusted` |
+| approver not authorized | `crawl_approval_approver_unauthorized` |
+| approval store unavailable | `crawl_approval_store_unavailable` |
+| approval lifetime invalid | `crawl_approval_lifetime_exceeded` |
 
 Approval-policy reason codes are documented in section 4.
 
 ## 3. Idempotency and concurrency
 
-WP-03B1 uses the existing durable `Status` table. No schema migration or new
+The scheduling foundation uses the existing durable `Status` table. No schema migration or new
 table was introduced. The fields used are `status_sha256` (deterministic
 primary key), `agent_id`, `source_id`, `operation_type`, `status`, `details`
 (JSONB in PostgreSQL, JSON text in SQLite), `created_at` and
@@ -108,9 +119,12 @@ primary key), `agent_id`, `source_id`, `operation_type`, `status`, `details`
 
 - `status_sha256` is deterministic:
   `owner | agent_id | source_id | operation_type | request_id`.
-- `RunID` is stored in the operation details and must match on retry. A changed
-  run, approval fingerprint or parameter hash for the same key returns
-  `conflict` and does not mutate the source.
+- `RunID` and `PrincipalUserID` are stored in the operation details and must
+  match on retry. A changed run, principal, approval fingerprint or parameter
+  hash for the same key returns `conflict` and does not mutate the source.
+- Agent-originated requests require `principal.Username == AgentIdentity.Owner`.
+  Because `Users.username` is unique, the owner component of the operation ID
+  is a unique principal label.
 - `AllowedSources` is required and is rechecked by the database adapter before
   any source mutation. It is populated only after the agent policy layer has
   approved the proposal against the full run scope.
@@ -169,14 +183,14 @@ for legacy MySQL callers but does not claim durable idempotency.
 
 No migration is required for this implementation. If maintainers prefer a
 dedicated crawl-request table instead of the generic existing `Status` table,
-that must be a separately approved WP-03B2 migration; the internal API and
+that must be a separately approved WP-03B2B migration; the internal API and
 result contract can be retained.
 
-## 4. Proposal, allowlist and approval boundary
+## 4. Proposal, allowlist, ownership and approval boundary
 
 `CrawlRequestProposal` is bounded, non-executable data:
 
-- request ID;
+- request ID (the trusted runtime generates it for future model-facing use);
 - source ID;
 - operation type (`crawl` only);
 - expiry, bounded to the next 24 hours.
@@ -187,77 +201,71 @@ arguments. It carries:
 - `AllowedOperations` — a frozen set of permitted operation names; the trusted
   host must not mutate it for the lifetime of the run;
 - `AllowedSources` — the approved source scope;
+- `Principal` — the authenticated operator the agent acts for;
+- `SourceAuthorizer` — the trusted source-ownership boundary;
 - an optional `CrawlApprovalVerifier` trusted authority;
 - `MaxRequests` and `BudgetWindow`.
 
 `CrawlRequestApproval` is an approval record presented for verification. It is
 bound to the proposal fingerprint, run ID, agent ID, owner, source, operation,
-approval ID, issuer, approver, approval time and expiry.
+approval ID, issuer, approver, approval time and expiry. Its fields are only a
+lookup key; the approval is not trusted until an authoritative verifier
+resolves it.
 
 `AuthorizeCrawlRequest()` requires:
 
 - trusted agent identity and owner;
 - non-empty run ID;
+- a valid principal whose username equals the agent owner;
 - trust level `trusted` or above;
 - `tool_execution` and `db_write` capabilities;
 - an explicit operation allowlist containing `request_source_crawl`;
 - an explicit source scope containing the proposal source;
 - no matching `tools` / `tool:request_source_crawl` contract prohibition;
 - a positive bounded quota and budget window;
+- successful source-ownership authorization for the same source;
 - a current proposal;
 - an explicit approval bound to the exact proposal, run and identity;
 - a current approval;
-- successful verification by the trusted approval verifier.
+- successful verification by the trusted approval verifier, including the
+  approver's source authority.
 
 Contract prohibition overrides the allowlist. A missing or empty operation
 allowlist fails closed. The `all` capability satisfies capability checks but
-never the operation allowlist, source scope, approval or contract restrictions.
-A new run, operation or modified proposal/approval cannot reuse an approval.
+never the operation allowlist, source scope, ownership, approval or contract
+restrictions. A new run, operation or modified proposal/approval cannot reuse
+an approval.
 
-### Approval provenance
+### Trusted approval and ownership
 
-A matching approval structure is not an authorization credential. The
-`CrawlApprovalVerifier` interface is the narrow boundary through which a
-trusted authority confirms that an approval was actually issued and remains
-valid:
+WP-03B2A adds:
 
-```go
-type CrawlApprovalVerifier interface {
-    VerifyCrawlApproval(ctx context.Context, approval CrawlRequestApproval,
-        proposal CrawlRequestProposal, identity AgentIdentity,
-        runID string, now time.Time) error
-}
-```
+- `CrawlPrincipal` and `CrawlPrincipalFromAuthIdentity()`;
+- `CrawlSourceAuthorizer` and `DatabaseCrawlSourceAuthorizer`;
+- `CrawlApprovalStore`, `CrawlApprovalIssuer`, `CrawlApprovalRevoker`;
+- `StoreBackedCrawlApprovalVerifier`.
 
-- A nil verifier always fails closed with
-  `crawl_approval_verifier_unavailable`.
-- A verifier rejection maps to `crawl_approval_unverified`.
-- `ErrCrawlApprovalRevoked` maps to `crawl_approval_revoked`.
-- A model-generated claim that approval exists is indistinguishable from any
-  other unverified approval record and is rejected.
-- Tests use an explicitly trusted test verifier; production has no verifier
-  until a durable operator approval source is approved.
+A nil source authorizer or approval verifier fails closed. A missing or zero
+source owner fails closed. A database lookup failure is never a permission
+grant. A matching approval structure is not sufficient: the verifier must
+resolve the approval in an authoritative store, match every binding, check
+revocation and verify the approver's source authority.
 
-There is no durable operator approval database, signing service, API or UI in
-WP-03B1. Adding one is a separate approval checkpoint. Until then, the
-model-facing scheduling tool must remain unregistered.
-
-The existing source-scope mechanism is an operator-configured set of source
-IDs. It does not currently enforce `Sources.usr_id` ownership or a general
-tenant hierarchy. WP-03B1 binds the request owner and approval owner but does
-not invent a new ownership policy. A deployment that requires per-user source
-ownership must add that trusted policy before exposing the WP-03B2 tool.
+There is no durable operator approval store, signing service, API or UI in
+this chunk, and `/v1/source/add` still accepts a caller-supplied `usr_id`.
+Those are documented production contracts in
+[`crawl_request_authorization.md`](crawl_request_authorization.md). Until they
+are approved and wired, the model-facing scheduling tool must remain
+unregistered.
 
 ### Decision integrity
 
-`CrawlRequestDecision` carries an unexported `verified` flag that only a
-successful `AuthorizeCrawlRequest()` invocation can set, plus unexported quota
-fields exposed through a read-only `Quota()` accessor. A caller outside the
-agent package cannot fabricate an allowed decision or widen its quota after
-authorization. `BuildCrawlScheduleRequest()` rechecks the decision, proposal,
-approval, identity, run and expiry bindings before constructing a database
-request. A denied, mismatched, cross-run, expired or altered decision cannot
-produce a submittable request.
+All authorization-relevant decision fields are unexported, including the
+verified flag, run, principal user ID, fingerprints, quota and outcomes.
+Read-only accessors expose audit data. `BuildCrawlScheduleRequest()` rechecks
+the decision, proposal, approval, identity, run, principal and expiry
+bindings before constructing a database request. A denied, mismatched,
+cross-run, expired or altered decision cannot produce a submittable request.
 
 `AuthorizeCrawlRequest()` and `BuildCrawlScheduleRequest()` read the trusted
 runtime clock and expose no caller-controlled time argument. Deterministic
@@ -272,46 +280,57 @@ this chunk.
 `JobEngine.AuditCrawlSchedulingDecision()` records:
 
 - trusted wall-clock timestamp;
-- agent ID, owner, run ID, trace ID;
+- agent ID, owner, principal user ID, run ID, trace ID;
 - source ID, request ID, operation type, idempotency/operation key;
-- authorization outcome and authorization reason code;
+- authorization stage and outcome;
+- approval outcome and authorization reason code;
+- source-ownership outcome;
 - scheduling state and overall scheduling outcome;
 - stable reason code.
 
-`AuditEvent` gained additive `source_id`, `request_id`, `operation_type`,
-`idempotency_key`, `authorization_outcome`, `authorization_reason_code`,
-`scheduling_state` and `timestamp` fields with `omitempty`; existing audit
-serialization retains its shape. The timestamp uses the runtime clock at audit
-time. In-memory audit events are not durable storage, and WP-03B1 does not
-claim otherwise. No prompts, model text, credentials, SQL or raw configuration
-are copied into the audit.
+Stable authorization stages include `proposal_received`, `policy_checked`,
+`source_verified`, `source_denied`, `approval_required`,
+`approval_verified`, `approval_rejected`, `authorized`, `submitted`,
+`reused`, `submission_denied` and `submission_failed`. Approval outcomes are
+`not_requested`, `verified`, `rejected`, `revoked`, `expired` and
+`unavailable`. Source outcomes are `not_checked`, `verified`, `missing`,
+`denied` and `unavailable`.
 
-## 6. Future WP-03B2 integration
+`AuditEvent` gained additive `authorization_stage`, `approval_outcome`,
+`source_ownership_outcome` and earlier correlation fields with `omitempty`;
+existing audit serialization retains its shape. The timestamp uses the
+runtime clock at audit time. In-memory audit events are not durable storage.
+No prompts, model text, credentials, SQL or raw configuration are copied into
+the audit.
 
-WP-03B2 may expose a single model-facing proposal tool only after review. It
+## 6. Future WP-03B2B integration
+
+WP-03B2B may expose a single model-facing proposal tool only after review. It
 must:
 
-1. validate model arguments into a bounded proposal;
-2. obtain an explicit approval from a trusted authority bound to the proposal,
-   identity and run;
-3. build a trusted `CrawlRequestPolicy` with a frozen operation allowlist,
-   source scope, positive quota and approval verifier;
-4. call `AuthorizeCrawlRequest()`;
-5. call `BuildCrawlScheduleRequest()` and then the database API;
-6. return only the accepted/already-pending/processing acknowledgement;
-7. observe completion later through the existing read-only source-status and
+1. accept only the proposed `source_id`;
+2. generate the logical request ID from trusted run and tool-call correlation;
+3. obtain an explicit approval from a trusted authority bound to the proposal,
+   identity, principal and run;
+4. build a trusted `CrawlRequestPolicy` with a frozen operation allowlist,
+   source scope, principal, source authorizer, positive quota and approval
+   verifier;
+5. call `AuthorizeCrawlRequest()`;
+6. call `BuildCrawlScheduleRequest()` and then the database API;
+7. return only the accepted/already-pending/processing acknowledgement;
+8. observe completion later through the existing read-only source-status and
    evidence tools;
-8. never let a model supply approval, issuer, owner, tenant, DB, scope,
-   allowlist or budget fields.
+9. never let a model supply approval, issuer, approver, owner, principal,
+   tenant, DB, scope, allowlist, clock or budget fields.
 
-The future tool will need an approved capability contract; this document does
-not add one. The investigated combination is the existing `tool_execution` and
-`db_write` capabilities. A dedicated crawl-request capability, if preferred,
-requires schema/documentation approval and is not invented here.
+The proposed input and result contract, effect classification and evidence
+semantics are documented in
+[`crawl_request_authorization.md`](crawl_request_authorization.md). The tool is
+not registered.
 
-Before WP-03B2, maintainers must also approve:
+Before WP-03B2B, maintainers must also approve:
 
 - the durable `Status`-table reuse or a dedicated migration;
-- a durable, trusted operator approval source and revocation policy;
-- source ownership/tenant enforcement;
+- a durable, trusted operator approval store, issuer and revocation policy;
+- authenticated source-ownership population and principal resolution;
 - the exact model-facing tool schema and source-scope rules.

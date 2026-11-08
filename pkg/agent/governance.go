@@ -51,12 +51,16 @@ type AuditEvent struct {
 	ReasonCode  string   `json:"reason_code,omitempty"`
 	EvidenceIDs []string `json:"evidence_ids,omitempty"`
 	// WP-03B1 scheduling correlation fields. Empty for non-scheduling actions.
+	PrincipalUserID         uint64     `json:"principal_user_id,omitempty"`
 	SourceID                uint64     `json:"source_id,omitempty"`
 	RequestID               string     `json:"request_id,omitempty"`
 	OperationType           string     `json:"operation_type,omitempty"`
 	IdempotencyKey          string     `json:"idempotency_key,omitempty"`
 	AuthorizationOutcome    string     `json:"authorization_outcome,omitempty"`
 	AuthorizationReasonCode string     `json:"authorization_reason_code,omitempty"`
+	AuthorizationStage      string     `json:"authorization_stage,omitempty"`
+	ApprovalOutcome         string     `json:"approval_outcome,omitempty"`
+	SourceOwnershipOutcome  string     `json:"source_ownership_outcome,omitempty"`
 	SchedulingState         string     `json:"scheduling_state,omitempty"`
 	Timestamp               *time.Time `json:"timestamp,omitempty"`
 }
@@ -90,12 +94,12 @@ func (je *JobEngine) appendAudit(event AuditEvent) {
 // text and database details are never copied into the audit.
 func (je *JobEngine) AuditCrawlSchedulingDecision(identity AgentIdentity, proposal CrawlRequestProposal, decision CrawlRequestDecision, result *cdb.CrawlScheduleResult, runID, traceID string) {
 	outcome := auditOutcomeDenied
-	reason := decision.ReasonCode
+	reason := decision.ReasonCode()
 	operationType := proposal.OperationType
 	requestID := proposal.RequestID
 	sourceID := proposal.SourceID
 	operationID := ""
-	if decision.Allowed {
+	if decision.Allowed() {
 		outcome = auditOutcomeAllowed
 	}
 	if result != nil {
@@ -115,14 +119,31 @@ func (je *JobEngine) AuditCrawlSchedulingDecision(identity AgentIdentity, propos
 	}
 	capabilities := []string(nil)
 	authorizationOutcome := auditOutcomeDenied
-	if decision.Allowed {
-		capabilities = append([]string(nil), decision.RequiredCapabilities...)
+	if decision.Allowed() {
+		capabilities = decision.RequiredCapabilities()
 		authorizationOutcome = auditOutcomeAllowed
 	}
-	authorizationReason := decision.ReasonCode
+	authorizationReason := decision.ReasonCode()
+	authorizationStage := decision.Stage()
 	schedulingState := ""
 	if result != nil {
 		schedulingState = string(result.State)
+		switch {
+		case result.Reused && (result.State == cdb.CrawlOperationAccepted ||
+			result.State == cdb.CrawlOperationAlreadyPending):
+			authorizationStage = CrawlStageReused
+		case result.State == cdb.CrawlOperationAccepted ||
+			result.State == cdb.CrawlOperationAlreadyPending ||
+			result.State == cdb.CrawlOperationProcessing ||
+			result.State == cdb.CrawlOperationCompleted:
+			authorizationStage = CrawlStageSubmitted
+		case result.State == cdb.CrawlOperationFailed ||
+			result.State == cdb.CrawlOperationCancelled ||
+			result.State == cdb.CrawlOperationUnsupported:
+			authorizationStage = CrawlStageSubmissionFailed
+		default:
+			authorizationStage = CrawlStageSubmissionDenied
+		}
 	}
 	timestamp := time.Now().UTC()
 	je.appendAudit(AuditEvent{
@@ -130,10 +151,13 @@ func (je *JobEngine) AuditCrawlSchedulingDecision(identity AgentIdentity, propos
 		AgentID: identity.AgentID, AgentName: identity.Name, Owner: identity.Owner,
 		Action: "CrawlRequest", RequiredCapability: "tool_execution+db_write",
 		CapabilitiesUsed: capabilities, Outcome: outcome, Reason: reason,
-		ReasonCode: reason, SourceID: sourceID, RequestID: requestID,
+		ReasonCode: reason, PrincipalUserID: decision.PrincipalUserID(),
+		SourceID: sourceID, RequestID: requestID,
 		OperationType: operationType, IdempotencyKey: operationID,
 		AuthorizationOutcome: authorizationOutcome, AuthorizationReasonCode: authorizationReason,
-		SchedulingState: schedulingState, Timestamp: &timestamp,
+		AuthorizationStage: authorizationStage, ApprovalOutcome: decision.ApprovalOutcome(),
+		SourceOwnershipOutcome: decision.SourceOwnershipOutcome(),
+		SchedulingState:        schedulingState, Timestamp: &timestamp,
 	})
 }
 

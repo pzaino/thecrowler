@@ -97,6 +97,7 @@ const (
 type CrawlScheduleRequest struct {
 	RequestID        string
 	RunID            string
+	PrincipalUserID  uint64
 	AgentID          string
 	Owner            string
 	SourceID         uint64
@@ -117,6 +118,7 @@ type CrawlScheduleResult struct {
 	OperationID      string
 	RequestID        string
 	RunID            string
+	PrincipalUserID  uint64
 	AgentID          string
 	Owner            string
 	SourceID         uint64
@@ -133,6 +135,7 @@ type CrawlScheduleResult struct {
 type crawlOperationDetails struct {
 	RequestID         string `json:"request_id"`
 	RunID             string `json:"run_id"`
+	PrincipalUserID   uint64 `json:"principal_user_id"`
 	AgentID           string `json:"agent_id"`
 	Owner             string `json:"owner"`
 	SourceID          uint64 `json:"source_id"`
@@ -320,6 +323,7 @@ func newCrawlScheduleResult(req CrawlScheduleRequest, key string, now time.Time)
 		OperationID:      key,
 		RequestID:        req.RequestID,
 		RunID:            req.RunID,
+		PrincipalUserID:  req.PrincipalUserID,
 		AgentID:          req.AgentID,
 		Owner:            req.Owner,
 		SourceID:         req.SourceID,
@@ -343,6 +347,9 @@ func validateCrawlScheduleRequest(req CrawlScheduleRequest, now time.Time) error
 	if req.SourceID == 0 {
 		return fmt.Errorf("source_id is required")
 	}
+	if req.PrincipalUserID == 0 {
+		return fmt.Errorf("principal_user_id is required")
+	}
 	if req.OperationType != CrawlOperationType {
 		return fmt.Errorf("operation_type must be %q", CrawlOperationType)
 	}
@@ -360,6 +367,10 @@ func validateCrawlScheduleRequest(req CrawlScheduleRequest, now time.Time) error
 	}
 	if req.ExpiresAt.After(now.Add(maxCrawlRequestLifetime)) {
 		return fmt.Errorf("expires_at exceeds the supported request lifetime")
+	}
+	if !req.ExpiresAt.After(req.ApprovedAt) ||
+		req.ExpiresAt.After(req.ApprovedAt.Add(maxCrawlRequestLifetime)) {
+		return fmt.Errorf("expires_at exceeds the approval-bound request lifetime")
 	}
 	if req.MaxRequests <= 0 || req.MaxRequests > maxCrawlRequests {
 		return fmt.Errorf("max_requests must be 1..%d", maxCrawlRequests)
@@ -414,7 +425,8 @@ func crawlOperationID(req CrawlScheduleRequest) string {
 func crawlOperationDetailsFor(req CrawlScheduleRequest) (crawlOperationDetails, error) {
 	details := crawlOperationDetails{
 		RequestID: req.RequestID, RunID: req.RunID,
-		AgentID: req.AgentID, Owner: req.Owner,
+		PrincipalUserID: req.PrincipalUserID,
+		AgentID:         req.AgentID, Owner: req.Owner,
 		SourceID: req.SourceID, OperationType: req.OperationType,
 		ParametersSHA256: req.ParametersSHA256, ApprovalID: req.ApprovalID,
 		ApprovalSHA256: req.ApprovalSHA256, ApprovedBy: req.ApprovedBy,
@@ -486,6 +498,7 @@ func resolveExistingCrawlOperation(ctx context.Context, tx *sql.Tx, db Handler, 
 func sameCrawlOperation(details crawlOperationDetails, req CrawlScheduleRequest) bool {
 	return details.RequestID == req.RequestID &&
 		details.RunID == req.RunID &&
+		details.PrincipalUserID == req.PrincipalUserID &&
 		details.AgentID == req.AgentID &&
 		details.Owner == req.Owner &&
 		details.SourceID == req.SourceID &&

@@ -15,7 +15,7 @@ import (
 
 // crawlRequestToolName is the prospective WP-03B2 tool/operation name used for
 // allowlist and contract matching. It is deliberately not registered in
-// AgentToolRegistry and cannot be called by a model in WP-03B1.
+// AgentToolRegistry and cannot be called by a model in WP-03B2A.
 const crawlRequestToolName = "request_source_crawl"
 
 const maxCrawlRequestIDLen = 128
@@ -23,31 +23,77 @@ const maxCrawlRequestIDLen = 128
 const (
 	maxCrawlProposalLifetime = 24 * time.Hour
 	maxCrawlApprovalLifetime = 24 * time.Hour
+	maxCrawlRequestLifetime  = 24 * time.Hour
 	maxCrawlPolicyRequests   = 100
 	maxCrawlPolicyBudget     = 24 * time.Hour
 )
 
+// Stable authorization stages for audit correlation.
+const (
+	CrawlStageProposalReceived = "proposal_received"
+	CrawlStagePolicyChecked    = "policy_checked"
+	CrawlStageSourceVerified   = "source_verified"
+	CrawlStageSourceDenied     = "source_denied"
+	CrawlStageApprovalRequired = "approval_required"
+	CrawlStageApprovalVerified = "approval_verified"
+	CrawlStageApprovalRejected = "approval_rejected"
+	CrawlStageAuthorized       = "authorized"
+	CrawlStageSubmitted        = "submitted"
+	CrawlStageReused           = "reused"
+	CrawlStageSubmissionDenied = "submission_denied"
+	CrawlStageSubmissionFailed = "submission_failed"
+)
+
+// Stable approval and source-ownership outcomes for audit correlation.
+const (
+	CrawlApprovalOutcomeNotRequested = "not_requested"
+	CrawlApprovalOutcomeVerified     = "verified"
+	CrawlApprovalOutcomeRejected     = "rejected"
+	CrawlApprovalOutcomeRevoked      = "revoked"
+	CrawlApprovalOutcomeExpired      = "expired"
+	CrawlApprovalOutcomeUnavailable  = "unavailable"
+
+	CrawlSourceOutcomeNotChecked  = "not_checked"
+	CrawlSourceOutcomeVerified    = "verified"
+	CrawlSourceOutcomeMissing     = "missing"
+	CrawlSourceOutcomeDenied      = "denied"
+	CrawlSourceOutcomeUnavailable = "unavailable"
+)
+
 // Crawl request policy reason codes.
 const (
-	CrawlReasonApproved                    = "crawl_request_approved"
-	CrawlReasonInvalidProposal             = "crawl_proposal_invalid"
-	CrawlReasonProposalExpired             = "crawl_proposal_expired"
-	CrawlReasonMissingIdentity             = "crawl_missing_identity"
-	CrawlReasonRunRequired                 = "crawl_run_required"
-	CrawlReasonTrustRequired               = "crawl_trust_required"
-	CrawlReasonCapabilityRequired          = "crawl_capability_required"
-	CrawlReasonContractForbidden           = "crawl_contract_forbidden"
-	CrawlReasonOperationNotAllowlisted     = "crawl_operation_not_allowlisted"
-	CrawlReasonSourceScopeRequired         = "crawl_source_scope_required"
-	CrawlReasonSourceOutOfScope            = "crawl_source_out_of_scope"
-	CrawlReasonBudgetRequired              = "crawl_budget_required"
-	CrawlReasonApprovalRequired            = "crawl_approval_required"
-	CrawlReasonApprovalMismatch            = "crawl_approval_mismatch"
-	CrawlReasonApprovalExpired             = "crawl_approval_expired"
-	CrawlReasonApprovalVerifierUnavailable = "crawl_approval_verifier_unavailable"
-	CrawlReasonApprovalUnverified          = "crawl_approval_unverified"
-	CrawlReasonApprovalRevoked             = "crawl_approval_revoked"
-	CrawlReasonRequestBuildFailed          = "crawl_request_build_failed"
+	CrawlReasonApproved                     = "crawl_request_approved"
+	CrawlReasonInvalidProposal              = "crawl_proposal_invalid"
+	CrawlReasonProposalExpired              = "crawl_proposal_expired"
+	CrawlReasonMissingIdentity              = "crawl_missing_identity"
+	CrawlReasonRunRequired                  = "crawl_run_required"
+	CrawlReasonPrincipalRequired            = "crawl_principal_required"
+	CrawlReasonPrincipalMismatch            = "crawl_principal_mismatch"
+	CrawlReasonTrustRequired                = "crawl_trust_required"
+	CrawlReasonCapabilityRequired           = "crawl_capability_required"
+	CrawlReasonContractForbidden            = "crawl_contract_forbidden"
+	CrawlReasonOperationNotAllowlisted      = "crawl_operation_not_allowlisted"
+	CrawlReasonSourceScopeRequired          = "crawl_source_scope_required"
+	CrawlReasonSourceOutOfScope             = "crawl_source_out_of_scope"
+	CrawlReasonSourceAuthorizerUnavailable  = "crawl_source_authorizer_unavailable"
+	CrawlReasonSourceOwnershipMissing       = "crawl_source_ownership_missing"
+	CrawlReasonSourceForbidden              = "crawl_source_forbidden"
+	CrawlReasonSourceAuthorizationError     = "crawl_source_authorization_error"
+	CrawlReasonBudgetRequired               = "crawl_budget_required"
+	CrawlReasonApprovalRequired             = "crawl_approval_required"
+	CrawlReasonApprovalMismatch             = "crawl_approval_mismatch"
+	CrawlReasonApprovalExpired              = "crawl_approval_expired"
+	CrawlReasonApprovalVerifierUnavailable  = "crawl_approval_verifier_unavailable"
+	CrawlReasonApprovalUnverified           = "crawl_approval_unverified"
+	CrawlReasonApprovalRevoked              = "crawl_approval_revoked"
+	CrawlReasonApprovalUnknown              = "crawl_approval_unknown"
+	CrawlReasonApprovalIssuerUntrusted      = "crawl_approval_issuer_untrusted"
+	CrawlReasonApprovalApproverUnauthorized = "crawl_approval_approver_unauthorized"
+	CrawlReasonApprovalStoreUnavailable     = "crawl_approval_store_unavailable"
+	CrawlReasonApprovalLifetimeExceeded     = "crawl_approval_lifetime_exceeded"
+	CrawlReasonAuthorizationCancelled       = "crawl_authorization_cancelled"
+	CrawlReasonAuthorizationTimeout         = "crawl_authorization_timeout"
+	CrawlReasonRequestBuildFailed           = "crawl_request_build_failed"
 )
 
 var (
@@ -58,12 +104,11 @@ var (
 	ErrCrawlApprovalRevoked = errors.New("crawl approval was revoked")
 )
 
-// CrawlApprovalVerifier is the narrow trusted-authority boundary. A nil
-// verifier fails closed. Implementations may consult an operator-controlled
-// approval registry or signing service; WP-03B1 does not invent a durable
-// approval database or UI.
+// CrawlApprovalVerifier is the trusted approval-authority boundary. A nil
+// verifier fails closed. Implementations must resolve the approval in an
+// authoritative store; matching caller-provided fields are not sufficient.
 type CrawlApprovalVerifier interface {
-	VerifyCrawlApproval(ctx context.Context, approval CrawlRequestApproval, proposal CrawlRequestProposal, identity AgentIdentity, runID string, now time.Time) error
+	VerifyCrawlApproval(ctx context.Context, verification CrawlApprovalVerification) error
 }
 
 // CrawlRequestPolicy is trusted run configuration. It is never populated from
@@ -71,6 +116,8 @@ type CrawlApprovalVerifier interface {
 type CrawlRequestPolicy struct {
 	AllowedOperations map[string]bool
 	AllowedSources    map[uint64]bool
+	Principal         CrawlPrincipal
+	SourceAuthorizer  CrawlSourceAuthorizer
 	ApprovalVerifier  CrawlApprovalVerifier
 	MaxRequests       int
 	BudgetWindow      time.Duration
@@ -97,7 +144,7 @@ func (p CrawlRequestProposal) Fingerprint() string {
 
 // CrawlRequestApproval is an approval record presented for verification. The
 // record fields alone are not an authorization credential; a trusted
-// CrawlApprovalVerifier must accept it.
+// CrawlApprovalVerifier must resolve it in an authoritative store.
 type CrawlRequestApproval struct {
 	ApprovalID     string
 	ProposalSHA256 string
@@ -134,26 +181,64 @@ func (a CrawlRequestApproval) Fingerprint() string {
 }
 
 // CrawlRequestDecision is the deterministic policy result for one proposal.
-// verified is unexported so an external caller cannot fabricate an allowed
-// decision; only AuthorizeCrawlRequest with a trusted verifier sets it.
+// All authorization-relevant fields are unexported so an external caller
+// cannot fabricate or mutate a verified decision. Read-only accessors expose
+// the information needed for audit and future tool results.
 type CrawlRequestDecision struct {
-	Allowed              bool
-	ReasonCode           string
-	ProposalSHA256       string
-	ApprovalSHA256       string
-	RequiredCapabilities []string
-	RunID                string
+	allowed              bool
+	reasonCode           string
+	proposalSHA256       string
+	approvalSHA256       string
+	requiredCapabilities []string
+	runID                string
+	principalUserID      uint64
 	maxRequests          int
 	budgetWindow         time.Duration
+	approvalOutcome      string
+	sourceOutcome        string
+	stage                string
 	verified             bool
 }
 
-// Quota returns the trusted operator quota bound into this decision. The
-// fields are unexported so an external caller cannot widen the quota after
-// authorization.
+// Allowed reports whether the decision authorized the operation.
+func (d CrawlRequestDecision) Allowed() bool { return d.allowed }
+
+// ReasonCode returns the stable policy reason code.
+func (d CrawlRequestDecision) ReasonCode() string { return d.reasonCode }
+
+// ProposalSHA256 returns the authorized proposal fingerprint.
+func (d CrawlRequestDecision) ProposalSHA256() string { return d.proposalSHA256 }
+
+// ApprovalSHA256 returns the authorized approval fingerprint.
+func (d CrawlRequestDecision) ApprovalSHA256() string { return d.approvalSHA256 }
+
+// RequiredCapabilities returns a copy of the capability set checked by policy.
+func (d CrawlRequestDecision) RequiredCapabilities() []string {
+	if len(d.requiredCapabilities) == 0 {
+		return nil
+	}
+	return append([]string(nil), d.requiredCapabilities...)
+}
+
+// RunID returns the trusted run bound into the decision.
+func (d CrawlRequestDecision) RunID() string { return d.runID }
+
+// PrincipalUserID returns the authenticated principal bound into the decision.
+func (d CrawlRequestDecision) PrincipalUserID() uint64 { return d.principalUserID }
+
+// Quota returns the trusted operator quota bound into this decision.
 func (d CrawlRequestDecision) Quota() (int, time.Duration) {
 	return d.maxRequests, d.budgetWindow
 }
+
+// ApprovalOutcome returns the stable approval verification outcome.
+func (d CrawlRequestDecision) ApprovalOutcome() string { return d.approvalOutcome }
+
+// SourceOwnershipOutcome returns the stable source-authorization outcome.
+func (d CrawlRequestDecision) SourceOwnershipOutcome() string { return d.sourceOutcome }
+
+// Stage returns the stable authorization stage reached by the decision.
+func (d CrawlRequestDecision) Stage() string { return d.stage }
 
 func crawlHashJSON(value any) string {
 	encoded, _ := json.Marshal(value)
@@ -161,102 +246,230 @@ func crawlHashJSON(value any) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// AuthorizeCrawlRequest is the internal WP-03B1 approval boundary. It does not
-// touch the database and cannot be reached from model output. It reads the
-// trusted runtime clock; tests use the package-internal clock-injected path.
+// AuthorizeCrawlRequest is the internal WP-03B2A authorization boundary. It
+// does not touch the database and cannot be reached from model output. It reads
+// the trusted runtime clock; tests use the package-internal clock-injected
+// path.
 func AuthorizeCrawlRequest(ctx context.Context, identity AgentIdentity, policy CrawlRequestPolicy, proposal CrawlRequestProposal, approval *CrawlRequestApproval, runID, traceID string) CrawlRequestDecision {
 	return authorizeCrawlRequestAt(ctx, identity, policy, proposal, approval, runID, traceID, time.Now().UTC())
 }
 
 func authorizeCrawlRequestAt(ctx context.Context, identity AgentIdentity, policy CrawlRequestPolicy, proposal CrawlRequestProposal, approval *CrawlRequestApproval, runID, traceID string, now time.Time) CrawlRequestDecision {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
 	decision := CrawlRequestDecision{
-		ReasonCode:           CrawlReasonApproved,
-		RequiredCapabilities: []string{"tool_execution", "db_write"},
-		RunID:                runID,
+		reasonCode:           CrawlReasonApproved,
+		requiredCapabilities: []string{"tool_execution", "db_write"},
+		runID:                runID,
+		approvalOutcome:      CrawlApprovalOutcomeNotRequested,
+		sourceOutcome:        CrawlSourceOutcomeNotChecked,
+		stage:                CrawlStageProposalReceived,
 	}
-	if err := validateCrawlProposal(proposal, now); err != nil {
-		decision.ReasonCode = CrawlReasonInvalidProposal
+	if err := ctx.Err(); err != nil {
+		decision.reasonCode = crawlContextReason(err)
 		return decision
 	}
-	decision.ProposalSHA256 = proposal.Fingerprint()
+	if err := validateCrawlProposal(proposal, now); err != nil {
+		decision.reasonCode = CrawlReasonInvalidProposal
+		return decision
+	}
+	decision.proposalSHA256 = proposal.Fingerprint()
 	if !proposal.ExpiresAt.After(now) {
-		decision.ReasonCode = CrawlReasonProposalExpired
+		decision.reasonCode = CrawlReasonProposalExpired
 		return decision
 	}
 	if strings.TrimSpace(identity.AgentID) == "" || strings.TrimSpace(identity.Owner) == "" {
-		decision.ReasonCode = CrawlReasonMissingIdentity
+		decision.reasonCode = CrawlReasonMissingIdentity
 		return decision
 	}
 	if strings.TrimSpace(runID) == "" {
-		decision.ReasonCode = CrawlReasonRunRequired
+		decision.reasonCode = CrawlReasonRunRequired
 		return decision
 	}
+	if err := policy.Principal.Validate(); err != nil {
+		decision.reasonCode = CrawlReasonPrincipalRequired
+		return decision
+	}
+	if policy.Principal.Username != strings.TrimSpace(identity.Owner) {
+		decision.reasonCode = CrawlReasonPrincipalMismatch
+		return decision
+	}
+	decision.principalUserID = policy.Principal.UserID
 	if trustLevelRank(identity.TrustLevel) < minToolTrustRank {
-		decision.ReasonCode = CrawlReasonTrustRequired
+		decision.reasonCode = CrawlReasonTrustRequired
 		return decision
 	}
-	for _, capability := range decision.RequiredCapabilities {
+	for _, capability := range decision.requiredCapabilities {
 		if !identityGrants(identity, capability) {
-			decision.ReasonCode = CrawlReasonCapabilityRequired
+			decision.reasonCode = CrawlReasonCapabilityRequired
 			return decision
 		}
 	}
 	// Contract prohibition overrides an allowlist entry.
 	if toolForbiddenByContract(identity.Contract, crawlRequestToolName) {
-		decision.ReasonCode = CrawlReasonContractForbidden
+		decision.reasonCode = CrawlReasonContractForbidden
 		return decision
 	}
 	if len(policy.AllowedOperations) == 0 || !policy.AllowedOperations[crawlRequestToolName] {
-		decision.ReasonCode = CrawlReasonOperationNotAllowlisted
+		decision.reasonCode = CrawlReasonOperationNotAllowlisted
 		return decision
 	}
 	if len(policy.AllowedSources) == 0 {
-		decision.ReasonCode = CrawlReasonSourceScopeRequired
+		decision.reasonCode = CrawlReasonSourceScopeRequired
 		return decision
 	}
 	if !policy.AllowedSources[proposal.SourceID] {
-		decision.ReasonCode = CrawlReasonSourceOutOfScope
+		decision.reasonCode = CrawlReasonSourceOutOfScope
 		return decision
 	}
 	if policy.MaxRequests <= 0 || policy.MaxRequests > maxCrawlPolicyRequests ||
 		policy.BudgetWindow <= 0 || policy.BudgetWindow > maxCrawlPolicyBudget {
-		decision.ReasonCode = CrawlReasonBudgetRequired
+		decision.reasonCode = CrawlReasonBudgetRequired
 		return decision
 	}
 	decision.maxRequests = policy.MaxRequests
 	decision.budgetWindow = policy.BudgetWindow
-	if approval == nil {
-		decision.ReasonCode = CrawlReasonApprovalRequired
+	decision.stage = CrawlStagePolicyChecked
+
+	if policy.SourceAuthorizer == nil {
+		decision.reasonCode = CrawlReasonSourceAuthorizerUnavailable
+		decision.sourceOutcome = CrawlSourceOutcomeUnavailable
+		decision.stage = CrawlStageSourceDenied
 		return decision
 	}
-	decision.ApprovalSHA256 = approval.Fingerprint()
+	if err := policy.SourceAuthorizer.AuthorizeCrawlSource(ctx, policy.Principal, proposal.SourceID); err != nil {
+		decision.reasonCode = crawlSourceAuthorizationReason(err)
+		decision.sourceOutcome = crawlSourceAuthorizationOutcome(err)
+		decision.stage = CrawlStageSourceDenied
+		return decision
+	}
+	decision.sourceOutcome = CrawlSourceOutcomeVerified
+	decision.stage = CrawlStageSourceVerified
+
+	if approval == nil {
+		decision.reasonCode = CrawlReasonApprovalRequired
+		decision.approvalOutcome = CrawlApprovalOutcomeNotRequested
+		decision.stage = CrawlStageApprovalRequired
+		return decision
+	}
+	decision.approvalSHA256 = approval.Fingerprint()
 	if err := validateCrawlApproval(*approval, proposal, identity, runID, now); err != nil {
-		decision.ReasonCode = CrawlReasonApprovalMismatch
+		decision.reasonCode = CrawlReasonApprovalMismatch
+		if errors.Is(err, ErrCrawlApprovalLifetime) {
+			decision.reasonCode = CrawlReasonApprovalLifetimeExceeded
+		}
+		decision.approvalOutcome = CrawlApprovalOutcomeRejected
+		decision.stage = CrawlStageApprovalRejected
 		return decision
 	}
 	if !approval.ExpiresAt.After(now) {
-		decision.ReasonCode = CrawlReasonApprovalExpired
+		decision.reasonCode = CrawlReasonApprovalExpired
+		decision.approvalOutcome = CrawlApprovalOutcomeExpired
+		decision.stage = CrawlStageApprovalRejected
 		return decision
 	}
 	if policy.ApprovalVerifier == nil {
-		decision.ReasonCode = CrawlReasonApprovalVerifierUnavailable
+		decision.reasonCode = CrawlReasonApprovalVerifierUnavailable
+		decision.approvalOutcome = CrawlApprovalOutcomeUnavailable
+		decision.stage = CrawlStageApprovalRejected
 		return decision
 	}
-	if err := policy.ApprovalVerifier.VerifyCrawlApproval(ctx, *approval, proposal, identity, runID, now); err != nil {
-		switch {
-		case errors.Is(err, ErrCrawlApprovalRevoked):
-			decision.ReasonCode = CrawlReasonApprovalRevoked
-		default:
-			decision.ReasonCode = CrawlReasonApprovalUnverified
-		}
+	verification := CrawlApprovalVerification{
+		Approval:  *approval,
+		Proposal:  proposal,
+		Identity:  identity,
+		Principal: policy.Principal,
+		RunID:     runID,
+		Now:       now,
+	}
+	if err := policy.ApprovalVerifier.VerifyCrawlApproval(ctx, verification); err != nil {
+		decision.reasonCode = crawlApprovalFailureReason(err)
+		decision.approvalOutcome = crawlApprovalFailureOutcome(err)
+		decision.stage = CrawlStageApprovalRejected
 		return decision
 	}
-	decision.Allowed = true
+	decision.approvalOutcome = CrawlApprovalOutcomeVerified
+	decision.stage = CrawlStageAuthorized
+	decision.allowed = true
 	decision.verified = true
 	return decision
+}
+
+func crawlContextReason(err error) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return CrawlReasonAuthorizationTimeout
+	}
+	return CrawlReasonAuthorizationCancelled
+}
+
+func crawlSourceAuthorizationReason(err error) string {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return CrawlReasonAuthorizationCancelled
+	case errors.Is(err, context.DeadlineExceeded):
+		return CrawlReasonAuthorizationTimeout
+	case errors.Is(err, ErrCrawlSourceOwnershipMissing):
+		return CrawlReasonSourceOwnershipMissing
+	case errors.Is(err, ErrCrawlSourceForbidden):
+		return CrawlReasonSourceForbidden
+	case errors.Is(err, ErrCrawlSourceAuthorizationUnavailable):
+		return CrawlReasonSourceAuthorizerUnavailable
+	default:
+		return CrawlReasonSourceAuthorizationError
+	}
+}
+
+func crawlSourceAuthorizationOutcome(err error) string {
+	switch {
+	case errors.Is(err, ErrCrawlSourceOwnershipMissing):
+		return CrawlSourceOutcomeMissing
+	case errors.Is(err, ErrCrawlSourceForbidden):
+		return CrawlSourceOutcomeDenied
+	case errors.Is(err, ErrCrawlSourceAuthorizationUnavailable):
+		return CrawlSourceOutcomeUnavailable
+	default:
+		return CrawlSourceOutcomeUnavailable
+	}
+}
+
+func crawlApprovalFailureReason(err error) string {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return CrawlReasonAuthorizationCancelled
+	case errors.Is(err, context.DeadlineExceeded):
+		return CrawlReasonAuthorizationTimeout
+	case errors.Is(err, ErrCrawlApprovalRevoked):
+		return CrawlReasonApprovalRevoked
+	case errors.Is(err, ErrCrawlApprovalUnknown):
+		return CrawlReasonApprovalUnknown
+	case errors.Is(err, ErrCrawlApprovalIssuerUntrusted):
+		return CrawlReasonApprovalIssuerUntrusted
+	case errors.Is(err, ErrCrawlApprovalApproverUnauthorized):
+		return CrawlReasonApprovalApproverUnauthorized
+	case errors.Is(err, ErrCrawlApprovalStoreUnavailable),
+		errors.Is(err, ErrCrawlApprovalApproverUnavailable):
+		return CrawlReasonApprovalStoreUnavailable
+	case errors.Is(err, ErrCrawlApprovalLifetime):
+		return CrawlReasonApprovalLifetimeExceeded
+	default:
+		return CrawlReasonApprovalUnverified
+	}
+}
+
+func crawlApprovalFailureOutcome(err error) string {
+	switch {
+	case errors.Is(err, ErrCrawlApprovalRevoked):
+		return CrawlApprovalOutcomeRevoked
+	case errors.Is(err, ErrCrawlApprovalStoreUnavailable),
+		errors.Is(err, ErrCrawlApprovalApproverUnavailable):
+		return CrawlApprovalOutcomeUnavailable
+	default:
+		return CrawlApprovalOutcomeRejected
+	}
 }
 
 func validateCrawlProposal(proposal CrawlRequestProposal, now time.Time) error {
@@ -307,6 +520,10 @@ func validateCrawlApproval(approval CrawlRequestApproval, proposal CrawlRequestP
 	if approval.ExpiresAt.IsZero() || approval.ExpiresAt.After(now.Add(maxCrawlApprovalLifetime)) {
 		return fmt.Errorf("approval expires_at is outside the supported lifetime")
 	}
+	if !approval.ExpiresAt.After(approval.ApprovedAt) ||
+		approval.ExpiresAt.Sub(approval.ApprovedAt) > maxCrawlApprovalLifetime {
+		return fmt.Errorf("%w: approval duration is outside the supported lifetime", ErrCrawlApprovalLifetime)
+	}
 	return nil
 }
 
@@ -335,12 +552,13 @@ func buildCrawlScheduleRequestAt(identity AgentIdentity, proposal CrawlRequestPr
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	if !decision.Allowed || !decision.verified || decision.RunID != runID ||
-		decision.ProposalSHA256 == "" || decision.ApprovalSHA256 == "" ||
+	if !decision.allowed || !decision.verified || decision.runID != runID ||
+		decision.proposalSHA256 == "" || decision.approvalSHA256 == "" ||
+		decision.principalUserID == 0 ||
 		decision.maxRequests <= 0 || decision.budgetWindow <= 0 ||
-		decision.ProposalSHA256 != proposal.Fingerprint() ||
-		decision.ApprovalSHA256 != approval.Fingerprint() ||
-		approval.ProposalSHA256 != decision.ProposalSHA256 ||
+		decision.proposalSHA256 != proposal.Fingerprint() ||
+		decision.approvalSHA256 != approval.Fingerprint() ||
+		approval.ProposalSHA256 != decision.proposalSHA256 ||
 		approval.RunID != runID ||
 		approval.AgentID != identity.AgentID || approval.Owner != identity.Owner ||
 		approval.SourceID != proposal.SourceID || approval.OperationType != proposal.OperationType {
@@ -353,13 +571,18 @@ func buildCrawlScheduleRequestAt(identity AgentIdentity, proposal CrawlRequestPr
 	if !expiresAt.After(now) {
 		return cdb.CrawlScheduleRequest{}, fmt.Errorf("approved crawl request has expired")
 	}
+	if !approval.ExpiresAt.After(approval.ApprovedAt) ||
+		expiresAt.After(approval.ApprovedAt.Add(maxCrawlRequestLifetime)) {
+		return cdb.CrawlScheduleRequest{}, fmt.Errorf("approved crawl request lifetime is invalid")
+	}
 	return cdb.CrawlScheduleRequest{
 		RequestID: proposal.RequestID, RunID: runID,
-		AgentID: identity.AgentID, Owner: identity.Owner,
+		PrincipalUserID: decision.principalUserID,
+		AgentID:         identity.AgentID, Owner: identity.Owner,
 		SourceID: proposal.SourceID, AllowedSources: []uint64{proposal.SourceID},
 		OperationType:    proposal.OperationType,
-		ParametersSHA256: decision.ProposalSHA256,
-		ApprovalID:       approval.ApprovalID, ApprovalSHA256: decision.ApprovalSHA256,
+		ParametersSHA256: decision.proposalSHA256,
+		ApprovalID:       approval.ApprovalID, ApprovalSHA256: decision.approvalSHA256,
 		ApprovedBy: approval.ApprovedBy, ApprovedAt: approval.ApprovedAt,
 		ExpiresAt:   expiresAt,
 		MaxRequests: decision.maxRequests, BudgetWindow: decision.budgetWindow,

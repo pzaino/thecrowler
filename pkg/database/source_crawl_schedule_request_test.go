@@ -59,7 +59,7 @@ func crawlOperationNow() time.Time {
 func crawlOperationRequest(sourceID uint64) CrawlScheduleRequest {
 	now := crawlOperationNow()
 	return CrawlScheduleRequest{
-		RequestID: "request-1", RunID: "run-1", AgentID: "agent-1", Owner: "owner-1",
+		RequestID: "request-1", RunID: "run-1", PrincipalUserID: 7, AgentID: "agent-1", Owner: "owner-1",
 		SourceID: sourceID, AllowedSources: []uint64{sourceID}, OperationType: CrawlOperationType,
 		ParametersSHA256: strings.Repeat("a", 64),
 		ApprovalID:       "approval-1", ApprovalSHA256: strings.Repeat("b", 64),
@@ -376,6 +376,26 @@ func TestScheduleSourceCrawlRequestInvalidAndUnsupported(t *testing.T) {
 		}
 	})
 
+	t.Run("missing principal does not mutate", func(t *testing.T) {
+		db, handler := newCrawlOperationTestDB(t)
+		insertCrawlOperationSource(t, db, 42, "completed", false)
+		req := crawlOperationRequest(42)
+		req.PrincipalUserID = 0
+		result, err := scheduleCrawlForTest(context.Background(), &handler, req)
+		if err != nil {
+			t.Fatalf("missing principal returned operational error: %v", err)
+		}
+		if result.State != CrawlOperationDenied || result.ReasonCode != CrawlReasonInvalid {
+			t.Fatalf("unexpected principal result: %+v", result)
+		}
+		if got := crawlOperationSourceStatus(t, db, 42); got != "completed" {
+			t.Fatalf("missing principal changed source to %q", got)
+		}
+		if got := crawlOperationStatusCount(t, db); got != 0 {
+			t.Fatalf("missing principal created %d operation rows", got)
+		}
+	})
+
 	t.Run("invalid request does not mutate", func(t *testing.T) {
 		db, handler := newCrawlOperationTestDB(t)
 		insertCrawlOperationSource(t, db, 42, "completed", false)
@@ -637,6 +657,28 @@ func TestScheduleSourceCrawlRequestRunAndApprovalBinding(t *testing.T) {
 		}
 		if got := crawlOperationStatusCount(t, db); got != 1 {
 			t.Fatalf("changed run created %d operation rows", got)
+		}
+	})
+
+	t.Run("different principal conflicts", func(t *testing.T) {
+		db, handler := newCrawlOperationTestDB(t)
+		insertCrawlOperationSource(t, db, 42, "completed", false)
+		req := crawlOperationRequest(42)
+		first, err := scheduleCrawlForTest(context.Background(), &handler, req)
+		if err != nil {
+			t.Fatalf("first schedule: %v", err)
+		}
+		changed := req
+		changed.PrincipalUserID = 8
+		result, err := scheduleCrawlForTest(context.Background(), &handler, changed)
+		if err != nil {
+			t.Fatalf("changed principal: %v", err)
+		}
+		if result.State != CrawlOperationConflict || result.ReasonCode != CrawlReasonConflict {
+			t.Fatalf("changed principal reused operation: %+v", result)
+		}
+		if got := crawlOperationStatusState(t, db, first.OperationID); got != string(CrawlOperationAccepted) {
+			t.Fatalf("changed principal altered operation state to %q", got)
 		}
 	})
 

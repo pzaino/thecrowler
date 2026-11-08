@@ -988,14 +988,18 @@ missing source is reported as `scope_denied`; database failures are generic tool
 errors without driver text. The new search tools use bound field/value
 parameters and never construct SQL from model input.
 
-State-changing crawl scheduling is **not** exposed as a tool in WP-03B1. The
-internal approved scheduling contract, durable idempotency semantics, request
-versus execution states and approval boundary are documented in
-[`crawl_scheduling_foundation.md`](crawl_scheduling_foundation.md). The
-internal authorizer requires an explicit operation allowlist, trusted source
-scope, a positive quota, run-bound approval and verification by a trusted
-approval authority; a nil verifier fails closed. The legacy
-`ScheduleSourceCrawl()` path remains unchanged for existing internal callers.
+State-changing crawl scheduling is **not** exposed as a tool. The internal
+approved scheduling contract, durable idempotency semantics, request versus
+execution states and approval boundary are documented in
+[`crawl_scheduling_foundation.md`](crawl_scheduling_foundation.md). WP-03B2A
+adds the trusted principal, source-ownership and approval-authority interfaces
+documented in
+[`crawl_request_authorization.md`](crawl_request_authorization.md). The
+authorizer requires an explicit operation allowlist, trusted source scope,
+source ownership, authenticated principal, positive quota, run-bound approval,
+and verification by a trusted approval authority. A nil verifier or source
+authorizer fails closed. The legacy `ScheduleSourceCrawl()` path remains
+unchanged for existing internal callers.
 
 Every proposed call passes, in order: explicit opt-in, valid identity with
 enforcement on, trusted registry membership, explicit run allowlist (the

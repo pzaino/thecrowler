@@ -40,7 +40,7 @@ func setCrawlSchedulingSourceState(t *testing.T, db *Handler, sourceID uint64, s
 func crawlSchedulingRequest(sourceID uint64) CrawlScheduleRequest {
 	now := time.Now().UTC()
 	return CrawlScheduleRequest{
-		RequestID: "wp03b1-request", RunID: "wp03b1-run", AgentID: "wp03b1-agent", Owner: "wp03b1-owner",
+		RequestID: "wp03b1-request", RunID: "wp03b1-run", PrincipalUserID: 7, AgentID: "wp03b1-agent", Owner: "wp03b1-owner",
 		SourceID: sourceID, AllowedSources: []uint64{sourceID}, OperationType: CrawlOperationType,
 		ParametersSHA256: strings.Repeat("a", 64),
 		ApprovalID:       "wp03b1-approval", ApprovalSHA256: strings.Repeat("b", 64),
@@ -478,5 +478,48 @@ func TestPostgresCrawlSchedulingMalformedQuotaRecordFailsClosed(t *testing.T) {
 	}
 	if rows != 1 {
 		t.Fatalf("malformed quota created new operations: %d rows", rows)
+	}
+}
+
+func TestPostgresSourceOwnerLookup(t *testing.T) {
+	db, sqlDB := openPostgresIntegrationTestDB(t)
+	sourceID := createCrawlSchedulingSource(t, db, fmt.Sprintf("wp03b2a-owner-%d", time.Now().UnixNano()))
+
+	owner, err := GetSourceOwner(context.Background(), db, sourceID)
+	if err != nil {
+		t.Fatalf("default owner lookup: %v", err)
+	}
+	if !owner.Found || owner.UserID != 0 {
+		t.Fatalf("unexpected default owner: %+v", owner)
+	}
+
+	if _, err := sqlDB.Exec(`UPDATE Sources SET usr_id=$1 WHERE source_id=$2`, 7, sourceID); err != nil {
+		t.Fatalf("set source owner: %v", err)
+	}
+	owner, err = GetSourceOwner(context.Background(), db, sourceID)
+	if err != nil {
+		t.Fatalf("owned lookup: %v", err)
+	}
+	if !owner.Found || owner.SourceID != sourceID || owner.UserID != 7 {
+		t.Fatalf("unexpected owned source: %+v", owner)
+	}
+
+	missing, err := GetSourceOwner(context.Background(), db, sourceID+1000000)
+	if err != nil {
+		t.Fatalf("missing owner lookup: %v", err)
+	}
+	if missing.Found {
+		t.Fatalf("missing source reported as found: %+v", missing)
+	}
+
+	if _, err := sqlDB.Exec(`UPDATE Sources SET deleted_at=NOW() WHERE source_id=$1`, sourceID); err != nil {
+		t.Fatalf("delete source: %v", err)
+	}
+	deleted, err := GetSourceOwner(context.Background(), db, sourceID)
+	if err != nil {
+		t.Fatalf("deleted owner lookup: %v", err)
+	}
+	if deleted.Found {
+		t.Fatalf("deleted source reported as found: %+v", deleted)
 	}
 }
