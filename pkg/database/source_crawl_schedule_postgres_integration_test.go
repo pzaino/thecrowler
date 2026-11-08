@@ -40,12 +40,12 @@ func setCrawlSchedulingSourceState(t *testing.T, db *Handler, sourceID uint64, s
 func crawlSchedulingRequest(sourceID uint64) CrawlScheduleRequest {
 	now := time.Now().UTC()
 	return CrawlScheduleRequest{
-		RequestID: "wp03b1-request", AgentID: "wp03b1-agent", Owner: "wp03b1-owner",
+		RequestID: "wp03b1-request", RunID: "wp03b1-run", AgentID: "wp03b1-agent", Owner: "wp03b1-owner",
 		SourceID: sourceID, AllowedSources: []uint64{sourceID}, OperationType: CrawlOperationType,
 		ParametersSHA256: strings.Repeat("a", 64),
 		ApprovalID:       "wp03b1-approval", ApprovalSHA256: strings.Repeat("b", 64),
 		ApprovedBy: "wp03b1-operator", ApprovedAt: now.Add(-time.Minute),
-		ExpiresAt: now.Add(time.Hour), Now: now,
+		ExpiresAt: now.Add(time.Hour), MaxRequests: 10, BudgetWindow: time.Hour,
 	}
 }
 
@@ -276,5 +276,207 @@ func TestPostgresCrawlSchedulingBudgetConcurrency(t *testing.T) {
 	}
 	if rows != 1 {
 		t.Fatalf("budget operation rows = %d, want 1", rows)
+	}
+}
+
+func TestPostgresCrawlSchedulingQuotaIsOwnerIsolated(t *testing.T) {
+	db, sqlDB := openPostgresIntegrationTestDB(t)
+	sourceID := createCrawlSchedulingSource(t, db, fmt.Sprintf("wp03b1-owner-quota-%d", time.Now().UnixNano()))
+	setCrawlSchedulingSourceState(t, db, sourceID, "completed", "", false)
+
+	base := crawlSchedulingRequest(sourceID)
+	base.MaxRequests = 1
+	base.BudgetWindow = time.Hour
+	ownerA, err := ScheduleSourceCrawlRequest(context.Background(), db, base)
+	if err != nil || ownerA.State != CrawlOperationAccepted {
+		t.Fatalf("owner A first request: %+v, %v", ownerA, err)
+	}
+	ownerB := base
+	ownerB.RequestID, ownerB.Owner, ownerB.MaxRequests = "owner-b-request", "owner-b", 10
+	ownerBResult, err := ScheduleSourceCrawlRequest(context.Background(), db, ownerB)
+	if err != nil {
+		t.Fatalf("owner B request: %v", err)
+	}
+	ownerC := base
+	ownerC.RequestID, ownerC.Owner, ownerC.MaxRequests = "owner-c-request", "owner-c", 10
+	ownerCResult, err := ScheduleSourceCrawlRequest(context.Background(), db, ownerC)
+	if err != nil {
+		t.Fatalf("owner C request: %v", err)
+	}
+	if _, err := sqlDB.Exec(`UPDATE Status SET created_at=NOW()-INTERVAL '1 minute' WHERE status_sha256=$1`, ownerA.OperationID); err != nil {
+		t.Fatalf("age owner A operation: %v", err)
+	}
+	for _, operationID := range []string{ownerBResult.OperationID, ownerCResult.OperationID} {
+		if _, err := sqlDB.Exec(`UPDATE Status SET created_at=NOW() WHERE status_sha256=$1`, operationID); err != nil {
+			t.Fatalf("newer owner operation: %v", err)
+		}
+	}
+	secondA := base
+	secondA.RequestID = "owner-a-request-2"
+	result, err := ScheduleSourceCrawlRequest(context.Background(), db, secondA)
+	if err != nil {
+		t.Fatalf("owner A second request: %v", err)
+	}
+	if result.State != CrawlOperationDenied || result.ReasonCode != CrawlReasonBudgetExhausted {
+		t.Fatalf("owner A quota was bypassed by newer other-owner rows: %+v", result)
+	}
+	var rows int
+	if err := sqlDB.QueryRow(`SELECT COUNT(*) FROM Status WHERE source_id=$1`, sourceID).Scan(&rows); err != nil {
+		t.Fatalf("count owner operations: %v", err)
+	}
+	if rows != 3 {
+		t.Fatalf("operation rows = %d, want 3", rows)
+	}
+}
+
+func TestPostgresCrawlSchedulingConcurrentOwners(t *testing.T) {
+	db, sqlDB := openPostgresIntegrationTestDB(t)
+	sourceID := createCrawlSchedulingSource(t, db, fmt.Sprintf("wp03b1-concurrent-owners-%d", time.Now().UnixNano()))
+	setCrawlSchedulingSourceState(t, db, sourceID, "completed", "", false)
+	base := crawlSchedulingRequest(sourceID)
+	owners := []string{"concurrent-a", "concurrent-b", "concurrent-c"}
+	start := make(chan struct{})
+	outcomes := make(chan CrawlScheduleResult, len(owners))
+	errs := make(chan error, len(owners))
+	var wg sync.WaitGroup
+	for index, owner := range owners {
+		request := base
+		request.RequestID = fmt.Sprintf("concurrent-request-%d", index)
+		request.Owner = owner
+		request.MaxRequests = 1
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			result, err := ScheduleSourceCrawlRequest(context.Background(), db, request)
+			if err != nil {
+				errs <- err
+				return
+			}
+			outcomes <- result
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(outcomes)
+	close(errs)
+	for err := range errs {
+		t.Fatalf("concurrent owner request: %v", err)
+	}
+	accepted := 0
+	for result := range outcomes {
+		if result.State == CrawlOperationAccepted {
+			accepted++
+		}
+	}
+	if accepted != 1 {
+		t.Fatalf("concurrent source accepted %d owners, want 1", accepted)
+	}
+	var rows int
+	if err := sqlDB.QueryRow(`SELECT COUNT(*) FROM Status WHERE source_id=$1`, sourceID).Scan(&rows); err != nil {
+		t.Fatalf("count concurrent owner operations: %v", err)
+	}
+	if rows != len(owners) {
+		t.Fatalf("operation rows = %d, want %d", rows, len(owners))
+	}
+	var status string
+	if err := sqlDB.QueryRow(`SELECT status FROM Sources WHERE source_id=$1`, sourceID).Scan(&status); err != nil {
+		t.Fatalf("read concurrent owner source: %v", err)
+	}
+	if status != "pending" {
+		t.Fatalf("concurrent owner source status = %q, want pending", status)
+	}
+}
+
+func TestPostgresCrawlSchedulingConcurrentRetryWithQuota(t *testing.T) {
+	db, sqlDB := openPostgresIntegrationTestDB(t)
+	sourceID := createCrawlSchedulingSource(t, db, fmt.Sprintf("wp03b1-retry-quota-%d", time.Now().UnixNano()))
+	setCrawlSchedulingSourceState(t, db, sourceID, "completed", "", false)
+	request := crawlSchedulingRequest(sourceID)
+	request.MaxRequests = 1
+	request.BudgetWindow = time.Hour
+
+	type outcome struct {
+		result CrawlScheduleResult
+		err    error
+	}
+	start := make(chan struct{})
+	outcomes := make(chan outcome, 2)
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			result, err := ScheduleSourceCrawlRequest(context.Background(), db, request)
+			outcomes <- outcome{result: result, err: err}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(outcomes)
+
+	accepted, reused, denied := 0, 0, 0
+	for item := range outcomes {
+		if item.err != nil {
+			t.Fatalf("concurrent retry: %v", item.err)
+		}
+		if item.result.Reused {
+			reused++
+		}
+		switch item.result.State {
+		case CrawlOperationAccepted:
+			if !item.result.Reused {
+				accepted++
+			}
+		case CrawlOperationDenied:
+			if item.result.ReasonCode == CrawlReasonBudgetExhausted {
+				denied++
+			}
+		}
+	}
+	if accepted != 1 || reused != 1 || denied != 0 {
+		t.Fatalf("concurrent retry accepted=%d reused=%d denied=%d", accepted, reused, denied)
+	}
+	var rows int
+	if err := sqlDB.QueryRow(`SELECT COUNT(*) FROM Status WHERE source_id=$1`, sourceID).Scan(&rows); err != nil {
+		t.Fatalf("count retry operations: %v", err)
+	}
+	if rows != 1 {
+		t.Fatalf("retry operation rows = %d, want 1", rows)
+	}
+}
+
+func TestPostgresCrawlSchedulingMalformedQuotaRecordFailsClosed(t *testing.T) {
+	db, sqlDB := openPostgresIntegrationTestDB(t)
+	sourceID := createCrawlSchedulingSource(t, db, fmt.Sprintf("wp03b1-malformed-%d", time.Now().UnixNano()))
+	setCrawlSchedulingSourceState(t, db, sourceID, "completed", "", false)
+	if _, err := sqlDB.Exec(`INSERT INTO Status
+		(status_sha256, agent_id, source_id, operation_type, status, details)
+		VALUES ($1, $2, $3, $4, 'accepted', $5::jsonb)`,
+		strings.Repeat("f", 64), "wp03b1-agent", sourceID, CrawlOperationType,
+		`{"request_id":"malformed","owner":7,"operation_type":"crawl"}`); err != nil {
+		t.Fatalf("insert malformed operation: %v", err)
+	}
+	result, err := ScheduleSourceCrawlRequest(context.Background(), db, crawlSchedulingRequest(sourceID))
+	if err == nil {
+		t.Fatal("malformed quota record did not fail closed")
+	}
+	if result.State != CrawlOperationFailed || result.ReasonCode != CrawlReasonDatabase {
+		t.Fatalf("unexpected malformed result: %+v", result)
+	}
+	var status string
+	if err := sqlDB.QueryRow(`SELECT status FROM Sources WHERE source_id=$1`, sourceID).Scan(&status); err != nil {
+		t.Fatalf("read source after malformed quota: %v", err)
+	}
+	if status != "completed" {
+		t.Fatalf("malformed quota changed source to %q", status)
+	}
+	var rows int
+	if err := sqlDB.QueryRow(`SELECT COUNT(*) FROM Status WHERE source_id=$1`, sourceID).Scan(&rows); err != nil {
+		t.Fatalf("count malformed operations: %v", err)
+	}
+	if rows != 1 {
+		t.Fatalf("malformed quota created new operations: %d rows", rows)
 	}
 }

@@ -82,11 +82,21 @@ var (
 	ErrCrawlSchedulingFailed = errors.New("crawl scheduling failed")
 )
 
+// Trusted scheduling bounds. The exported API uses the runtime clock; tests use
+// the package-internal clock-injected path. Agent-originated requests must
+// always carry a positive quota.
+const (
+	maxCrawlRequestLifetime = 24 * time.Hour
+	maxCrawlRequests        = 100
+	maxCrawlBudgetWindow    = 24 * time.Hour
+)
+
 // CrawlScheduleRequest is the trusted internal request for an idempotent
 // scheduling operation. Approval fields must be produced by the trusted
 // proposal/approval layer; they are never model arguments.
 type CrawlScheduleRequest struct {
 	RequestID        string
+	RunID            string
 	AgentID          string
 	Owner            string
 	SourceID         uint64
@@ -100,13 +110,13 @@ type CrawlScheduleRequest struct {
 	ExpiresAt        time.Time
 	MaxRequests      int
 	BudgetWindow     time.Duration
-	Now              time.Time
 }
 
 // CrawlScheduleResult is the structured scheduling outcome.
 type CrawlScheduleResult struct {
 	OperationID      string
 	RequestID        string
+	RunID            string
 	AgentID          string
 	Owner            string
 	SourceID         uint64
@@ -122,6 +132,7 @@ type CrawlScheduleResult struct {
 
 type crawlOperationDetails struct {
 	RequestID         string `json:"request_id"`
+	RunID             string `json:"run_id"`
 	AgentID           string `json:"agent_id"`
 	Owner             string `json:"owner"`
 	SourceID          uint64 `json:"source_id"`
@@ -145,16 +156,18 @@ type crawlOperationRow struct {
 // request. It only marks an eligible source pending; it never waits for a
 // crawler, starts a crawler, or reports crawl completion.
 func ScheduleSourceCrawlRequest(ctx context.Context, db *Handler, req CrawlScheduleRequest) (CrawlScheduleResult, error) {
+	return scheduleSourceCrawlRequest(ctx, db, req, time.Now().UTC())
+}
+
+func scheduleSourceCrawlRequest(ctx context.Context, db *Handler, req CrawlScheduleRequest, now time.Time) (CrawlScheduleResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	now := req.Now.UTC()
-	if req.Now.IsZero() {
+	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	req.Now = now
-	result := newCrawlScheduleResult(req, "")
-	if err := validateCrawlScheduleRequest(req); err != nil {
+	result := newCrawlScheduleResult(req, "", now)
+	if err := validateCrawlScheduleRequest(req, now); err != nil {
 		result.State = CrawlOperationDenied
 		result.ReasonCode = CrawlReasonInvalid
 		return result, nil
@@ -207,12 +220,22 @@ func ScheduleSourceCrawlRequest(ctx context.Context, db *Handler, req CrawlSched
 		return crawlOperationFailure(result, txCtx, err)
 	}
 	if found {
-		return resolveExistingCrawlOperation(txCtx, tx, *db, req, result, existing)
+		return resolveExistingCrawlOperation(txCtx, tx, *db, req, result, existing, now)
 	}
 	if err := lockCrawlSource(txCtx, tx, *db, req.SourceID); err != nil {
 		return crawlOperationFailure(result, txCtx, err)
 	}
-	withinBudget, err := crawlRequestWithinBudget(txCtx, tx, *db, req)
+	// Re-read after taking the source lock. A concurrent identical request may
+	// have committed its operation while this transaction waited, and its
+	// quota consumption must not turn a legitimate retry into a budget denial.
+	existing, found, err = readCrawlOperation(txCtx, tx, *db, key)
+	if err != nil {
+		return crawlOperationFailure(result, txCtx, err)
+	}
+	if found {
+		return resolveExistingCrawlOperation(txCtx, tx, *db, req, result, existing, now)
+	}
+	withinBudget, err := crawlRequestWithinBudget(txCtx, tx, *db, req, now)
 	if err != nil {
 		return crawlOperationFailure(result, txCtx, err)
 	}
@@ -242,7 +265,7 @@ func ScheduleSourceCrawlRequest(ctx context.Context, db *Handler, req CrawlSched
 			result.ReasonCode = CrawlReasonIncompleteOperation
 			return result, ErrCrawlSchedulingFailed
 		}
-		return resolveExistingCrawlOperation(txCtx, tx, *db, req, result, existing)
+		return resolveExistingCrawlOperation(txCtx, tx, *db, req, result, existing, now)
 	}
 
 	sourceState, disabled, found, err := readCrawlSourceState(txCtx, tx, *db, req.SourceID)
@@ -250,16 +273,16 @@ func ScheduleSourceCrawlRequest(ctx context.Context, db *Handler, req CrawlSched
 		return crawlOperationFailure(result, txCtx, err)
 	}
 	if !found {
-		return finishCrawlOperation(txCtx, tx, *db, req, result, CrawlOperationNotFound, CrawlReasonNotFound, CrawlSourceMissing)
+		return finishCrawlOperation(txCtx, tx, *db, req, result, CrawlOperationNotFound, CrawlReasonNotFound, CrawlSourceMissing, now)
 	}
 	if disabled {
-		return finishCrawlOperation(txCtx, tx, *db, req, result, CrawlOperationDisabled, CrawlReasonDisabled, CrawlSourceDisabled)
+		return finishCrawlOperation(txCtx, tx, *db, req, result, CrawlOperationDisabled, CrawlReasonDisabled, CrawlSourceDisabled, now)
 	}
 	switch sourceState {
 	case CrawlSourceProcessing:
-		return finishCrawlOperation(txCtx, tx, *db, req, result, CrawlOperationProcessing, CrawlReasonProcessing, sourceState)
+		return finishCrawlOperation(txCtx, tx, *db, req, result, CrawlOperationProcessing, CrawlReasonProcessing, sourceState, now)
 	case CrawlSourcePending:
-		return finishCrawlOperation(txCtx, tx, *db, req, result, CrawlOperationAlreadyPending, CrawlReasonAlreadyPending, sourceState)
+		return finishCrawlOperation(txCtx, tx, *db, req, result, CrawlOperationAlreadyPending, CrawlReasonAlreadyPending, sourceState, now)
 	}
 
 	updated, err := markCrawlSourcePending(txCtx, tx, *db, req.SourceID)
@@ -267,7 +290,7 @@ func ScheduleSourceCrawlRequest(ctx context.Context, db *Handler, req CrawlSched
 		return crawlOperationFailure(result, txCtx, err)
 	}
 	if updated {
-		return finishCrawlOperation(txCtx, tx, *db, req, result, CrawlOperationAccepted, CrawlReasonScheduled, CrawlSourcePending)
+		return finishCrawlOperation(txCtx, tx, *db, req, result, CrawlOperationAccepted, CrawlReasonScheduled, CrawlSourcePending, now)
 	}
 
 	// A concurrent request changed the source between the observation and the
@@ -278,13 +301,13 @@ func ScheduleSourceCrawlRequest(ctx context.Context, db *Handler, req CrawlSched
 	}
 	switch {
 	case !found:
-		return finishCrawlOperation(txCtx, tx, *db, req, result, CrawlOperationNotFound, CrawlReasonNotFound, CrawlSourceMissing)
+		return finishCrawlOperation(txCtx, tx, *db, req, result, CrawlOperationNotFound, CrawlReasonNotFound, CrawlSourceMissing, now)
 	case disabled:
-		return finishCrawlOperation(txCtx, tx, *db, req, result, CrawlOperationDisabled, CrawlReasonDisabled, CrawlSourceDisabled)
+		return finishCrawlOperation(txCtx, tx, *db, req, result, CrawlOperationDisabled, CrawlReasonDisabled, CrawlSourceDisabled, now)
 	case sourceState == CrawlSourceProcessing:
-		return finishCrawlOperation(txCtx, tx, *db, req, result, CrawlOperationProcessing, CrawlReasonProcessing, sourceState)
+		return finishCrawlOperation(txCtx, tx, *db, req, result, CrawlOperationProcessing, CrawlReasonProcessing, sourceState, now)
 	case sourceState == CrawlSourcePending:
-		return finishCrawlOperation(txCtx, tx, *db, req, result, CrawlOperationAlreadyPending, CrawlReasonAlreadyPending, sourceState)
+		return finishCrawlOperation(txCtx, tx, *db, req, result, CrawlOperationAlreadyPending, CrawlReasonAlreadyPending, sourceState, now)
 	default:
 		result.State = CrawlOperationFailed
 		result.ReasonCode = CrawlReasonIncompleteOperation
@@ -292,25 +315,26 @@ func ScheduleSourceCrawlRequest(ctx context.Context, db *Handler, req CrawlSched
 	}
 }
 
-func newCrawlScheduleResult(req CrawlScheduleRequest, key string) CrawlScheduleResult {
+func newCrawlScheduleResult(req CrawlScheduleRequest, key string, now time.Time) CrawlScheduleResult {
 	return CrawlScheduleResult{
 		OperationID:      key,
 		RequestID:        req.RequestID,
+		RunID:            req.RunID,
 		AgentID:          req.AgentID,
 		Owner:            req.Owner,
 		SourceID:         req.SourceID,
 		OperationType:    req.OperationType,
 		SourceState:      CrawlSourceUnknown,
-		SourceObservedAt: req.Now,
+		SourceObservedAt: now,
 		ExpiresAt:        req.ExpiresAt,
 	}
 }
 
-func validateCrawlScheduleRequest(req CrawlScheduleRequest) error {
+func validateCrawlScheduleRequest(req CrawlScheduleRequest, now time.Time) error {
 	for field, value := range map[string]string{
-		"request_id": req.RequestID, "agent_id": req.AgentID,
-		"owner": req.Owner, "approval_id": req.ApprovalID,
-		"approved_by": req.ApprovedBy,
+		"request_id": req.RequestID, "run_id": req.RunID,
+		"agent_id": req.AgentID, "owner": req.Owner,
+		"approval_id": req.ApprovalID, "approved_by": req.ApprovedBy,
 	} {
 		if err := validateCrawlIdentifier(field, value, 128); err != nil {
 			return err
@@ -325,17 +349,23 @@ func validateCrawlScheduleRequest(req CrawlScheduleRequest) error {
 	if !validSHA256Hex(req.ParametersSHA256) || !validSHA256Hex(req.ApprovalSHA256) {
 		return fmt.Errorf("parameters_sha256 and approval_sha256 must be lowercase SHA-256 digests")
 	}
-	if req.ApprovedAt.IsZero() || req.ApprovedAt.After(req.Now) {
+	if req.ApprovedAt.IsZero() || req.ApprovedAt.After(now) {
 		return fmt.Errorf("approved_at must be a valid past timestamp")
+	}
+	if req.ApprovedAt.Before(now.Add(-maxCrawlRequestLifetime)) {
+		return fmt.Errorf("approval is older than the supported request lifetime")
 	}
 	if req.ExpiresAt.IsZero() {
 		return fmt.Errorf("expires_at is required")
 	}
-	if req.MaxRequests < 0 {
-		return fmt.Errorf("max_requests must be non-negative")
+	if req.ExpiresAt.After(now.Add(maxCrawlRequestLifetime)) {
+		return fmt.Errorf("expires_at exceeds the supported request lifetime")
 	}
-	if req.MaxRequests > 0 && req.BudgetWindow <= 0 {
-		return fmt.Errorf("budget_window must be positive when max_requests is set")
+	if req.MaxRequests <= 0 || req.MaxRequests > maxCrawlRequests {
+		return fmt.Errorf("max_requests must be 1..%d", maxCrawlRequests)
+	}
+	if req.BudgetWindow <= 0 || req.BudgetWindow > maxCrawlBudgetWindow {
+		return fmt.Errorf("budget_window must be within the supported range")
 	}
 	return nil
 }
@@ -383,7 +413,8 @@ func crawlOperationID(req CrawlScheduleRequest) string {
 
 func crawlOperationDetailsFor(req CrawlScheduleRequest) (crawlOperationDetails, error) {
 	details := crawlOperationDetails{
-		RequestID: req.RequestID, AgentID: req.AgentID, Owner: req.Owner,
+		RequestID: req.RequestID, RunID: req.RunID,
+		AgentID: req.AgentID, Owner: req.Owner,
 		SourceID: req.SourceID, OperationType: req.OperationType,
 		ParametersSHA256: req.ParametersSHA256, ApprovalID: req.ApprovalID,
 		ApprovalSHA256: req.ApprovalSHA256, ApprovedBy: req.ApprovedBy,
@@ -420,7 +451,7 @@ func crawlOperationFailure(result CrawlScheduleResult, ctx context.Context, err 
 	return result, ErrCrawlSchedulingFailed
 }
 
-func resolveExistingCrawlOperation(ctx context.Context, tx *sql.Tx, db Handler, req CrawlScheduleRequest, result CrawlScheduleResult, existing crawlOperationRow) (CrawlScheduleResult, error) {
+func resolveExistingCrawlOperation(ctx context.Context, tx *sql.Tx, db Handler, req CrawlScheduleRequest, result CrawlScheduleResult, existing crawlOperationRow, now time.Time) (CrawlScheduleResult, error) {
 	if !sameCrawlOperation(existing.Details, req) {
 		result.State = CrawlOperationConflict
 		result.ReasonCode = CrawlReasonConflict
@@ -435,6 +466,7 @@ func resolveExistingCrawlOperation(ctx context.Context, tx *sql.Tx, db Handler, 
 	}
 	result.State = state
 	result.Reused = true
+	result.SourceObservedAt = now
 	result.ExpiresAt = parseCrawlTime(existing.Details.ExpiresAt)
 	sourceState, disabled, found, err := readCrawlSourceState(ctx, tx, db, req.SourceID)
 	if err != nil {
@@ -453,12 +485,17 @@ func resolveExistingCrawlOperation(ctx context.Context, tx *sql.Tx, db Handler, 
 
 func sameCrawlOperation(details crawlOperationDetails, req CrawlScheduleRequest) bool {
 	return details.RequestID == req.RequestID &&
+		details.RunID == req.RunID &&
 		details.AgentID == req.AgentID &&
 		details.Owner == req.Owner &&
 		details.SourceID == req.SourceID &&
 		details.OperationType == req.OperationType &&
 		details.ParametersSHA256 == req.ParametersSHA256 &&
-		details.ApprovalSHA256 == req.ApprovalSHA256
+		details.ApprovalID == req.ApprovalID &&
+		details.ApprovalSHA256 == req.ApprovalSHA256 &&
+		details.ApprovedBy == req.ApprovedBy &&
+		details.ApprovedAt == req.ApprovedAt.UTC().Format(time.RFC3339Nano) &&
+		details.ExpiresAt == req.ExpiresAt.UTC().Format(time.RFC3339Nano)
 }
 
 func parseCrawlTime(value string) time.Time {
@@ -472,11 +509,11 @@ func parseCrawlTime(value string) time.Time {
 	return parsed
 }
 
-func finishCrawlOperation(ctx context.Context, tx *sql.Tx, db Handler, req CrawlScheduleRequest, result CrawlScheduleResult, state CrawlOperationState, reason string, sourceState CrawlSourceState) (CrawlScheduleResult, error) {
+func finishCrawlOperation(ctx context.Context, tx *sql.Tx, db Handler, req CrawlScheduleRequest, result CrawlScheduleResult, state CrawlOperationState, reason string, sourceState CrawlSourceState, now time.Time) (CrawlScheduleResult, error) {
 	result.State = state
 	result.ReasonCode = reason
 	result.SourceState = sourceState
-	result.SourceObservedAt = req.Now
+	result.SourceObservedAt = now
 	details, err := crawlOperationDetailsFor(req)
 	if err != nil {
 		return result, ErrCrawlSchedulingFailed
@@ -508,18 +545,42 @@ func lockCrawlSource(ctx context.Context, tx *sql.Tx, db Handler, sourceID uint6
 	return err
 }
 
-func crawlRequestWithinBudget(ctx context.Context, tx *sql.Tx, db Handler, req CrawlScheduleRequest) (bool, error) {
+func crawlRequestWithinBudget(ctx context.Context, tx *sql.Tx, db Handler, req CrawlScheduleRequest, now time.Time) (bool, error) {
 	if req.MaxRequests <= 0 {
-		return true, nil
+		return false, fmt.Errorf("crawl request budget is required")
+	}
+	ownerExpr := "details->>'owner'"
+	malformedExpr := `(details->'owner' IS NULL OR jsonb_typeof(details->'owner') <> 'string' OR TRIM(details->>'owner') = '')`
+	if normalizeInformationSeedDBMS(db.DBMS()) == DBSQLiteStr {
+		ownerExpr = "json_extract(details, '$.owner')"
+		malformedExpr = `(json_extract(details, '$.owner') IS NULL OR typeof(json_extract(details, '$.owner')) <> 'text' OR TRIM(json_extract(details, '$.owner')) = '')`
+	}
+	// Detect malformed or owner-less operation rows before applying LIMIT. A
+	// malformed record must fail closed rather than silently disappear.
+	malformedQuery := `SELECT COUNT(*) FROM Status
+		WHERE agent_id = ` + crawlPlaceholder(db, 1) + `
+		  AND source_id = ` + crawlPlaceholder(db, 2) + `
+		  AND operation_type = ` + crawlPlaceholder(db, 3) + `
+		  AND created_at >= ` + crawlPlaceholder(db, 4) + `
+		  AND ` + malformedExpr
+	var malformed int
+	if err := tx.QueryRowContext(ctx, malformedQuery, req.AgentID, req.SourceID, req.OperationType,
+		now.Add(-req.BudgetWindow)).Scan(&malformed); err != nil {
+		return false, err
+	}
+	if malformed > 0 {
+		return false, fmt.Errorf("malformed crawl operation record")
 	}
 	query := `SELECT status, details FROM Status
 		WHERE agent_id = ` + crawlPlaceholder(db, 1) + `
 		  AND source_id = ` + crawlPlaceholder(db, 2) + `
 		  AND operation_type = ` + crawlPlaceholder(db, 3) + `
 		  AND created_at >= ` + crawlPlaceholder(db, 4) + `
-		ORDER BY created_at DESC LIMIT ` + crawlPlaceholder(db, 5)
+		  AND status IN ('accepted', 'already_pending', 'processing')
+		  AND ` + ownerExpr + ` = ` + crawlPlaceholder(db, 5) + `
+		ORDER BY created_at DESC LIMIT ` + crawlPlaceholder(db, 6)
 	rows, err := tx.QueryContext(ctx, query, req.AgentID, req.SourceID, req.OperationType,
-		req.Now.Add(-req.BudgetWindow), req.MaxRequests+1)
+		now.Add(-req.BudgetWindow), req.Owner, req.MaxRequests+1)
 	if err != nil {
 		return false, err
 	}
@@ -534,9 +595,6 @@ func crawlRequestWithinBudget(ctx context.Context, tx *sql.Tx, db Handler, req C
 		var details crawlOperationDetails
 		if err := json.Unmarshal(raw, &details); err != nil {
 			return false, err
-		}
-		if details.Owner != req.Owner {
-			continue
 		}
 		switch CrawlOperationState(status) {
 		case CrawlOperationAccepted, CrawlOperationAlreadyPending, CrawlOperationProcessing:

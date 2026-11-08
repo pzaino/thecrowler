@@ -101,11 +101,17 @@ func TestCrawlProposalLiveOllamaInertOptional(t *testing.T) {
 		AgentID: "proposal-agent", Owner: "proposal-owner", TrustLevel: "trusted",
 		Capabilities: []string{"tool_execution", "db_write"},
 	}
-	decision := AuthorizeCrawlRequest(identity, map[uint64]bool{42: true}, probe.proposal, nil, "run-live", "trace-live", time.Now().UTC())
+	policy := CrawlRequestPolicy{
+		AllowedOperations: map[string]bool{crawlRequestToolName: true},
+		AllowedSources:    map[uint64]bool{42: true},
+		MaxRequests:       1,
+		BudgetWindow:      time.Hour,
+	}
+	decision := AuthorizeCrawlRequest(context.Background(), identity, policy, probe.proposal, nil, "run-live", "trace-live")
 	if decision.Allowed || decision.ReasonCode != CrawlReasonApprovalRequired {
 		t.Fatalf("unapproved live proposal was not denied: %+v", decision)
 	}
-	if _, err := BuildCrawlScheduleRequest(identity, probe.proposal, CrawlRequestApproval{}, decision, time.Now().UTC()); err == nil {
+	if _, err := BuildCrawlScheduleRequest(identity, probe.proposal, CrawlRequestApproval{}, decision, "run-live"); err == nil {
 		t.Fatal("unapproved live proposal built a scheduling request")
 	}
 	t.Logf("live inert proposal: decision=%s proposal=%s", decision.ReasonCode, decision.ProposalSHA256)

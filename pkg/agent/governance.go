@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 )
@@ -50,10 +51,14 @@ type AuditEvent struct {
 	ReasonCode  string   `json:"reason_code,omitempty"`
 	EvidenceIDs []string `json:"evidence_ids,omitempty"`
 	// WP-03B1 scheduling correlation fields. Empty for non-scheduling actions.
-	SourceID       uint64 `json:"source_id,omitempty"`
-	RequestID      string `json:"request_id,omitempty"`
-	OperationType  string `json:"operation_type,omitempty"`
-	IdempotencyKey string `json:"idempotency_key,omitempty"`
+	SourceID                uint64     `json:"source_id,omitempty"`
+	RequestID               string     `json:"request_id,omitempty"`
+	OperationType           string     `json:"operation_type,omitempty"`
+	IdempotencyKey          string     `json:"idempotency_key,omitempty"`
+	AuthorizationOutcome    string     `json:"authorization_outcome,omitempty"`
+	AuthorizationReasonCode string     `json:"authorization_reason_code,omitempty"`
+	SchedulingState         string     `json:"scheduling_state,omitempty"`
+	Timestamp               *time.Time `json:"timestamp,omitempty"`
 }
 
 func (je *JobEngine) startGovernanceRun() {
@@ -109,9 +114,17 @@ func (je *JobEngine) AuditCrawlSchedulingDecision(identity AgentIdentity, propos
 		}
 	}
 	capabilities := []string(nil)
+	authorizationOutcome := auditOutcomeDenied
 	if decision.Allowed {
 		capabilities = append([]string(nil), decision.RequiredCapabilities...)
+		authorizationOutcome = auditOutcomeAllowed
 	}
+	authorizationReason := decision.ReasonCode
+	schedulingState := ""
+	if result != nil {
+		schedulingState = string(result.State)
+	}
+	timestamp := time.Now().UTC()
 	je.appendAudit(AuditEvent{
 		RunID: runID, TraceID: traceID,
 		AgentID: identity.AgentID, AgentName: identity.Name, Owner: identity.Owner,
@@ -119,6 +132,8 @@ func (je *JobEngine) AuditCrawlSchedulingDecision(identity AgentIdentity, propos
 		CapabilitiesUsed: capabilities, Outcome: outcome, Reason: reason,
 		ReasonCode: reason, SourceID: sourceID, RequestID: requestID,
 		OperationType: operationType, IdempotencyKey: operationID,
+		AuthorizationOutcome: authorizationOutcome, AuthorizationReasonCode: authorizationReason,
+		SchedulingState: schedulingState, Timestamp: &timestamp,
 	})
 }
 
