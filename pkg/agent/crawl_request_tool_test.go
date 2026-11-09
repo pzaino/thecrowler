@@ -336,8 +336,9 @@ func TestCrawlRequestSubmissionRejectsBindingAndAuthorizationChanges(t *testing.
 	if _, err := runtime.SubmitApprovedProposal(context.Background(), requestID, crossRun.ApprovalID, runtime.Policy.Principal); !errors.Is(err, ErrCrawlApprovalForged) {
 		t.Fatalf("cross-run submission error = %v", err)
 	}
-	if _, err := (*handler).Exec(`UPDATE CrawlProposals SET expires_at=? WHERE request_id=?`, now.Add(-time.Minute), requestID); err != nil {
-		t.Fatalf("expire proposal: %v", err)
+	expire, err := cdb.MarkCrawlProposalExpired(context.Background(), handler, requestID)
+	if err != nil || expire.Outcome != cdb.CrawlProposalTransitionApplied {
+		t.Fatalf("expire proposal: outcome=%s err=%v", expire.Outcome, err)
 	}
 	if _, err := runtime.SubmitApprovedProposal(context.Background(), requestID, approval.ApprovalID, runtime.Policy.Principal); !errors.Is(err, ErrCrawlProposalExpired) {
 		t.Fatalf("expired proposal submission error = %v", err)
@@ -454,5 +455,127 @@ func TestCrawlRequestToolRetryKeepsDurableExpiry(t *testing.T) {
 		!before.ExpiresAt.Equal(after.ExpiresAt) ||
 		!secondResult["expires_at"].(time.Time).Equal(before.ExpiresAt) {
 		t.Fatalf("retry changed durable identity: before=%+v after=%+v result=%+v", before, after, secondResult)
+	}
+}
+
+type failingApprovalLookupStore struct {
+	err error
+}
+
+func (s failingApprovalLookupStore) LookupCrawlApproval(ctx context.Context, approvalID string) (CrawlApprovalRecord, bool, error) {
+	return CrawlApprovalRecord{}, false, s.err
+}
+
+func (s failingApprovalLookupStore) LookupCrawlApprovalByRequest(ctx context.Context, runID, requestID string, principalUserID, sourceID uint64, operationType string) (CrawlApprovalRecord, bool, error) {
+	return CrawlApprovalRecord{}, false, s.err
+}
+
+func TestCrawlRequestToolDistinguishesApprovalLookupFailureAndState(t *testing.T) {
+	handler := newCrawlSchedulingTestDB(t)
+	now := time.Now().UTC()
+	runtime := newCrawlToolTestRuntime(t, handler, []uint64{42}, now)
+	tool := &crawlRequestTool{runtime: runtime}
+	result, err := tool.Execute(crawlToolContext(t, handler, runtime, "lookup-call"), map[string]any{"source_id": float64(42)})
+	if err != nil {
+		t.Fatalf("initial proposal: %v", err)
+	}
+	requestID := result["request_id"].(string)
+	runtime.ApprovalStore = failingApprovalLookupStore{err: errors.New("database down")}
+	if _, err := tool.Execute(crawlToolContext(t, handler, runtime, "lookup-call"), map[string]any{"source_id": float64(42)}); err == nil {
+		t.Fatalf("approval lookup failure was reported as approval absence")
+	} else if authErr, ok := err.(*ToolAuthError); !ok || authErr.Code != CrawlReasonApprovalStoreUnavailable {
+		t.Fatalf("approval lookup failure error = %v", err)
+	}
+	status, operations := crawlSchedulingTestSourceState(t, handler, 42)
+	if status != "completed" || operations != 0 {
+		t.Fatalf("approval lookup failure mutated source: status=%q operations=%d", status, operations)
+	}
+
+	// Restore the real store and issue an approval, then revoke it.
+	runtime = newCrawlToolTestRuntime(t, handler, []uint64{42}, now)
+	tool = &crawlRequestTool{runtime: runtime}
+	row, found, err := cdb.GetCrawlProposalByRequest(context.Background(), handler, requestID)
+	if err != nil || !found {
+		t.Fatalf("read proposal: found=%v err=%v", found, err)
+	}
+	store := runtime.ApprovalStore.(*DatabaseCrawlApprovalStore)
+	approval, err := store.IssueCrawlApproval(context.Background(), CrawlApprovalIssuanceRequest{
+		Proposal: CrawlRequestProposal{
+			RequestID: row.RequestID, SourceID: row.SourceID,
+			OperationType: row.OperationType, ExpiresAt: row.ExpiresAt,
+		},
+		Identity: runtime.Identity, Principal: runtime.Policy.Principal,
+		RunID: row.RunID, IssuerPrincipal: runtime.Policy.Principal,
+		Approver: runtime.Policy.Principal, Issuer: "crowler-api",
+		ApprovedAt: now, ExpiresAt: now.Add(10 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("issue approval: %v", err)
+	}
+	if _, err := (*handler).Exec(`UPDATE CrawlApprovals SET approved_at=?, expires_at=? WHERE approval_id=?`,
+		now.Add(-20*time.Minute), now.Add(-10*time.Minute), approval.ApprovalID); err != nil {
+		t.Fatalf("expire approval: %v", err)
+	}
+	expired, err := tool.Execute(crawlToolContext(t, handler, runtime, "lookup-call"), map[string]any{"source_id": float64(42)})
+	if err != nil {
+		t.Fatalf("expired approval proposal: %v", err)
+	}
+	if expired["state"] != "approval_expired" || expired["reason_code"] != CrawlReasonApprovalExpired {
+		t.Fatalf("expired approval state = %+v", expired)
+	}
+	if _, err := (*handler).Exec(`UPDATE CrawlApprovals SET approved_at=?, expires_at=? WHERE approval_id=?`,
+		now, now.Add(10*time.Minute), approval.ApprovalID); err != nil {
+		t.Fatalf("restore approval lifetime: %v", err)
+	}
+	if err := store.RevokeCrawlApproval(context.Background(), runtime.Policy.Principal, approval.ApprovalID, "test", now); err != nil {
+		t.Fatalf("revoke approval: %v", err)
+	}
+	revoked, err := tool.Execute(crawlToolContext(t, handler, runtime, "lookup-call"), map[string]any{"source_id": float64(42)})
+	if err != nil {
+		t.Fatalf("revoked approval proposal: %v", err)
+	}
+	if revoked["state"] != "approval_revoked" || revoked["reason_code"] != CrawlReasonApprovalRevoked {
+		t.Fatalf("revoked approval state = %+v", revoked)
+	}
+	status, operations = crawlSchedulingTestSourceState(t, handler, 42)
+	if status != "completed" || operations != 0 {
+		t.Fatalf("approval states mutated source: status=%q operations=%d", status, operations)
+	}
+}
+
+func TestCrawlRequestToolLoopReportsApprovalLookupFailure(t *testing.T) {
+	handler := newCrawlSchedulingTestDB(t)
+	now := time.Now().UTC()
+	runtime := newCrawlToolTestRuntime(t, handler, []uint64{42}, now)
+	tool := &crawlRequestTool{runtime: runtime}
+	if _, err := tool.Execute(crawlToolContext(t, handler, runtime, "loop-lookup-call"), map[string]any{"source_id": float64(42)}); err != nil {
+		t.Fatalf("seed proposal: %v", err)
+	}
+	runtime.ApprovalStore = failingApprovalLookupStore{err: errors.New("database down")}
+	registry := NewAgentToolRegistry()
+	if err := RegisterCrawlRequestTool(registry, runtime); err != nil {
+		t.Fatalf("register tool: %v", err)
+	}
+	provider := &scriptedProvider{name: "scripted", responses: []any{
+		chatWithCalls(stringCall("loop-call", crawlRequestToolName, `{"source_id":42}`)),
+		chatWithText("done"),
+	}}
+	result, err := RunToolLoop(ToolLoopConfig{
+		Provider: provider, ProviderName: "scripted", Model: "scripted",
+		URL: "https://example.com/v1/chat", Prompt: "propose", Registry: registry,
+		Allowlist: []string{crawlRequestToolName}, Identity: runtime.Identity, Enforcement: true,
+		AllowedSources: []uint64{42}, AllowedOperations: map[string]bool{crawlRequestToolName: true},
+		MutationAllowed: true, CrawlRuntime: runtime, DB: *handler,
+		Limits: DefaultToolLoopLimits(), RunID: "loop-run", TraceID: "loop-trace",
+	})
+	if err != nil {
+		t.Fatalf("tool loop with lookup failure: %v", err)
+	}
+	if len(result.ToolCalls) != 1 || result.ToolCalls[0].Status != "failed" {
+		t.Fatalf("approval lookup failure was not reported as a failed tool call: %+v", result.ToolCalls)
+	}
+	status, operations := crawlSchedulingTestSourceState(t, handler, 42)
+	if status != "completed" || operations != 0 {
+		t.Fatalf("lookup failure in loop mutated source: status=%q operations=%d", status, operations)
 	}
 }

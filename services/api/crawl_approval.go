@@ -93,7 +93,8 @@ func crawlApprovalErrorCode(err error) int {
 	case errors.Is(err, agentpkg.ErrCrawlApprovalLifetime),
 		errors.Is(err, agentpkg.ErrCrawlApprovalForged):
 		return http.StatusBadRequest
-	case errors.Is(err, agentpkg.ErrCrawlApprovalUnknown), errors.Is(err, agentpkg.ErrCrawlProposalNotFound):
+	case errors.Is(err, agentpkg.ErrCrawlApprovalUnknown), errors.Is(err, agentpkg.ErrCrawlProposalNotFound),
+		errors.Is(err, cdb.ErrCrawlProposalRowNotFound):
 		return http.StatusNotFound
 	case errors.Is(err, agentpkg.ErrCrawlProposalExpired):
 		return http.StatusGone
@@ -106,7 +107,9 @@ func crawlApprovalErrorCode(err error) int {
 	case errors.Is(err, agentpkg.ErrCrawlApprovalStoreUnavailable),
 		errors.Is(err, agentpkg.ErrCrawlApprovalApproverUnavailable),
 		errors.Is(err, agentpkg.ErrCrawlProposalStoreUnavailable),
-		errors.Is(err, agentpkg.ErrCrawlMutationUnsupported):
+		errors.Is(err, agentpkg.ErrCrawlMutationUnsupported),
+		errors.Is(err, agentpkg.ErrCrawlSchedulingUncertain),
+		errors.Is(err, cdb.ErrCrawlSchedulingUncertain):
 		return http.StatusServiceUnavailable
 	case errors.Is(err, agentpkg.ErrCrawlMutationDisabled),
 		errors.Is(err, agentpkg.ErrCrawlMutationOperationRequired),

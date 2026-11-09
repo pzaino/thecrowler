@@ -537,7 +537,14 @@ func TestPostgresCrawlProposalApprovalSubmissionChain(t *testing.T) {
 	if err := store.RevokeCrawlApproval(context.Background(), runtime.Policy.Principal, approval.ApprovalID, "postgres test", time.Now().UTC()); err != nil {
 		t.Fatalf("revoke postgres approval: %v", err)
 	}
-	if _, err := runtime.SubmitApprovedProposal(context.Background(), requestID, approval.ApprovalID, runtime.Policy.Principal); !errors.Is(err, ErrCrawlApprovalRevoked) {
-		t.Fatalf("postgres revoked submission error = %v", err)
+	revokedRetry, err := runtime.SubmitApprovedProposal(context.Background(), requestID, approval.ApprovalID, runtime.Policy.Principal)
+	if err != nil || !revokedRetry.Reused || revokedRetry.OperationID != submitted.OperationID {
+		t.Fatalf("postgres committed operation was not observable after revocation: %+v err=%v", revokedRetry, err)
+	}
+	if err := (*db).QueryRow(`SELECT COUNT(*) FROM Status WHERE source_id=$1`, sourceID).Scan(&operations); err != nil {
+		t.Fatalf("count postgres post-revocation operations: %v", err)
+	}
+	if operations != 1 {
+		t.Fatalf("postgres revocation retry created %d operations", operations)
 	}
 }

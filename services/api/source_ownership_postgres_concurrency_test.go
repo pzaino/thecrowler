@@ -430,3 +430,92 @@ func TestPostgresConcurrentApprovalRevocationAuthorization(t *testing.T) {
 		t.Fatalf("concurrent HTTP revocation actor = %d, want owner %d", revokedBy, ownerID)
 	}
 }
+
+func TestPostgresCrawlProposalSubmissionEndpointAtomicity(t *testing.T) {
+	handler, ownerID, _, _ := setupSourceOwnershipPostgresAPI(t)
+	ownerName := fmt.Sprintf("pg-race-owner-%d", ownerID)
+	owner := pgIdentity(ownerID, ownerName, "user")
+	sourceURL := fmt.Sprintf("https://pg-proposal-submit-%d.example/", time.Now().UnixNano())
+	if code, body := pgAddSource(t, owner, sourceURL); code != http.StatusCreated {
+		t.Fatalf("create source status %d: %s", code, body)
+	}
+	var sourceID uint64
+	if err := handler.QueryRow(`SELECT source_id FROM Sources WHERE url=$1`, cdb.NormalizeSourceURL(sourceURL)).Scan(&sourceID); err != nil {
+		t.Fatalf("read proposal source: %v", err)
+	}
+	pgSourceCleanup(t, handler, sourceID)
+	now := time.Now().UTC()
+	requestID := fmt.Sprintf("%064x", now.UnixNano())
+	runID := "pg-proposal-run"
+	seedSubmittableCrawlProposal(t, handler, requestID, runID, sourceID, ownerID, ownerName, now.Add(time.Hour))
+	issueBody := fmt.Sprintf(`{"request_id":%q,"source_id":%d,"operation_type":"crawl","approval_expires_at":%q}`,
+		requestID, sourceID, now.Add(30*time.Minute).Format(time.RFC3339Nano))
+	issue := callCrawlApprovalHandler(t, crawlApprovalIssueHandler, http.MethodPost,
+		"/v1/console/crawl/approvals/issue", issueBody, &owner)
+	if issue.Code != http.StatusOK {
+		t.Fatalf("issue approval status %d: %s", issue.Code, issue.Body.String())
+	}
+	approval := decodeCrawlApprovalResponse(t, issue)
+	submit := callCrawlApprovalHandler(t, crawlApprovalSubmitHandler, http.MethodPost,
+		"/v1/console/crawl/approvals/submit", crawlApprovalSubmitBody(requestID, approval.ApprovalID), &owner)
+	if submit.Code != http.StatusOK {
+		t.Fatalf("submit status %d: %s", submit.Code, submit.Body.String())
+	}
+	response := decodeCrawlSubmitResponse(t, submit)
+	if response["state"] != string(cdb.CrawlOperationAccepted) {
+		t.Fatalf("unexpected submit response: %+v", response)
+	}
+	operationID := response["operation_id"].(string)
+	var proposalState, proposalOperation string
+	if err := handler.QueryRow(`SELECT state, COALESCE(operation_id,'') FROM CrawlProposals WHERE request_id=$1`, requestID).
+		Scan(&proposalState, &proposalOperation); err != nil {
+		t.Fatalf("read submitted proposal: %v", err)
+	}
+	if proposalState != cdb.CrawlProposalStateSubmitted || proposalOperation != operationID {
+		t.Fatalf("proposal/operation divergence: state=%q operation=%q want=%q", proposalState, proposalOperation, operationID)
+	}
+	var status string
+	var operations int
+	if err := handler.QueryRow(`SELECT status FROM Sources WHERE source_id=$1`, sourceID).Scan(&status); err != nil {
+		t.Fatalf("read submitted source: %v", err)
+	}
+	if err := handler.QueryRow(`SELECT COUNT(*) FROM Status WHERE source_id=$1`, sourceID).Scan(&operations); err != nil {
+		t.Fatalf("count submitted operations: %v", err)
+	}
+	if status != "pending" || operations != 1 {
+		t.Fatalf("submitted source status=%q operations=%d", status, operations)
+	}
+	repeat := callCrawlApprovalHandler(t, crawlApprovalSubmitHandler, http.MethodPost,
+		"/v1/console/crawl/approvals/submit", crawlApprovalSubmitBody(requestID, approval.ApprovalID), &owner)
+	if repeat.Code != http.StatusOK || decodeCrawlSubmitResponse(t, repeat)["reused"] != true {
+		t.Fatalf("repeat submission was not idempotent: %d %s", repeat.Code, repeat.Body.String())
+	}
+
+	// Simulate the legacy divergence window: the operation is committed but
+	// the proposal was marked expired. Submission must reconcile, not fail.
+	if _, err := handler.Exec(`UPDATE CrawlProposals SET state='expired' WHERE request_id=$1`, requestID); err != nil {
+		t.Fatalf("simulate proposal divergence: %v", err)
+	}
+	repair := callCrawlApprovalHandler(t, crawlApprovalSubmitHandler, http.MethodPost,
+		"/v1/console/crawl/approvals/submit", crawlApprovalSubmitBody(requestID, approval.ApprovalID), &owner)
+	if repair.Code != http.StatusOK {
+		t.Fatalf("repair submission status %d: %s", repair.Code, repair.Body.String())
+	}
+	repaired := decodeCrawlSubmitResponse(t, repair)
+	if repaired["reused"] != true || repaired["operation_id"] != operationID {
+		t.Fatalf("repair did not return the authoritative operation: %+v", repaired)
+	}
+	if err := handler.QueryRow(`SELECT state, COALESCE(operation_id,'') FROM CrawlProposals WHERE request_id=$1`, requestID).
+		Scan(&proposalState, &proposalOperation); err != nil {
+		t.Fatalf("read repaired proposal: %v", err)
+	}
+	if proposalState != cdb.CrawlProposalStateSubmitted || proposalOperation != operationID {
+		t.Fatalf("repair left divergent proposal state=%q operation=%q", proposalState, proposalOperation)
+	}
+	if err := handler.QueryRow(`SELECT COUNT(*) FROM Status WHERE source_id=$1`, sourceID).Scan(&operations); err != nil {
+		t.Fatalf("count repaired operations: %v", err)
+	}
+	if operations != 1 {
+		t.Fatalf("repair created %d operations", operations)
+	}
+}

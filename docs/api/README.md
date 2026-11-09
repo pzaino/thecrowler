@@ -118,6 +118,7 @@ fail-closed 503 rather than an unpersisted approval.
 | POST | `/v1/console/crawl/approvals/issue` | Issue a bounded approval for an agent, run, source and proposal. |
 | POST | `/v1/console/crawl/approvals/revoke` | Revoke an approval by ID. |
 | GET | `/v1/console/crawl/approvals/status` | Read an approval visible to the authenticated source owner or an administrator. |
+| POST | `/v1/console/crawl/approvals/submit` | Submit an approved durable proposal through the existing scheduler. |
 
 The issue body contains only the proposal identity, source, agent, run and
 expiry timestamps. The approver, owner, principal user ID and issuer are derived
@@ -400,3 +401,13 @@ See the following specialized APIs for more advanced interactions:
 * [Time-series API](timeseries.md) for aggregate-first time-series data.
 * [Add sources API](addsource.md) for managing sources and seeds.
 * [Email-sources API](email-sources.md) for managing email sources.
+
+
+Crawl approval submission is an authenticated operator action. It verifies the
+recorded proposal, the exact durable approval, the caller's current source
+authority and the scheduler's transactional approval/ownership checks. A
+successful `accepted` result means scheduling was committed; it is not proof
+that the crawl completed. A result with state `uncertain` and reason
+`crawl_commit_uncertain` means the commit outcome could not be determined:
+retry the same request, and the durable operation will be reconciled rather
+than duplicated.

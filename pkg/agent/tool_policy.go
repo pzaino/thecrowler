@@ -59,6 +59,7 @@ const (
 	ToolDenyDuplicateCallID  = "duplicate_call_id"
 	ToolDenyMutationDisabled = "mutation_disabled"
 	ToolDenyOperation        = "operation_not_allowlisted"
+	ToolDenyEffect           = "unknown_tool_effect"
 )
 
 // minToolTrustRank is the Phase 3 execution floor: callers need at least
@@ -135,13 +136,17 @@ func AuthorizeToolCall(auth ToolAuthContext, tool AgentTool, args map[string]any
 	if classified, ok := tool.(AgentToolEffect); ok {
 		effect = classified.Effect()
 	}
-	if effect == ToolEffectMutation {
+	switch effect {
+	case ToolEffectReadOnly:
+	case ToolEffectMutation:
 		if !auth.MutationAllowed {
 			return denyTool(ToolDenyMutationDisabled, "model-driven mutation is disabled")
 		}
 		if auth.AllowedOperations == nil || !auth.AllowedOperations[name] {
 			return denyTool(ToolDenyOperation, "operation %q is not in the explicit operation allowlist", name)
 		}
+	default:
+		return denyTool(ToolDenyEffect, "tool %q declares an unknown effect", name)
 	}
 	if err := checkToolArguments(name, tool, args); err != nil {
 		return err

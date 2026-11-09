@@ -169,45 +169,190 @@ func GetCrawlProposalByLogicalKey(ctx context.Context, db *Handler, runID, toolC
 	return row, true, nil
 }
 
-// MarkCrawlProposalSubmitted records a successful scheduling submission
-// without changing its immutable proposal identity or expiry.
-func MarkCrawlProposalSubmitted(ctx context.Context, db *Handler, requestID, operationID string, submittedAt time.Time) error {
-	return updateCrawlProposalState(ctx, db, requestID, CrawlProposalStateSubmitted, operationID, submittedAt)
+// CrawlProposalTransitionOutcome describes the result of a compare-and-set
+// proposal lifecycle transition. Callers must not treat every non-error return
+// as an applied transition.
+type CrawlProposalTransitionOutcome string
+
+const (
+	CrawlProposalTransitionApplied  CrawlProposalTransitionOutcome = "applied"
+	CrawlProposalTransitionAlready  CrawlProposalTransitionOutcome = "already_in_state"
+	CrawlProposalTransitionConflict CrawlProposalTransitionOutcome = "conflict"
+	CrawlProposalTransitionNotFound CrawlProposalTransitionOutcome = "not_found"
+)
+
+// CrawlProposalTransitionResult carries the outcome and the authoritative row
+// observed after the transition attempt.
+type CrawlProposalTransitionResult struct {
+	Outcome CrawlProposalTransitionOutcome
+	Row     CrawlProposalRow
 }
 
-// MarkCrawlProposalExpired records expiry of a pending proposal.
-func MarkCrawlProposalExpired(ctx context.Context, db *Handler, requestID string) error {
-	return updateCrawlProposalState(ctx, db, requestID, CrawlProposalStateExpired, "", time.Time{})
+var (
+	// ErrCrawlProposalRowNotFound means the durable proposal does not exist.
+	ErrCrawlProposalRowNotFound = errors.New("crawl proposal row not found")
+	// ErrCrawlProposalStateConflict means the current durable state does not
+	// permit the requested transition.
+	ErrCrawlProposalStateConflict = errors.New("crawl proposal state conflict")
+)
+
+// lockCrawlProposalTx locks and reads one proposal inside an existing
+// transaction. PostgreSQL row locking serializes submission, expiry and
+// reconciliation for the same request.
+func lockCrawlProposalTx(ctx context.Context, tx *sql.Tx, db Handler, requestID string) (CrawlProposalRow, bool, error) {
+	if tx == nil {
+		return CrawlProposalRow{}, false, fmt.Errorf("transaction is nil")
+	}
+	query := `SELECT ` + crawlProposalColumns() + ` FROM CrawlProposals
+		WHERE request_id = ` + crawlProposalPlaceholder(db, 1)
+	if normalizeInformationSeedDBMS(db.DBMS()) == DBPostgresStr {
+		query += ` FOR UPDATE`
+	}
+	row, err := scanCrawlProposalRow(tx.QueryRowContext(ctx, query, strings.TrimSpace(requestID)))
+	if errors.Is(err, sql.ErrNoRows) {
+		return CrawlProposalRow{}, false, nil
+	}
+	if err != nil {
+		return CrawlProposalRow{}, false, crawlProposalContextError(ctx, crawlApprovalStoreError(err))
+	}
+	return row, true, nil
 }
 
-func updateCrawlProposalState(ctx context.Context, db *Handler, requestID, state, operationID string, submittedAt time.Time) error {
+// MarkCrawlProposalSubmitted applies pending -> submitted. Repeating the same
+// transition with the same operation ID returns Already; a different operation
+// ID or a conflicting source state returns Conflict.
+func MarkCrawlProposalSubmitted(ctx context.Context, db *Handler, requestID, operationID string, submittedAt time.Time) (CrawlProposalTransitionResult, error) {
+	return transitionCrawlProposal(ctx, db, requestID, CrawlProposalStateSubmitted, operationID, submittedAt, false)
+}
+
+// ReconcileCrawlProposalSubmitted applies pending -> submitted or expired ->
+// submitted when an authoritative accepted operation is already present. It is
+// used to repair the pre-atomic divergence window and crash recovery.
+func ReconcileCrawlProposalSubmitted(ctx context.Context, db *Handler, requestID, operationID string, submittedAt time.Time) (CrawlProposalTransitionResult, error) {
+	return transitionCrawlProposal(ctx, db, requestID, CrawlProposalStateSubmitted, operationID, submittedAt, true)
+}
+
+// MarkCrawlProposalExpired applies pending -> expired. Submitted and denied
+// proposals never return to expired or pending.
+func MarkCrawlProposalExpired(ctx context.Context, db *Handler, requestID string) (CrawlProposalTransitionResult, error) {
+	return transitionCrawlProposal(ctx, db, requestID, CrawlProposalStateExpired, "", time.Time{}, false)
+}
+
+// MarkCrawlProposalDenied applies pending -> denied.
+func MarkCrawlProposalDenied(ctx context.Context, db *Handler, requestID string) (CrawlProposalTransitionResult, error) {
+	return transitionCrawlProposal(ctx, db, requestID, CrawlProposalStateDenied, "", time.Time{}, false)
+}
+
+func transitionCrawlProposal(ctx context.Context, db *Handler, requestID, target, operationID string, submittedAt time.Time, allowExpiredToSubmitted bool) (CrawlProposalTransitionResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if db == nil || *db == nil {
-		return fmt.Errorf("database handler is nil")
+		return CrawlProposalTransitionResult{}, fmt.Errorf("database handler is nil")
 	}
 	if !supportsCrawlProposalStore(*db) {
-		return ErrCrawlApprovalStoreUnsupported
+		return CrawlProposalTransitionResult{}, ErrCrawlApprovalStoreUnsupported
 	}
-	p := func(n int) string { return crawlProposalPlaceholder(*db, n) }
+	txCtx, cancel := TransactionContextForHandler(ctx, db)
+	defer cancel()
+	tx, err := (*db).BeginTx(txCtx, nil)
+	if err != nil {
+		return CrawlProposalTransitionResult{}, crawlProposalContextError(txCtx, NormalizeTransactionError(txCtx, err))
+	}
+	defer func() { _ = tx.Rollback() }()
+	row, found, err := lockCrawlProposalTx(txCtx, tx, *db, requestID)
+	if err != nil {
+		return CrawlProposalTransitionResult{}, err
+	}
+	if !found {
+		return CrawlProposalTransitionResult{Outcome: CrawlProposalTransitionNotFound}, ErrCrawlProposalRowNotFound
+	}
+	result, err := transitionCrawlProposalLockedTx(txCtx, tx, *db, row, target, operationID, submittedAt, allowExpiredToSubmitted)
+	if err != nil {
+		return result, err
+	}
+	if err := tx.Commit(); err != nil {
+		return result, crawlProposalContextError(txCtx, NormalizeTransactionError(txCtx, err))
+	}
+	return result, nil
+}
+
+// transitionCrawlProposalLockedTx applies one strict compare-and-set
+// transition on a locked row. The caller owns the transaction and commit.
+func transitionCrawlProposalLockedTx(ctx context.Context, tx *sql.Tx, db Handler, row CrawlProposalRow, target, operationID string, submittedAt time.Time, allowExpiredToSubmitted bool) (CrawlProposalTransitionResult, error) {
+	if target == CrawlProposalStateSubmitted && strings.TrimSpace(operationID) == "" {
+		return CrawlProposalTransitionResult{Outcome: CrawlProposalTransitionConflict, Row: row}, ErrCrawlProposalStateConflict
+	}
+	if target == CrawlProposalStateSubmitted && submittedAt.IsZero() {
+		submittedAt = time.Now().UTC()
+	}
+	if row.State == target {
+		if target == CrawlProposalStateSubmitted && row.OperationID.Valid &&
+			row.OperationID.String != "" && row.OperationID.String != strings.TrimSpace(operationID) {
+			return CrawlProposalTransitionResult{Outcome: CrawlProposalTransitionConflict, Row: row}, ErrCrawlProposalStateConflict
+		}
+		return CrawlProposalTransitionResult{Outcome: CrawlProposalTransitionAlready, Row: row}, nil
+	}
+	allowed := false
+	switch target {
+	case CrawlProposalStateSubmitted:
+		allowed = row.State == CrawlProposalStatePending ||
+			(allowExpiredToSubmitted && row.State == CrawlProposalStateExpired)
+	case CrawlProposalStateExpired, CrawlProposalStateDenied:
+		allowed = row.State == CrawlProposalStatePending
+	}
+	if !allowed {
+		return CrawlProposalTransitionResult{Outcome: CrawlProposalTransitionConflict, Row: row}, ErrCrawlProposalStateConflict
+	}
+	p := func(n int) string { return crawlProposalPlaceholder(db, n) }
 	query := `UPDATE CrawlProposals
 		SET state = ` + p(1) + `,
 		    operation_id = ` + p(2) + `,
 		    submitted_at = ` + p(3) + `,
 		    last_updated_at = CURRENT_TIMESTAMP
-		WHERE request_id = ` + p(4) + ` AND state = 'pending'`
+		WHERE request_id = ` + p(4) + ` AND state = ` + p(5)
+	var operation interface{}
+	if target == CrawlProposalStateSubmitted {
+		operation = strings.TrimSpace(operationID)
+	}
 	var submitted interface{}
-	if !submittedAt.IsZero() {
+	if target == CrawlProposalStateSubmitted {
 		submitted = submittedAt.UTC().Truncate(time.Microsecond)
 	}
-	var op interface{}
-	if operationID != "" {
-		op = operationID
-	}
-	_, err := (*db).ExecContext(ctx, query, state, op, submitted, strings.TrimSpace(requestID))
+	result, err := tx.ExecContext(ctx, query, target, operation, submitted, row.RequestID, row.State)
 	if err != nil {
-		return crawlApprovalStoreError(err)
+		return CrawlProposalTransitionResult{Outcome: CrawlProposalTransitionConflict, Row: row}, crawlProposalContextError(ctx, crawlApprovalStoreError(err))
 	}
-	return nil
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return CrawlProposalTransitionResult{Outcome: CrawlProposalTransitionConflict, Row: row}, err
+	}
+	if affected == 0 {
+		current, found, readErr := lockCrawlProposalTx(ctx, tx, db, row.RequestID)
+		if readErr != nil {
+			return CrawlProposalTransitionResult{Outcome: CrawlProposalTransitionConflict, Row: row}, readErr
+		}
+		if !found {
+			return CrawlProposalTransitionResult{Outcome: CrawlProposalTransitionNotFound, Row: row}, ErrCrawlProposalRowNotFound
+		}
+		if current.State == target {
+			return CrawlProposalTransitionResult{Outcome: CrawlProposalTransitionAlready, Row: current}, nil
+		}
+		return CrawlProposalTransitionResult{Outcome: CrawlProposalTransitionConflict, Row: current}, ErrCrawlProposalStateConflict
+	}
+	row.State = target
+	if target == CrawlProposalStateSubmitted {
+		row.OperationID = sql.NullString{String: strings.TrimSpace(operationID), Valid: true}
+		row.SubmittedAt = sql.NullTime{Time: submittedAt.UTC().Truncate(time.Microsecond), Valid: true}
+	}
+	return CrawlProposalTransitionResult{Outcome: CrawlProposalTransitionApplied, Row: row}, nil
+}
+
+func crawlProposalContextError(ctx context.Context, err error) error {
+	if ctx != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+	}
+	return err
 }

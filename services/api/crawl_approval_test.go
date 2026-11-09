@@ -149,7 +149,7 @@ func seedSubmittableCrawlProposal(t *testing.T, handler cdb.Handler, requestID, 
 		placeholder(6), placeholder(7), placeholder(8), placeholder(9))
 	if _, err := handler.Exec(query,
 		requestID, runID, "call-1", owner, principalID, sourceID,
-		fingerprint, crawlProposalPolicyJSON(sourceID, owner), expiresAt.UTC()); err != nil {
+		fingerprint, crawlProposalPolicyJSON(sourceID, owner), expiresAt.UTC().Truncate(time.Microsecond)); err != nil {
 		t.Fatalf("seed submittable crawl proposal %s: %v", requestID, err)
 	}
 }
@@ -451,8 +451,8 @@ func TestCrawlApprovalSubmitApprovedProposal(t *testing.T) {
 	}
 	afterRevoke := callCrawlApprovalHandler(t, crawlApprovalSubmitHandler, http.MethodPost,
 		"/v1/console/crawl/approvals/submit", crawlApprovalSubmitBody(requestID, approval.ApprovalID), &owner)
-	if afterRevoke.Code != http.StatusConflict {
-		t.Fatalf("revoked submit status %d: %s", afterRevoke.Code, afterRevoke.Body.String())
+	if afterRevoke.Code != http.StatusOK || decodeCrawlSubmitResponse(t, afterRevoke)["reused"] != true {
+		t.Fatalf("committed operation was hidden after revocation: %d %s", afterRevoke.Code, afterRevoke.Body.String())
 	}
 }
 
@@ -507,5 +507,39 @@ func TestCrawlApprovalIssueRequiresGenuineDurableProposal(t *testing.T) {
 			now.Add(time.Hour).Format(time.RFC3339Nano)+`","approval_expires_at":"`+now.Add(30*time.Minute).Format(time.RFC3339Nano)+`"}`, &owner)
 	if wrongRun.Code != http.StatusBadRequest {
 		t.Fatalf("wrong-run issue status %d: %s", wrongRun.Code, wrongRun.Body.String())
+	}
+}
+
+func TestCrawlApprovalRevokedPendingCannotSchedule(t *testing.T) {
+	handler := setupCrawlApprovalAPITest(t)
+	now := time.Now().UTC()
+	owner := sourceOwnershipIdentity(7, "owner-1", "user")
+	requestID := "revoked-pending-request-1"
+	runID := "revoked-pending-run-1"
+	seedSubmittableCrawlProposal(t, handler, requestID, runID, 42, 7, "owner-1", now.Add(time.Hour))
+	issueBody := `{"request_id":"` + requestID + `","source_id":42,"approval_expires_at":"` +
+		now.Add(30*time.Minute).Format(time.RFC3339Nano) + `"}`
+	issue := callCrawlApprovalHandler(t, crawlApprovalIssueHandler, http.MethodPost,
+		"/v1/console/crawl/approvals/issue", issueBody, &owner)
+	if issue.Code != http.StatusOK {
+		t.Fatalf("issue revoked-pending approval status %d: %s", issue.Code, issue.Body.String())
+	}
+	approval := decodeCrawlApprovalResponse(t, issue)
+	revoke := callCrawlApprovalHandler(t, crawlApprovalRevokeHandler, http.MethodPost,
+		"/v1/console/crawl/approvals/revoke", `{"approval_id":"`+approval.ApprovalID+`","reason":"policy revoked"}`, &owner)
+	if revoke.Code != http.StatusOK {
+		t.Fatalf("revoke pending approval status %d: %s", revoke.Code, revoke.Body.String())
+	}
+	submit := callCrawlApprovalHandler(t, crawlApprovalSubmitHandler, http.MethodPost,
+		"/v1/console/crawl/approvals/submit", crawlApprovalSubmitBody(requestID, approval.ApprovalID), &owner)
+	if submit.Code != http.StatusConflict {
+		t.Fatalf("revoked pending submit status %d: %s", submit.Code, submit.Body.String())
+	}
+	var operations int
+	if err := handler.(*sourceAPITestHandler).db.QueryRow(`SELECT COUNT(*) FROM Status WHERE source_id=42`).Scan(&operations); err != nil {
+		t.Fatalf("count revoked pending operations: %v", err)
+	}
+	if operations != 0 {
+		t.Fatalf("revoked pending proposal scheduled %d operations", operations)
 	}
 }

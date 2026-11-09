@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -606,5 +607,120 @@ func TestPostgresSourceOwnerLookup(t *testing.T) {
 	}
 	if deleted.Found {
 		t.Fatalf("deleted source reported as found: %+v", deleted)
+	}
+}
+
+func TestPostgresProposalSubmissionExpirySerialization(t *testing.T) {
+	db, sqlDB := openPostgresIntegrationTestDB(t)
+	sourceID := createCrawlSchedulingSource(t, db, fmt.Sprintf("wp03b2c-race-%d", time.Now().UnixNano()))
+	setCrawlSchedulingSourceState(t, db, sourceID, "completed", "", false)
+	req := crawlSchedulingRequest(sourceID)
+	req.RequestID = fmt.Sprintf("%064x", time.Now().UnixNano())
+	req = preparePostgresApprovalRequest(req)
+	ensurePostgresCrawlApproval(t, db, req)
+	proposal := CrawlProposalRow{
+		RequestID: req.RequestID, RunID: req.RunID, ToolCallID: "pg-tool-call",
+		AgentID: req.AgentID, Owner: req.Owner, PrincipalUserID: req.PrincipalUserID,
+		SourceID: req.SourceID, OperationType: req.OperationType,
+		ProposalSHA256: req.ParametersSHA256, TraceID: "pg-trace",
+		MaxRequests: req.MaxRequests, BudgetWindowSeconds: int64(req.BudgetWindow / time.Second),
+		PolicyJSON: "{}", State: CrawlProposalStatePending, ExpiresAt: req.ExpiresAt,
+	}
+	if inserted, err := InsertCrawlProposal(context.Background(), db, proposal); err != nil || !inserted {
+		t.Fatalf("insert proposal: inserted=%v err=%v", inserted, err)
+	}
+
+	locked := make(chan struct{})
+	release := make(chan struct{})
+	crawlScheduleProposalLockedHook = func() {
+		close(locked)
+		<-release
+	}
+	t.Cleanup(func() { crawlScheduleProposalLockedHook = nil })
+
+	type submitOutcome struct {
+		result CrawlScheduleResult
+		err    error
+	}
+	submitted := make(chan submitOutcome, 1)
+	go func() {
+		result, err := scheduleSourceCrawlRequestForProposal(context.Background(), db, req,
+			proposal.RequestID, proposal.ProposalSHA256, time.Now().UTC())
+		submitted <- submitOutcome{result: result, err: err}
+	}()
+	<-locked
+
+	expired := make(chan error, 1)
+	go func() {
+		_, err := MarkCrawlProposalExpired(context.Background(), db, proposal.RequestID)
+		expired <- err
+	}()
+	waitForPostgresLockWait(t, sqlDB, "%FROM CrawlProposals%")
+	close(release)
+
+	submitResult := <-submitted
+	if submitResult.err != nil || submitResult.result.State != CrawlOperationAccepted {
+		t.Fatalf("submission while expiry waits: %+v err=%v", submitResult.result, submitResult.err)
+	}
+	if err := <-expired; !errors.Is(err, ErrCrawlProposalStateConflict) {
+		t.Fatalf("expiry after submission commit error = %v", err)
+	}
+	stored, found, err := GetCrawlProposalByRequest(context.Background(), db, proposal.RequestID)
+	if err != nil || !found || stored.State != CrawlProposalStateSubmitted ||
+		stored.OperationID.String != submitResult.result.OperationID {
+		t.Fatalf("proposal state after race: %+v found=%v err=%v", stored, found, err)
+	}
+	var operations int
+	if err := (*db).QueryRow(`SELECT COUNT(*) FROM Status WHERE source_id=$1`, sourceID).Scan(&operations); err != nil {
+		t.Fatalf("count operations: %v", err)
+	}
+	if operations != 1 {
+		t.Fatalf("race created %d operations", operations)
+	}
+}
+
+func TestPostgresProposalExpiryFirstCannotSchedule(t *testing.T) {
+	db, sqlDB := openPostgresIntegrationTestDB(t)
+	sourceID := createCrawlSchedulingSource(t, db, fmt.Sprintf("wp03b2c-expired-%d", time.Now().UnixNano()))
+	setCrawlSchedulingSourceState(t, db, sourceID, "completed", "", false)
+	req := crawlSchedulingRequest(sourceID)
+	req.RequestID = fmt.Sprintf("%064x", time.Now().UnixNano())
+	req = preparePostgresApprovalRequest(req)
+	ensurePostgresCrawlApproval(t, db, req)
+	proposal := CrawlProposalRow{
+		RequestID: req.RequestID, RunID: req.RunID, ToolCallID: "pg-expired-tool",
+		AgentID: req.AgentID, Owner: req.Owner, PrincipalUserID: req.PrincipalUserID,
+		SourceID: req.SourceID, OperationType: req.OperationType,
+		ProposalSHA256: req.ParametersSHA256, TraceID: "pg-expired-trace",
+		MaxRequests: req.MaxRequests, BudgetWindowSeconds: int64(req.BudgetWindow / time.Second),
+		PolicyJSON: "{}", State: CrawlProposalStatePending, ExpiresAt: req.ExpiresAt,
+	}
+	if inserted, err := InsertCrawlProposal(context.Background(), db, proposal); err != nil || !inserted {
+		t.Fatalf("insert proposal: inserted=%v err=%v", inserted, err)
+	}
+	if _, err := MarkCrawlProposalExpired(context.Background(), db, proposal.RequestID); err != nil {
+		t.Fatalf("expire first: %v", err)
+	}
+	result, err := scheduleSourceCrawlRequestForProposal(context.Background(), db, req,
+		proposal.RequestID, proposal.ProposalSHA256, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("expired-first submission error: %v", err)
+	}
+	if result.State != CrawlOperationExpired || result.ReasonCode != CrawlReasonExpired {
+		t.Fatalf("expired-first result = %+v", result)
+	}
+	var operations int
+	if err := sqlDB.QueryRow(`SELECT COUNT(*) FROM Status WHERE source_id=$1`, sourceID).Scan(&operations); err != nil {
+		t.Fatalf("count expired operations: %v", err)
+	}
+	if operations != 0 {
+		t.Fatalf("expired-first request wrote %d operations", operations)
+	}
+	var status string
+	if err := sqlDB.QueryRow(`SELECT status FROM Sources WHERE source_id=$1`, sourceID).Scan(&status); err != nil {
+		t.Fatalf("read expired source: %v", err)
+	}
+	if status != "completed" {
+		t.Fatalf("expired-first request changed source status to %q", status)
 	}
 }

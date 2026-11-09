@@ -334,32 +334,34 @@ runtime clock at audit time. In-memory audit events are not durable storage.
 No prompts, model text, credentials, SQL or raw configuration are copied into
 the audit.
 
-## 6. Future WP-03B2C integration
+## 6. WP-03B2C proposal scheduling
 
-WP-03B2C may expose a single model-facing proposal tool only after review. It
-must:
+WP-03B2C exposes the single model-facing proposal tool behind an explicit
+mutation policy. The tool accepts only `source_id`, derives the logical request
+ID from trusted run and tool-call correlation, and writes a durable
+`CrawlProposals` row. It never approves or schedules the request itself.
 
-1. accept only the proposed `source_id`;
-2. generate the logical request ID from trusted run and tool-call correlation;
-3. obtain an explicit approval from a trusted authority bound to the proposal,
-   identity, principal and run;
-4. build a trusted `CrawlRequestPolicy` with a frozen operation allowlist,
-   source scope, principal, source authorizer, positive quota and approval
-   verifier;
-5. call `AuthorizeCrawlRequest()`;
-6. call `BuildCrawlScheduleRequest()` and then the database API;
-7. return only the accepted/already-pending/processing acknowledgement;
-8. observe completion later through the existing read-only source-status and
-   evidence tools;
-9. never let a model supply approval, issuer, approver, owner, principal,
-   tenant, DB, scope, allowlist, clock or budget fields.
+The operator submission path calls
+`ScheduleSourceCrawlRequestForProposal()`, which holds the proposal row lock and
+runs the existing scheduler in the same transaction. A committed operation row,
+the source `pending` state and the proposal `submitted` transition are committed
+together. A proposal transition failure rolls back the operation and source
+change. Legacy `ScheduleSourceCrawlRequest()` callers retain their existing
+behavior through the shared transaction body.
 
-The input and result contract, effect classification and evidence semantics are
-documented in [`crawl_request_authorization.md`](crawl_request_authorization.md).
-WP-03B2C registers the tool only through an explicit mutation policy and
-`RegisterMutation()`; it remains absent from the default read-only registry.
+Proposal transitions are strict compare-and-set operations with explicit
+`applied`, `already_in_state`, `conflict` and `not_found` outcomes. The only
+non-pending transition into `submitted` is reconciliation from `expired` when
+the authoritative operation already exists. `submitted` never becomes
+`expired` or `pending`; `expired` never becomes schedulable without a new
+authorized proposal.
 
-WP-03B2C also supplies the durable `CrawlProposals` record, the trusted operator
-approval store/issuer/revocation path, authenticated source-ownership
-population, authoritative principal resolution, and the model-facing tool
-schema and source-scope rules described in the authorization document.
+A commit error is reported as `uncertain` / `crawl_commit_uncertain`, not as a
+definite failure. Retrying the same request reconciles the proposal against the
+durable operation key and returns the existing operation ID without creating a
+second crawl. A `submitted` proposal with no operation is reported as
+`crawl_proposal_inconsistent` rather than scheduled again.
+
+The complete contract, state table, retry guidance and policy-revocation
+limitations are documented in
+[`crawl_request_authorization.md`](crawl_request_authorization.md).

@@ -106,6 +106,11 @@ func (r *AgentToolRegistry) register(tool AgentTool, mutation bool) error {
 	effect := ToolEffectReadOnly
 	if classified, ok := tool.(AgentToolEffect); ok {
 		effect = classified.Effect()
+		switch effect {
+		case ToolEffectReadOnly, ToolEffectMutation:
+		default:
+			return fmt.Errorf("invalid tool %q: unknown effect %q", tool.Name(), effect)
+		}
 	}
 	if mutation {
 		if effect != ToolEffectMutation {

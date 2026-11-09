@@ -659,15 +659,20 @@ The submission path:
    recorded approver or issuer;
 4. re-runs the frozen capability, trust, contract, allowlist, scope, quota,
    expiry and verified-ownership policy;
-5. reuses `ScheduleSourceCrawlRequest()`, which revalidates the approval and
-   ownership transactionally and applies the existing source lock, status
-   transition and idempotency checks.
+5. first reconciles any already committed operation for the proposal;
+6. calls `ScheduleSourceCrawlRequestForProposal()`, which holds the proposal
+   row lock, revalidates the approval and ownership transactionally, applies
+   the existing source lock/status/idempotency checks, and transitions the
+   proposal to `submitted` before committing both records in one transaction.
 
 Repeating the submission is safe: the durable crawler operation is reused and
-no second crawl is created. Revocation makes new submissions fail. A transfer
-of ownership, disabled principal, revoked administrator grant or expired
-proposal also fails closed; no unauthorized source status or scheduling record
-is written.
+no second crawl is created. An already committed operation remains observable
+after later approval revocation or policy change; the reconciliation path
+returns the authoritative operation instead of hiding it. A revoked approval
+for a proposal that has no committed operation still fails. A transfer of
+ownership, disabled principal, revoked administrator grant or expired proposal
+without an operation also fails closed; no unauthorized source status or
+scheduling record is written.
 
 ### Evidence semantics
 
@@ -700,3 +705,96 @@ model prompts and result payloads are not copied into audit records.
 
 The operator API must have authentication enabled. The v1.17 migration must be
 applied during a stop-old-writers window before enabling the mutation policy.
+
+
+## 11. Proposal state machine and scheduling commit contract
+
+### Strict transitions
+
+The durable `CrawlProposals.state` column has a closed transition set:
+
+| From | To | Preconditions |
+| --- | --- | --- |
+| `pending` | `submitted` | Authoritative scheduling operation accepted or already pending/processing; operation ID recorded |
+| `pending` | `expired` | No accepted operation exists and the proposal expiry has passed |
+| `pending` | `denied` | Operator/policy denial before an accepted operation exists |
+| `expired` | `submitted` | Reconciliation only: the authoritative operation record exists |
+| `submitted` | `submitted` | Idempotent repeat with the same operation ID |
+| `expired` | `expired` | Idempotent repeat |
+| `denied` | any | Rejected; a denied proposal cannot become schedulable |
+
+All transitions use compare-and-set (`WHERE request_id = ? AND state = ?`) and
+inspect `RowsAffected`. A zero-row update re-reads the locked row and returns
+`already_in_state`, `conflict` or `not_found`; it never returns a generic
+success. Context cancellation and deadline expiry are returned as
+`context.Canceled` and `context.DeadlineExceeded`.
+
+### Atomic scheduling
+
+`ScheduleSourceCrawlRequestForProposal()` locks the proposal first, then enters
+the existing scheduler transaction. The scheduler writes the authoritative
+`Status` operation and source status, and the proposal transition to
+`submitted` occurs before the single commit. If the proposal transition fails,
+the whole transaction rolls back: no operation row and no source `pending`
+state remain. The legacy `ScheduleSourceCrawlRequest()` path is unchanged
+apart from sharing the same transaction body and commit helper.
+
+Lock order is proposal → source → approval → users. Expiry serializes against
+submission on the proposal row. A submission that commits first causes a
+concurrent expiry to observe `submitted` and return a conflict without changing
+the proposal. An expiry that commits first leaves no operation; submission then
+returns `expired` and writes no operation.
+
+### Recovery and uncertainty
+
+A commit may return an error after the database actually committed. The
+scheduler reports the machine-readable `uncertain` state with
+`crawl_commit_uncertain`; it never reports a definite failure in that case.
+The operator retries the same request. Reconciliation loads the proposal,
+finds the authoritative operation by the deterministic operation key, verifies
+its request/run/agent/owner/principal/source/operation/parameters binding, and
+transitions the proposal to `submitted` with that operation ID. No new
+operation is created.
+
+The same reconciliation repairs the pre-atomic divergence window where a
+proposal is `pending` or `expired` while an accepted operation already exists.
+A `submitted` proposal with no operation is reported as `uncertain` /
+`crawl_proposal_inconsistent`, not scheduled again.
+
+### Operator retry guidance
+
+- HTTP 200 with state `accepted`, `already_pending`, `processing` or
+  `completed`: scheduling is durable; reuse the returned operation ID.
+- HTTP 200 with state `expired`: no operation was created; submit a new
+  proposal if the request is still needed.
+- HTTP 200/409 with state `uncertain`: retry the same request. Reconciliation
+  decides whether the operation committed.
+- HTTP 403/409 for approval/ownership/state conflicts: do not retry blindly;
+  inspect the proposal, approval and source ownership.
+
+## 12. Policy revocation assessment
+
+The proposal stores a frozen `policy_json` snapshot containing the agent
+identity, capabilities, contract, operation allowlist, source scope and quota.
+That snapshot is necessary provenance, but it is not an unlimited authorization
+grant:
+
+- current source ownership is revalidated in the scheduling transaction;
+- current approval revocation is checked before any new operation is
+  scheduled;
+- current principal/approver/issuer account state is locked and checked by the
+  scheduler;
+- current administrator grants are checked for administrative approvals;
+- proposal expiry is enforced; after expiry, no new operation can be created;
+- an already committed operation is read-only and remains observable through
+  reconciliation, but cannot be used to create another operation.
+
+The operator API process does not load the live agent manifest, so a change to
+an agent's capability or contract is not automatically observable at
+submission time. The bounded proposal lifetime and approval revocation are the
+current authoritative revocation mechanisms. To revoke an agent's pending
+authority immediately, revoke the approval (and let the proposal expire);
+submitted operations remain idempotently observable but do not authorize new
+work. This is the precise remaining activation limitation for the API
+submission mode. The mutation mode remains disabled by default and requires
+explicit operator opt-in.

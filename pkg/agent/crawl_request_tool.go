@@ -47,6 +47,10 @@ var (
 	// ErrCrawlSubmissionDenied means the approved proposal failed the trusted
 	// authorization policy at submission time.
 	ErrCrawlSubmissionDenied = errors.New("approved crawl proposal is not authorized for submission")
+	// ErrCrawlSchedulingUncertain means the scheduler commit outcome could not
+	// be determined. Callers must retry and reconcile against the durable
+	// operation record.
+	ErrCrawlSchedulingUncertain = errors.New("crawl scheduling commit outcome is uncertain")
 )
 
 // CrawlRequestOperationName is the stable operation/tool name used by trusted
@@ -315,21 +319,11 @@ func (t *crawlRequestTool) Execute(ctx context.Context, args map[string]any) (ma
 		proposal = crawlProposalFromRow(existing)
 		if existing.State == cdb.CrawlProposalStateSubmitted {
 			t.emitAudit(runtime, proposal, CrawlRequestDecision{reasonCode: CrawlReasonApprovalRecorded}, auditOutcomeAllowed)
-			return crawlRequestToolMap(CrawlRequestToolResult{
-				OperationID: existing.OperationID.String, RequestID: existing.RequestID,
-				SourceID: existing.SourceID, State: existing.State,
-				ReasonCode: CrawlReasonApprovalRecorded, Reused: true,
-				ObservedAt: now, ExpiresAt: existing.ExpiresAt,
-			}), nil
+			return crawlProposalRowMap(existing, existing.State, CrawlReasonApprovalRecorded, now, true), nil
 		}
 		if existing.State == cdb.CrawlProposalStateExpired || !existing.ExpiresAt.After(now) {
-			_ = cdb.MarkCrawlProposalExpired(ctx, &db, existing.RequestID)
 			t.emitAudit(runtime, proposal, CrawlRequestDecision{reasonCode: CrawlReasonProposalExpired}, auditOutcomeDenied)
-			return crawlRequestToolMap(CrawlRequestToolResult{
-				RequestID: existing.RequestID, SourceID: existing.SourceID,
-				State: cdb.CrawlProposalStateExpired, ReasonCode: CrawlReasonProposalExpired,
-				ObservedAt: now, ExpiresAt: existing.ExpiresAt,
-			}), nil
+			return t.expireProposal(ctx, &db, existing, now)
 		}
 	}
 
@@ -346,21 +340,11 @@ func (t *crawlRequestTool) Execute(ctx context.Context, args map[string]any) (ma
 	}
 	if row.State == cdb.CrawlProposalStateSubmitted {
 		t.emitAudit(runtime, proposal, decision, auditOutcomeAllowed)
-		return crawlRequestToolMap(CrawlRequestToolResult{
-			OperationID: row.OperationID.String, RequestID: row.RequestID,
-			SourceID: row.SourceID, State: row.State,
-			ReasonCode: CrawlReasonApprovalRecorded, Reused: true,
-			ObservedAt: now, ExpiresAt: row.ExpiresAt,
-		}), nil
+		return crawlProposalRowMap(row, row.State, CrawlReasonApprovalRecorded, now, true), nil
 	}
 	if !row.ExpiresAt.After(now) || row.State == cdb.CrawlProposalStateExpired {
-		_ = cdb.MarkCrawlProposalExpired(ctx, &db, row.RequestID)
 		t.emitAudit(runtime, proposal, decision, auditOutcomeDenied)
-		return crawlRequestToolMap(CrawlRequestToolResult{
-			RequestID: row.RequestID, SourceID: row.SourceID,
-			State: cdb.CrawlProposalStateExpired, ReasonCode: CrawlReasonProposalExpired,
-			ObservedAt: now, ExpiresAt: row.ExpiresAt,
-		}), nil
+		return t.expireProposal(ctx, &db, row, now)
 	}
 	// A concurrent duplicate may have inserted the row between the lookup and
 	// the insert. Re-authorize against the durable expiry if it differs.
@@ -376,11 +360,22 @@ func (t *crawlRequestTool) Execute(ctx context.Context, args map[string]any) (ma
 
 	state := "approval_required"
 	reason := CrawlReasonApprovalRequired
-	if _, found, lookupErr := t.runtime.ApprovalStore.LookupCrawlApprovalByRequest(
+	record, approvalFound, lookupErr := t.runtime.ApprovalStore.LookupCrawlApprovalByRequest(
 		ctx, row.RunID, row.RequestID, row.PrincipalUserID, row.SourceID, row.OperationType,
-	); lookupErr == nil && found {
-		state = "approval_recorded"
-		reason = CrawlReasonApprovalRecorded
+	)
+	if lookupErr != nil {
+		t.emitAudit(runtime, proposal, decision, auditOutcomeError)
+		return nil, denyTool(CrawlReasonApprovalStoreUnavailable, "authoritative approval lookup failed")
+	}
+	if approvalFound {
+		switch {
+		case record.Revoked:
+			state, reason = "approval_revoked", CrawlReasonApprovalRevoked
+		case !record.Approval.ExpiresAt.After(now):
+			state, reason = "approval_expired", CrawlReasonApprovalExpired
+		default:
+			state, reason = "approval_recorded", CrawlReasonApprovalRecorded
+		}
 	}
 	t.emitAudit(runtime, proposal, decision, auditOutcomeAllowed)
 	return crawlRequestToolMap(CrawlRequestToolResult{
@@ -388,6 +383,57 @@ func (t *crawlRequestTool) Execute(ctx context.Context, args map[string]any) (ma
 		State: state, ReasonCode: reason, ApprovalRequired: state == "approval_required",
 		ObservedAt: now, ExpiresAt: row.ExpiresAt,
 	}), nil
+}
+
+func crawlProposalRowMap(row cdb.CrawlProposalRow, state, reason string, now time.Time, reused bool) map[string]any {
+	return crawlRequestToolMap(CrawlRequestToolResult{
+		OperationID: row.OperationID.String, RequestID: row.RequestID,
+		SourceID: row.SourceID, State: state, ReasonCode: reason, Reused: reused,
+		ObservedAt: now, ExpiresAt: row.ExpiresAt,
+	})
+}
+
+// expireProposal applies the strict pending -> expired transition and does not
+// hide a conflicting submitted state.
+func (t *crawlRequestTool) expireProposal(ctx context.Context, db *cdb.Handler, row cdb.CrawlProposalRow, now time.Time) (map[string]any, error) {
+	// A committed operation may exist even though the proposal looks expired
+	// (legacy divergence or crash). Surface that authoritative operation rather
+	// than reporting the proposal as unscheduled.
+	if reconciled, found, reconcileErr := cdb.ReconcileCrawlProposalOperation(ctx, db, row); reconcileErr == nil && found {
+		return crawlRequestToolMap(CrawlRequestToolResult{
+			OperationID: reconciled.OperationID, RequestID: reconciled.RequestID,
+			SourceID: reconciled.SourceID, State: string(reconciled.State),
+			ReasonCode: reconciled.ReasonCode, Reused: true,
+			ObservedAt: now, ExpiresAt: reconciled.ExpiresAt,
+		}), nil
+	}
+	transition, err := cdb.MarkCrawlProposalExpired(ctx, db, row.RequestID)
+	if err == nil {
+		return crawlProposalRowMap(transition.Row, cdb.CrawlProposalStateExpired, CrawlReasonProposalExpired, now, false), nil
+	}
+	switch {
+	case errors.Is(err, cdb.ErrCrawlProposalStateConflict):
+		current, found, readErr := cdb.GetCrawlProposalByRequest(ctx, db, row.RequestID)
+		if readErr != nil {
+			return nil, ErrCrawlProposalStoreUnavailable
+		}
+		if !found {
+			return nil, ErrCrawlProposalNotFound
+		}
+		if current.State == cdb.CrawlProposalStateSubmitted {
+			return crawlProposalRowMap(current, current.State, CrawlReasonApprovalRecorded, now, true), nil
+		}
+		if current.State == cdb.CrawlProposalStateExpired {
+			return crawlProposalRowMap(current, current.State, CrawlReasonProposalExpired, now, false), nil
+		}
+		return nil, ErrCrawlProposalConflict
+	case errors.Is(err, cdb.ErrCrawlProposalRowNotFound):
+		return nil, ErrCrawlProposalNotFound
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return nil, err
+	default:
+		return nil, ErrCrawlProposalStoreUnavailable
+	}
 }
 
 func crawlProposalFromRow(row cdb.CrawlProposalRow) CrawlRequestProposal {
@@ -561,17 +607,41 @@ func (r *CrawlRequestToolRuntime) SubmitApprovedProposal(ctx context.Context, re
 	if row.State == cdb.CrawlProposalStateDenied {
 		return cdb.CrawlScheduleResult{}, ErrCrawlSubmissionDenied
 	}
-	if row.State == cdb.CrawlProposalStateExpired || !row.ExpiresAt.After(now) {
-		if row.State == cdb.CrawlProposalStatePending {
-			_ = cdb.MarkCrawlProposalExpired(ctx, &db, row.RequestID)
-		}
-		return cdb.CrawlScheduleResult{
-			RequestID: row.RequestID, SourceID: row.SourceID,
-			State: cdb.CrawlOperationExpired, ReasonCode: cdb.CrawlReasonExpired,
-		}, ErrCrawlProposalExpired
-	}
 	if err := r.Policy.SourceAuthorizer.AuthorizeCrawlSource(ctx, operator, row.SourceID); err != nil {
 		return cdb.CrawlScheduleResult{}, ErrCrawlApprovalApproverUnauthorized
+	}
+	proposal := CrawlRequestProposal{
+		RequestID: row.RequestID, SourceID: row.SourceID,
+		OperationType: row.OperationType, ExpiresAt: row.ExpiresAt.UTC(),
+	}
+	if proposal.Fingerprint() != row.ProposalSHA256 {
+		return cdb.CrawlScheduleResult{}, ErrCrawlProposalConflict
+	}
+	// Reconcile an already committed operation before any expiry decision. A
+	// crash or the pre-atomic divergence window may have left the proposal
+	// pending or expired while the authoritative operation exists.
+	reconciled, operationFound, reconcileErr := cdb.ReconcileCrawlProposalOperation(ctx, &db, row)
+	if reconcileErr != nil {
+		if errors.Is(reconcileErr, cdb.ErrCrawlSchedulingUncertain) {
+			return reconciled, ErrCrawlSchedulingUncertain
+		}
+		if errors.Is(reconcileErr, cdb.ErrCrawlProposalRowNotFound) {
+			return cdb.CrawlScheduleResult{}, ErrCrawlProposalNotFound
+		}
+		return cdb.CrawlScheduleResult{}, ErrCrawlProposalStoreUnavailable
+	}
+	if operationFound {
+		emitCrawlRequestAudit(row.RunID, row.TraceID, row.AgentID, r.Identity.Name, row.Owner,
+			row.ToolCallID, proposal, row.PrincipalUserID, auditOutcomeAllowed,
+			reconciled.ReasonCode, CrawlStageReused, CrawlApprovalOutcomeVerified,
+			CrawlSourceOutcomeVerified, string(reconciled.State))
+		return reconciled, nil
+	}
+	if row.State == cdb.CrawlProposalStateSubmitted {
+		return cdb.CrawlScheduleResult{
+			RequestID: row.RequestID, SourceID: row.SourceID,
+			State: cdb.CrawlOperationUncertain, ReasonCode: cdb.CrawlReasonProposalInconsistent,
+		}, ErrCrawlProposalConflict
 	}
 	record, found, err := r.ApprovalStore.LookupCrawlApproval(ctx, approvalID)
 	if err != nil {
@@ -598,12 +668,21 @@ func (r *CrawlRequestToolRuntime) SubmitApprovedProposal(ctx context.Context, re
 		record.IssuerPrincipal.UserID != operator.UserID {
 		return cdb.CrawlScheduleResult{}, ErrCrawlApprovalApproverUnauthorized
 	}
-	proposal := CrawlRequestProposal{
-		RequestID: row.RequestID, SourceID: row.SourceID,
-		OperationType: row.OperationType, ExpiresAt: row.ExpiresAt.UTC(),
-	}
-	if proposal.Fingerprint() != row.ProposalSHA256 {
-		return cdb.CrawlScheduleResult{}, ErrCrawlProposalConflict
+	if row.State == cdb.CrawlProposalStateExpired || !row.ExpiresAt.After(now) {
+		_, expireErr := cdb.MarkCrawlProposalExpired(ctx, &db, row.RequestID)
+		if expireErr != nil {
+			if errors.Is(expireErr, cdb.ErrCrawlProposalStateConflict) {
+				return cdb.CrawlScheduleResult{
+					RequestID: row.RequestID, SourceID: row.SourceID,
+					State: cdb.CrawlOperationUncertain, ReasonCode: cdb.CrawlReasonProposalInconsistent,
+				}, ErrCrawlProposalConflict
+			}
+			return cdb.CrawlScheduleResult{}, ErrCrawlProposalStoreUnavailable
+		}
+		return cdb.CrawlScheduleResult{
+			RequestID: row.RequestID, SourceID: row.SourceID,
+			State: cdb.CrawlOperationExpired, ReasonCode: cdb.CrawlReasonExpired,
+		}, ErrCrawlProposalExpired
 	}
 	policy := r.Policy
 	policy.AllowedOperations = stringSet(snapshot.AllowedOperations)
@@ -625,22 +704,16 @@ func (r *CrawlRequestToolRuntime) SubmitApprovedProposal(ctx context.Context, re
 	if err != nil {
 		return cdb.CrawlScheduleResult{}, ErrCrawlProposalConflict
 	}
-	result, err := cdb.ScheduleSourceCrawlRequest(ctx, &db, scheduleRequest)
+	result, err := cdb.ScheduleSourceCrawlRequestForProposal(ctx, &db, scheduleRequest, row.RequestID, row.ProposalSHA256)
 	if err != nil {
 		emitCrawlRequestAudit(row.RunID, row.TraceID, row.AgentID, r.Identity.Name, row.Owner,
 			row.ToolCallID, proposal, row.PrincipalUserID, auditOutcomeError,
 			result.ReasonCode, decision.Stage(), decision.ApprovalOutcome(),
 			decision.SourceOwnershipOutcome(), string(result.State))
-		return result, err
-	}
-	if crawlOperationAccepted(result.State) {
-		if markErr := cdb.MarkCrawlProposalSubmitted(ctx, &db, row.RequestID, result.OperationID, now); markErr != nil {
-			emitCrawlRequestAudit(row.RunID, row.TraceID, row.AgentID, r.Identity.Name, row.Owner,
-				row.ToolCallID, proposal, row.PrincipalUserID, auditOutcomeError,
-				CrawlReasonRequestBuildFailed, decision.Stage(), decision.ApprovalOutcome(),
-				decision.SourceOwnershipOutcome(), string(result.State))
-			return result, ErrCrawlProposalStoreUnavailable
+		if errors.Is(err, cdb.ErrCrawlSchedulingUncertain) {
+			return result, ErrCrawlSchedulingUncertain
 		}
+		return result, err
 	}
 	emitCrawlRequestAudit(row.RunID, row.TraceID, row.AgentID, r.Identity.Name, row.Owner,
 		row.ToolCallID, proposal, row.PrincipalUserID, auditOutcomeAllowed,
@@ -656,16 +729,6 @@ func containsUint64(values []uint64, wanted uint64) bool {
 		}
 	}
 	return false
-}
-
-func crawlOperationAccepted(state cdb.CrawlOperationState) bool {
-	switch state {
-	case cdb.CrawlOperationAccepted, cdb.CrawlOperationAlreadyPending,
-		cdb.CrawlOperationProcessing, cdb.CrawlOperationCompleted:
-		return true
-	default:
-		return false
-	}
 }
 
 func emitCrawlRequestAudit(runID, traceID, agentID, agentName, owner, callID string,
