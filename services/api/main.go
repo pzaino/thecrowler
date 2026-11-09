@@ -2183,7 +2183,14 @@ func handleInformationSeedPathAction(w http.ResponseWriter, r *http.Request, act
 		} else if strings.Contains(message, "invalid json") || strings.Contains(message, "cannot be rerun") {
 			status = http.StatusBadRequest
 		}
-		handleErrorAndRespond(w, err, results, "Error updating information seed: %v", status, http.StatusOK)
+		handleErrorAndRespond(
+			w,
+			err,
+			results,
+			"Error updating information seed",
+			status,
+			http.StatusOK,
+		)
 		return
 	}
 	totalSuccess.Add(1)
