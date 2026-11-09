@@ -154,6 +154,30 @@ func newCrawlSchedulingTestDB(t *testing.T) *cdb.Handler {
 	)`); err != nil {
 		t.Fatalf("create live scheduling CrawlApprovals table: %v", err)
 	}
+	if _, err := handler.Exec(`CREATE TABLE IF NOT EXISTS CrawlProposals (
+		request_id CHAR(64) PRIMARY KEY,
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		last_updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		run_id TEXT NOT NULL,
+		tool_call_id TEXT NOT NULL,
+		agent_id TEXT NOT NULL,
+		owner TEXT NOT NULL,
+		principal_user_id INTEGER NOT NULL,
+		source_id INTEGER NOT NULL,
+		operation_type TEXT NOT NULL,
+		proposal_sha256 CHAR(64) NOT NULL,
+		trace_id TEXT NOT NULL DEFAULT '',
+		max_requests INTEGER NOT NULL,
+		budget_window_seconds INTEGER NOT NULL,
+		policy_json TEXT NOT NULL,
+		state TEXT NOT NULL DEFAULT 'pending',
+		expires_at TIMESTAMP NOT NULL,
+		submitted_at TIMESTAMP,
+		operation_id TEXT,
+		UNIQUE (run_id, tool_call_id, source_id, operation_type)
+	)`); err != nil {
+		t.Fatalf("create live scheduling CrawlProposals table: %v", err)
+	}
 	for _, statement := range []string{
 		`CREATE TABLE IF NOT EXISTS Users (user_id INTEGER PRIMARY KEY, username TEXT NOT NULL UNIQUE, disabled BOOLEAN NOT NULL DEFAULT FALSE, deleted_at TIMESTAMP)`,
 		`CREATE TABLE IF NOT EXISTS AuthRoles (role_id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT)`,

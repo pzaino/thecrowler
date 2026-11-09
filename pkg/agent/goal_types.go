@@ -146,6 +146,7 @@ type AgentGoalSpec struct {
 	Messages        []any
 	Allowlist       []string
 	AllowedSources  []uint64
+	MutationPolicy  *MutationPolicy
 	Evidence        EvidencePolicy
 	Budgets         GoalBudgets
 	Acceptance      AcceptanceSpec

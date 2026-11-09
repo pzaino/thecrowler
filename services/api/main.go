@@ -743,6 +743,7 @@ func initAPIv1() {
 		crawlApprovalIssueHandlerWithMiddlewares := withAuthenticatedPublicMiddlewares(crawlApprovalIssueHandler)
 		crawlApprovalRevokeHandlerWithMiddlewares := withAuthenticatedPublicMiddlewares(crawlApprovalRevokeHandler)
 		crawlApprovalStatusHandlerWithMiddlewares := withAuthenticatedPublicMiddlewares(crawlApprovalStatusHandler)
+		crawlApprovalSubmitHandlerWithMiddlewares := withAuthenticatedPublicMiddlewares(crawlApprovalSubmitHandler)
 
 		http.Handle("/v1/console/crawl/approvals/issue", crawlApprovalIssueHandlerWithMiddlewares)
 		cmn.RegisterAPIRoute("/v1/console/crawl/approvals/issue", []string{"POST"},
@@ -755,6 +756,7 @@ func initAPIv1() {
 			true, false, 200, crawlApprovalRevokeRequest{}, nil, nil)
 
 		http.Handle("/v1/console/crawl/approvals/status", crawlApprovalStatusHandlerWithMiddlewares)
+		http.Handle("/v1/console/crawl/approvals/submit", crawlApprovalSubmitHandlerWithMiddlewares)
 		cmn.RegisterAPIRoute("/v1/console/crawl/approvals/status", []string{"GET"},
 			"Read a durable operator crawl approval (console)", tagsNone,
 			true, false, 200, nil, StdAPIBasicQuery{}, crawlApprovalResponse{})

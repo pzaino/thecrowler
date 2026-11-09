@@ -29,6 +29,7 @@ func startupFixture(t *testing.T, version string, complete bool, generation stri
 		`CREATE TABLE TimeSeriesCardinalityMaintenanceLock(lock_id INTEGER PRIMARY KEY)`,
 		`CREATE TABLE SourceOwnership(source_id INTEGER PRIMARY KEY,user_id INTEGER NOT NULL,verified_at TIMESTAMP NOT NULL,verified_by_user_id INTEGER NOT NULL,verified_by TEXT NOT NULL,verification_method TEXT NOT NULL)`,
 		`CREATE TABLE CrawlApprovals(approval_id TEXT PRIMARY KEY,proposal_sha256 TEXT,request_id TEXT,run_id TEXT,agent_id TEXT,owner TEXT,principal_user_id INTEGER,source_id INTEGER,operation_type TEXT,approval_sha256 TEXT,expires_at TIMESTAMP,revoked_at TIMESTAMP)`,
+		`CREATE TABLE CrawlProposals(request_id TEXT PRIMARY KEY,run_id TEXT,tool_call_id TEXT,agent_id TEXT,owner TEXT,principal_user_id INTEGER,source_id INTEGER,operation_type TEXT,proposal_sha256 TEXT,trace_id TEXT,max_requests INTEGER,budget_window_seconds INTEGER,policy_json TEXT,state TEXT,expires_at TIMESTAMP)`,
 		`CREATE TABLE DatabaseWriterCompatibility(lock_id INTEGER PRIMARY KEY,writer_generation TEXT NOT NULL)`,
 		`INSERT INTO DatabaseWriterCompatibility VALUES(1,'` + generation + `')`,
 		`CREATE INDEX idx_ts_observation_series_identity ON TimeSeriesObservationSeries(metric_id,series_hash)`,

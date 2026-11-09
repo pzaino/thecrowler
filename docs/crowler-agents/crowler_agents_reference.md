@@ -988,9 +988,19 @@ missing source is reported as `scope_denied`; database failures are generic tool
 errors without driver text. The new search tools use bound field/value
 parameters and never construct SQL from model input.
 
-State-changing crawl scheduling is **not** exposed as a tool. The internal
-approved scheduling contract, durable idempotency semantics, request versus
-execution states and approval boundary are documented in
+State-changing crawl scheduling is **not** in the default read-only catalog.
+WP-03B2C adds an opt-in `request_source_crawl` mutation tool. It is admitted
+only through `RegisterMutation()`, a `mutation_policy` with `enabled: true`, an
+explicit operation allowlist, a non-empty source scope and a finite quota. The
+model may send only `{"source_id": 42}`. The tool persists a durable,
+run/tool-call-bound proposal and returns `approval_required`; it never approves
+or schedules by itself. An authenticated operator issues the exact approval and
+submits it through `/v1/console/crawl/approvals/submit`, which reuses
+`ScheduleSourceCrawlRequest()` and its source lock, ownership revalidation,
+approval revalidation and idempotency checks.
+
+The internal approved scheduling contract, durable idempotency semantics,
+request versus execution states and approval boundary are documented in
 [`crawl_scheduling_foundation.md`](crawl_scheduling_foundation.md). WP-03B2A/WP-03B2B
 add the trusted principal, authoritative source ownership, durable approval
 store, operator approval endpoints, final-mutation revalidation and stable
@@ -1014,7 +1024,7 @@ results are size-bounded, secret-redacted observations returned as
 `role:"tool"` messages with matching `tool_call_id`s; the run ends on final
 text, budget exhaustion, cancellation, or provider error.
 
-Policy fields (`allowlist`, `limits`, `allowed_sources`) must be statically
+Policy fields (`allowlist`, `limits`, `allowed_sources`, `mutation_policy`) must be statically
 declared — input references there are rejected — and `AgentToolLoop`
 requires the `tool_execution` capability plus identity enforcement (`all`
 without enforcement still refuses). The inference-endpoint fields

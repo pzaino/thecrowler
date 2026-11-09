@@ -1,14 +1,18 @@
-# Crawl request authorization and ownership (WP-03B2B)
+# Crawl request authorization and ownership (WP-03B2B/WP-03B2C)
 
-Status: production-shaped internal authorization infrastructure. The
-model-facing `request_source_crawl` tool is **not registered** and no model can
-approve or schedule work.
+Status: production-shaped authorization infrastructure plus an opt-in,
+operator-controlled model-facing crawl request. The `request_source_crawl`
+tool is **not in the default read-only registry**. It is admitted only through
+`RegisterMutation` when an explicit mutation policy is enabled. A model can
+record a proposal; it can never approve or schedule its own request.
 
-WP-03B2B adds authoritative authenticated source ownership, verified ownership
-provenance, a durable PostgreSQL/SQLite approval store, issuer and revoker
-adapters, operator API endpoints, final-mutation revalidation and stable
-proposal identity. Schema **1.17** is the runtime contract for the remaining
-agentic plan; clean installs and the v1.17 upgrade create both
+WP-03B2B added authoritative authenticated source ownership, verified
+ownership provenance, a durable PostgreSQL/SQLite approval store, issuer and
+revoker adapters, operator API endpoints, final-mutation revalidation and
+stable proposal identity. WP-03B2C adds durable `CrawlProposals`, the
+mutation-capable tool, trusted run/tool-call binding, and the operator
+submission endpoint. Schema **1.17** is the runtime contract for the remaining
+agentic plan; clean installs and the v1.17 upgrade create `CrawlProposals`,
 `CrawlApprovals` and `SourceOwnership`.
 
 ## 1. Identity and source ownership
@@ -314,9 +318,11 @@ MySQL keeps the ownership-provenance table for schema compatibility but does
 not support durable crawl approvals or the authenticated atomic source-mutation
 contract; those features fail closed with an explicit unsupported result.
 
-Rollback is additive and destructive only to approval/ownership provenance:
+Rollback is additive and destructive only to proposal/approval/ownership
+provenance:
 
 ```sql
+DROP TABLE IF EXISTS CrawlProposals;
 DROP TABLE IF EXISTS CrawlApprovals;
 DROP TABLE IF EXISTS SourceOwnership;
 UPDATE DBSchemaVersion SET is_current = (version = '1.16');
@@ -329,23 +335,23 @@ The console registers:
 
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
-| POST | `/v1/console/crawl/approvals/issue` | Issue an approval. |
+| POST | `/v1/console/crawl/approvals/issue` | Issue an approval for a recorded proposal. |
 | POST | `/v1/console/crawl/approvals/revoke` | Revoke an approval. |
 | GET | `/v1/console/crawl/approvals/status` | Read an approval. |
+| POST | `/v1/console/crawl/approvals/submit` | Submit an approved proposal through the scheduler. |
 | POST | `/v1/console/source/ownership/verify` | Verify or explicitly transfer source ownership (admin). |
 
 All require `api.enable_console: true` and enabled API authentication. The
 approver/issuer/owner/principal are derived from the authenticated request, not
 the body.
 
-The current issue endpoint binds the authenticated operator as both approver
-and run principal, and requires the agent owner to match that principal. An
-administrator can therefore inspect and revoke another owner's approval, and
-can issue an approval tied to their own principal, but cannot yet issue a
-schedulable approval on behalf of another owner's agent run. Binding an
-approval to someone else's principal requires the authoritative run/agent
-execution context planned for WP-03B2C; the API deliberately does not accept a
-caller-supplied principal user ID.
+The issue endpoint now loads the durable `CrawlProposals` row named by
+`request_id` and derives the agent, run, principal, source, operation and
+proposal expiry from that row. Caller-supplied fields are optional but must
+match the recorded proposal exactly. The authenticated operator becomes the
+approver and issuer; the proposal's recorded owner remains the run principal,
+so an administrator may approve a proposal for another owner's run without
+being able to substitute an arbitrary principal user ID.
 
 Issue request:
 
@@ -464,27 +470,27 @@ The trusted runtime generates the logical request ID from:
 - actual provider tool-call correlation ID;
 - source ID.
 
-`CrawlProposalFactory` and `CrawlProposalRegistry` keep the first proposal
-identity and expiry stable across duplicate tool-call delivery inside one
-process. A duplicate call does not extend the original proposal lifetime. A
-changed source, operation or tool call produces a different request ID.
+The tool writes a durable `CrawlProposals` row on the first call. A duplicate
+call loads that row and reuses its request ID, proposal fingerprint and expiry,
+even if the process restarted or the local clock advanced. A duplicate call
+does not extend the original proposal lifetime. A changed source, operation or
+tool call produces a different request ID.
 
-Before approval, the registry is process-local, capacity-bounded and expiry-
-aware. Expired entries are pruned, and the earliest-expiring entry is evicted
-when the configured capacity is reached; a very old proposal may therefore need
-to be proposed again if it was evicted before approval. This is not restart-safe
-and is not claimed to be. After approval, the durable approval row stores the
-request ID and proposal expiry. Proposal and approval fingerprints normalize
+`CrawlProposalFactory` and `MemoryCrawlProposalRegistry` remain bounded
+process-local helpers for the earlier inert proposal contract and tests; they
+are not the restart-safe anchor for the model-facing tool. The durable proposal
+row is the anchor before approval, and the durable approval row becomes the
+additional binding after approval. Proposal and approval fingerprints normalize
 timestamps to the database's microsecond precision, so a row reconstructed after
-a restart remains comparable. `DatabaseCrawlApprovalStore.LookupCrawlApprovalByRequest()`
-returns the exact stored proposal and is the restart-safe anchor for retries.
+a restart remains comparable.
 
 A retry of an already accepted logical request remains idempotent even if the
 approval was later revoked. A new request ID cannot use the old approval.
 
-## 7. Proposed model-facing tool contract
+## 7. Model-facing tool contract (implemented, opt-in)
 
-The tool remains unregistered. The input contains only:
+The tool is registered only through an explicit mutation policy. The input
+contains only:
 
 ```json
 {
@@ -497,28 +503,30 @@ The tool remains unregistered. The input contains only:
 }
 ```
 
-Proposed safe result:
+Phase-A proposal result:
 
 ```json
 {
-  "operation_id": "...",
-  "request_id": "...",
+  "request_id": "...64 hex...",
   "source_id": 42,
-  "state": "accepted",
-  "reason_code": "crawl_scheduled",
-  "reused": false,
-  "observed_at": "2026-11-08T00:00:00Z"
+  "state": "approval_required",
+  "reason_code": "crawl_approval_required",
+  "approval_required": true,
+  "expires_at": "2026-11-09T15:00:00Z",
+  "observed_at": "2026-11-09T14:30:00Z"
 }
 ```
 
-The result contains no approval, principal, owner, quota, configuration or raw
-error data. `accepted`, `already_pending` and `processing` are scheduling states,
-not crawl-completion proof.
+The operator submission endpoint returns the scheduling result separately. The
+model-facing result contains no approval ID, principal, owner, quota,
+configuration or raw error data. `accepted`, `already_pending` and `processing`
+are scheduling states, not crawl-completion proof.
 
-The current `AgentTool` interface has no read-only/mutation classification.
-WP-03B2B does not change that public interface. WP-03B2C must introduce a
-mutation-specific effect classification or interface and must never advertise
-the crawl-request tool as read-only.
+WP-03B2C adds an explicit `ToolEffect` classification. Read-only tools keep
+their existing interface and admission path; mutation tools must implement
+`Effect() == ToolEffectMutation` and must be admitted through
+`RegisterMutation()` and an explicit mutation policy. The crawl-request tool is
+never advertised as read-only.
 
 ## 8. Deterministic evidence semantics
 
@@ -557,35 +565,138 @@ the `Status` row and the durable approval is the `CrawlApprovals` row. No
 prompts, secrets, credentials, SQL or raw configuration are copied into the
 audit.
 
-## 10. Outstanding decisions before WP-03B2C
+## 10. Controlled model-facing crawl requests (WP-03B2C)
 
-1. Apply the approved v1.17 migration to existing deployments during a
-   stop-old-writers window, then verify the v1.17 runtime contract and
-   administrator-verify any historical source ownership that must be
-   authoritative.
-2. Wire the agent runtime to resolve and pass the authenticated principal for
-   the agent's run. Until then, approval issuance binds the operator as the run
-   principal, so cross-owner administrative approvals are not schedulable.
-3. Decide the mapping for external identity subjects that are not local
-   numeric user IDs.
-4. Decide whether approval issuance must additionally validate the agent
-   manifest/trust in the API process. WP-03B2B binds the operator approval to a
-   syntactically valid agent ID and owner; the run-time authorization still
-   enforces the agent's trust, capabilities and contract.
-5. Approve the mutation tool effect classification, input/result schema and
-   goal evidence contract.
-6. Decide whether shared/tenant source ownership needs a maintained mapping
-   table. Do not infer it from `Owners` or `SourceOwnerIndex`.
-7. Keep `request_source_crawl` unregistered until 1–6 are approved.
+### Enabling the operation
 
-## 11. WP-03B2C activation checklist
+`request_source_crawl` is disabled unless **all** of the following hold:
 
-- v1.17 migration applied and writer compatibility advanced in an approved
-  deployment.
-- Operator approval API verified against the migrated deployment database.
-- Agent principal resolution is trusted and run-bound.
-- Mutation tool effect classification is approved and enforced.
-- Live model tests prove absent, forged, revoked and cross-bound approvals
-  cannot schedule work.
-- The authorized path is tested against an isolated fixture without exposing a
-  production mutation tool to the model.
+- the step declares a `mutation_policy` with `enabled: true`;
+- `mutation_policy.allowed_operations` explicitly contains
+  `request_source_crawl` (wildcards are rejected);
+- the step's tool `allowlist` also contains `request_source_crawl`;
+- `allowed_sources` is non-empty and contains the proposed source;
+- the agent identity holds `tool_execution` and `db_write`, has trusted
+  standing, and its contract does not forbid the tool;
+- the configured owner maps to an active local `Users.username`;
+- `max_requests` is 1..100 and `budget_window` is positive and bounded;
+- the database is PostgreSQL or SQLite on schema 1.17 and both
+  `CrawlProposals` and `CrawlApprovals` are available.
+
+The default runtime, deployment templates and `DefaultToolRegistry()` do not
+register the tool. `AgentToolRegistry.Register()` rejects mutation tools;
+only `RegisterMutation()` admits this one, and only after the policy above has
+been validated.
+
+### Model-facing input and result
+
+The model may send only:
+
+```json
+{"source_id": 42}
+```
+
+The strict schema rejects additional properties, zero, negative and
+non-integer values. The model cannot supply run, agent, owner, principal,
+request, approval, expiry, quota, URL or operation values.
+
+A successful proposal returns a safe result such as:
+
+```json
+{
+  "request_id": "…64 hex…",
+  "source_id": 42,
+  "state": "approval_required",
+  "reason_code": "crawl_approval_required",
+  "approval_required": true,
+  "expires_at": "2026-11-09T15:00:00Z",
+  "observed_at": "2026-11-09T14:30:00Z"
+}
+```
+
+`state` may also be `approval_recorded` when an exact durable approval already
+exists, `submitted` after an operator submission, or `expired`. None of these
+states means the crawl completed. A scheduling acknowledgment only means the
+source became eligible for the existing engine claim.
+
+### Trusted identity and idempotency
+
+The request ID is `SHA-256(run_id + NUL + effective_tool_call_id + NUL +
+source_id)`. The tool loop assigns the effective call ID before executing any
+call, rejects duplicate IDs for the whole batch, and passes the effective ID to
+the tool through `ToolRuntime.CallID`. The same logical invocation therefore
+keeps the same durable proposal and expiry across retries and process
+restarts.
+
+The proposal records the run, tool-call correlation ID, agent, owner,
+authoritative principal user ID, source, operation, proposal fingerprint,
+trace ID, quota, expiry and a frozen policy snapshot. The snapshot is used at
+submission time to recheck capabilities, trust, contract, operation allowlist
+and source scope instead of trusting the current request.
+
+### Operator approval and submission
+
+An operator first inspects the proposal (by `request_id`) and issues an
+approval with `/v1/console/crawl/approvals/issue`. The endpoint requires the
+recorded proposal to exist, be pending and unexpired, and to match any supplied
+source, agent, run, operation or expiry fields. The approval binds the exact
+proposal fingerprint, run, agent, owner, principal, source, operation, issuer
+and approver.
+
+After approval, the operator calls:
+
+```json
+POST /v1/console/crawl/approvals/submit
+{"request_id": "…", "approval_id": "…"}
+```
+
+The submission path:
+
+1. reloads the durable proposal and approval;
+2. verifies the proposal fingerprint, principal, run, agent, owner, source and
+   operation;
+3. rechecks the caller's current source authority and that the caller is the
+   recorded approver or issuer;
+4. re-runs the frozen capability, trust, contract, allowlist, scope, quota,
+   expiry and verified-ownership policy;
+5. reuses `ScheduleSourceCrawlRequest()`, which revalidates the approval and
+   ownership transactionally and applies the existing source lock, status
+   transition and idempotency checks.
+
+Repeating the submission is safe: the durable crawler operation is reused and
+no second crawl is created. Revocation makes new submissions fail. A transfer
+of ownership, disabled principal, revoked administrator grant or expired
+proposal also fails closed; no unauthorized source status or scheduling record
+is written.
+
+### Evidence semantics
+
+`request_source_crawl` is mutation-capable and is not an evidence provider. A
+tool observation from it is never evidence that a crawl was scheduled or
+completed. In `AgentGoalRun`:
+
+- a proposal is evidence that the agent proposed an operation;
+- an accepted scheduling request is evidence that the source became eligible;
+- only trusted source-status observations can establish that a source is
+  processing or completed.
+
+A model's final text response cannot change any of those states. A goal that
+requires `pending`, `processing` or completed crawl evidence stays `incomplete`
+when only a proposal exists.
+
+### Backends, diagnostics and limitations
+
+PostgreSQL and SQLite support proposals, approvals, authenticated source
+mutation, ownership verification and scheduling. MySQL retains ownership
+provenance only; mutation tools fail closed with an unsupported-backend error.
+
+Denied requests return stable reason codes such as `crawl_source_out_of_scope`,
+`crawl_source_ownership_missing`, `crawl_operation_not_allowlisted`,
+`crawl_approval_required`, `crawl_approval_rejected`,
+`crawl_request_budget_exhausted`, `crawl_source_processing` and
+`crawl_source_ownership_rejected`. Audit events carry the run, trace, agent,
+owner, principal, source, request, approval, operation and scheduling state;
+model prompts and result payloads are not copied into audit records.
+
+The operator API must have authentication enabled. The v1.17 migration must be
+applied during a stop-old-writers window before enabling the mutation policy.

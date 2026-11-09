@@ -9,6 +9,7 @@ import (
 
 	agentpkg "github.com/pzaino/thecrowler/pkg/agent"
 	auth "github.com/pzaino/thecrowler/pkg/auth"
+	cdb "github.com/pzaino/thecrowler/pkg/database"
 )
 
 const crawlApprovalIssuerName = "crowler-api"
@@ -42,6 +43,11 @@ type crawlApprovalResponse struct {
 type crawlApprovalRevokeRequest struct {
 	ApprovalID string `json:"approval_id"`
 	Reason     string `json:"reason,omitempty"`
+}
+
+type crawlApprovalSubmitRequest struct {
+	RequestID  string `json:"request_id"`
+	ApprovalID string `json:"approval_id"`
 }
 
 func resolveCrawlApprovalPrincipal(ctx context.Context) (agentpkg.CrawlPrincipal, auth.Identity, error) {
@@ -87,14 +93,27 @@ func crawlApprovalErrorCode(err error) int {
 	case errors.Is(err, agentpkg.ErrCrawlApprovalLifetime),
 		errors.Is(err, agentpkg.ErrCrawlApprovalForged):
 		return http.StatusBadRequest
-	case errors.Is(err, agentpkg.ErrCrawlApprovalUnknown):
+	case errors.Is(err, agentpkg.ErrCrawlApprovalUnknown), errors.Is(err, agentpkg.ErrCrawlProposalNotFound):
 		return http.StatusNotFound
+	case errors.Is(err, agentpkg.ErrCrawlProposalExpired):
+		return http.StatusGone
+	case errors.Is(err, agentpkg.ErrCrawlSubmissionDenied), errors.Is(err, agentpkg.ErrCrawlApprovalForged):
+		return http.StatusForbidden
 	case errors.Is(err, agentpkg.ErrCrawlApprovalConflict),
-		errors.Is(err, agentpkg.ErrCrawlApprovalRevoked):
+		errors.Is(err, agentpkg.ErrCrawlApprovalRevoked),
+		errors.Is(err, agentpkg.ErrCrawlProposalConflict):
 		return http.StatusConflict
 	case errors.Is(err, agentpkg.ErrCrawlApprovalStoreUnavailable),
-		errors.Is(err, agentpkg.ErrCrawlApprovalApproverUnavailable):
+		errors.Is(err, agentpkg.ErrCrawlApprovalApproverUnavailable),
+		errors.Is(err, agentpkg.ErrCrawlProposalStoreUnavailable),
+		errors.Is(err, agentpkg.ErrCrawlMutationUnsupported):
 		return http.StatusServiceUnavailable
+	case errors.Is(err, agentpkg.ErrCrawlMutationDisabled),
+		errors.Is(err, agentpkg.ErrCrawlMutationOperationRequired),
+		errors.Is(err, agentpkg.ErrCrawlMutationSourceScopeRequired),
+		errors.Is(err, agentpkg.ErrCrawlMutationQuotaRequired),
+		errors.Is(err, agentpkg.ErrCrawlPrincipalUnavailable):
+		return http.StatusForbidden
 	default:
 		return http.StatusInternalServerError
 	}
@@ -114,35 +133,152 @@ func crawlApprovalIssueHandler(w http.ResponseWriter, r *http.Request) {
 	request.AgentID = strings.TrimSpace(request.AgentID)
 	request.RunID = strings.TrimSpace(request.RunID)
 	request.OperationType = strings.TrimSpace(request.OperationType)
-	if request.OperationType == "" {
-		request.OperationType = "crawl"
+	if request.RequestID == "" {
+		handleErrorAndRespond(w, errors.New("request_id is required"), nil, "Invalid crawl approval request", http.StatusBadRequest, 0)
+		return
 	}
 	principal, _, err := resolveCrawlApprovalPrincipal(r.Context())
 	if err != nil {
 		handleErrorAndRespond(w, err, nil, "Crawl approval authentication failed", crawlApprovalErrorCode(err), 0)
 		return
 	}
-	now := time.Now().UTC()
+	row, found, err := cdb.GetCrawlProposalByRequest(r.Context(), &dbHandler, request.RequestID)
+	if err != nil {
+		handleErrorAndRespond(w, agentpkg.ErrCrawlProposalStoreUnavailable, nil, "Crawl proposal lookup failed", http.StatusServiceUnavailable, 0)
+		return
+	}
+	if !found {
+		handleErrorAndRespond(w, agentpkg.ErrCrawlProposalNotFound, nil, "Crawl proposal not found", http.StatusNotFound, 0)
+		return
+	}
+	if err := validateCrawlApprovalIssueAgainstProposal(request, row, time.Now().UTC()); err != nil {
+		handleErrorAndRespond(w, err, nil, "Crawl approval does not match the recorded proposal", http.StatusBadRequest, 0)
+		return
+	}
 	proposal := agentpkg.CrawlRequestProposal{
-		RequestID: request.RequestID, SourceID: request.SourceID,
-		OperationType: request.OperationType, ExpiresAt: request.ProposalExpiresAt,
+		RequestID: row.RequestID, SourceID: row.SourceID,
+		OperationType: row.OperationType, ExpiresAt: row.ExpiresAt.UTC(),
+	}
+	identity := agentpkg.AgentIdentity{
+		AgentID: row.AgentID, Owner: row.Owner, TrustLevel: "trusted",
+	}
+	proposalPrincipal := agentpkg.CrawlPrincipal{
+		UserID: row.PrincipalUserID, Username: row.Owner, Issuer: crawlApprovalIssuerName,
+	}
+	approvalExpiry := request.ApprovalExpiresAt.UTC()
+	now := time.Now().UTC()
+	if approvalExpiry.IsZero() {
+		approvalExpiry = now.Add(time.Hour)
+		if row.ExpiresAt.Before(approvalExpiry) {
+			approvalExpiry = row.ExpiresAt.UTC()
+		}
 	}
 	store := newDatabaseCrawlApprovalStore()
 	approval, err := store.IssueCrawlApproval(r.Context(), agentpkg.CrawlApprovalIssuanceRequest{
-		Proposal: proposal,
-		Identity: agentpkg.AgentIdentity{
-			AgentID: request.AgentID, Owner: principal.Username, TrustLevel: "trusted",
-		},
-		Principal: principal, RunID: request.RunID,
+		Proposal: proposal, Identity: identity,
+		Principal: proposalPrincipal, RunID: row.RunID,
 		IssuerPrincipal: principal, Approver: principal,
-		Issuer: crawlApprovalIssuerName, ApprovedAt: now,
-		ExpiresAt: request.ApprovalExpiresAt,
+		Issuer: crawlApprovalIssuerName, ApprovedAt: now, ExpiresAt: approvalExpiry,
 	})
 	if err != nil {
 		handleErrorAndRespond(w, err, nil, "Crawl approval issuance failed", crawlApprovalErrorCode(err), 0)
 		return
 	}
-	handleErrorAndRespond(w, nil, crawlApprovalResponseFromApproval(approval, request.RequestID, false), "", 0, http.StatusOK)
+	handleErrorAndRespond(w, nil, crawlApprovalResponseFromApproval(approval, row.RequestID, false), "", 0, http.StatusOK)
+}
+
+func validateCrawlApprovalIssueAgainstProposal(request crawlApprovalIssueRequest, row cdb.CrawlProposalRow, now time.Time) error {
+	if row.State != cdb.CrawlProposalStatePending {
+		return agentpkg.ErrCrawlProposalConflict
+	}
+	if !row.ExpiresAt.After(now) {
+		return agentpkg.ErrCrawlProposalExpired
+	}
+	expected := agentpkg.CrawlRequestProposal{
+		RequestID: row.RequestID, SourceID: row.SourceID,
+		OperationType: row.OperationType, ExpiresAt: row.ExpiresAt.UTC().Truncate(time.Microsecond),
+	}.Fingerprint()
+	if row.ProposalSHA256 != expected {
+		return agentpkg.ErrCrawlProposalConflict
+	}
+	if request.SourceID != 0 && request.SourceID != row.SourceID {
+		return agentpkg.ErrCrawlProposalConflict
+	}
+	if request.AgentID != "" && request.AgentID != row.AgentID {
+		return agentpkg.ErrCrawlProposalConflict
+	}
+	if request.RunID != "" && request.RunID != row.RunID {
+		return agentpkg.ErrCrawlProposalConflict
+	}
+	if request.OperationType != "" && request.OperationType != row.OperationType {
+		return agentpkg.ErrCrawlProposalConflict
+	}
+	return nil
+}
+
+func crawlApprovalSubmitHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var request crawlApprovalSubmitRequest
+	if err := decodeJSON(r, &request); err != nil {
+		handleErrorAndRespond(w, err, nil, "Invalid crawl submission request", http.StatusBadRequest, 0)
+		return
+	}
+	request.RequestID = strings.TrimSpace(request.RequestID)
+	request.ApprovalID = strings.TrimSpace(request.ApprovalID)
+	if request.RequestID == "" || request.ApprovalID == "" {
+		handleErrorAndRespond(w, errors.New("request_id and approval_id are required"), nil, "Invalid crawl submission request", http.StatusBadRequest, 0)
+		return
+	}
+	principal, _, err := resolveCrawlApprovalPrincipal(r.Context())
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Crawl submission authentication failed", crawlApprovalErrorCode(err), 0)
+		return
+	}
+	row, found, err := cdb.GetCrawlProposalByRequest(r.Context(), &dbHandler, request.RequestID)
+	if err != nil {
+		handleErrorAndRespond(w, agentpkg.ErrCrawlProposalStoreUnavailable, nil, "Crawl proposal lookup failed", http.StatusServiceUnavailable, 0)
+		return
+	}
+	if !found {
+		handleErrorAndRespond(w, agentpkg.ErrCrawlProposalNotFound, nil, "Crawl proposal not found", http.StatusNotFound, 0)
+		return
+	}
+	runtime, err := agentpkg.BuildCrawlRequestToolRuntime(r.Context(), agentpkg.CrawlRequestToolRuntimeConfig{
+		Enabled: true, DB: dbHandler,
+		Identity:          agentpkg.AgentIdentity{AgentID: row.AgentID, Owner: row.Owner, TrustLevel: "trusted"},
+		AllowedOperations: []string{agentpkg.CrawlRequestOperationName},
+		AllowedSources:    []uint64{row.SourceID},
+		MaxRequests:       row.MaxRequests,
+		BudgetWindow:      time.Duration(row.BudgetWindowSeconds) * time.Second,
+		Issuer:            crawlApprovalIssuerName,
+		ProposalTTL:       time.Minute,
+		SourceAuthorizer: agentpkg.DatabaseCrawlSourceAuthorizer{
+			Lookup:     agentpkg.DatabaseSourceOwnerLookup{DB: &dbHandler},
+			AllowAdmin: true,
+		},
+	})
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Crawl submission authorization unavailable", http.StatusServiceUnavailable, 0)
+		return
+	}
+	result, err := runtime.SubmitApprovedProposal(r.Context(), request.RequestID, request.ApprovalID, principal)
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "Crawl submission failed", crawlApprovalErrorCode(err), 0)
+		return
+	}
+	handleErrorAndRespond(w, nil, map[string]any{
+		"request_id":   result.RequestID,
+		"operation_id": result.OperationID,
+		"state":        result.State,
+		"reason_code":  result.ReasonCode,
+		"source_state": result.SourceState,
+		"reused":       result.Reused,
+		"observed_at":  result.SourceObservedAt,
+		"expires_at":   result.ExpiresAt,
+	}, "", 0, http.StatusOK)
 }
 
 func crawlApprovalRevokeHandler(w http.ResponseWriter, r *http.Request) {

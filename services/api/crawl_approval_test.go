@@ -2,12 +2,14 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	agentpkg "github.com/pzaino/thecrowler/pkg/agent"
 	auth "github.com/pzaino/thecrowler/pkg/auth"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
@@ -17,6 +19,45 @@ func setupCrawlApprovalAPITest(t *testing.T) cdb.Handler {
 	t.Helper()
 	handler := setupSourceOwnershipTest(t)
 	db := handler.(*sourceAPITestHandler).db
+	if _, err := db.Exec(`CREATE TABLE Status (
+		status_sha256 CHAR(64) PRIMARY KEY,
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		last_updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		deleted_at TIMESTAMP,
+		parent_status_sha256 CHAR(64),
+		agent_id TEXT,
+		source_id INTEGER,
+		operation_type TEXT,
+		status TEXT NOT NULL,
+		progress REAL,
+		details TEXT NOT NULL
+	)`); err != nil {
+		t.Fatalf("create Status: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE CrawlProposals (
+		request_id CHAR(64) PRIMARY KEY,
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		last_updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		run_id TEXT NOT NULL,
+		tool_call_id TEXT NOT NULL,
+		agent_id TEXT NOT NULL,
+		owner TEXT NOT NULL,
+		principal_user_id INTEGER NOT NULL,
+		source_id INTEGER NOT NULL,
+		operation_type TEXT NOT NULL,
+		proposal_sha256 CHAR(64) NOT NULL,
+		trace_id TEXT NOT NULL DEFAULT '',
+		max_requests INTEGER NOT NULL,
+		budget_window_seconds INTEGER NOT NULL,
+		policy_json TEXT NOT NULL,
+		state TEXT NOT NULL DEFAULT 'pending',
+		expires_at TIMESTAMP NOT NULL,
+		submitted_at TIMESTAMP,
+		operation_id TEXT,
+		UNIQUE (run_id, tool_call_id, source_id, operation_type)
+	)`); err != nil {
+		t.Fatalf("create CrawlProposals: %v", err)
+	}
 	if _, err := db.Exec(`CREATE TABLE CrawlApprovals (
 		approval_id CHAR(64) PRIMARY KEY,
 		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -55,6 +96,77 @@ func setupCrawlApprovalAPITest(t *testing.T) cdb.Handler {
 	return handler
 }
 
+func seedCrawlProposal(t *testing.T, handler cdb.Handler, requestID, runID string, sourceID, principalID uint64, owner string, expiresAt time.Time) {
+	t.Helper()
+	fingerprint := agentpkg.CrawlRequestProposal{
+		RequestID: requestID, SourceID: sourceID,
+		OperationType: cdb.CrawlOperationType, ExpiresAt: expiresAt.UTC().Truncate(time.Microsecond),
+	}.Fingerprint()
+	if _, err := handler.(*sourceAPITestHandler).db.Exec(`INSERT INTO CrawlProposals
+		(request_id, run_id, tool_call_id, agent_id, owner, principal_user_id,
+		 source_id, operation_type, proposal_sha256, trace_id, max_requests,
+		 budget_window_seconds, policy_json, state, expires_at)
+		VALUES (?, ?, ?, 'agent-1', ?, ?, ?, 'crawl', ?, 'trace-1', 2, 3600, '{}', 'pending', ?)`,
+		requestID, runID, "call-1", owner, principalID, sourceID,
+		fingerprint, expiresAt.UTC()); err != nil {
+		t.Fatalf("seed crawl proposal %s: %v", requestID, err)
+	}
+}
+
+func crawlProposalPolicyJSON(sourceID uint64, owner string) string {
+	encoded, _ := json.Marshal(map[string]any{
+		"identity": map[string]any{
+			"agent_id": "agent-1", "owner": owner, "trust_level": "trusted",
+			"capabilities": []string{"tool_execution", "db_write"},
+		},
+		"allowed_operations":    []string{"request_source_crawl"},
+		"allowed_sources":       []uint64{sourceID},
+		"max_requests":          2,
+		"budget_window_seconds": 3600,
+		"issuer":                "crowler-api",
+	})
+	return string(encoded)
+}
+
+func seedSubmittableCrawlProposal(t *testing.T, handler cdb.Handler, requestID, runID string, sourceID, principalID uint64, owner string, expiresAt time.Time) {
+	t.Helper()
+	fingerprint := agentpkg.CrawlRequestProposal{
+		RequestID: requestID, SourceID: sourceID,
+		OperationType: cdb.CrawlOperationType, ExpiresAt: expiresAt.UTC().Truncate(time.Microsecond),
+	}.Fingerprint()
+	placeholder := func(n int) string {
+		if strings.Contains(strings.ToLower(handler.DBMS()), "postgres") {
+			return fmt.Sprintf("$%d", n)
+		}
+		return "?"
+	}
+	query := fmt.Sprintf(`INSERT INTO CrawlProposals
+		(request_id, run_id, tool_call_id, agent_id, owner, principal_user_id,
+		 source_id, operation_type, proposal_sha256, trace_id, max_requests,
+		 budget_window_seconds, policy_json, state, expires_at)
+		VALUES (%s, %s, %s, 'agent-1', %s, %s, %s, 'crawl', %s, 'trace-1', 2, 3600, %s, 'pending', %s)`,
+		placeholder(1), placeholder(2), placeholder(3), placeholder(4), placeholder(5),
+		placeholder(6), placeholder(7), placeholder(8), placeholder(9))
+	if _, err := handler.Exec(query,
+		requestID, runID, "call-1", owner, principalID, sourceID,
+		fingerprint, crawlProposalPolicyJSON(sourceID, owner), expiresAt.UTC()); err != nil {
+		t.Fatalf("seed submittable crawl proposal %s: %v", requestID, err)
+	}
+}
+
+func decodeCrawlSubmitResponse(t *testing.T, recorder *httptest.ResponseRecorder) map[string]any {
+	t.Helper()
+	var response map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode submit response: %v: %s", err, recorder.Body.String())
+	}
+	return response
+}
+
+func crawlApprovalSubmitBody(requestID, approvalID string) string {
+	return `{"request_id":"` + requestID + `","approval_id":"` + approvalID + `"}`
+}
+
 func crawlApprovalIssueBody(now time.Time) string {
 	return `{"request_id":"approval-request-1","source_id":42,"agent_id":"agent-1","run_id":"run-1","operation_type":"crawl","proposal_expires_at":"` +
 		now.Add(time.Hour).Format(time.RFC3339Nano) + `","approval_expires_at":"` + now.Add(30*time.Minute).Format(time.RFC3339Nano) + `"}`
@@ -81,6 +193,7 @@ func TestCrawlApprovalIssueAndStatus(t *testing.T) {
 	handler := setupCrawlApprovalAPITest(t)
 	now := time.Now().UTC()
 	owner := sourceOwnershipIdentity(7, "owner-1", "user")
+	seedCrawlProposal(t, handler, "approval-request-1", "run-1", 42, 7, "owner-1", now.Add(time.Hour))
 	recorder := callCrawlApprovalHandler(t, crawlApprovalIssueHandler, http.MethodPost,
 		"/v1/console/crawl/approvals/issue", crawlApprovalIssueBody(now), &owner)
 	if recorder.Code != http.StatusOK {
@@ -138,6 +251,7 @@ func TestCrawlApprovalRevocation(t *testing.T) {
 	now := time.Now().UTC()
 	owner := sourceOwnershipIdentity(7, "owner-1", "user")
 	other := sourceOwnershipIdentity(8, "owner-2", "user")
+	seedCrawlProposal(t, handler, "approval-request-1", "run-1", 42, 7, "owner-1", now.Add(time.Hour))
 	admin := sourceOwnershipIdentity(9, "admin-1", "admin")
 	recorder := callCrawlApprovalHandler(t, crawlApprovalIssueHandler, http.MethodPost,
 		"/v1/console/crawl/approvals/issue", crawlApprovalIssueBody(now), &owner)
@@ -217,11 +331,13 @@ func TestCrawlApprovalRevocation(t *testing.T) {
 }
 
 func TestCrawlApprovalAuthorizationFailures(t *testing.T) {
-	_ = setupCrawlApprovalAPITest(t)
+	handler := setupCrawlApprovalAPITest(t)
 	now := time.Now().UTC()
 	owner := sourceOwnershipIdentity(7, "owner-1", "user")
 	other := sourceOwnershipIdentity(8, "owner-2", "user")
 	admin := sourceOwnershipIdentity(9, "admin-1", "admin")
+	seedCrawlProposal(t, handler, "approval-request-1", "run-1", 42, 7, "owner-1", now.Add(time.Hour))
+	seedCrawlProposal(t, handler, "admin-request-1", "run-1", 43, 8, "owner-2", now.Add(time.Hour))
 
 	crossUser := callCrawlApprovalHandler(t, crawlApprovalIssueHandler, http.MethodPost,
 		"/v1/console/crawl/approvals/issue", crawlApprovalIssueBody(now), &other)
@@ -262,5 +378,134 @@ func TestCrawlApprovalAuthorizationFailures(t *testing.T) {
 		"/v1/console/crawl/approvals/issue", crawlApprovalIssueBody(now), &owner)
 	if noAuth.Code != http.StatusUnauthorized {
 		t.Fatalf("auth-disabled status %d: %s", noAuth.Code, noAuth.Body.String())
+	}
+}
+
+func TestCrawlApprovalSubmitApprovedProposal(t *testing.T) {
+	handler := setupCrawlApprovalAPITest(t)
+	now := time.Now().UTC()
+	owner := sourceOwnershipIdentity(7, "owner-1", "user")
+	other := sourceOwnershipIdentity(8, "owner-2", "user")
+	requestID := "submit-request-1"
+	runID := "submit-run-1"
+	seedSubmittableCrawlProposal(t, handler, requestID, runID, 42, 7, "owner-1", now.Add(time.Hour))
+
+	issueBody := `{"request_id":"` + requestID + `","source_id":42,"agent_id":"agent-1","run_id":"` + runID + `","operation_type":"crawl","proposal_expires_at":"` +
+		now.Add(time.Hour).Format(time.RFC3339Nano) + `","approval_expires_at":"` + now.Add(30*time.Minute).Format(time.RFC3339Nano) + `"}`
+	issue := callCrawlApprovalHandler(t, crawlApprovalIssueHandler, http.MethodPost,
+		"/v1/console/crawl/approvals/issue", issueBody, &owner)
+	if issue.Code != http.StatusOK {
+		t.Fatalf("issue status %d: %s", issue.Code, issue.Body.String())
+	}
+	approval := decodeCrawlApprovalResponse(t, issue)
+
+	crossUser := callCrawlApprovalHandler(t, crawlApprovalSubmitHandler, http.MethodPost,
+		"/v1/console/crawl/approvals/submit", crawlApprovalSubmitBody(requestID, approval.ApprovalID), &other)
+	if crossUser.Code != http.StatusForbidden {
+		t.Fatalf("cross-user submit status %d: %s", crossUser.Code, crossUser.Body.String())
+	}
+
+	submitted := callCrawlApprovalHandler(t, crawlApprovalSubmitHandler, http.MethodPost,
+		"/v1/console/crawl/approvals/submit", crawlApprovalSubmitBody(requestID, approval.ApprovalID), &owner)
+	if submitted.Code != http.StatusOK {
+		t.Fatalf("submit status %d: %s", submitted.Code, submitted.Body.String())
+	}
+	response := decodeCrawlSubmitResponse(t, submitted)
+	if response["state"] != string(cdb.CrawlOperationAccepted) || response["reason_code"] != cdb.CrawlReasonScheduled {
+		t.Fatalf("unexpected submit response: %+v", response)
+	}
+	var status string
+	if err := handler.(*sourceAPITestHandler).db.QueryRow(`SELECT status FROM Sources WHERE source_id=42`).Scan(&status); err != nil {
+		t.Fatalf("read source status: %v", err)
+	}
+	if status != "pending" {
+		t.Fatalf("source status = %q, want pending", status)
+	}
+	var operations int
+	if err := handler.(*sourceAPITestHandler).db.QueryRow(`SELECT COUNT(*) FROM Status WHERE source_id=42`).Scan(&operations); err != nil {
+		t.Fatalf("count operations: %v", err)
+	}
+	if operations != 1 {
+		t.Fatalf("operation rows = %d, want 1", operations)
+	}
+
+	repeat := callCrawlApprovalHandler(t, crawlApprovalSubmitHandler, http.MethodPost,
+		"/v1/console/crawl/approvals/submit", crawlApprovalSubmitBody(requestID, approval.ApprovalID), &owner)
+	if repeat.Code != http.StatusOK {
+		t.Fatalf("repeat submit status %d: %s", repeat.Code, repeat.Body.String())
+	}
+	if decodeCrawlSubmitResponse(t, repeat)["reused"] != true {
+		t.Fatalf("repeat submit was not idempotent: %s", repeat.Body.String())
+	}
+	if err := handler.(*sourceAPITestHandler).db.QueryRow(`SELECT COUNT(*) FROM Status WHERE source_id=42`).Scan(&operations); err != nil {
+		t.Fatalf("count repeat operations: %v", err)
+	}
+	if operations != 1 {
+		t.Fatalf("repeat submit created %d operations", operations)
+	}
+
+	revoke := callCrawlApprovalHandler(t, crawlApprovalRevokeHandler, http.MethodPost,
+		"/v1/console/crawl/approvals/revoke", `{"approval_id":"`+approval.ApprovalID+`","reason":"done"}`, &owner)
+	if revoke.Code != http.StatusOK {
+		t.Fatalf("revoke status %d: %s", revoke.Code, revoke.Body.String())
+	}
+	afterRevoke := callCrawlApprovalHandler(t, crawlApprovalSubmitHandler, http.MethodPost,
+		"/v1/console/crawl/approvals/submit", crawlApprovalSubmitBody(requestID, approval.ApprovalID), &owner)
+	if afterRevoke.Code != http.StatusConflict {
+		t.Fatalf("revoked submit status %d: %s", afterRevoke.Code, afterRevoke.Body.String())
+	}
+}
+
+func TestCrawlApprovalAdministratorCanApproveAndSubmitOwnerProposal(t *testing.T) {
+	handler := setupCrawlApprovalAPITest(t)
+	now := time.Now().UTC()
+	admin := sourceOwnershipIdentity(9, "admin-1", "admin")
+	requestID := "submit-admin-request-1"
+	runID := "submit-admin-run-1"
+	seedSubmittableCrawlProposal(t, handler, requestID, runID, 42, 7, "owner-1", now.Add(time.Hour))
+	issueBody := `{"request_id":"` + requestID + `","source_id":42,"agent_id":"agent-1","run_id":"` + runID + `","operation_type":"crawl","proposal_expires_at":"` +
+		now.Add(time.Hour).Format(time.RFC3339Nano) + `","approval_expires_at":"` + now.Add(30*time.Minute).Format(time.RFC3339Nano) + `"}`
+	issue := callCrawlApprovalHandler(t, crawlApprovalIssueHandler, http.MethodPost,
+		"/v1/console/crawl/approvals/issue", issueBody, &admin)
+	if issue.Code != http.StatusOK {
+		t.Fatalf("admin issue status %d: %s", issue.Code, issue.Body.String())
+	}
+	approval := decodeCrawlApprovalResponse(t, issue)
+	submitted := callCrawlApprovalHandler(t, crawlApprovalSubmitHandler, http.MethodPost,
+		"/v1/console/crawl/approvals/submit", crawlApprovalSubmitBody(requestID, approval.ApprovalID), &admin)
+	if submitted.Code != http.StatusOK {
+		t.Fatalf("admin submit status %d: %s", submitted.Code, submitted.Body.String())
+	}
+	if decodeCrawlSubmitResponse(t, submitted)["state"] != string(cdb.CrawlOperationAccepted) {
+		t.Fatalf("admin submission was not accepted: %s", submitted.Body.String())
+	}
+}
+
+func TestCrawlApprovalIssueRequiresGenuineDurableProposal(t *testing.T) {
+	handler := setupCrawlApprovalAPITest(t)
+	now := time.Now().UTC()
+	owner := sourceOwnershipIdentity(7, "owner-1", "user")
+	seedCrawlProposal(t, handler, "approval-request-1", "run-1", 42, 7, "owner-1", now.Add(time.Hour))
+
+	unknown := callCrawlApprovalHandler(t, crawlApprovalIssueHandler, http.MethodPost,
+		"/v1/console/crawl/approvals/issue",
+		`{"request_id":"missing-request","source_id":42,"agent_id":"agent-1","run_id":"run-1","proposal_expires_at":"`+
+			now.Add(time.Hour).Format(time.RFC3339Nano)+`","approval_expires_at":"`+now.Add(30*time.Minute).Format(time.RFC3339Nano)+`"}`, &owner)
+	if unknown.Code != http.StatusNotFound {
+		t.Fatalf("unknown proposal issue status %d: %s", unknown.Code, unknown.Body.String())
+	}
+	wrongSource := callCrawlApprovalHandler(t, crawlApprovalIssueHandler, http.MethodPost,
+		"/v1/console/crawl/approvals/issue",
+		`{"request_id":"approval-request-1","source_id":43,"agent_id":"agent-1","run_id":"run-1","proposal_expires_at":"`+
+			now.Add(time.Hour).Format(time.RFC3339Nano)+`","approval_expires_at":"`+now.Add(30*time.Minute).Format(time.RFC3339Nano)+`"}`, &owner)
+	if wrongSource.Code != http.StatusBadRequest {
+		t.Fatalf("wrong-source issue status %d: %s", wrongSource.Code, wrongSource.Body.String())
+	}
+	wrongRun := callCrawlApprovalHandler(t, crawlApprovalIssueHandler, http.MethodPost,
+		"/v1/console/crawl/approvals/issue",
+		`{"request_id":"approval-request-1","source_id":42,"agent_id":"agent-1","run_id":"run-2","proposal_expires_at":"`+
+			now.Add(time.Hour).Format(time.RFC3339Nano)+`","approval_expires_at":"`+now.Add(30*time.Minute).Format(time.RFC3339Nano)+`"}`, &owner)
+	if wrongRun.Code != http.StatusBadRequest {
+		t.Fatalf("wrong-run issue status %d: %s", wrongRun.Code, wrongRun.Body.String())
 	}
 }

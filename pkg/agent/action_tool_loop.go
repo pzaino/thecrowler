@@ -15,6 +15,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -246,6 +247,35 @@ func normalizeToolLoopConfig(params, config map[string]interface{}, ictx InputCo
 	registry, err := DefaultToolRegistry()
 	if err != nil {
 		return loop, err
+	}
+	mutation, err := normalizeMutationPolicy(params, config)
+	if err != nil {
+		return loop, fmt.Errorf("tool loop denied: %v", err)
+	}
+	if mutation != nil && mutation.Enabled {
+		if !containsString(loop.Allowlist, crawlRequestToolName) {
+			return loop, fmt.Errorf("tool loop denied: %s must be in the explicit tool allowlist when mutation is enabled", crawlRequestToolName)
+		}
+		crawlRuntime, err := BuildCrawlRequestToolRuntime(context.Background(), CrawlRequestToolRuntimeConfig{
+			Enabled:           true,
+			DB:                dbHandler,
+			Identity:          identity,
+			AllowedOperations: mutation.AllowedOperations,
+			AllowedSources:    loop.AllowedSources,
+			MaxRequests:       mutation.MaxRequests,
+			BudgetWindow:      mutation.BudgetWindow,
+			Issuer:            mutation.Issuer,
+			ProposalTTL:       mutation.ProposalTTL,
+		})
+		if err != nil {
+			return loop, fmt.Errorf("tool loop denied: %v", err)
+		}
+		if err := RegisterCrawlRequestTool(registry, crawlRuntime); err != nil {
+			return loop, fmt.Errorf("tool loop denied: %v", err)
+		}
+		loop.CrawlRuntime = crawlRuntime
+		loop.MutationAllowed = true
+		loop.AllowedOperations = mutation.OperationsSet()
 	}
 	loop.Registry = registry
 	return loop, nil

@@ -26,6 +26,9 @@ var (
 	// ErrSourceOwnershipAdminRequired means the caller lacks an active
 	// administrative role for the requested ownership verification.
 	ErrSourceOwnershipAdminRequired = errors.New("source ownership verification requires an administrator")
+	// ErrActiveUserNotFound means a trusted username could not be mapped to an
+	// active local user account.
+	ErrActiveUserNotFound = errors.New("active local user not found")
 )
 
 // SourceOwner is the persisted owner information for one source.
@@ -479,6 +482,47 @@ func VerifySourceOwnershipContext(ctx context.Context, db *Handler, verification
 		Verified: true, VerificationMethod: verification.VerificationMethod,
 		VerifiedAt: verification.VerifiedAt.UTC().Truncate(time.Microsecond),
 	}, nil
+}
+
+// ResolveActiveUserIDByUsername maps a trusted configured owner name to the
+// current active local user ID. The lookup fails closed if the name is missing
+// or the account is disabled/deleted.
+func ResolveActiveUserIDByUsername(ctx context.Context, db *Handler, username string) (uint64, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if db == nil || *db == nil {
+		return 0, fmt.Errorf("database handler is nil")
+	}
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return 0, ErrActiveUserNotFound
+	}
+	placeholder := sourceOwnershipPlaceholder(*db, 1)
+	deletedFilter := " AND deleted_at IS NULL"
+	if normalizeInformationSeedDBMS((*db).DBMS()) == DBMySQLStr {
+		deletedFilter = ""
+	}
+	query := `SELECT user_id FROM Users
+		WHERE username = ` + placeholder + ` AND disabled = ` + falseLiteralForDB(*db) + deletedFilter
+	var userID uint64
+	if err := (*db).QueryRowContext(ctx, query, username).Scan(&userID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, ErrActiveUserNotFound
+		}
+		return 0, fmt.Errorf("resolve active user: %w", err)
+	}
+	if userID == 0 {
+		return 0, ErrActiveUserNotFound
+	}
+	return userID, nil
+}
+
+func falseLiteralForDB(db Handler) string {
+	if normalizeInformationSeedDBMS(db.DBMS()) == DBSQLiteStr {
+		return "0"
+	}
+	return "FALSE"
 }
 
 // lockActiveUserTx locks the Users row and checks that the account is active.

@@ -199,6 +199,7 @@ var (
 type CrawlApprovalRecord struct {
 	Approval          CrawlRequestApproval
 	Proposal          CrawlRequestProposal
+	PrincipalUserID   uint64
 	IssuerPrincipal   CrawlPrincipal
 	ApproverPrincipal CrawlPrincipal
 	Revoked           bool

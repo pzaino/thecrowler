@@ -25,6 +25,10 @@ carry the `delegate` capability, and `CreateEvent` steps use numeric sources.
   `CROWLER_OLLAMA_TOOL_MODELS` before relying on tool execution.
 - `ai-tool-calling-probe.agent.yaml` uses `provider: ollama` for inert
   tool-call proposals. Nothing it returns is executed.
+- `tool-loop-crawl-requester.agent.yaml` is a disabled-by-default controlled
+  crawl requester. It records a durable `request_source_crawl` proposal but
+  cannot approve or schedule it; an authenticated operator must issue the exact
+  approval and submit it through the console API.
 - `goal-source-reader.agent.yaml`, `goal-source-any.agent.yaml` and
   `goal-crawl-metadata-reader.agent.yaml` show evidence-verified
   `AgentGoalRun` goals. The latter uses `get_source_crawl_status`,

@@ -1,0 +1,67 @@
+# Controlled crawl request: the model may propose one explicitly scoped crawl,
+# but it cannot approve or schedule it. The tool persists a durable proposal;
+# an authenticated operator must issue the exact approval and submit it through
+# /v1/console/crawl/approvals/submit.
+#
+# This example is intentionally not enabled by default. To use it:
+#   1. Set agent_identity.owner to the username of an active CROWler user who
+#      verifiably owns the listed source.
+#   2. Replace the source placeholder with a real, owned source ID.
+#   3. Keep mutation_policy.allowed_operations limited to request_source_crawl.
+#   4. Keep the database on schema 1.17 and enable API authentication.
+#   5. Review the persisted proposal before approving it.
+format_version: v2
+agent_identity:
+  agent_id: crawl-requester
+  name: Controlled Crawl Requester
+  agent_type: executor
+  owner: platform
+  trust_level: trusted
+  capabilities:
+    - ai_reasoning
+    - db_read
+    - db_write
+    - tool_execution
+  memory:
+    scope: none
+  constraints:
+    max_steps: 4
+    time_budget: 2m
+jobs:
+  - name: Controlled Crawl Requester
+    process: serial
+    trigger_type: manual
+    trigger_name: run_crawl_request
+    steps:
+      - action: AgentToolLoop
+        params:
+          provider: ollama
+          url: "http://OLLAMA_HOST:11434"
+          model: "tool-capable-model"
+          prompt: "Propose a crawl for source 7 by calling request_source_crawl exactly once. Do not call any other tool. After the tool result, reply with: proposal recorded."
+          allowlist:
+            - request_source_crawl
+          allowed_sources:
+            - 7
+          mutation_policy:
+            enabled: true
+            allowed_operations:
+              - request_source_crawl
+            issuer: crowler-api
+            proposal_ttl: 30m
+            max_requests: 1
+            budget_window: 1h
+          limits:
+            max_model_rounds: 3
+            max_tool_calls: 2
+            max_result_bytes: 8192
+            max_total_result_bytes: 16384
+            timeout: 25s
+      - action: CreateEvent
+        params:
+          event_name: ai.crawl.request.proposed
+          event_type: ai.crawl.request.proposed
+          source: "0"
+          severity: info
+          details:
+            result: "$response"

@@ -114,6 +114,7 @@ func createCrawlApprovalPostgresSource(t *testing.T, db *cdb.Handler, ownerID ui
 	}
 	t.Cleanup(func() {
 		_, _ = (*db).Exec(`DELETE FROM Status WHERE source_id=$1`, sourceID)
+		_, _ = (*db).Exec(`DELETE FROM CrawlProposals WHERE source_id=$1`, sourceID)
 		_, _ = (*db).Exec(`DELETE FROM CrawlApprovals WHERE source_id=$1`, sourceID)
 		_, _ = (*db).Exec(`DELETE FROM SourceOwnership WHERE source_id=$1`, sourceID)
 		_, _ = (*db).Exec(`DELETE FROM Sources WHERE source_id=$1`, sourceID)
@@ -440,5 +441,103 @@ func TestPostgresCrawlApprovalConcurrentRevocationAuthorization(t *testing.T) {
 	raw, found, err := cdb.GetCrawlApprovalByID(context.Background(), db, approval.ApprovalID)
 	if err != nil || !found || !raw.RevokedAt.Valid || raw.RevokedByUserID.Int64 != int64(ownerID) {
 		t.Fatalf("unexpected concurrent revocation metadata: %+v found=%v err=%v", raw, found, err)
+	}
+}
+
+func TestPostgresCrawlProposalApprovalSubmissionChain(t *testing.T) {
+	db := openCrawlApprovalPostgresDB(t)
+	ownerID, _ := setupCrawlApprovalPostgresUsers(t, db)
+	sourceID := createCrawlApprovalPostgresSource(t, db, ownerID)
+	ownerName := fmt.Sprintf("wp03b2b-owner-%d", ownerID)
+	now := time.Now().UTC()
+	identity := AgentIdentity{
+		AgentID: "wp03b2c-agent", Owner: ownerName, TrustLevel: "trusted",
+		Capabilities: []string{"tool_execution", "db_write"},
+	}
+	runtime, err := BuildCrawlRequestToolRuntime(context.Background(), CrawlRequestToolRuntimeConfig{
+		Enabled: true, DB: *db, Identity: identity,
+		AllowedOperations: []string{crawlRequestToolName},
+		AllowedSources:    []uint64{sourceID},
+		MaxRequests:       2, BudgetWindow: time.Hour,
+		Issuer: "crowler-api", ProposalTTL: 2 * time.Minute,
+		Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("build postgres crawl runtime: %v", err)
+	}
+	tool := &crawlRequestTool{runtime: runtime}
+	ctx := ContextWithToolRuntime(context.Background(), ToolRuntime{
+		DB: *db, CallID: "pg-call-1", Crawl: runtime,
+		Auth: ToolAuthContext{
+			Identity: identity, Enforcement: true,
+			Allowlist:         map[string]bool{crawlRequestToolName: true},
+			AllowedSources:    map[uint64]bool{sourceID: true},
+			AllowedOperations: map[string]bool{crawlRequestToolName: true},
+			MutationAllowed:   true, RunID: "pg-run-1", TraceID: "pg-trace-1",
+		},
+	})
+	result, err := tool.Execute(ctx, map[string]any{"source_id": float64(sourceID)})
+	if err != nil {
+		t.Fatalf("postgres crawl proposal: %v", err)
+	}
+	requestID := result["request_id"].(string)
+	row, found, err := cdb.GetCrawlProposalByRequest(context.Background(), db, requestID)
+	if err != nil || !found || row.State != cdb.CrawlProposalStatePending {
+		t.Fatalf("postgres proposal not durable: %+v found=%v err=%v", row, found, err)
+	}
+	var operations int
+	if err := (*db).QueryRow(`SELECT COUNT(*) FROM Status WHERE source_id=$1`, sourceID).Scan(&operations); err != nil {
+		t.Fatalf("count postgres operations before approval: %v", err)
+	}
+	if operations != 0 {
+		t.Fatalf("postgres proposal scheduled %d operations", operations)
+	}
+
+	store := runtime.ApprovalStore.(*DatabaseCrawlApprovalStore)
+	approval, err := store.IssueCrawlApproval(context.Background(), CrawlApprovalIssuanceRequest{
+		Proposal: CrawlRequestProposal{
+			RequestID: row.RequestID, SourceID: row.SourceID,
+			OperationType: row.OperationType, ExpiresAt: row.ExpiresAt,
+		},
+		Identity: identity, Principal: runtime.Policy.Principal,
+		RunID: row.RunID, IssuerPrincipal: runtime.Policy.Principal,
+		Approver: runtime.Policy.Principal, Issuer: "crowler-api",
+		ApprovedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(10 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("issue postgres approval: %v", err)
+	}
+	submitted, err := runtime.SubmitApprovedProposal(context.Background(), requestID, approval.ApprovalID, runtime.Policy.Principal)
+	if err != nil {
+		t.Fatalf("submit postgres approved proposal: %v", err)
+	}
+	if submitted.State != cdb.CrawlOperationAccepted {
+		t.Fatalf("postgres submission state = %q: %+v", submitted.State, submitted)
+	}
+	var status string
+	if err := (*db).QueryRow(`SELECT status FROM Sources WHERE source_id=$1`, sourceID).Scan(&status); err != nil {
+		t.Fatalf("read postgres source status: %v", err)
+	}
+	if err := (*db).QueryRow(`SELECT COUNT(*) FROM Status WHERE source_id=$1`, sourceID).Scan(&operations); err != nil {
+		t.Fatalf("count postgres operations: %v", err)
+	}
+	if status != "pending" || operations != 1 {
+		t.Fatalf("postgres scheduling result status=%q operations=%d", status, operations)
+	}
+	repeat, err := runtime.SubmitApprovedProposal(context.Background(), requestID, approval.ApprovalID, runtime.Policy.Principal)
+	if err != nil || !repeat.Reused {
+		t.Fatalf("postgres repeat submission not idempotent: %+v err=%v", repeat, err)
+	}
+	if err := (*db).QueryRow(`SELECT COUNT(*) FROM Status WHERE source_id=$1`, sourceID).Scan(&operations); err != nil {
+		t.Fatalf("count postgres repeat operations: %v", err)
+	}
+	if operations != 1 {
+		t.Fatalf("postgres repeat created %d operations", operations)
+	}
+	if err := store.RevokeCrawlApproval(context.Background(), runtime.Policy.Principal, approval.ApprovalID, "postgres test", time.Now().UTC()); err != nil {
+		t.Fatalf("revoke postgres approval: %v", err)
+	}
+	if _, err := runtime.SubmitApprovedProposal(context.Background(), requestID, approval.ApprovalID, runtime.Policy.Principal); !errors.Is(err, ErrCrawlApprovalRevoked) {
+		t.Fatalf("postgres revoked submission error = %v", err)
 	}
 }

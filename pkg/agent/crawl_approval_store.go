@@ -107,6 +107,16 @@ func (s *DatabaseCrawlApprovalStore) IssueCrawlApproval(ctx context.Context, req
 		!request.ExpiresAt.After(time.Now().UTC()) {
 		return CrawlRequestApproval{}, ErrCrawlApprovalLifetime
 	}
+	// The run principal recorded on the proposal must itself be the verified
+	// source owner. Scheduling binds principal_user_id to the owner, so an
+	// approval that names a different principal must fail closed at issuance
+	// rather than appear valid until submission.
+	if err := s.SourceAuthorizer.AuthorizeCrawlSource(ctx, request.Principal, proposal.SourceID); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return CrawlRequestApproval{}, ctxErr
+		}
+		return CrawlRequestApproval{}, ErrCrawlApprovalApproverUnauthorized
+	}
 	if err := s.SourceAuthorizer.AuthorizeCrawlSource(ctx, request.Approver, proposal.SourceID); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return CrawlRequestApproval{}, ctxErr
@@ -356,7 +366,8 @@ func (s *DatabaseCrawlApprovalStore) enrichPrincipal(ctx context.Context, princi
 
 func approvalRecordFromRow(row cdb.CrawlApprovalRow) CrawlApprovalRecord {
 	record := CrawlApprovalRecord{
-		Approval: approvalFromRow(row),
+		Approval:        approvalFromRow(row),
+		PrincipalUserID: row.PrincipalUserID,
 		Proposal: CrawlRequestProposal{
 			RequestID: row.RequestID, SourceID: row.SourceID,
 			OperationType: row.OperationType, ExpiresAt: row.ProposalExpiresAt.UTC(),

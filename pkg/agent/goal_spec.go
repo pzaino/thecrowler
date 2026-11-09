@@ -40,7 +40,7 @@ var (
 var goalAllowedTopKeys = map[string]bool{
 	"goal_id": true, "objective": true, "provider": true, "url": true,
 	"auth": true, "model": true, "prompt": true, "messages": true,
-	"allowlist": true, "allowed_sources": true, "stop_on_tool_error": true,
+	"allowlist": true, "allowed_sources": true, "mutation_policy": true, "stop_on_tool_error": true,
 	"evidence": true, "budgets": true, "acceptance": true,
 }
 
@@ -201,7 +201,7 @@ func parseAgentGoalSpec(params map[string]any, identity *AgentIdentity, jobName 
 			return nil, fmt.Errorf("unknown AgentGoalRun param %q", key)
 		}
 	}
-	for _, key := range []string{"goal_id", "objective", "provider", "url", "auth", "model", "allowlist", "allowed_sources", "evidence", "budgets", "acceptance"} {
+	for _, key := range []string{"goal_id", "objective", "provider", "url", "auth", "model", "allowlist", "allowed_sources", "mutation_policy", "evidence", "budgets", "acceptance"} {
 		raw, ok := params[key]
 		if !ok || raw == nil {
 			continue
@@ -270,6 +270,10 @@ func parseAgentGoalSpec(params map[string]any, identity *AgentIdentity, jobName 
 	if err != nil {
 		return nil, err
 	}
+	mutationPolicy, err := parseMutationPolicyRaw(params["mutation_policy"])
+	if err != nil {
+		return nil, err
+	}
 
 	evidencePolicy, err := parseGoalEvidencePolicy(params["evidence"])
 	if err != nil {
@@ -309,6 +313,7 @@ func parseAgentGoalSpec(params map[string]any, identity *AgentIdentity, jobName 
 		Messages:        messages,
 		Allowlist:       allowlist,
 		AllowedSources:  allowedSources,
+		MutationPolicy:  mutationPolicy,
 		Evidence:        evidencePolicy,
 		Budgets:         budgets,
 		Acceptance:      acceptance,
@@ -1291,6 +1296,10 @@ func validateGoalTools(spec *AgentGoalSpec) error {
 	allow := map[string]bool{}
 	for _, name := range spec.Allowlist {
 		if _, ok := registry.Get(name); !ok {
+			if name == crawlRequestToolName && spec.MutationPolicy.EnabledOperations(name) {
+				allow[name] = true
+				continue
+			}
 			return fmt.Errorf("allowlisted tool %q is not registered", name)
 		}
 		allow[name] = true

@@ -30,7 +30,21 @@ import (
 // instance-scoped (never a mutable process-wide namespace) so independent
 // runs and tests stay isolated.
 
-// AgentTool is one trusted, read-only tool implementation.
+// ToolEffect is the trusted effect classification of a registered tool.
+type ToolEffect string
+
+const (
+	ToolEffectReadOnly ToolEffect = "read_only"
+	ToolEffectMutation ToolEffect = "mutation"
+)
+
+// AgentToolEffect is implemented by mutation-capable tools. Read-only tools
+// need not implement it; the registry defaults their effect to read_only.
+type AgentToolEffect interface {
+	Effect() ToolEffect
+}
+
+// AgentTool is one trusted, read-only tool implementation by default.
 type AgentTool interface {
 	// Name is the stable wire identifier (letters, digits, _ and -).
 	Name() string
@@ -69,14 +83,36 @@ func NewAgentToolRegistry() *AgentToolRegistry {
 	return &AgentToolRegistry{tools: map[string]AgentTool{}}
 }
 
-// Register vets and stores one tool. Schemas are deep-copied on the way in
-// so later caller mutation cannot change the registered contract.
+// Register vets and stores one read-only tool. Schemas are deep-copied on the
+// way in so later caller mutation cannot change the registered contract.
 func (r *AgentToolRegistry) Register(tool AgentTool) error {
+	return r.register(tool, false)
+}
+
+// RegisterMutation vets and stores one mutation-capable tool. It is a separate
+// admission path so accidental use of Register cannot activate a mutation tool
+// in the default read-only registry.
+func (r *AgentToolRegistry) RegisterMutation(tool AgentTool) error {
+	return r.register(tool, true)
+}
+
+func (r *AgentToolRegistry) register(tool AgentTool, mutation bool) error {
 	if r == nil {
 		return fmt.Errorf("nil tool registry")
 	}
 	if tool == nil {
 		return fmt.Errorf("invalid tool: nil implementation")
+	}
+	effect := ToolEffectReadOnly
+	if classified, ok := tool.(AgentToolEffect); ok {
+		effect = classified.Effect()
+	}
+	if mutation {
+		if effect != ToolEffectMutation {
+			return fmt.Errorf("mutation registration requires an explicit mutation effect")
+		}
+	} else if effect == ToolEffectMutation {
+		return fmt.Errorf("mutation tool %q must be registered with RegisterMutation", tool.Name())
 	}
 	name := strings.TrimSpace(tool.Name())
 	if !toolNamePattern.MatchString(name) || len(name) > maxToolNameLen {
@@ -135,6 +171,7 @@ func (r *AgentToolRegistry) Register(tool AgentTool) error {
 		schema:       schemaCopy,
 		capabilities: capsCopy,
 		evidence:     evidence,
+		effect:       effect,
 		inner:        tool,
 	}
 	r.order = append(r.order, name)
@@ -149,6 +186,7 @@ type frozenTool struct {
 	schema       map[string]any
 	capabilities []string
 	evidence     EvidenceMetadata
+	effect       ToolEffect
 	inner        AgentTool
 }
 
@@ -169,6 +207,21 @@ func (f *frozenTool) RequiredCapabilities() []string {
 
 func (f *frozenTool) Execute(ctx context.Context, args map[string]any) (map[string]any, error) {
 	return f.inner.Execute(ctx, args)
+}
+
+// Effect returns the admission-time effect classification.
+func (f *frozenTool) Effect() ToolEffect { return f.effect }
+
+// Effect returns the registered effect classification for a tool name.
+func (r *AgentToolRegistry) Effect(name string) (ToolEffect, bool) {
+	tool, ok := r.Get(name)
+	if !ok {
+		return "", false
+	}
+	if classified, ok := tool.(AgentToolEffect); ok {
+		return classified.Effect(), true
+	}
+	return ToolEffectReadOnly, true
 }
 
 // Get returns the tool implementation for a name.

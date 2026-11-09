@@ -1065,6 +1065,70 @@
                                                     "stop_on_tool_error": {
                                                         "type": "boolean",
                                                         "description": "Stop the loop on ordinary tool execution errors."
+                                                    },
+                                                    "mutation_policy": {
+                                                      "type": "object",
+                                                      "description": "Explicit operator opt-in for model-driven state changes. Disabled by default.",
+                                                      "properties": {
+                                                        "enabled": {
+                                                          "type": "boolean",
+                                                          "description": "Enable model-driven mutation tools for this step."
+                                                        },
+                                                        "allowed_operations": {
+                                                          "type": "array",
+                                                          "minItems": 1,
+                                                          "maxItems": 16,
+                                                          "uniqueItems": true,
+                                                          "items": {
+                                                            "type": "string",
+                                                            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+                                                          }
+                                                        },
+                                                        "issuer": {
+                                                          "type": "string",
+                                                          "minLength": 1,
+                                                          "maxLength": 128
+                                                        },
+                                                        "proposal_ttl": {
+                                                          "type": "string",
+                                                          "pattern": "^[0-9]{1,6}(s|m|h)$"
+                                                        },
+                                                        "max_requests": {
+                                                          "type": "integer",
+                                                          "minimum": 1,
+                                                          "maximum": 100
+                                                        },
+                                                        "budget_window": {
+                                                          "type": "string",
+                                                          "pattern": "^[0-9]{1,6}(s|m|h)$"
+                                                        }
+                                                      },
+                                                      "required": [
+                                                        "enabled"
+                                                      ],
+                                                      "additionalProperties": false,
+                                                      "allOf": [
+                                                        {
+                                                          "if": {
+                                                            "properties": {
+                                                              "enabled": {
+                                                                "const": true
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "enabled"
+                                                            ]
+                                                          },
+                                                          "then": {
+                                                            "required": [
+                                                              "allowed_operations",
+                                                              "issuer",
+                                                              "max_requests",
+                                                              "budget_window"
+                                                            ]
+                                                          }
+                                                        }
+                                                      ]
                                                     }
                                                 },
                                                 "required": [
@@ -1168,6 +1232,70 @@
                                           "stop_on_tool_error": {
                                             "type": "boolean"
                                           },
+                                          "mutation_policy": {
+                                                "type": "object",
+                                                "description": "Explicit operator opt-in for model-driven state changes. Disabled by default.",
+                                                "properties": {
+                                                  "enabled": {
+                                                    "type": "boolean",
+                                                    "description": "Enable model-driven mutation tools for this step."
+                                                  },
+                                                  "allowed_operations": {
+                                                    "type": "array",
+                                                    "minItems": 1,
+                                                    "maxItems": 16,
+                                                    "uniqueItems": true,
+                                                    "items": {
+                                                      "type": "string",
+                                                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+                                                    }
+                                                  },
+                                                  "issuer": {
+                                                    "type": "string",
+                                                    "minLength": 1,
+                                                    "maxLength": 128
+                                                  },
+                                                  "proposal_ttl": {
+                                                    "type": "string",
+                                                    "pattern": "^[0-9]{1,6}(s|m|h)$"
+                                                  },
+                                                  "max_requests": {
+                                                    "type": "integer",
+                                                    "minimum": 1,
+                                                    "maximum": 100
+                                                  },
+                                                  "budget_window": {
+                                                    "type": "string",
+                                                    "pattern": "^[0-9]{1,6}(s|m|h)$"
+                                                  }
+                                                },
+                                                "required": [
+                                                  "enabled"
+                                                ],
+                                                "additionalProperties": false,
+                                                "allOf": [
+                                                  {
+                                                    "if": {
+                                                      "properties": {
+                                                        "enabled": {
+                                                          "const": true
+                                                        }
+                                                      },
+                                                      "required": [
+                                                        "enabled"
+                                                      ]
+                                                    },
+                                                    "then": {
+                                                      "required": [
+                                                        "allowed_operations",
+                                                        "issuer",
+                                                        "max_requests",
+                                                        "budget_window"
+                                                      ]
+                                                    }
+                                                  }
+                                                ]
+                                              },
                                           "evidence": {
                                             "type": "object",
                                             "properties": {

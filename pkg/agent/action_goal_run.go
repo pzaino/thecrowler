@@ -86,6 +86,36 @@ func (a *AgentGoalRunAction) Execute(params map[string]interface{}) (map[string]
 		rval[StrMessage] = "goal run denied: tool registry unavailable"
 		return rval, err
 	}
+	var crawlRuntime *CrawlRequestToolRuntime
+	if spec.MutationPolicy.EnabledOperations(crawlRequestToolName) {
+		if !containsString(spec.Allowlist, crawlRequestToolName) {
+			err := fmt.Errorf("goal run denied: %s must be in the explicit tool allowlist when mutation is enabled", crawlRequestToolName)
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = err.Error()
+			return rval, err
+		}
+		crawlRuntime, err = BuildCrawlRequestToolRuntime(context.Background(), CrawlRequestToolRuntimeConfig{
+			Enabled:           true,
+			DB:                dbHandler,
+			Identity:          identity,
+			AllowedOperations: spec.MutationPolicy.AllowedOperations,
+			AllowedSources:    spec.AllowedSources,
+			MaxRequests:       spec.MutationPolicy.MaxRequests,
+			BudgetWindow:      spec.MutationPolicy.BudgetWindow,
+			Issuer:            spec.MutationPolicy.Issuer,
+			ProposalTTL:       spec.MutationPolicy.ProposalTTL,
+		})
+		if err != nil {
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = "goal run denied: " + err.Error()
+			return rval, err
+		}
+		if err := RegisterCrawlRequestTool(registry, crawlRuntime); err != nil {
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = "goal run denied: " + err.Error()
+			return rval, err
+		}
+	}
 	for _, name := range spec.Allowlist {
 		if _, ok := registry.Get(name); !ok {
 			err := fmt.Errorf("goal run denied: allowlisted tool %q is not registered", name)
@@ -122,11 +152,14 @@ func (a *AgentGoalRunAction) Execute(params map[string]interface{}) (map[string]
 	runConfig := goalRunConfig{
 		Spec: runtimeSpec, Identity: identity, DB: dbHandler,
 		Registry: registry, EvidenceRegistry: evidenceRegistry,
-		Provider:      provider,
-		RunID:         uuid.NewString(),
-		TraceID:       toolLoopRunFieldValue(params, "trace_id"),
-		CorrelationID: toolLoopRunFieldValue(params, "run_id"),
-		GroupDeadline: inheritedDeadline,
+		AllowedOperations: spec.MutationPolicy.OperationsSet(),
+		MutationAllowed:   crawlRuntime != nil,
+		CrawlRuntime:      crawlRuntime,
+		Provider:          provider,
+		RunID:             uuid.NewString(),
+		TraceID:           toolLoopRunFieldValue(params, "trace_id"),
+		CorrelationID:     toolLoopRunFieldValue(params, "run_id"),
+		GroupDeadline:     inheritedDeadline,
 	}
 	if strings.TrimSpace(runConfig.TraceID) == "" {
 		runConfig.TraceID = uuid.NewString()
@@ -204,17 +237,20 @@ func goalIdentityFromRuntime(params map[string]interface{}) AgentIdentity {
 
 // goalRunConfig carries only trusted inputs.
 type goalRunConfig struct {
-	Spec             *AgentGoalSpec
-	Identity         AgentIdentity
-	DB               cdb.Handler
-	Registry         *AgentToolRegistry
-	EvidenceRegistry *GoalEvidenceRegistry
-	Provider         LLMProvider
-	RunID            string
-	TraceID          string
-	CorrelationID    string
-	GroupDeadline    time.Time
-	Ctx              context.Context
+	Spec              *AgentGoalSpec
+	Identity          AgentIdentity
+	DB                cdb.Handler
+	Registry          *AgentToolRegistry
+	EvidenceRegistry  *GoalEvidenceRegistry
+	AllowedOperations map[string]bool
+	MutationAllowed   bool
+	CrawlRuntime      *CrawlRequestToolRuntime
+	Provider          LLMProvider
+	RunID             string
+	TraceID           string
+	CorrelationID     string
+	GroupDeadline     time.Time
+	Ctx               context.Context
 }
 
 type goalRunState struct {
@@ -298,9 +334,11 @@ func RunGoal(config goalRunConfig) (GoalRunResult, error) {
 	}
 	auth := ToolAuthContext{
 		Identity: config.Identity, Enforcement: true,
-		Allowlist:      stringSet(config.Spec.Allowlist),
-		AllowedSources: sliceToSourceSet(config.Spec.AllowedSources),
-		RunID:          run.result.RunID, TraceID: run.result.TraceID,
+		Allowlist:         stringSet(config.Spec.Allowlist),
+		AllowedSources:    sliceToSourceSet(config.Spec.AllowedSources),
+		AllowedOperations: config.AllowedOperations,
+		MutationAllowed:   config.MutationAllowed,
+		RunID:             run.result.RunID, TraceID: run.result.TraceID,
 	}
 	run.auth = auth
 	emitGoalAudit(run.result.RunID, run.result.TraceID, config.Identity.AgentID, config.Identity.Name, config.Identity.Owner, config.Spec.GoalID, "", auditOutcomeAllowed, "goal_run_started", "goal run started", nil)
@@ -409,7 +447,7 @@ func (r *goalRunner) processToolCall(ctx context.Context, call LLMToolCall, call
 	if err := ctx.Err(); err != nil {
 		return r.finish(r.timeoutStatus(), r.timeoutReason(), "goal loop expired"), true
 	}
-	runtime := ToolRuntime{DB: r.config.DB, Auth: r.auth, Deadline: r.state.deadline}
+	runtime := ToolRuntime{DB: r.config.DB, Auth: r.auth, Deadline: r.state.deadline, CallID: callID, Crawl: r.config.CrawlRuntime}
 	callCtx, cancel := context.WithDeadline(ctx, r.state.deadline)
 	defer cancel()
 	handlerResult, err := tool.Execute(ContextWithToolRuntime(callCtx, runtime), args)

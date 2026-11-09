@@ -44,13 +44,15 @@ func CrawlToolRequestID(runID, toolCallID string, sourceID uint64) (string, erro
 // no approval, principal, owner, quota or source-configuration data. A
 // scheduling acknowledgment is not proof that a crawl completed.
 type CrawlRequestToolResult struct {
-	OperationID string    `json:"operation_id"`
-	RequestID   string    `json:"request_id"`
-	SourceID    uint64    `json:"source_id"`
-	State       string    `json:"state"`
-	ReasonCode  string    `json:"reason_code"`
-	Reused      bool      `json:"reused"`
-	ObservedAt  time.Time `json:"observed_at"`
+	OperationID      string    `json:"operation_id,omitempty"`
+	RequestID        string    `json:"request_id"`
+	SourceID         uint64    `json:"source_id"`
+	State            string    `json:"state"`
+	ReasonCode       string    `json:"reason_code"`
+	ApprovalRequired bool      `json:"approval_required"`
+	Reused           bool      `json:"reused"`
+	ObservedAt       time.Time `json:"observed_at"`
+	ExpiresAt        time.Time `json:"expires_at"`
 }
 
 // NewCrawlRequestToolResult converts a trusted scheduling result to the safe

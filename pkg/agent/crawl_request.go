@@ -81,6 +81,7 @@ const (
 	CrawlReasonSourceAuthorizationError     = "crawl_source_authorization_error"
 	CrawlReasonBudgetRequired               = "crawl_budget_required"
 	CrawlReasonApprovalRequired             = "crawl_approval_required"
+	CrawlReasonApprovalRecorded             = "crawl_approval_recorded"
 	CrawlReasonApprovalMismatch             = "crawl_approval_mismatch"
 	CrawlReasonApprovalExpired              = "crawl_approval_expired"
 	CrawlReasonApprovalVerifierUnavailable  = "crawl_approval_verifier_unavailable"

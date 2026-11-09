@@ -44,19 +44,21 @@ import (
 
 // Tool authorization reason codes (stable, audited, safe to expose).
 const (
-	ToolDenyNoOptIn         = "no_tool_loop_opt_in"
-	ToolDenyNoIdentity      = "missing_identity"
-	ToolDenyEnforcementOff  = "identity_enforcement_required"
-	ToolDenyUnknownTool     = "unknown_tool"
-	ToolDenyNotAllowlisted  = "not_allowlisted"
-	ToolDenyCapability      = "missing_capability"
-	ToolDenyTrust           = "insufficient_trust"
-	ToolDenyContract        = "forbidden_by_contract"
-	ToolDenyArguments       = "invalid_arguments"
-	ToolDenyScope           = "scope_denied"
-	ToolDenyBudget          = "budget_exhausted"
-	ToolDenyContext         = "context_expired"
-	ToolDenyDuplicateCallID = "duplicate_call_id"
+	ToolDenyNoOptIn          = "no_tool_loop_opt_in"
+	ToolDenyNoIdentity       = "missing_identity"
+	ToolDenyEnforcementOff   = "identity_enforcement_required"
+	ToolDenyUnknownTool      = "unknown_tool"
+	ToolDenyNotAllowlisted   = "not_allowlisted"
+	ToolDenyCapability       = "missing_capability"
+	ToolDenyTrust            = "insufficient_trust"
+	ToolDenyContract         = "forbidden_by_contract"
+	ToolDenyArguments        = "invalid_arguments"
+	ToolDenyScope            = "scope_denied"
+	ToolDenyBudget           = "budget_exhausted"
+	ToolDenyContext          = "context_expired"
+	ToolDenyDuplicateCallID  = "duplicate_call_id"
+	ToolDenyMutationDisabled = "mutation_disabled"
+	ToolDenyOperation        = "operation_not_allowlisted"
 )
 
 // minToolTrustRank is the Phase 3 execution floor: callers need at least
@@ -73,12 +75,14 @@ const maxToolArgsDepth = 16
 // built by the loop from run configuration and identity, never from model
 // output.
 type ToolAuthContext struct {
-	Identity       AgentIdentity
-	Enforcement    bool
-	Allowlist      map[string]bool
-	AllowedSources map[uint64]bool
-	RunID          string
-	TraceID        string
+	Identity          AgentIdentity
+	Enforcement       bool
+	Allowlist         map[string]bool
+	AllowedSources    map[uint64]bool
+	AllowedOperations map[string]bool
+	MutationAllowed   bool
+	RunID             string
+	TraceID           string
 }
 
 // ToolAuthError is a policy denial with a stable machine-readable code.
@@ -126,6 +130,18 @@ func AuthorizeToolCall(auth ToolAuthContext, tool AgentTool, args map[string]any
 	}
 	if toolForbiddenByContract(auth.Identity.Contract, name) {
 		return denyTool(ToolDenyContract, "tool %q is forbidden by contract", name)
+	}
+	effect := ToolEffectReadOnly
+	if classified, ok := tool.(AgentToolEffect); ok {
+		effect = classified.Effect()
+	}
+	if effect == ToolEffectMutation {
+		if !auth.MutationAllowed {
+			return denyTool(ToolDenyMutationDisabled, "model-driven mutation is disabled")
+		}
+		if auth.AllowedOperations == nil || !auth.AllowedOperations[name] {
+			return denyTool(ToolDenyOperation, "operation %q is not in the explicit operation allowlist", name)
+		}
 	}
 	if err := checkToolArguments(name, tool, args); err != nil {
 		return err
@@ -332,6 +348,8 @@ type ToolRuntime struct {
 	DB       cdb.Handler
 	Auth     ToolAuthContext
 	Deadline time.Time
+	CallID   string
+	Crawl    *CrawlRequestToolRuntime
 }
 
 // ToolRuntimeFromContext extracts trusted execution dependencies. The second

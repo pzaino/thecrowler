@@ -354,14 +354,12 @@ must:
 9. never let a model supply approval, issuer, approver, owner, principal,
    tenant, DB, scope, allowlist, clock or budget fields.
 
-The proposed input and result contract, effect classification and evidence
-semantics are documented in
-[`crawl_request_authorization.md`](crawl_request_authorization.md). The tool is
-not registered.
+The input and result contract, effect classification and evidence semantics are
+documented in [`crawl_request_authorization.md`](crawl_request_authorization.md).
+WP-03B2C registers the tool only through an explicit mutation policy and
+`RegisterMutation()`; it remains absent from the default read-only registry.
 
-Before WP-03B2C, maintainers must also approve:
-
-- the durable `Status`-table reuse or a dedicated migration;
-- a durable, trusted operator approval store, issuer and revocation policy;
-- authenticated source-ownership population and principal resolution;
-- the exact model-facing tool schema and source-scope rules.
+WP-03B2C also supplies the durable `CrawlProposals` record, the trusted operator
+approval store/issuer/revocation path, authenticated source-ownership
+population, authoritative principal resolution, and the model-facing tool
+schema and source-scope rules described in the authorization document.

@@ -50,6 +50,12 @@ func CheckStartupCompatibility(ctx context.Context, db Handler) error {
 			"owner", "principal_user_id", "source_id", "operation_type",
 			"approval_sha256", "expires_at", "revoked_at",
 		}
+		required["CrawlProposals"] = []string{
+			"request_id", "run_id", "tool_call_id", "agent_id", "owner",
+			"principal_user_id", "source_id", "operation_type",
+			"proposal_sha256", "trace_id", "max_requests",
+			"budget_window_seconds", "policy_json", "state", "expires_at",
+		}
 		required["TimeSeriesCardinalityTokens"] = []string{"token_number"}
 		required["TimeSeriesSeriesSlots"] = []string{"metric_id", "slot_number", "series_hash", "identity_value"}
 		required["TimeSeriesDimensionSlots"] = []string{"metric_id", "dimension_key", "slot_number", "value_hash", "identity_value"}
@@ -58,6 +64,12 @@ func CheckStartupCompatibility(ctx context.Context, db Handler) error {
 			"approval_id", "proposal_sha256", "request_id", "run_id", "agent_id",
 			"owner", "principal_user_id", "source_id", "operation_type",
 			"approval_sha256", "expires_at", "revoked_at",
+		}
+		required["CrawlProposals"] = []string{
+			"request_id", "run_id", "tool_call_id", "agent_id", "owner",
+			"principal_user_id", "source_id", "operation_type",
+			"proposal_sha256", "trace_id", "max_requests",
+			"budget_window_seconds", "policy_json", "state", "expires_at",
 		}
 		required["TimeSeriesCardinalityMaintenanceLock"] = []string{"lock_id"}
 	case "mysql":

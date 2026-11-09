@@ -88,6 +88,7 @@ func pgSourceCleanup(t *testing.T, handler cdb.Handler, sourceID uint64) {
 	t.Helper()
 	t.Cleanup(func() {
 		_, _ = handler.Exec(`DELETE FROM Status WHERE source_id=$1`, sourceID)
+		_, _ = handler.Exec(`DELETE FROM CrawlProposals WHERE source_id=$1`, sourceID)
 		_, _ = handler.Exec(`DELETE FROM CrawlApprovals WHERE source_id=$1`, sourceID)
 		_, _ = handler.Exec(`DELETE FROM SourceOwnership WHERE source_id=$1`, sourceID)
 		_, _ = handler.Exec(`DELETE FROM Sources WHERE source_id=$1`, sourceID)
@@ -380,8 +381,10 @@ func TestPostgresConcurrentApprovalRevocationAuthorization(t *testing.T) {
 	}
 	pgSourceCleanup(t, handler, sourceID)
 	now := time.Now().UTC()
-	issueBody := fmt.Sprintf(`{"request_id":"pg-approval-race-%d","source_id":%d,"agent_id":"race-agent","run_id":"race-run","operation_type":"crawl","proposal_expires_at":%q,"approval_expires_at":%q}`,
-		now.UnixNano(), sourceID, now.Add(time.Hour).Format(time.RFC3339Nano), now.Add(30*time.Minute).Format(time.RFC3339Nano))
+	requestID := fmt.Sprintf("%064x", now.UnixNano())
+	seedSubmittableCrawlProposal(t, handler, requestID, "race-run", sourceID, ownerID, ownerName, now.Add(time.Hour))
+	issueBody := fmt.Sprintf(`{"request_id":%q,"source_id":%d,"operation_type":"crawl","proposal_expires_at":%q,"approval_expires_at":%q}`,
+		requestID, sourceID, now.Add(time.Hour).Format(time.RFC3339Nano), now.Add(30*time.Minute).Format(time.RFC3339Nano))
 	issue := callCrawlApprovalHandler(t, crawlApprovalIssueHandler, http.MethodPost,
 		"/v1/console/crawl/approvals/issue", issueBody, &owner)
 	if issue.Code != http.StatusOK {

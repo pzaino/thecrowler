@@ -119,6 +119,67 @@ BEGIN
 END
 $$;
 
+----------------------------------------------------------------
+-- Durable crawl proposals. A proposal is created by the trusted agent
+-- runtime before any scheduling mutation and is the restart-safe anchor used
+-- by operator approval and submission. Approval state remains in
+-- CrawlApprovals; this table records proposal provenance and lifecycle.
+CREATE TABLE IF NOT EXISTS CrawlProposals (
+    request_id CHAR(64) PRIMARY KEY,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    run_id TEXT NOT NULL,
+    tool_call_id TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    owner TEXT NOT NULL,
+    principal_user_id BIGINT NOT NULL,
+    source_id BIGINT NOT NULL,
+    operation_type TEXT NOT NULL,
+    proposal_sha256 CHAR(64) NOT NULL,
+    trace_id TEXT NOT NULL DEFAULT '',
+    max_requests INTEGER NOT NULL,
+    budget_window_seconds BIGINT NOT NULL,
+    policy_json TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'pending',
+    expires_at TIMESTAMPTZ NOT NULL,
+    submitted_at TIMESTAMPTZ,
+    operation_id TEXT,
+
+    CONSTRAINT uq_crawlproposals_logical UNIQUE
+        (run_id, tool_call_id, source_id, operation_type),
+    CONSTRAINT chk_crawlproposals_hashes CHECK (
+        request_id ~ '^[0-9a-f]{64}$' AND proposal_sha256 ~ '^[0-9a-f]{64}$'
+    ),
+    CONSTRAINT chk_crawlproposals_state CHECK (
+        state IN ('pending', 'submitted', 'expired', 'denied')
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_crawlproposals_run_request
+ON CrawlProposals(run_id, request_id);
+
+CREATE INDEX IF NOT EXISTS idx_crawlproposals_principal
+ON CrawlProposals(principal_user_id, expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_crawlproposals_source
+ON CrawlProposals(source_id, expires_at);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_update_crawlproposals_last_updated_before_update') THEN
+        CREATE TRIGGER trg_update_crawlproposals_last_updated_before_update
+        BEFORE UPDATE ON CrawlProposals
+        FOR EACH ROW
+        EXECUTE FUNCTION update_last_updated_at_column();
+    END IF;
+END
+$$;
+
+ALTER TABLE CrawlProposals OWNER TO :CROWLER_DB_USER;
+GRANT SELECT, INSERT, UPDATE, DELETE ON CrawlProposals TO :CROWLER_DB_USER;
+
+
 UPDATE DBSchemaVersion SET is_current=FALSE;
 INSERT INTO DBSchemaVersion(version,description,is_current)
 VALUES ('1.17','Durable crawl approval persistence',TRUE)
