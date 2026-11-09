@@ -102,15 +102,28 @@ func crawlApprovalErrorCode(err error) int {
 		return http.StatusForbidden
 	case errors.Is(err, agentpkg.ErrCrawlApprovalConflict),
 		errors.Is(err, agentpkg.ErrCrawlApprovalRevoked),
-		errors.Is(err, agentpkg.ErrCrawlProposalConflict):
+		errors.Is(err, agentpkg.ErrCrawlProposalConflict),
+		errors.Is(err, agentpkg.ErrCrawlOperationConflict),
+		errors.Is(err, agentpkg.ErrCrawlOperationMetadataInvalid),
+		errors.Is(err, agentpkg.ErrCrawlOperationStateInvalid),
+		errors.Is(err, cdb.ErrCrawlOperationConflict),
+		errors.Is(err, cdb.ErrCrawlOperationMetadataInvalid),
+		errors.Is(err, cdb.ErrCrawlOperationStateInvalid),
+		errors.Is(err, cdb.ErrCrawlProposalStateConflict):
 		return http.StatusConflict
 	case errors.Is(err, agentpkg.ErrCrawlApprovalStoreUnavailable),
 		errors.Is(err, agentpkg.ErrCrawlApprovalApproverUnavailable),
 		errors.Is(err, agentpkg.ErrCrawlProposalStoreUnavailable),
 		errors.Is(err, agentpkg.ErrCrawlMutationUnsupported),
 		errors.Is(err, agentpkg.ErrCrawlSchedulingUncertain),
-		errors.Is(err, cdb.ErrCrawlSchedulingUncertain):
+		errors.Is(err, agentpkg.ErrCrawlOperationStoreUnavailable),
+		errors.Is(err, cdb.ErrCrawlSchedulingUncertain),
+		errors.Is(err, cdb.ErrCrawlOperationStoreUnavailable):
 		return http.StatusServiceUnavailable
+	case errors.Is(err, context.Canceled):
+		return 499
+	case errors.Is(err, context.DeadlineExceeded):
+		return http.StatusGatewayTimeout
 	case errors.Is(err, agentpkg.ErrCrawlMutationDisabled),
 		errors.Is(err, agentpkg.ErrCrawlMutationOperationRequired),
 		errors.Is(err, agentpkg.ErrCrawlMutationSourceScopeRequired),

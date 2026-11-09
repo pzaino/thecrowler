@@ -51,6 +51,18 @@ var (
 	// be determined. Callers must retry and reconcile against the durable
 	// operation record.
 	ErrCrawlSchedulingUncertain = errors.New("crawl scheduling commit outcome is uncertain")
+	// ErrCrawlOperationConflict means a durable operation exists under the
+	// expected identity but its stored authorization details do not match.
+	ErrCrawlOperationConflict = errors.New("durable crawl operation conflicts with the proposal")
+	// ErrCrawlOperationMetadataInvalid means durable operation metadata cannot
+	// be decoded or is incomplete.
+	ErrCrawlOperationMetadataInvalid = errors.New("durable crawl operation metadata is invalid")
+	// ErrCrawlOperationStateInvalid means durable operation state is not a
+	// recognized scheduling state.
+	ErrCrawlOperationStateInvalid = errors.New("durable crawl operation state is invalid")
+	// ErrCrawlOperationStoreUnavailable means operation reconciliation could
+	// not read the authoritative store. It does not prove absence.
+	ErrCrawlOperationStoreUnavailable = errors.New("durable crawl operation store is unavailable")
 )
 
 // CrawlRequestOperationName is the stable operation/tool name used by trusted
@@ -310,6 +322,9 @@ func (t *crawlRequestTool) Execute(ctx context.Context, args map[string]any) (ma
 	// fingerprint for an already-recorded logical invocation.
 	existing, found, err := cdb.GetCrawlProposalByRequest(ctx, &db, requestID)
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 		return nil, ErrCrawlProposalStoreUnavailable
 	}
 	if found {
@@ -399,13 +414,21 @@ func (t *crawlRequestTool) expireProposal(ctx context.Context, db *cdb.Handler, 
 	// A committed operation may exist even though the proposal looks expired
 	// (legacy divergence or crash). Surface that authoritative operation rather
 	// than reporting the proposal as unscheduled.
-	if reconciled, found, reconcileErr := cdb.ReconcileCrawlProposalOperation(ctx, db, row); reconcileErr == nil && found {
-		return crawlRequestToolMap(CrawlRequestToolResult{
-			OperationID: reconciled.OperationID, RequestID: reconciled.RequestID,
-			SourceID: reconciled.SourceID, State: string(reconciled.State),
-			ReasonCode: reconciled.ReasonCode, Reused: true,
-			ObservedAt: now, ExpiresAt: reconciled.ExpiresAt,
-		}), nil
+	reconciliation, reconcileErr := cdb.ReconcileCrawlProposalOperation(ctx, db, row)
+	switch reconciliation.Outcome {
+	case cdb.CrawlOperationReconciliationFound:
+		if reconcileErr != nil {
+			return nil, reconciliationToolError(reconciliation, reconcileErr)
+		}
+		return reconciliationToolMap(reconciliation, now), nil
+	case cdb.CrawlOperationReconciliationNotFound:
+		if reconcileErr != nil {
+			return nil, reconciliationToolError(reconciliation, reconcileErr)
+		}
+		// The authoritative lookup completed and proved absence. Ordinary
+		// expiry processing may proceed.
+	default:
+		return nil, reconciliationToolError(reconciliation, reconcileErr)
 	}
 	transition, err := cdb.MarkCrawlProposalExpired(ctx, db, row.RequestID)
 	if err == nil {
@@ -433,6 +456,90 @@ func (t *crawlRequestTool) expireProposal(ctx context.Context, db *cdb.Handler, 
 		return nil, err
 	default:
 		return nil, ErrCrawlProposalStoreUnavailable
+	}
+}
+
+func crawlOperationCommitted(state cdb.CrawlOperationState) bool {
+	switch state {
+	case cdb.CrawlOperationAccepted, cdb.CrawlOperationAlreadyPending,
+		cdb.CrawlOperationProcessing, cdb.CrawlOperationCompleted:
+		return true
+	default:
+		return false
+	}
+}
+
+func reconciliationReason(reconciliation cdb.CrawlOperationReconciliation) string {
+	if reconciliation.Result.ReasonCode != "" {
+		return reconciliation.Result.ReasonCode
+	}
+	switch reconciliation.Outcome {
+	case cdb.CrawlOperationReconciliationConflict:
+		return cdb.CrawlReasonOperationConflict
+	case cdb.CrawlOperationReconciliationInvalidMetadata:
+		return cdb.CrawlReasonOperationMetadataInvalid
+	case cdb.CrawlOperationReconciliationInvalidState:
+		return cdb.CrawlReasonOperationStateInvalid
+	case cdb.CrawlOperationReconciliationUnavailable:
+		return cdb.CrawlReasonOperationStoreUnavailable
+	case cdb.CrawlOperationReconciliationUncertain:
+		return cdb.CrawlReasonCommitUncertain
+	case cdb.CrawlOperationReconciliationCancelled:
+		return cdb.CrawlReasonCancelled
+	case cdb.CrawlOperationReconciliationDeadline:
+		return cdb.CrawlReasonTransactionTimeout
+	default:
+		return cdb.CrawlReasonOperationStoreUnavailable
+	}
+}
+
+func reconciliationToolMap(reconciliation cdb.CrawlOperationReconciliation, now time.Time) map[string]any {
+	return crawlRequestToolMap(CrawlRequestToolResult{
+		OperationID: reconciliation.Result.OperationID, RequestID: reconciliation.Result.RequestID,
+		SourceID: reconciliation.Result.SourceID, State: string(reconciliation.Result.State),
+		ReasonCode: reconciliation.Result.ReasonCode, Reused: true,
+		ObservedAt: now, ExpiresAt: reconciliation.Result.ExpiresAt,
+	})
+}
+
+func reconciliationToolError(reconciliation cdb.CrawlOperationReconciliation, err error) error {
+	switch reconciliation.Outcome {
+	case cdb.CrawlOperationReconciliationConflict:
+		return denyTool("crawl_operation_conflict", "durable operation conflicts with the proposal")
+	case cdb.CrawlOperationReconciliationInvalidMetadata:
+		return denyTool("crawl_operation_metadata_invalid", "durable operation metadata is invalid")
+	case cdb.CrawlOperationReconciliationInvalidState:
+		return denyTool("crawl_operation_state_invalid", "durable operation state is invalid")
+	case cdb.CrawlOperationReconciliationCancelled:
+		return context.Canceled
+	case cdb.CrawlOperationReconciliationDeadline:
+		return context.DeadlineExceeded
+	case cdb.CrawlOperationReconciliationUncertain:
+		return denyTool(cdb.CrawlReasonCommitUncertain, "crawl commit outcome is uncertain")
+	default:
+		if errors.Is(err, cdb.ErrCrawlSchedulingUnsupported) {
+			return denyTool("crawl_operation_store_unavailable", "durable operation store is unsupported")
+		}
+		return denyTool("crawl_operation_store_unavailable", "durable operation store is unavailable")
+	}
+}
+
+func reconciliationSubmitError(reconciliation cdb.CrawlOperationReconciliation, err error) error {
+	switch reconciliation.Outcome {
+	case cdb.CrawlOperationReconciliationConflict:
+		return ErrCrawlOperationConflict
+	case cdb.CrawlOperationReconciliationInvalidMetadata:
+		return ErrCrawlOperationMetadataInvalid
+	case cdb.CrawlOperationReconciliationInvalidState:
+		return ErrCrawlOperationStateInvalid
+	case cdb.CrawlOperationReconciliationCancelled:
+		return context.Canceled
+	case cdb.CrawlOperationReconciliationDeadline:
+		return context.DeadlineExceeded
+	case cdb.CrawlOperationReconciliationUncertain:
+		return ErrCrawlSchedulingUncertain
+	default:
+		return ErrCrawlOperationStoreUnavailable
 	}
 }
 
@@ -620,22 +727,38 @@ func (r *CrawlRequestToolRuntime) SubmitApprovedProposal(ctx context.Context, re
 	// Reconcile an already committed operation before any expiry decision. A
 	// crash or the pre-atomic divergence window may have left the proposal
 	// pending or expired while the authoritative operation exists.
-	reconciled, operationFound, reconcileErr := cdb.ReconcileCrawlProposalOperation(ctx, &db, row)
-	if reconcileErr != nil {
-		if errors.Is(reconcileErr, cdb.ErrCrawlSchedulingUncertain) {
-			return reconciled, ErrCrawlSchedulingUncertain
+	reconciliation, reconcileErr := cdb.ReconcileCrawlProposalOperation(ctx, &db, row)
+	switch reconciliation.Outcome {
+	case cdb.CrawlOperationReconciliationFound:
+		if reconcileErr != nil {
+			return reconciliation.Result, reconciliationSubmitError(reconciliation, reconcileErr)
 		}
-		if errors.Is(reconcileErr, cdb.ErrCrawlProposalRowNotFound) {
-			return cdb.CrawlScheduleResult{}, ErrCrawlProposalNotFound
+		outcome := auditOutcomeAllowed
+		if !crawlOperationCommitted(reconciliation.Result.State) {
+			outcome = auditOutcomeDenied
 		}
-		return cdb.CrawlScheduleResult{}, ErrCrawlProposalStoreUnavailable
-	}
-	if operationFound {
 		emitCrawlRequestAudit(row.RunID, row.TraceID, row.AgentID, r.Identity.Name, row.Owner,
-			row.ToolCallID, proposal, row.PrincipalUserID, auditOutcomeAllowed,
-			reconciled.ReasonCode, CrawlStageReused, CrawlApprovalOutcomeVerified,
-			CrawlSourceOutcomeVerified, string(reconciled.State))
-		return reconciled, nil
+			row.ToolCallID, proposal, row.PrincipalUserID, outcome,
+			reconciliation.Result.ReasonCode, CrawlStageReused, CrawlApprovalOutcomeVerified,
+			CrawlSourceOutcomeVerified, string(reconciliation.Result.State))
+		return reconciliation.Result, nil
+	case cdb.CrawlOperationReconciliationNotFound:
+		if reconcileErr != nil {
+			return reconciliation.Result, reconciliationSubmitError(reconciliation, reconcileErr)
+		}
+		// Continue with the normal approval and submission path.
+	default:
+		errOutcome := auditOutcomeError
+		if reconciliation.Outcome == cdb.CrawlOperationReconciliationConflict ||
+			reconciliation.Outcome == cdb.CrawlOperationReconciliationInvalidMetadata ||
+			reconciliation.Outcome == cdb.CrawlOperationReconciliationInvalidState {
+			errOutcome = auditOutcomeDenied
+		}
+		emitCrawlRequestAudit(row.RunID, row.TraceID, row.AgentID, r.Identity.Name, row.Owner,
+			row.ToolCallID, proposal, row.PrincipalUserID, errOutcome,
+			reconciliationReason(reconciliation), CrawlStageReused, CrawlApprovalOutcomeVerified,
+			CrawlSourceOutcomeVerified, string(reconciliation.Result.State))
+		return reconciliation.Result, reconciliationSubmitError(reconciliation, reconcileErr)
 	}
 	if row.State == cdb.CrawlProposalStateSubmitted {
 		return cdb.CrawlScheduleResult{

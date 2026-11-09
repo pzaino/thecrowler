@@ -543,3 +543,85 @@ func TestCrawlApprovalRevokedPendingCannotSchedule(t *testing.T) {
 		t.Fatalf("revoked pending proposal scheduled %d operations", operations)
 	}
 }
+
+func TestCrawlApprovalSubmitRejectsConflictingOperation(t *testing.T) {
+	handler := setupCrawlApprovalAPITest(t)
+	now := time.Now().UTC()
+	owner := sourceOwnershipIdentity(7, "owner-1", "user")
+	requestID := "conflict-request-1"
+	runID := "conflict-run-1"
+	seedSubmittableCrawlProposal(t, handler, requestID, runID, 42, 7, "owner-1", now.Add(time.Hour))
+	issueBody := `{"request_id":"` + requestID + `","source_id":42,"approval_expires_at":"` +
+		now.Add(30*time.Minute).Format(time.RFC3339Nano) + `"}`
+	issue := callCrawlApprovalHandler(t, crawlApprovalIssueHandler, http.MethodPost,
+		"/v1/console/crawl/approvals/issue", issueBody, &owner)
+	if issue.Code != http.StatusOK {
+		t.Fatalf("conflict issue status %d: %s", issue.Code, issue.Body.String())
+	}
+	approval := decodeCrawlApprovalResponse(t, issue)
+	key := cdb.CrawlOperationKey("owner-1", "agent-1", 42, cdb.CrawlOperationType, requestID)
+	details := `{"request_id":"` + requestID + `","run_id":"different-run","principal_user_id":7,` +
+		`"agent_id":"agent-1","owner":"owner-1","source_id":42,"operation_type":"crawl",` +
+		`"parameters_sha256":"` + strings.Repeat("a", 64) + `","approval_id":"` + approval.ApprovalID + `",` +
+		`"approval_sha256":"` + strings.Repeat("b", 64) + `","approved_by":"owner-1","approved_by_user_id":7,` +
+		`"approved_at":"` + now.UTC().Format(time.RFC3339Nano) + `","expires_at":"` + now.Add(30*time.Minute).UTC().Format(time.RFC3339Nano) + `"}`
+	if _, err := handler.(*sourceAPITestHandler).db.Exec(`INSERT INTO Status
+		(status_sha256, agent_id, source_id, operation_type, status, details)
+		VALUES (?, 'agent-1', 42, 'crawl', 'accepted', ?)`, key, details); err != nil {
+		t.Fatalf("insert conflicting operation: %v", err)
+	}
+	submit := callCrawlApprovalHandler(t, crawlApprovalSubmitHandler, http.MethodPost,
+		"/v1/console/crawl/approvals/submit", crawlApprovalSubmitBody(requestID, approval.ApprovalID), &owner)
+	if submit.Code != http.StatusConflict {
+		t.Fatalf("conflicting operation submit status %d: %s", submit.Code, submit.Body.String())
+	}
+	var proposalState string
+	if err := handler.(*sourceAPITestHandler).db.QueryRow(`SELECT state FROM CrawlProposals WHERE request_id=?`, requestID).Scan(&proposalState); err != nil {
+		t.Fatalf("read conflicting proposal: %v", err)
+	}
+	if proposalState != cdb.CrawlProposalStatePending {
+		t.Fatalf("conflicting operation transitioned proposal to %q", proposalState)
+	}
+	var operations int
+	if err := handler.(*sourceAPITestHandler).db.QueryRow(`SELECT COUNT(*) FROM Status WHERE source_id=42`).Scan(&operations); err != nil {
+		t.Fatalf("count conflicting operations: %v", err)
+	}
+	if operations != 1 {
+		t.Fatalf("conflicting operation count = %d, want the existing row", operations)
+	}
+}
+
+func TestCrawlApprovalSubmitRejectsInvalidOperationMetadata(t *testing.T) {
+	handler := setupCrawlApprovalAPITest(t)
+	now := time.Now().UTC()
+	owner := sourceOwnershipIdentity(7, "owner-1", "user")
+	requestID := "invalid-metadata-request-1"
+	runID := "invalid-metadata-run-1"
+	seedSubmittableCrawlProposal(t, handler, requestID, runID, 42, 7, "owner-1", now.Add(time.Hour))
+	issueBody := `{"request_id":"` + requestID + `","source_id":42,"approval_expires_at":"` +
+		now.Add(30*time.Minute).Format(time.RFC3339Nano) + `"}`
+	issue := callCrawlApprovalHandler(t, crawlApprovalIssueHandler, http.MethodPost,
+		"/v1/console/crawl/approvals/issue", issueBody, &owner)
+	if issue.Code != http.StatusOK {
+		t.Fatalf("invalid-metadata issue status %d: %s", issue.Code, issue.Body.String())
+	}
+	approval := decodeCrawlApprovalResponse(t, issue)
+	key := cdb.CrawlOperationKey("owner-1", "agent-1", 42, cdb.CrawlOperationType, requestID)
+	if _, err := handler.(*sourceAPITestHandler).db.Exec(`INSERT INTO Status
+		(status_sha256, agent_id, source_id, operation_type, status, details)
+		VALUES (?, 'agent-1', 42, 'crawl', 'accepted', ?)`, key, `{bad`); err != nil {
+		t.Fatalf("insert invalid operation metadata: %v", err)
+	}
+	submit := callCrawlApprovalHandler(t, crawlApprovalSubmitHandler, http.MethodPost,
+		"/v1/console/crawl/approvals/submit", crawlApprovalSubmitBody(requestID, approval.ApprovalID), &owner)
+	if submit.Code != http.StatusConflict {
+		t.Fatalf("invalid metadata submit status %d: %s", submit.Code, submit.Body.String())
+	}
+	var proposalState string
+	if err := handler.(*sourceAPITestHandler).db.QueryRow(`SELECT state FROM CrawlProposals WHERE request_id=?`, requestID).Scan(&proposalState); err != nil {
+		t.Fatalf("read invalid-metadata proposal: %v", err)
+	}
+	if proposalState != cdb.CrawlProposalStatePending {
+		t.Fatalf("invalid metadata transitioned proposal to %q", proposalState)
+	}
+}

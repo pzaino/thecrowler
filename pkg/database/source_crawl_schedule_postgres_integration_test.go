@@ -6,8 +6,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -616,6 +619,8 @@ func TestPostgresProposalSubmissionExpirySerialization(t *testing.T) {
 	setCrawlSchedulingSourceState(t, db, sourceID, "completed", "", false)
 	req := crawlSchedulingRequest(sourceID)
 	req.RequestID = fmt.Sprintf("%064x", time.Now().UnixNano())
+	req.ApprovedAt = req.ApprovedAt.UTC().Truncate(time.Microsecond)
+	req.ExpiresAt = req.ExpiresAt.UTC().Truncate(time.Microsecond)
 	req = preparePostgresApprovalRequest(req)
 	ensurePostgresCrawlApproval(t, db, req)
 	proposal := CrawlProposalRow{
@@ -685,6 +690,8 @@ func TestPostgresProposalExpiryFirstCannotSchedule(t *testing.T) {
 	setCrawlSchedulingSourceState(t, db, sourceID, "completed", "", false)
 	req := crawlSchedulingRequest(sourceID)
 	req.RequestID = fmt.Sprintf("%064x", time.Now().UnixNano())
+	req.ApprovedAt = req.ApprovedAt.UTC().Truncate(time.Microsecond)
+	req.ExpiresAt = req.ExpiresAt.UTC().Truncate(time.Microsecond)
 	req = preparePostgresApprovalRequest(req)
 	ensurePostgresCrawlApproval(t, db, req)
 	proposal := CrawlProposalRow{
@@ -723,4 +730,174 @@ func TestPostgresProposalExpiryFirstCannotSchedule(t *testing.T) {
 	if status != "completed" {
 		t.Fatalf("expired-first request changed source status to %q", status)
 	}
+}
+
+func envOrReconciliation(name, fallback string) string {
+	if value := os.Getenv(name); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func postgresReconciliationFixture(t *testing.T, db *Handler, label string) (CrawlScheduleRequest, CrawlProposalRow, string) {
+	t.Helper()
+	sourceID := createCrawlSchedulingSource(t, db, fmt.Sprintf("wp03b2c-recon-%s-%d", label, time.Now().UnixNano()))
+	setCrawlSchedulingSourceState(t, db, sourceID, "completed", "", false)
+	req := crawlSchedulingRequest(sourceID)
+	req.RequestID = fmt.Sprintf("%064x", time.Now().UnixNano())
+	req.ApprovedAt = req.ApprovedAt.UTC().Truncate(time.Microsecond)
+	req.ExpiresAt = req.ExpiresAt.UTC().Truncate(time.Microsecond)
+	req = preparePostgresApprovalRequest(req)
+	ensurePostgresCrawlApproval(t, db, req)
+	proposal := CrawlProposalRow{
+		RequestID: req.RequestID, RunID: req.RunID, ToolCallID: "pg-recon-tool",
+		AgentID: req.AgentID, Owner: req.Owner, PrincipalUserID: req.PrincipalUserID,
+		SourceID: req.SourceID, OperationType: req.OperationType,
+		ProposalSHA256: req.ParametersSHA256, TraceID: "pg-recon-trace",
+		MaxRequests: req.MaxRequests, BudgetWindowSeconds: int64(req.BudgetWindow / time.Second),
+		PolicyJSON: "{}", State: CrawlProposalStatePending, ExpiresAt: req.ExpiresAt,
+	}
+	if inserted, err := InsertCrawlProposal(context.Background(), db, proposal); err != nil || !inserted {
+		t.Fatalf("insert reconciliation proposal: inserted=%v err=%v", inserted, err)
+	}
+	key := CrawlOperationKey(req.Owner, req.AgentID, req.SourceID, req.OperationType, req.RequestID)
+	return req, proposal, key
+}
+
+func insertPostgresReconciliationOperation(t *testing.T, db *Handler, key, status string, details crawlOperationDetails) {
+	t.Helper()
+	raw, err := json.Marshal(details)
+	if err != nil {
+		t.Fatalf("marshal postgres operation: %v", err)
+	}
+	if _, err := (*db).Exec(`INSERT INTO Status
+		(status_sha256, agent_id, source_id, operation_type, status, details)
+		VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
+		key, details.AgentID, details.SourceID, details.OperationType, status, string(raw)); err != nil {
+		t.Fatalf("insert postgres reconciliation operation: %v", err)
+	}
+}
+
+func TestPostgresReconciliationOutcomes(t *testing.T) {
+	db, _ := openPostgresIntegrationTestDB(t)
+
+	t.Run("matching operation", func(t *testing.T) {
+		req, proposal, key := postgresReconciliationFixture(t, db, "match")
+		details, _ := crawlOperationDetailsFor(req)
+		insertPostgresReconciliationOperation(t, db, key, string(CrawlOperationAccepted), details)
+		reconciliation, err := ReconcileCrawlProposalOperation(context.Background(), db, proposal)
+		if err != nil || reconciliation.Outcome != CrawlOperationReconciliationFound ||
+			reconciliation.Result.State != CrawlOperationAccepted {
+			t.Fatalf("matching reconciliation = %+v err=%v", reconciliation, err)
+		}
+		stored, found, err := GetCrawlProposalByRequest(context.Background(), db, proposal.RequestID)
+		if err != nil || !found || stored.State != CrawlProposalStateSubmitted {
+			t.Fatalf("matching proposal = %+v found=%v err=%v", stored, found, err)
+		}
+	})
+
+	t.Run("conflicting operation", func(t *testing.T) {
+		req, proposal, key := postgresReconciliationFixture(t, db, "conflict")
+		details, _ := crawlOperationDetailsFor(req)
+		details.RunID = "pg-conflicting-run"
+		insertPostgresReconciliationOperation(t, db, key, string(CrawlOperationAccepted), details)
+		reconciliation, err := ReconcileCrawlProposalOperation(context.Background(), db, proposal)
+		if !errors.Is(err, ErrCrawlOperationConflict) ||
+			reconciliation.Outcome != CrawlOperationReconciliationConflict || reconciliation.Result.Reused {
+			t.Fatalf("conflicting reconciliation = %+v err=%v", reconciliation, err)
+		}
+		stored, found, err := GetCrawlProposalByRequest(context.Background(), db, proposal.RequestID)
+		if err != nil || !found || stored.State != CrawlProposalStatePending {
+			t.Fatalf("conflict changed proposal: %+v found=%v err=%v", stored, found, err)
+		}
+	})
+
+	t.Run("invalid metadata", func(t *testing.T) {
+		_, proposal, key := postgresReconciliationFixture(t, db, "metadata")
+		if _, err := (*db).Exec(`INSERT INTO Status
+			(status_sha256, agent_id, source_id, operation_type, status, details)
+			VALUES ($1, 'agent-1', 42, 'crawl', 'accepted', '{"request_id":123}'::jsonb)`, key); err != nil {
+			t.Fatalf("insert invalid metadata: %v", err)
+		}
+		reconciliation, err := ReconcileCrawlProposalOperation(context.Background(), db, proposal)
+		if !errors.Is(err, ErrCrawlOperationMetadataInvalid) ||
+			reconciliation.Outcome != CrawlOperationReconciliationInvalidMetadata {
+			t.Fatalf("invalid metadata reconciliation = %+v err=%v", reconciliation, err)
+		}
+	})
+
+	t.Run("approval binding conflict", func(t *testing.T) {
+		req, proposal, key := postgresReconciliationFixture(t, db, "approval")
+		details, _ := crawlOperationDetailsFor(req)
+		details.ApprovalID = strings.Repeat("f", 64)
+		insertPostgresReconciliationOperation(t, db, key, string(CrawlOperationAccepted), details)
+		reconciliation, err := ReconcileCrawlProposalOperation(context.Background(), db, proposal)
+		if !errors.Is(err, ErrCrawlOperationConflict) ||
+			reconciliation.Outcome != CrawlOperationReconciliationConflict {
+			t.Fatalf("approval conflict reconciliation = %+v err=%v", reconciliation, err)
+		}
+	})
+
+	t.Run("store unavailable", func(t *testing.T) {
+		_, proposal, _ := postgresReconciliationFixture(t, db, "unavailable")
+		port, _ := strconv.Atoi(envOrReconciliation("DOCKER_POSTGRES_DB_PORT", "5432"))
+		cfgDB := cfg.Config{Database: cfg.Database{
+			Type: "postgres", Host: envOrReconciliation("DOCKER_POSTGRES_DB_HOST", "127.0.0.1"),
+			Port: port, User: envOrReconciliation("DOCKER_POSTGRES_DB_USER", "postgres"),
+			Password:           envOrReconciliation("DOCKER_POSTGRES_PASSWORD", "postgres"),
+			DBName:             envOrReconciliation("DOCKER_POSTGRES_DB_NAME", "SitesIndex"),
+			SSLMode:            envOrReconciliation("DOCKER_POSTGRES_SSL_MODE", "disable"),
+			TransactionTimeout: 5,
+		}}
+		closed, err := NewHandler(cfgDB)
+		if err != nil {
+			t.Fatalf("create closed-store handler: %v", err)
+		}
+		if err := closed.Connect(cfgDB); err != nil {
+			t.Fatalf("connect closed-store handler: %v", err)
+		}
+		if err := closed.Close(); err != nil {
+			t.Fatalf("close closed-store handler: %v", err)
+		}
+		reconciliation, err := ReconcileCrawlProposalOperation(context.Background(), &closed, proposal)
+		if !errors.Is(err, ErrCrawlOperationStoreUnavailable) ||
+			reconciliation.Outcome != CrawlOperationReconciliationUnavailable {
+			t.Fatalf("store-unavailable reconciliation = %+v err=%v", reconciliation, err)
+		}
+	})
+
+	t.Run("cancelled", func(t *testing.T) {
+		_, proposal, _ := postgresReconciliationFixture(t, db, "cancel")
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		reconciliation, err := ReconcileCrawlProposalOperation(ctx, db, proposal)
+		if !errors.Is(err, context.Canceled) ||
+			reconciliation.Outcome != CrawlOperationReconciliationCancelled {
+			t.Fatalf("cancelled reconciliation = %+v err=%v", reconciliation, err)
+		}
+	})
+
+	t.Run("transient metadata retry", func(t *testing.T) {
+		req, proposal, key := postgresReconciliationFixture(t, db, "retry")
+		if _, err := (*db).Exec(`INSERT INTO Status
+			(status_sha256, agent_id, source_id, operation_type, status, details)
+			VALUES ($1, 'agent-1', 42, 'crawl', 'accepted', '{"request_id":123}'::jsonb)`, key); err != nil {
+			t.Fatalf("insert transient metadata: %v", err)
+		}
+		if reconciliation, err := ReconcileCrawlProposalOperation(context.Background(), db, proposal); !errors.Is(err, ErrCrawlOperationMetadataInvalid) {
+			t.Fatalf("initial metadata reconciliation = %+v err=%v", reconciliation, err)
+		}
+		if _, err := (*db).Exec(`DELETE FROM Status WHERE status_sha256=$1`, key); err != nil {
+			t.Fatalf("remove transient metadata: %v", err)
+		}
+		details, _ := crawlOperationDetailsFor(req)
+		insertPostgresReconciliationOperation(t, db, key, string(CrawlOperationAccepted), details)
+		reconciliation, err := ReconcileCrawlProposalOperation(context.Background(), db, proposal)
+		if err != nil || reconciliation.Outcome != CrawlOperationReconciliationFound {
+			t.Fatalf("retry reconciliation = %+v err=%v", reconciliation, err)
+		}
+		if stored, found, err := GetCrawlProposalByRequest(context.Background(), db, proposal.RequestID); err != nil || !found || stored.State != CrawlProposalStateSubmitted {
+			t.Fatalf("retry proposal = %+v found=%v err=%v", stored, found, err)
+		}
+	})
 }

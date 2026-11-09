@@ -579,3 +579,209 @@ func TestCrawlRequestToolLoopReportsApprovalLookupFailure(t *testing.T) {
 		t.Fatalf("lookup failure in loop mutated source: status=%q operations=%d", status, operations)
 	}
 }
+
+func insertExpiredProposalFixture(t *testing.T, handler *cdb.Handler, runtime *CrawlRequestToolRuntime, callID string, now time.Time) (string, string) {
+	t.Helper()
+	requestID, err := CrawlToolRequestID("run-1", callID, 42)
+	if err != nil {
+		t.Fatalf("derive expired request ID: %v", err)
+	}
+	proposal := CrawlRequestProposal{
+		RequestID: requestID, SourceID: 42, OperationType: cdb.CrawlOperationType,
+		ExpiresAt: now.Add(-time.Minute).UTC().Truncate(time.Microsecond),
+	}
+	row := cdb.CrawlProposalRow{
+		RequestID: requestID, RunID: "run-1", ToolCallID: callID,
+		AgentID: runtime.Identity.AgentID, Owner: runtime.Identity.Owner,
+		PrincipalUserID: runtime.Policy.Principal.UserID, SourceID: 42,
+		OperationType: cdb.CrawlOperationType, ProposalSHA256: proposal.Fingerprint(),
+		TraceID: "trace-1", MaxRequests: runtime.Policy.MaxRequests,
+		BudgetWindowSeconds: int64(runtime.Policy.BudgetWindow / time.Second),
+		PolicyJSON:          "{}", State: cdb.CrawlProposalStatePending, ExpiresAt: proposal.ExpiresAt,
+	}
+	if inserted, err := cdb.InsertCrawlProposal(context.Background(), handler, row); err != nil || !inserted {
+		t.Fatalf("insert expired proposal: inserted=%v err=%v", inserted, err)
+	}
+	key := cdb.CrawlOperationKey(row.Owner, row.AgentID, row.SourceID, row.OperationType, row.RequestID)
+	return requestID, key
+}
+
+func TestCrawlRequestExpiryDoesNotSwallowReconciliationFailure(t *testing.T) {
+	handler := newCrawlSchedulingTestDB(t)
+	now := time.Now().UTC()
+	runtime := newCrawlToolTestRuntime(t, handler, []uint64{42}, now)
+	tool := &crawlRequestTool{runtime: runtime}
+	requestID, key := insertExpiredProposalFixture(t, handler, runtime, "expire-call", now)
+	if _, err := (*handler).Exec(`INSERT INTO Status
+		(status_sha256, agent_id, source_id, operation_type, status, details)
+		VALUES (?, 'agent-1', 42, 'crawl', 'accepted', '{bad')`, key); err != nil {
+		t.Fatalf("insert malformed operation: %v", err)
+	}
+	if _, err := tool.Execute(crawlToolContext(t, handler, runtime, "expire-call"), map[string]any{"source_id": float64(42)}); err == nil {
+		t.Fatalf("reconciliation failure was treated as expiry success")
+	} else if authErr, ok := err.(*ToolAuthError); !ok || authErr.Code != "crawl_operation_metadata_invalid" {
+		t.Fatalf("reconciliation failure error = %v", err)
+	}
+	stored, found, err := cdb.GetCrawlProposalByRequest(context.Background(), handler, requestID)
+	if err != nil || !found || stored.State != cdb.CrawlProposalStatePending {
+		t.Fatalf("failed reconciliation mutated proposal: %+v found=%v err=%v", stored, found, err)
+	}
+
+	// A transient metadata failure can be repaired; retry must then expire the
+	// proposal only after a successful authoritative lookup proves absence.
+	if _, err := (*handler).Exec(`DELETE FROM Status WHERE status_sha256=?`, key); err != nil {
+		t.Fatalf("remove malformed operation: %v", err)
+	}
+	expired, err := tool.Execute(crawlToolContext(t, handler, runtime, "expire-call"), map[string]any{"source_id": float64(42)})
+	if err != nil {
+		t.Fatalf("retry after metadata repair: %v", err)
+	}
+	if expired["state"] != cdb.CrawlProposalStateExpired {
+		t.Fatalf("retry state = %+v", expired)
+	}
+	stored, found, err = cdb.GetCrawlProposalByRequest(context.Background(), handler, requestID)
+	if err != nil || !found || stored.State != cdb.CrawlProposalStateExpired {
+		t.Fatalf("retry did not expire proposal: %+v found=%v err=%v", stored, found, err)
+	}
+
+	// Cancellation during reconciliation must not mutate proposal state.
+	requestID2, _ := insertExpiredProposalFixture(t, handler, runtime, "cancel-call", now)
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := tool.Execute(crawlToolContextWithContext(cancelled, t, handler, runtime, "cancel-call"), map[string]any{"source_id": float64(42)}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled expiry error = %v", err)
+	}
+	stored, found, err = cdb.GetCrawlProposalByRequest(context.Background(), handler, requestID2)
+	if err != nil || !found || stored.State != cdb.CrawlProposalStatePending {
+		t.Fatalf("cancelled reconciliation mutated proposal: %+v found=%v err=%v", stored, found, err)
+	}
+}
+
+func crawlToolContextWithContext(ctx context.Context, t *testing.T, handler *cdb.Handler, runtime *CrawlRequestToolRuntime, callID string) context.Context {
+	t.Helper()
+	return ContextWithToolRuntime(ctx, ToolRuntime{
+		DB: *handler, CallID: callID, Crawl: runtime,
+		Auth: ToolAuthContext{
+			Identity: runtime.Identity, Enforcement: true,
+			Allowlist:         map[string]bool{crawlRequestToolName: true},
+			AllowedSources:    map[uint64]bool{42: true},
+			AllowedOperations: map[string]bool{crawlRequestToolName: true},
+			MutationAllowed:   true, RunID: "run-1", TraceID: "trace-1",
+		},
+	})
+}
+
+func TestCrawlRequestExpiryDoesNotTreatConflictAsAbsence(t *testing.T) {
+	handler := newCrawlSchedulingTestDB(t)
+	now := time.Now().UTC()
+	runtime := newCrawlToolTestRuntime(t, handler, []uint64{42}, now)
+	tool := &crawlRequestTool{runtime: runtime}
+	requestID, key := insertExpiredProposalFixture(t, handler, runtime, "conflict-call", now)
+	details := `{"request_id":"` + requestID + `","run_id":"different-run","principal_user_id":7,` +
+		`"agent_id":"agent-1","owner":"owner-1","source_id":42,"operation_type":"crawl",` +
+		`"parameters_sha256":"` + strings.Repeat("a", 64) + `"}`
+	if _, err := (*handler).Exec(`INSERT INTO Status
+		(status_sha256, agent_id, source_id, operation_type, status, details)
+		VALUES (?, 'agent-1', 42, 'crawl', 'accepted', ?)`, key, details); err != nil {
+		t.Fatalf("insert conflicting operation: %v", err)
+	}
+	if _, err := tool.Execute(crawlToolContext(t, handler, runtime, "conflict-call"), map[string]any{"source_id": float64(42)}); err == nil {
+		t.Fatalf("conflicting operation was treated as expiry success")
+	} else if authErr, ok := err.(*ToolAuthError); !ok || authErr.Code != "crawl_operation_conflict" {
+		t.Fatalf("conflicting operation error = %v", err)
+	}
+	stored, found, err := cdb.GetCrawlProposalByRequest(context.Background(), handler, requestID)
+	if err != nil || !found || stored.State != cdb.CrawlProposalStatePending {
+		t.Fatalf("conflict mutated proposal: %+v found=%v err=%v", stored, found, err)
+	}
+}
+
+func TestCrawlRequestSubmissionConflictIsNeverSuccessfulReuse(t *testing.T) {
+	handler := newCrawlSchedulingTestDB(t)
+	now := time.Now().UTC()
+	runtime := newCrawlToolTestRuntime(t, handler, []uint64{42}, now)
+	tool := &crawlRequestTool{runtime: runtime}
+	result, err := tool.Execute(crawlToolContext(t, handler, runtime, "submit-conflict-call"), map[string]any{"source_id": float64(42)})
+	if err != nil {
+		t.Fatalf("proposal: %v", err)
+	}
+	requestID := result["request_id"].(string)
+	row, found, err := cdb.GetCrawlProposalByRequest(context.Background(), handler, requestID)
+	if err != nil || !found {
+		t.Fatalf("read proposal: found=%v err=%v", found, err)
+	}
+	store := runtime.ApprovalStore.(*DatabaseCrawlApprovalStore)
+	approval, err := store.IssueCrawlApproval(context.Background(), CrawlApprovalIssuanceRequest{
+		Proposal: CrawlRequestProposal{
+			RequestID: row.RequestID, SourceID: row.SourceID,
+			OperationType: row.OperationType, ExpiresAt: row.ExpiresAt,
+		},
+		Identity: runtime.Identity, Principal: runtime.Policy.Principal,
+		RunID: row.RunID, IssuerPrincipal: runtime.Policy.Principal,
+		Approver: runtime.Policy.Principal, Issuer: "crowler-api",
+		ApprovedAt: now, ExpiresAt: now.Add(10 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("issue approval: %v", err)
+	}
+	key := cdb.CrawlOperationKey(row.Owner, row.AgentID, row.SourceID, row.OperationType, row.RequestID)
+	details := `{"request_id":"` + row.RequestID + `","run_id":"different-run","principal_user_id":7,` +
+		`"agent_id":"agent-1","owner":"owner-1","source_id":42,"operation_type":"crawl",` +
+		`"parameters_sha256":"` + strings.Repeat("a", 64) + `"}`
+	if _, err := (*handler).Exec(`INSERT INTO Status
+		(status_sha256, agent_id, source_id, operation_type, status, details)
+		VALUES (?, 'agent-1', 42, 'crawl', 'accepted', ?)`, key, details); err != nil {
+		t.Fatalf("insert conflicting operation: %v", err)
+	}
+	submitted, err := runtime.SubmitApprovedProposal(context.Background(), requestID, approval.ApprovalID, runtime.Policy.Principal)
+	if !errors.Is(err, ErrCrawlOperationConflict) {
+		t.Fatalf("conflicting submission error = %v", err)
+	}
+	if submitted.Reused || submitted.State == cdb.CrawlOperationAccepted {
+		t.Fatalf("conflicting operation reported as successful reuse: %+v", submitted)
+	}
+	stored, found, err := cdb.GetCrawlProposalByRequest(context.Background(), handler, requestID)
+	if err != nil || !found || stored.State != cdb.CrawlProposalStatePending {
+		t.Fatalf("conflict changed proposal: %+v found=%v err=%v", stored, found, err)
+	}
+	status, operations := crawlSchedulingTestSourceState(t, handler, 42)
+	if status != "completed" || operations != 1 {
+		t.Fatalf("conflict source status=%q operations=%d", status, operations)
+	}
+
+	// Malformed metadata must also fail rather than expire/schedule.
+	runtime2 := newCrawlToolTestRuntime(t, handler, []uint64{42}, now)
+	tool2 := &crawlRequestTool{runtime: runtime2}
+	result2, err := tool2.Execute(crawlToolContext(t, handler, runtime2, "submit-metadata-call"), map[string]any{"source_id": float64(42)})
+	if err != nil {
+		t.Fatalf("second proposal: %v", err)
+	}
+	requestID2 := result2["request_id"].(string)
+	row2, _, _ := cdb.GetCrawlProposalByRequest(context.Background(), handler, requestID2)
+	approval2, err := store.IssueCrawlApproval(context.Background(), CrawlApprovalIssuanceRequest{
+		Proposal: CrawlRequestProposal{
+			RequestID: row2.RequestID, SourceID: row2.SourceID,
+			OperationType: row2.OperationType, ExpiresAt: row2.ExpiresAt,
+		},
+		Identity: runtime2.Identity, Principal: runtime2.Policy.Principal,
+		RunID: row2.RunID, IssuerPrincipal: runtime2.Policy.Principal,
+		Approver: runtime2.Policy.Principal, Issuer: "crowler-api",
+		ApprovedAt: now, ExpiresAt: now.Add(10 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("issue second approval: %v", err)
+	}
+	key2 := cdb.CrawlOperationKey(row2.Owner, row2.AgentID, row2.SourceID, row2.OperationType, row2.RequestID)
+	if _, err := (*handler).Exec(`INSERT INTO Status
+		(status_sha256, agent_id, source_id, operation_type, status, details)
+		VALUES (?, 'agent-1', 42, 'crawl', 'accepted', '{bad')`, key2); err != nil {
+		t.Fatalf("insert malformed operation: %v", err)
+	}
+	if _, err := runtime2.SubmitApprovedProposal(context.Background(), requestID2, approval2.ApprovalID, runtime2.Policy.Principal); !errors.Is(err, ErrCrawlOperationMetadataInvalid) {
+		t.Fatalf("malformed metadata submission error = %v", err)
+	}
+	stored2, _, _ := cdb.GetCrawlProposalByRequest(context.Background(), handler, requestID2)
+	if stored2.State != cdb.CrawlProposalStatePending {
+		t.Fatalf("malformed metadata changed proposal to %q", stored2.State)
+	}
+}

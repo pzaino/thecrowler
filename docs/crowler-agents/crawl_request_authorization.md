@@ -752,14 +752,36 @@ scheduler reports the machine-readable `uncertain` state with
 `crawl_commit_uncertain`; it never reports a definite failure in that case.
 The operator retries the same request. Reconciliation loads the proposal,
 finds the authoritative operation by the deterministic operation key, verifies
-its request/run/agent/owner/principal/source/operation/parameters binding, and
-transitions the proposal to `submitted` with that operation ID. No new
-operation is created.
+its request/run/agent/owner/principal/source/operation/parameters and approval
+binding, and transitions the proposal to `submitted` with that operation ID.
+No new operation is created.
+
+Reconciliation uses a closed outcome set:
+
+- `found`: matching authoritative operation; safe to reuse
+- `not_found`: lookup completed and proved absence
+- `conflict`: an operation exists but its stored identity, approval or
+  fingerprint does not match the proposal; never successful reuse
+- `invalid_metadata`: operation JSON cannot be decoded or required fields are
+  missing
+- `invalid_state`: the stored operation state is not inspectable Scheduling
+  state
+- `unavailable`: the operation store or database read failed
+- `cancelled` / `deadline_exceeded`: caller context ended
+- `uncertain`: the transaction outcome could not be determined
+
+Only `not_found` permits ordinary expiry. A lookup failure does not prove
+absence. Conflicting operation metadata returns a typed conflict error and the
+operator API returns HTTP 409, not 200. The proposal is not transitioned to
+`submitted` and existing durable records are left for diagnostics.
 
 The same reconciliation repairs the pre-atomic divergence window where a
 proposal is `pending` or `expired` while an accepted operation already exists.
 A `submitted` proposal with no operation is reported as `uncertain` /
 `crawl_proposal_inconsistent`, not scheduled again.
+
+A malformed or conflicting operation record is never overwritten. Repairing it
+requires an operator investigation, not an automatic reconciliation rewrite.
 
 ### Operator retry guidance
 
@@ -769,6 +791,12 @@ A `submitted` proposal with no operation is reported as `uncertain` /
   proposal if the request is still needed.
 - HTTP 200/409 with state `uncertain`: retry the same request. Reconciliation
   decides whether the operation committed.
+- HTTP 409 for `crawl_operation_conflict`, `crawl_operation_metadata_invalid`
+  or `crawl_operation_state_invalid`: stop and inspect the durable `Status`
+  record; do not overwrite it or assume the proposal is unscheduled.
+- HTTP 503 for `crawl_operation_store_unavailable` or `crawl_commit_uncertain`:
+  retry the same request after the store recovers. A failed lookup is not
+  evidence that no operation exists.
 - HTTP 403/409 for approval/ownership/state conflicts: do not retry blindly;
   inspect the proposal, approval and source ownership.
 

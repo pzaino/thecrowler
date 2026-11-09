@@ -359,7 +359,12 @@ authorized proposal.
 A commit error is reported as `uncertain` / `crawl_commit_uncertain`, not as a
 definite failure. Retrying the same request reconciles the proposal against the
 durable operation key and returns the existing operation ID without creating a
-second crawl. A `submitted` proposal with no operation is reported as
+second crawl. Reconciliation returns a typed outcome: `found`, `not_found`,
+`conflict`, `invalid_metadata`, `invalid_state`, `unavailable`, `cancelled`,
+`deadline_exceeded` or `uncertain`. Only `not_found` permits ordinary expiry.
+A conflicting or unreadable operation is never reported as successful reuse,
+is never overwritten, and leaves the proposal pending for operator review. A
+`submitted` proposal with no operation is reported as
 `crawl_proposal_inconsistent` rather than scheduled again.
 
 The complete contract, state table, retry guidance and policy-revocation

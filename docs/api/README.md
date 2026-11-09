@@ -410,4 +410,9 @@ successful `accepted` result means scheduling was committed; it is not proof
 that the crawl completed. A result with state `uncertain` and reason
 `crawl_commit_uncertain` means the commit outcome could not be determined:
 retry the same request, and the durable operation will be reconciled rather
-than duplicated.
+than duplicated. A `409 Conflict` for `crawl_operation_conflict`,
+`crawl_operation_metadata_invalid` or `crawl_operation_state_invalid` means the
+durable `Status` record does not match the proposal or cannot be read safely;
+it is never reported as successful reuse. A `503 Service Unavailable` for
+`crawl_operation_store_unavailable` means absence was not proven and the
+request may be retried after the store recovers.
