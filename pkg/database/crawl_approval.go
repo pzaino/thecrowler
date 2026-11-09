@@ -183,28 +183,16 @@ func InsertCrawlApprovalAuthorized(ctx context.Context, db *Handler, row CrawlAp
 	if !owner.Verified || owner.UserID == 0 {
 		return false, ErrSourceMutationUnverified
 	}
-	active, err := activeUserTx(txCtx, tx, *db, row.ApprovedByUserID)
-	if err != nil {
-		return false, err
-	}
-	if !active {
+	if row.ApprovedByUserID == 0 || row.IssuedByUserID == 0 {
 		return false, ErrSourceMutationForbidden
+	}
+	if err := lockActiveUsersTx(txCtx, tx, *db, row.ApprovedByUserID, row.IssuedByUserID); err != nil {
+		return false, err
 	}
 	if row.ApprovedByUserID != owner.UserID {
-		admin, err := activeUserHasAnyRoleTx(txCtx, tx, *db, row.ApprovedByUserID, []string{"admin", "superadmin"})
-		if err != nil {
+		if err := lockUserAdminRoleTx(txCtx, tx, *db, row.ApprovedByUserID); err != nil {
 			return false, err
 		}
-		if !admin {
-			return false, ErrSourceMutationForbidden
-		}
-	}
-	active, err = activeUserTx(txCtx, tx, *db, row.IssuedByUserID)
-	if err != nil {
-		return false, err
-	}
-	if !active {
-		return false, ErrSourceMutationForbidden
 	}
 
 	result, err := tx.ExecContext(txCtx, crawlApprovalInsertSQL(*db), crawlApprovalInsertArgs(row)...)
@@ -219,6 +207,90 @@ func InsertCrawlApprovalAuthorized(ctx context.Context, db *Handler, row CrawlAp
 		return false, NormalizeTransactionError(txCtx, err)
 	}
 	return affected > 0, nil
+}
+
+// RevokeCrawlApprovalAuthorized performs an authorization-first,
+// idempotent revocation. It locks the source and current account/grant rows,
+// rechecks verified ownership or a current administrative grant, and only then
+// applies the revocation. Repeating an authorized revocation returns success
+// without changing the original revocation metadata.
+func RevokeCrawlApprovalAuthorized(ctx context.Context, db *Handler, approvalID string, principalUserID uint64, admin bool, revokedBy, reason string, revokedAt time.Time) (bool, bool, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if db == nil || *db == nil {
+		return false, false, fmt.Errorf("database handler is nil")
+	}
+	if !supportsCrawlApprovalStore(*db) {
+		return false, false, ErrCrawlApprovalStoreUnsupported
+	}
+	if strings.TrimSpace(approvalID) == "" || principalUserID == 0 {
+		return false, false, ErrSourceMutationForbidden
+	}
+	if revokedAt.IsZero() {
+		revokedAt = time.Now().UTC()
+	}
+	txCtx, cancel := TransactionContextForHandler(ctx, db)
+	defer cancel()
+	tx, err := (*db).BeginTx(txCtx, nil)
+	if err != nil {
+		return false, false, NormalizeTransactionError(txCtx, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	p := func(n int) string { return crawlApprovalPlaceholder(*db, n) }
+	var sourceID uint64
+	if err := tx.QueryRowContext(txCtx, `SELECT source_id FROM CrawlApprovals WHERE approval_id = `+p(1), approvalID).Scan(&sourceID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, false, nil
+		}
+		return false, false, crawlApprovalStoreError(err)
+	}
+
+	// Authorize before the idempotent-revocation decision. This is the defect
+	// this helper closes: an already-revoked row must not bypass source and
+	// account authorization.
+	if _, err := AuthorizeSourceMutationTx(txCtx, tx, *db, sourceID, principalUserID, admin); err != nil {
+		return false, true, err
+	}
+
+	lockQuery := `SELECT revoked_at FROM CrawlApprovals WHERE approval_id = ` + p(1)
+	if normalizeInformationSeedDBMS((*db).DBMS()) == DBPostgresStr {
+		lockQuery += ` FOR UPDATE`
+	}
+	var alreadyRevoked sql.NullTime
+	if err := tx.QueryRowContext(txCtx, lockQuery, approvalID).Scan(&alreadyRevoked); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, false, nil
+		}
+		return false, false, crawlApprovalStoreError(err)
+	}
+	if alreadyRevoked.Valid {
+		if err := tx.Commit(); err != nil {
+			return false, false, NormalizeTransactionError(txCtx, err)
+		}
+		return false, true, nil
+	}
+
+	update := `UPDATE CrawlApprovals
+		SET revoked_at = ` + p(1) + `,
+		    revoked_by_user_id = ` + p(2) + `,
+		    revoked_by = ` + p(3) + `,
+		    revocation_reason = ` + p(4) + `,
+		    last_updated_at = CURRENT_TIMESTAMP
+		WHERE approval_id = ` + p(5) + ` AND revoked_at IS NULL`
+	result, err := tx.ExecContext(txCtx, update, revokedAt, principalUserID, strings.TrimSpace(revokedBy), strings.TrimSpace(reason), approvalID)
+	if err != nil {
+		return false, true, crawlApprovalStoreError(err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, true, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, false, NormalizeTransactionError(txCtx, err)
+	}
+	return affected > 0, true, nil
 }
 
 // GetCrawlApprovalByID returns one approval by its stable approval ID.

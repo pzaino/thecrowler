@@ -4,6 +4,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -371,5 +372,73 @@ func TestPostgresCrawlApprovalRollback(t *testing.T) {
 	}
 	if status != "completed" || operations != 0 {
 		t.Fatalf("rollback left status=%q operations=%d", status, operations)
+	}
+}
+
+func TestPostgresCrawlApprovalConcurrentRevocationAuthorization(t *testing.T) {
+	db := openCrawlApprovalPostgresDB(t)
+	ownerID, _ := setupCrawlApprovalPostgresUsers(t, db)
+	otherID := ownerID + 2
+	otherName := fmt.Sprintf("wp03b2b-other-%d", otherID)
+	if _, err := (*db).Exec(`INSERT INTO Users(user_id, username, disabled, deleted_at)
+		VALUES ($1, $2, FALSE, NULL)
+		ON CONFLICT (user_id) DO UPDATE SET username=EXCLUDED.username, disabled=FALSE, deleted_at=NULL`, otherID, otherName); err != nil {
+		t.Fatalf("insert other user: %v", err)
+	}
+	if _, err := (*db).Exec(`INSERT INTO UserRoles(user_id, role_id)
+		SELECT $1, role_id FROM AuthRoles WHERE name='user'
+		ON CONFLICT DO NOTHING`, otherID); err != nil {
+		t.Fatalf("grant other user role: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = (*db).Exec(`DELETE FROM UserRoles WHERE user_id=$1`, otherID)
+		_, _ = (*db).Exec(`DELETE FROM UserScopes WHERE user_id=$1`, otherID)
+		_, _ = (*db).Exec(`DELETE FROM Users WHERE user_id=$1`, otherID)
+	})
+
+	sourceID := createCrawlApprovalPostgresSource(t, db, ownerID)
+	now := time.Now().UTC()
+	owner := CrawlPrincipal{UserID: ownerID, Username: fmt.Sprintf("wp03b2b-owner-%d", ownerID), Issuer: "crowler"}
+	other := CrawlPrincipal{UserID: otherID, Username: otherName, Issuer: "crowler"}
+	identity := AgentIdentity{AgentID: "wp03b2b-revoke-agent", Owner: owner.Username, TrustLevel: "trusted"}
+	proposal := postgresApprovalProposal(sourceID, fmt.Sprintf("wp03b2b-revoke-%d", now.UnixNano()), now)
+	store := postgresApprovalStore(db)
+	approval, err := store.IssueCrawlApproval(context.Background(), postgresApprovalRequest(proposal, identity, owner, now))
+	if err != nil {
+		t.Fatalf("issue approval: %v", err)
+	}
+
+	type outcome struct {
+		principal string
+		err       error
+	}
+	results := make(chan outcome, 2)
+	var wg sync.WaitGroup
+	for _, principal := range []CrawlPrincipal{owner, other} {
+		principal := principal
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err := store.RevokeCrawlApproval(context.Background(), principal, approval.ApprovalID, principal.Username+" request", now)
+			results <- outcome{principal: principal.Username, err: err}
+		}()
+	}
+	wg.Wait()
+	close(results)
+	ownerSuccess, otherDenied := false, false
+	for result := range results {
+		switch result.principal {
+		case owner.Username:
+			ownerSuccess = result.err == nil
+		case other.Username:
+			otherDenied = errors.Is(result.err, ErrCrawlApprovalApproverUnauthorized)
+		}
+	}
+	if !ownerSuccess || !otherDenied {
+		t.Fatalf("concurrent revocation outcomes ownerSuccess=%v otherDenied=%v", ownerSuccess, otherDenied)
+	}
+	raw, found, err := cdb.GetCrawlApprovalByID(context.Background(), db, approval.ApprovalID)
+	if err != nil || !found || !raw.RevokedAt.Valid || raw.RevokedByUserID.Int64 != int64(ownerID) {
+		t.Fatalf("unexpected concurrent revocation metadata: %+v found=%v err=%v", raw, found, err)
 	}
 }

@@ -94,18 +94,17 @@ func UpsertAuthenticatedSourceContext(
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	active, err := activeUserTx(txCtx, tx, *db, principalUserID)
-	if err != nil {
-		return 0, false, err
-	}
-	if !active {
-		return 0, false, ErrSourceMutationForbidden
-	}
 	inserted, err := insertAuthenticatedSourceRow(txCtx, tx, *db, prepared)
 	if err != nil {
 		return 0, false, err
 	}
 	if inserted {
+		// The insert may have completed before a concurrent disable. Lock the
+		// account before recording provenance; a disable which committed first
+		// aborts this transaction, while a later disable waits for this commit.
+		if err := lockActiveUserTx(txCtx, tx, *db, principalUserID); err != nil {
+			return 0, false, err
+		}
 		sourceID, err := sourceIDByURLTx(txCtx, tx, *db, prepared.URL)
 		if err != nil {
 			return 0, false, err
@@ -131,20 +130,25 @@ func UpsertAuthenticatedSourceContext(
 	if owner.Deleted {
 		return 0, false, ErrSourceMutationDeleted
 	}
-	if !admin {
+	// The source row is locked now; recheck account state and current grants
+	// under that lock before deciding whether this upsert may update it.
+	if owner.UserID == principalUserID && owner.Verified {
+		if err := lockActiveUserTx(txCtx, tx, *db, principalUserID); err != nil {
+			return 0, false, err
+		}
+	} else if admin {
+		if err := lockUserAuthorizationTx(txCtx, tx, *db, principalUserID, true); err != nil {
+			return 0, false, err
+		}
+	} else {
+		if err := lockActiveUserTx(txCtx, tx, *db, principalUserID); err != nil {
+			return 0, false, err
+		}
 		if owner.UserID == 0 || !owner.Verified {
 			return 0, false, ErrSourceMutationUnverified
 		}
 		if owner.UserID != principalUserID {
 			return 0, false, ErrAuthenticatedSourceConflict
-		}
-	} else {
-		active, err := activeUserHasAnyRoleTx(txCtx, tx, *db, principalUserID, []string{"admin", "superadmin"})
-		if err != nil {
-			return 0, false, err
-		}
-		if !active {
-			return 0, false, ErrSourceMutationForbidden
 		}
 	}
 

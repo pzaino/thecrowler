@@ -15,8 +15,9 @@ import (
 
 // DatabaseCrawlApprovalStore is the production-shaped durable approval
 // adapter. It implements issuance, lookup and revocation against the
-// CrawlApprovals table and uses the trusted source authorizer for operator
-// permission checks.
+// CrawlApprovals table. Issuance and verification use the trusted source
+// authorizer; revocation uses the authoritative source/account transaction so
+// repeated revocation cannot bypass permission checks.
 type DatabaseCrawlApprovalStore struct {
 	DB               *cdb.Handler
 	SourceAuthorizer CrawlSourceAuthorizer
@@ -262,7 +263,9 @@ func (s *DatabaseCrawlApprovalStore) LookupCrawlApprovalByRequest(ctx context.Co
 }
 
 // RevokeCrawlApproval persists revocation after checking the principal's
-// source authority. Repeating a revocation is idempotent.
+// current account, verified source ownership and administrative grants.
+// Repeating an authorized revocation is idempotent, but an unauthorized caller
+// never receives success merely because the approval is already revoked.
 func (s *DatabaseCrawlApprovalStore) RevokeCrawlApproval(ctx context.Context, principal CrawlPrincipal, approvalID, reason string, revokedAt time.Time) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -270,31 +273,28 @@ func (s *DatabaseCrawlApprovalStore) RevokeCrawlApproval(ctx context.Context, pr
 	if err := principal.Validate(); err != nil {
 		return ErrCrawlApprovalApproverUnauthorized
 	}
-	row, found, err := cdb.GetCrawlApprovalByID(ctx, s.DB, approvalID)
-	if err != nil {
+	if s == nil || s.DB == nil || *s.DB == nil {
 		return ErrCrawlApprovalStoreUnavailable
-	}
-	if !found {
-		return ErrCrawlApprovalUnknown
-	}
-	record := approvalRecordFromRow(row)
-	if record.Revoked {
-		return nil
 	}
 	if s.SourceAuthorizer == nil {
 		return ErrCrawlApprovalApproverUnavailable
 	}
-	if err := s.SourceAuthorizer.AuthorizeCrawlSource(ctx, principal, record.Approval.SourceID); err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return ctxErr
-		}
-		if errors.Is(err, ErrCrawlSourceOwnershipMissing) || errors.Is(err, ErrCrawlSourceForbidden) {
+	resolved, err := s.enrichPrincipal(ctx, principal)
+	if err != nil {
+		return ErrCrawlApprovalApproverUnauthorized
+	}
+	revoked, exists, err := cdb.RevokeCrawlApprovalAuthorized(
+		ctx, s.DB, approvalID, resolved.UserID, resolved.IsSourceAdministrator(),
+		resolved.Username, reason, revokedAt,
+	)
+	if err != nil {
+		if errors.Is(err, cdb.ErrSourceMutationNotFound) ||
+			errors.Is(err, cdb.ErrSourceMutationDeleted) ||
+			errors.Is(err, cdb.ErrSourceMutationUnverified) ||
+			errors.Is(err, cdb.ErrSourceMutationForbidden) ||
+			errors.Is(err, cdb.ErrSourceOwnershipAdminRequired) {
 			return ErrCrawlApprovalApproverUnauthorized
 		}
-		return ErrCrawlApprovalApproverUnavailable
-	}
-	revoked, exists, err := cdb.RevokeCrawlApproval(ctx, s.DB, approvalID, principal.UserID, principal.Username, reason, revokedAt)
-	if err != nil {
 		return ErrCrawlApprovalStoreUnavailable
 	}
 	if !exists {

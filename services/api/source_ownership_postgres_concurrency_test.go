@@ -363,3 +363,67 @@ func TestPostgresUserDisabledDuringSourceUpdate(t *testing.T) {
 		t.Fatalf("disabled-user update changed status to %q", status)
 	}
 }
+
+func TestPostgresConcurrentApprovalRevocationAuthorization(t *testing.T) {
+	handler, ownerID, otherID, _ := setupSourceOwnershipPostgresAPI(t)
+	ownerName := fmt.Sprintf("pg-race-owner-%d", ownerID)
+	otherName := fmt.Sprintf("pg-race-other-%d", otherID)
+	sourceURL := fmt.Sprintf("https://pg-approval-race-%d.example/", time.Now().UnixNano())
+	owner := pgIdentity(ownerID, ownerName, "user")
+	other := pgIdentity(otherID, otherName, "user")
+	if code, body := pgAddSource(t, owner, sourceURL); code != http.StatusCreated {
+		t.Fatalf("create source status %d: %s", code, body)
+	}
+	var sourceID uint64
+	if err := handler.QueryRow(`SELECT source_id FROM Sources WHERE url=$1`, cdb.NormalizeSourceURL(sourceURL)).Scan(&sourceID); err != nil {
+		t.Fatalf("read approval source: %v", err)
+	}
+	pgSourceCleanup(t, handler, sourceID)
+	now := time.Now().UTC()
+	issueBody := fmt.Sprintf(`{"request_id":"pg-approval-race-%d","source_id":%d,"agent_id":"race-agent","run_id":"race-run","operation_type":"crawl","proposal_expires_at":%q,"approval_expires_at":%q}`,
+		now.UnixNano(), sourceID, now.Add(time.Hour).Format(time.RFC3339Nano), now.Add(30*time.Minute).Format(time.RFC3339Nano))
+	issue := callCrawlApprovalHandler(t, crawlApprovalIssueHandler, http.MethodPost,
+		"/v1/console/crawl/approvals/issue", issueBody, &owner)
+	if issue.Code != http.StatusOK {
+		t.Fatalf("issue approval status %d: %s", issue.Code, issue.Body.String())
+	}
+	approval := decodeCrawlApprovalResponse(t, issue)
+
+	type outcome struct {
+		code int
+	}
+	results := make(chan outcome, 2)
+	var wg sync.WaitGroup
+	for _, identity := range []auth.Identity{owner, other} {
+		identity := identity
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			recorder := callCrawlApprovalHandler(t, crawlApprovalRevokeHandler, http.MethodPost,
+				"/v1/console/crawl/approvals/revoke",
+				`{"approval_id":"`+approval.ApprovalID+`","reason":"concurrent"}`, &identity)
+			results <- outcome{code: recorder.Code}
+		}()
+	}
+	wg.Wait()
+	close(results)
+	ownerSuccess, otherDenied := false, false
+	for result := range results {
+		switch result.code {
+		case http.StatusOK:
+			ownerSuccess = true
+		case http.StatusForbidden:
+			otherDenied = true
+		}
+	}
+	if !ownerSuccess || !otherDenied {
+		t.Fatalf("concurrent HTTP revocation ownerSuccess=%v otherDenied=%v", ownerSuccess, otherDenied)
+	}
+	var revokedBy uint64
+	if err := handler.QueryRow(`SELECT revoked_by_user_id FROM CrawlApprovals WHERE approval_id=$1`, approval.ApprovalID).Scan(&revokedBy); err != nil {
+		t.Fatalf("read HTTP revocation owner: %v", err)
+	}
+	if revokedBy != ownerID {
+		t.Fatalf("concurrent HTTP revocation actor = %d, want owner %d", revokedBy, ownerID)
+	}
+}

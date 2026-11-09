@@ -120,11 +120,25 @@ func TestCrawlApprovalIssueAndStatus(t *testing.T) {
 	}
 }
 
+func crawlApprovalRevocationMetadata(t *testing.T, handler cdb.Handler, approvalID string) (string, uint64, string) {
+	t.Helper()
+	var revokedAt, reason string
+	var revokedBy uint64
+	if err := handler.(*sourceAPITestHandler).db.QueryRow(
+		`SELECT COALESCE(CAST(revoked_at AS TEXT),''), COALESCE(revoked_by_user_id,0), COALESCE(revocation_reason,'')
+		 FROM CrawlApprovals WHERE approval_id = ?`, approvalID).
+		Scan(&revokedAt, &revokedBy, &reason); err != nil {
+		t.Fatalf("read approval revocation metadata: %v", err)
+	}
+	return revokedAt, revokedBy, reason
+}
+
 func TestCrawlApprovalRevocation(t *testing.T) {
-	_ = setupCrawlApprovalAPITest(t)
+	handler := setupCrawlApprovalAPITest(t)
 	now := time.Now().UTC()
 	owner := sourceOwnershipIdentity(7, "owner-1", "user")
 	other := sourceOwnershipIdentity(8, "owner-2", "user")
+	admin := sourceOwnershipIdentity(9, "admin-1", "admin")
 	recorder := callCrawlApprovalHandler(t, crawlApprovalIssueHandler, http.MethodPost,
 		"/v1/console/crawl/approvals/issue", crawlApprovalIssueBody(now), &owner)
 	if recorder.Code != http.StatusOK {
@@ -159,6 +173,46 @@ func TestCrawlApprovalRevocation(t *testing.T) {
 		`{"approval_id":"`+issued.ApprovalID+`","reason":"repeat"}`, &owner)
 	if repeat.Code != http.StatusOK {
 		t.Fatalf("repeat revoke status %d: %s", repeat.Code, repeat.Body.String())
+	}
+	revokedAt, revokedBy, reason := crawlApprovalRevocationMetadata(t, handler, issued.ApprovalID)
+
+	otherRepeat := callCrawlApprovalHandler(t, crawlApprovalRevokeHandler, http.MethodPost,
+		"/v1/console/crawl/approvals/revoke",
+		`{"approval_id":"`+issued.ApprovalID+`","reason":"other repeat"}`, &other)
+	if otherRepeat.Code != http.StatusForbidden {
+		t.Fatalf("other repeat revoke status %d: %s", otherRepeat.Code, otherRepeat.Body.String())
+	}
+	afterOtherAt, afterOtherBy, afterOtherReason := crawlApprovalRevocationMetadata(t, handler, issued.ApprovalID)
+	if afterOtherAt != revokedAt || afterOtherBy != revokedBy || afterOtherReason != reason {
+		t.Fatalf("unauthorized repeat changed revocation metadata")
+	}
+
+	if _, err := handler.(*sourceAPITestHandler).db.Exec(`DELETE FROM UserRoles WHERE user_id=9`); err != nil {
+		t.Fatalf("revoke admin grant: %v", err)
+	}
+	adminRepeat := callCrawlApprovalHandler(t, crawlApprovalRevokeHandler, http.MethodPost,
+		"/v1/console/crawl/approvals/revoke",
+		`{"approval_id":"`+issued.ApprovalID+`","reason":"demoted admin repeat"}`, &admin)
+	if adminRepeat.Code != http.StatusForbidden {
+		t.Fatalf("demoted admin repeat status %d: %s", adminRepeat.Code, adminRepeat.Body.String())
+	}
+	afterAdminAt, afterAdminBy, afterAdminReason := crawlApprovalRevocationMetadata(t, handler, issued.ApprovalID)
+	if afterAdminAt != revokedAt || afterAdminBy != revokedBy || afterAdminReason != reason {
+		t.Fatalf("demoted administrator changed revocation metadata")
+	}
+
+	if _, err := handler.(*sourceAPITestHandler).db.Exec(`UPDATE Users SET disabled=TRUE WHERE user_id=7`); err != nil {
+		t.Fatalf("disable owner: %v", err)
+	}
+	disabledRepeat := callCrawlApprovalHandler(t, crawlApprovalRevokeHandler, http.MethodPost,
+		"/v1/console/crawl/approvals/revoke",
+		`{"approval_id":"`+issued.ApprovalID+`","reason":"disabled repeat"}`, &owner)
+	if disabledRepeat.Code != http.StatusUnauthorized {
+		t.Fatalf("disabled owner repeat status %d: %s", disabledRepeat.Code, disabledRepeat.Body.String())
+	}
+	afterDisabledAt, afterDisabledBy, afterDisabledReason := crawlApprovalRevocationMetadata(t, handler, issued.ApprovalID)
+	if afterDisabledAt != revokedAt || afterDisabledBy != revokedBy || afterDisabledReason != reason {
+		t.Fatalf("disabled owner changed revocation metadata")
 	}
 }
 

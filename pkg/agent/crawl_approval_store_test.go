@@ -255,3 +255,117 @@ func TestDatabaseCrawlApprovalStoreRestartSafeProposalFingerprint(t *testing.T) 
 			record.Proposal.Fingerprint(), approval.ProposalSHA256)
 	}
 }
+
+func TestDatabaseCrawlApprovalStoreRepeatedRevocationRequiresAuthorization(t *testing.T) {
+	store, _ := newDatabaseApprovalStore(t)
+	now := time.Now().UTC()
+	request := databaseApprovalRequest(now)
+	approval, err := store.IssueCrawlApproval(context.Background(), request)
+	if err != nil {
+		t.Fatalf("issue approval: %v", err)
+	}
+	owner := request.Principal
+	other := CrawlPrincipal{UserID: 8, Username: "owner-2", Issuer: "crowler", Roles: []string{"user"}}
+	if err := store.RevokeCrawlApproval(context.Background(), owner, approval.ApprovalID, "owner request", now); err != nil {
+		t.Fatalf("owner revoke: %v", err)
+	}
+	raw, found, err := cdb.GetCrawlApprovalByID(context.Background(), store.DB, approval.ApprovalID)
+	if err != nil || !found {
+		t.Fatalf("read revoked approval: found=%v err=%v", found, err)
+	}
+	originalRevokedAt, originalRevokedBy, originalReason := raw.RevokedAt, raw.RevokedByUserID, raw.RevocationReason
+	if err := store.RevokeCrawlApproval(context.Background(), owner, approval.ApprovalID, "owner repeat", now); err != nil {
+		t.Fatalf("authorized repeat revoke: %v", err)
+	}
+	afterOwner, found, err := cdb.GetCrawlApprovalByID(context.Background(), store.DB, approval.ApprovalID)
+	if err != nil || !found {
+		t.Fatalf("read after owner repeat: found=%v err=%v", found, err)
+	}
+	if afterOwner.RevokedAt != originalRevokedAt || afterOwner.RevokedByUserID != originalRevokedBy ||
+		afterOwner.RevocationReason != originalReason {
+		t.Fatalf("authorized repeat changed revocation metadata: before=%+v after=%+v", raw, afterOwner)
+	}
+	if err := store.RevokeCrawlApproval(context.Background(), other, approval.ApprovalID, "unauthorized repeat", now); !errors.Is(err, ErrCrawlApprovalApproverUnauthorized) {
+		t.Fatalf("unauthorized repeat error = %v", err)
+	}
+	afterOther, found, err := cdb.GetCrawlApprovalByID(context.Background(), store.DB, approval.ApprovalID)
+	if err != nil || !found {
+		t.Fatalf("read after unauthorized repeat: found=%v err=%v", found, err)
+	}
+	if afterOther.RevokedAt != originalRevokedAt || afterOther.RevokedByUserID != originalRevokedBy ||
+		afterOther.RevocationReason != originalReason {
+		t.Fatalf("unauthorized repeat changed revocation metadata: before=%+v after=%+v", raw, afterOther)
+	}
+}
+
+func TestDatabaseCrawlApprovalStoreRevocationRequiresCurrentPrivilege(t *testing.T) {
+	store, _ := newDatabaseApprovalStore(t)
+	now := time.Now().UTC()
+	request := databaseApprovalRequest(now)
+	approval, err := store.IssueCrawlApproval(context.Background(), request)
+	if err != nil {
+		t.Fatalf("issue approval: %v", err)
+	}
+	admin := CrawlPrincipal{UserID: 9, Username: "admin-1", Issuer: "crowler", Roles: []string{"admin"}}
+	if err := store.RevokeCrawlApproval(context.Background(), admin, approval.ApprovalID, "admin request", now); err != nil {
+		t.Fatalf("admin revoke: %v", err)
+	}
+	raw, found, err := cdb.GetCrawlApprovalByID(context.Background(), store.DB, approval.ApprovalID)
+	if err != nil || !found {
+		t.Fatalf("read admin-revoked approval: found=%v err=%v", found, err)
+	}
+	if _, err := (*store.DB).Exec(`DELETE FROM UserRoles WHERE user_id=9`); err != nil {
+		t.Fatalf("revoke administrator grant: %v", err)
+	}
+	if err := store.RevokeCrawlApproval(context.Background(), admin, approval.ApprovalID, "revoked admin repeat", now); !errors.Is(err, ErrCrawlApprovalApproverUnauthorized) {
+		t.Fatalf("demoted admin repeat error = %v", err)
+	}
+	after, found, err := cdb.GetCrawlApprovalByID(context.Background(), store.DB, approval.ApprovalID)
+	if err != nil || !found {
+		t.Fatalf("read after demoted admin: found=%v err=%v", found, err)
+	}
+	if after.RevokedAt != raw.RevokedAt || after.RevokedByUserID != raw.RevokedByUserID ||
+		after.RevocationReason != raw.RevocationReason {
+		t.Fatalf("demoted admin changed revocation metadata: before=%+v after=%+v", raw, after)
+	}
+}
+
+func TestDatabaseCrawlApprovalStoreRevocationRejectsDisabledOwner(t *testing.T) {
+	store, _ := newDatabaseApprovalStore(t)
+	now := time.Now().UTC()
+	request := databaseApprovalRequest(now)
+	approval, err := store.IssueCrawlApproval(context.Background(), request)
+	if err != nil {
+		t.Fatalf("issue approval: %v", err)
+	}
+	owner := request.Principal
+	if err := store.RevokeCrawlApproval(context.Background(), owner, approval.ApprovalID, "owner request", now); err != nil {
+		t.Fatalf("owner revoke: %v", err)
+	}
+	raw, found, err := cdb.GetCrawlApprovalByID(context.Background(), store.DB, approval.ApprovalID)
+	if err != nil || !found {
+		t.Fatalf("read revoked approval: found=%v err=%v", found, err)
+	}
+	if _, err := (*store.DB).Exec(`UPDATE Users SET disabled=TRUE WHERE user_id=7`); err != nil {
+		t.Fatalf("disable owner: %v", err)
+	}
+	if err := store.RevokeCrawlApproval(context.Background(), owner, approval.ApprovalID, "disabled repeat", now); !errors.Is(err, ErrCrawlApprovalApproverUnauthorized) {
+		t.Fatalf("disabled owner repeat error = %v", err)
+	}
+	after, found, err := cdb.GetCrawlApprovalByID(context.Background(), store.DB, approval.ApprovalID)
+	if err != nil || !found {
+		t.Fatalf("read after disabled owner: found=%v err=%v", found, err)
+	}
+	if after.RevokedAt != raw.RevokedAt || after.RevokedByUserID != raw.RevokedByUserID ||
+		after.RevocationReason != raw.RevocationReason {
+		t.Fatalf("disabled owner changed revocation metadata: before=%+v after=%+v", raw, after)
+	}
+}
+
+func TestDatabaseCrawlApprovalStoreRejectsUnknownRevocation(t *testing.T) {
+	store, _ := newDatabaseApprovalStore(t)
+	owner := CrawlPrincipal{UserID: 7, Username: "owner-1", Issuer: "crowler", Roles: []string{"user"}}
+	if err := store.RevokeCrawlApproval(context.Background(), owner, strings.Repeat("d", 64), "unknown", time.Now().UTC()); !errors.Is(err, ErrCrawlApprovalUnknown) {
+		t.Fatalf("unknown revocation error = %v", err)
+	}
+}

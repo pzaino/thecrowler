@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -314,30 +315,29 @@ func AuthorizeSourceMutationTx(ctx context.Context, tx *sql.Tx, db Handler, sour
 	if owner.Deleted {
 		return SourceOwner{}, ErrSourceMutationDeleted
 	}
-	if !admin {
-		active, err := activeUserTx(ctx, tx, db, principalUserID)
-		if err != nil {
+	// The source row is already locked. Lock the principal row (and, when an
+	// administrator override is claimed, the current grant rows) before using
+	// the account state. This makes disablement/deletion and role revocation
+	// serialize against the mutation instead of racing a pre-lock check.
+	if owner.UserID == principalUserID && owner.Verified {
+		if err := lockActiveUserTx(ctx, tx, db, principalUserID); err != nil {
 			return owner, err
-		}
-		if !active {
-			return owner, ErrSourceMutationForbidden
-		}
-		if owner.UserID == 0 || !owner.Verified {
-			return owner, ErrSourceMutationUnverified
-		}
-		if owner.UserID != principalUserID {
-			return owner, ErrSourceMutationForbidden
 		}
 		return owner, nil
 	}
-	active, err := activeUserHasAnyRoleTx(ctx, tx, db, principalUserID, []string{"admin", "superadmin"})
-	if err != nil {
+	if admin {
+		if err := lockUserAuthorizationTx(ctx, tx, db, principalUserID, true); err != nil {
+			return owner, err
+		}
+		return owner, nil
+	}
+	if err := lockActiveUserTx(ctx, tx, db, principalUserID); err != nil {
 		return owner, err
 	}
-	if !active {
-		return owner, ErrSourceMutationForbidden
+	if owner.UserID == 0 || !owner.Verified {
+		return owner, ErrSourceMutationUnverified
 	}
-	return owner, nil
+	return owner, ErrSourceMutationForbidden
 }
 
 // AuthorizeSourceMutationByURLTx is the URL-addressed equivalent used by source
@@ -365,30 +365,25 @@ func AuthorizeSourceMutationByURLTx(ctx context.Context, tx *sql.Tx, db Handler,
 	if owner.Deleted {
 		return SourceOwner{}, ErrSourceMutationDeleted
 	}
-	if !admin {
-		active, err := activeUserTx(ctx, tx, db, principalUserID)
-		if err != nil {
+	if owner.UserID == principalUserID && owner.Verified {
+		if err := lockActiveUserTx(ctx, tx, db, principalUserID); err != nil {
 			return owner, err
-		}
-		if !active {
-			return owner, ErrSourceMutationForbidden
-		}
-		if owner.UserID == 0 || !owner.Verified {
-			return owner, ErrSourceMutationUnverified
-		}
-		if owner.UserID != principalUserID {
-			return owner, ErrSourceMutationForbidden
 		}
 		return owner, nil
 	}
-	active, err := activeUserHasAnyRoleTx(ctx, tx, db, principalUserID, []string{"admin", "superadmin"})
-	if err != nil {
+	if admin {
+		if err := lockUserAuthorizationTx(ctx, tx, db, principalUserID, true); err != nil {
+			return owner, err
+		}
+		return owner, nil
+	}
+	if err := lockActiveUserTx(ctx, tx, db, principalUserID); err != nil {
 		return owner, err
 	}
-	if !active {
-		return owner, ErrSourceMutationForbidden
+	if owner.UserID == 0 || !owner.Verified {
+		return owner, ErrSourceMutationUnverified
 	}
-	return owner, nil
+	return owner, ErrSourceMutationForbidden
 }
 
 // VerifySourceOwnershipContext performs an explicit administrative ownership
@@ -432,19 +427,14 @@ func VerifySourceOwnershipContext(ctx context.Context, db *Handler, verification
 	if owner.Deleted {
 		return SourceOwner{}, ErrSourceMutationDeleted
 	}
-	active, err := activeUserHasAnyRoleTx(txCtx, tx, *db, verification.VerifiedByUserID, []string{"admin", "superadmin"})
-	if err != nil {
+	if err := lockActiveUsersTx(txCtx, tx, *db, verification.UserID, verification.VerifiedByUserID); err != nil {
 		return SourceOwner{}, err
 	}
-	if !active {
-		return SourceOwner{}, ErrSourceOwnershipAdminRequired
-	}
-	userActive, err := activeUserTx(txCtx, tx, *db, verification.UserID)
-	if err != nil {
+	if err := lockUserAdminRoleTx(txCtx, tx, *db, verification.VerifiedByUserID); err != nil {
+		if errors.Is(err, ErrSourceMutationForbidden) {
+			return SourceOwner{}, ErrSourceOwnershipAdminRequired
+		}
 		return SourceOwner{}, err
-	}
-	if !userActive {
-		return SourceOwner{}, ErrSourceMutationForbidden
 	}
 
 	updateOwner := `UPDATE Sources SET usr_id = ` + sourceOwnershipPlaceholder(*db, 1) + `, last_updated_at = CURRENT_TIMESTAMP WHERE source_id = ` + sourceOwnershipPlaceholder(*db, 2)
@@ -491,31 +481,44 @@ func VerifySourceOwnershipContext(ctx context.Context, db *Handler, verification
 	}, nil
 }
 
-func activeUserTx(ctx context.Context, tx *sql.Tx, db Handler, userID uint64) (bool, error) {
+// lockActiveUserTx locks the Users row and checks that the account is active.
+// PostgreSQL row locking makes a concurrent disable/delete wait until this
+// transaction commits; a disable/delete which committed first is observed and
+// rejected. SQLite serializes writers through its transaction.
+func lockActiveUserTx(ctx context.Context, tx *sql.Tx, db Handler, userID uint64) error {
 	if tx == nil {
-		return false, fmt.Errorf("transaction is nil")
+		return fmt.Errorf("transaction is nil")
+	}
+	if userID == 0 {
+		return ErrSourceMutationForbidden
 	}
 	placeholder := sourceOwnershipPlaceholder(db, 1)
-	deletedExpr := "deleted_at IS NULL"
-	if normalizeInformationSeedDBMS(db.DBMS()) == DBMySQLStr {
-		deletedExpr = "TRUE"
+	query := `SELECT disabled, deleted_at FROM Users WHERE user_id = ` + placeholder
+	if normalizeInformationSeedDBMS(db.DBMS()) == DBPostgresStr {
+		query += ` FOR UPDATE`
 	}
-	query := `SELECT COUNT(*) FROM Users WHERE user_id = ` + placeholder + ` AND disabled = ` + falseLiteral(db) + ` AND ` + deletedExpr
-	var count int
-	if err := tx.QueryRowContext(ctx, query, userID).Scan(&count); err != nil {
-		return false, fmt.Errorf("check user state: %w", err)
+	var disabled bool
+	var deletedAt sql.NullTime
+	if err := tx.QueryRowContext(ctx, query, userID).Scan(&disabled, &deletedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrSourceMutationForbidden
+		}
+		return fmt.Errorf("lock user account: %w", err)
 	}
-	return count > 0, nil
+	if disabled || deletedAt.Valid {
+		return ErrSourceMutationForbidden
+	}
+	return nil
 }
 
-func activeUserHasAnyRoleTx(ctx context.Context, tx *sql.Tx, db Handler, userID uint64, roles []string) (bool, error) {
-	active, err := activeUserTx(ctx, tx, db, userID)
-	if err != nil || !active {
-		return false, err
+// lockUserAdminRoleTx locks the user's current grant rows and verifies that an
+// administrative role is still present. Role revocation therefore either
+// commits before this check (and is observed) or waits for this transaction.
+func lockUserAdminRoleTx(ctx context.Context, tx *sql.Tx, db Handler, userID uint64) error {
+	if tx == nil {
+		return fmt.Errorf("transaction is nil")
 	}
-	if len(roles) == 0 {
-		return false, nil
-	}
+	roles := []string{"admin", "superadmin"}
 	placeholders := make([]string, 0, len(roles)+1)
 	placeholders = append(placeholders, sourceOwnershipPlaceholder(db, 1))
 	args := []interface{}{userID}
@@ -523,20 +526,67 @@ func activeUserHasAnyRoleTx(ctx context.Context, tx *sql.Tx, db Handler, userID 
 		placeholders = append(placeholders, sourceOwnershipPlaceholder(db, i+2))
 		args = append(args, strings.ToLower(strings.TrimSpace(role)))
 	}
-	query := `SELECT COUNT(*) FROM UserRoles ur
+	query := `SELECT ur.role_id FROM UserRoles ur
 		JOIN AuthRoles r ON r.role_id = ur.role_id
 		WHERE ur.user_id = ` + placeholders[0] + `
 		  AND LOWER(r.name) IN (` + strings.Join(placeholders[1:], ",") + `)`
-	var count int
-	if err := tx.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
-		return false, fmt.Errorf("check administrative role: %w", err)
+	if normalizeInformationSeedDBMS(db.DBMS()) == DBPostgresStr {
+		query += ` FOR UPDATE OF ur, r`
 	}
-	return count > 0, nil
+	rows, err := tx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("lock administrative role: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck
+	found := false
+	for rows.Next() {
+		var roleID uint64
+		if err := rows.Scan(&roleID); err != nil {
+			return fmt.Errorf("scan administrative role: %w", err)
+		}
+		found = true
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("read administrative role: %w", err)
+	}
+	if !found {
+		return ErrSourceMutationForbidden
+	}
+	return nil
 }
 
-func falseLiteral(db Handler) string {
-	if normalizeInformationSeedDBMS(db.DBMS()) == DBSQLiteStr {
-		return "0"
+// lockUserAuthorizationTx locks the account and, when requested, its current
+// administrative grant before a source/approval mutation uses that authority.
+func lockUserAuthorizationTx(ctx context.Context, tx *sql.Tx, db Handler, userID uint64, admin bool) error {
+	if err := lockActiveUserTx(ctx, tx, db, userID); err != nil {
+		return err
 	}
-	return "FALSE"
+	if admin {
+		return lockUserAdminRoleTx(ctx, tx, db, userID)
+	}
+	return nil
+}
+
+// lockActiveUsersTx locks a set of accounts in ascending ID order so two
+// transactions touching the same accounts cannot deadlock on user rows.
+func lockActiveUsersTx(ctx context.Context, tx *sql.Tx, db Handler, userIDs ...uint64) error {
+	unique := make(map[uint64]struct{}, len(userIDs))
+	ordered := make([]uint64, 0, len(userIDs))
+	for _, userID := range userIDs {
+		if userID == 0 {
+			continue
+		}
+		if _, seen := unique[userID]; seen {
+			continue
+		}
+		unique[userID] = struct{}{}
+		ordered = append(ordered, userID)
+	}
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i] < ordered[j] })
+	for _, userID := range ordered {
+		if err := lockActiveUserTx(ctx, tx, db, userID); err != nil {
+			return err
+		}
+	}
+	return nil
 }

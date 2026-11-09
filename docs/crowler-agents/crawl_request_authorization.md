@@ -56,6 +56,13 @@ explicit agent-to-user mapping table remains a future contract decision.
 - request-body or query-string `usr_id` is ignored when authentication is
   enabled;
 - source ownership cannot be changed through add or update;
+- authenticated source add/update/remove/vacuum lock the source row and then
+  lock/recheck the current `Users` row and, for administrator overrides, the
+  current `UserRoles`/`AuthRoles` grant rows; a disablement or role revocation
+  which committed first is observed, while a later one waits for the mutation;
+- a new-source insert is provisional until that account-row lock succeeds. If
+  account deactivation commits first, the source insert is rolled back; if the
+  insert obtains the account lock first, deactivation serializes after commit;
 - `/v1/source/update`, `/v1/source/remove` and `/v1/source/vacuum` require the
   source owner or the established `admin`/`superadmin` role;
 - an existing URL owned by another user cannot be claimed or modified through
@@ -213,7 +220,10 @@ type CrawlApprovalRevoker interface {
 - returns `crawl_approval_conflict` when the same run/request/source/operation
   already has a different proposal;
 - returns `crawl_approval_revoked` when a retry targets a revoked approval;
-- persists revocation without deleting history.
+- persists revocation without deleting history;
+- rechecks the caller's current account, verified source ownership and current
+  administrative grant before an idempotent revocation succeeds; an already
+  revoked approval never bypasses authorization.
 
 `StoreBackedCrawlApprovalVerifier` checks the trusted issuer, authoritative
 record, revocation state, exact approval fingerprint, proposal/run/agent/
@@ -421,14 +431,21 @@ transaction:
    the same source lock.
 7. Quota, operation insertion and the conditional source update follow.
 
-The lock order is source, then approval. Revocation locks only the approval row.
-An ownership transfer must lock the source row. This produces linearizable
-outcomes:
+Source mutations lock the source row first, then the authoritative account/grant
+rows. Approval issuance locks source, then account/grant rows, then inserts the
+approval. Revocation locks source, then account/grant rows, then the approval
+row. Scheduling locks source, then the approval row, then the account/grant
+rows. Sharing the source-row lock serializes competing operations on the same
+source; account rows are locked in ascending user-ID order. This produces
+linearizable outcomes:
 
 - revocation before submission → submission denied;
 - submission before revocation → accepted operation, then revocation;
 - transfer before submission → ownership denial;
-- submission before transfer → accepted operation, then transfer.
+- submission before transfer → accepted operation, then transfer;
+- disablement/grant revocation before the authoritative mutation check → denial;
+- an authorized idempotent revocation remains successful, while an unauthorized
+  retry is denied even after the approval is already revoked.
 
 A missing `CrawlApprovals` table fails closed with
 `crawl_approval_unavailable`; a missing approval or stale binding returns

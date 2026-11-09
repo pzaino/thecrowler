@@ -639,30 +639,25 @@ func validateCrawlApprovalForScheduling(ctx context.Context, tx *sql.Tx, db Hand
 		return CrawlReasonApprovalRejected, nil
 	}
 
-	// The approver must still be an active account. If the approver is not the
-	// source owner, the administrative grant that allowed issuance must still
-	// be present at submission time.
-	approverActive, err := activeUserTx(ctx, tx, db, approvedByUserID)
-	if err != nil {
-		return "", err
-	}
-	if !approverActive {
+	// The principal, approver and issuer must still be active. Lock their
+	// Users rows now so disablement/deletion cannot commit between this check
+	// and the scheduling mutation. If the approver is not the principal, lock
+	// the current administrative grant rows as well.
+	if approvedByUserID == 0 || issuedByUserID == 0 {
 		return CrawlReasonApprovalRejected, nil
 	}
-	issuerActive, err := activeUserTx(ctx, tx, db, issuedByUserID)
-	if err != nil {
+	if err := lockActiveUsersTx(ctx, tx, db, principalUserID, approvedByUserID, issuedByUserID); err != nil {
+		if errors.Is(err, ErrSourceMutationForbidden) {
+			return CrawlReasonApprovalRejected, nil
+		}
 		return "", err
-	}
-	if !issuerActive {
-		return CrawlReasonApprovalRejected, nil
 	}
 	if approvedByUserID != principalUserID {
-		admin, err := activeUserHasAnyRoleTx(ctx, tx, db, approvedByUserID, []string{"admin", "superadmin"})
-		if err != nil {
+		if err := lockUserAdminRoleTx(ctx, tx, db, approvedByUserID); err != nil {
+			if errors.Is(err, ErrSourceMutationForbidden) {
+				return CrawlReasonApprovalRejected, nil
+			}
 			return "", err
-		}
-		if !admin {
-			return CrawlReasonApprovalRejected, nil
 		}
 	}
 
