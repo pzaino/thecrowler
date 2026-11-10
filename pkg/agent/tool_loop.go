@@ -122,6 +122,7 @@ type ToolLoopConfig struct {
 	TraceID           string
 	GroupDeadline     time.Time
 	Ctx               context.Context
+	cancel            context.CancelFunc
 }
 
 // ToolCallSummary is the sanitized per-call record: names, IDs, and reason
@@ -209,8 +210,15 @@ func emitToolAudit(runID, traceID, agentID, agentName, owner, tool, outcome, rea
 
 // RunToolLoop executes the bounded synchronous loop.
 func RunToolLoop(config ToolLoopConfig) (ToolLoopResult, error) {
-	if config.MCPManager != nil {
-		defer func() { _ = config.MCPManager.Close() }()
+	if config.MCPManager != nil || config.cancel != nil {
+		defer func() {
+			if config.MCPManager != nil {
+				_ = config.MCPManager.Close()
+			}
+			if config.cancel != nil {
+				config.cancel()
+			}
+		}()
 	}
 	result := ToolLoopResult{
 		ToolCalls: []ToolCallSummary{},
@@ -305,14 +313,19 @@ func RunToolLoop(config ToolLoopConfig) (ToolLoopResult, error) {
 		emitToolAudit(result.RunID, result.TraceID, agentID, agentName, owner, "", auditOutcomeDenied, "run context expired")
 		return fail(ToolLoopCancelled, "run context expired", fmt.Errorf("tool loop cancelled: run context expired"))
 	}
-	loopCtx, loopCancel := context.WithDeadline(parentCtx, time.Now().Add(effectiveTimeout))
+	deadline := time.Now().Add(effectiveTimeout)
+	if inherited, ok := parentCtx.Deadline(); ok && inherited.Before(deadline) {
+		deadline = inherited
+	}
+	loopCtx, loopCancel := context.WithDeadline(parentCtx, deadline)
 	defer loopCancel()
+	actualDeadline, _ := loopCtx.Deadline()
 
 	advertised := advertiseTools(config.Registry, allowlist)
 	state = &toolLoopState{
 		messages: initialLoopMessages(config),
 		seenIDs:  map[string]bool{},
-		deadline: time.Now().Add(effectiveTimeout),
+		deadline: actualDeadline,
 		runID:    result.RunID,
 		traceID:  result.TraceID,
 	}
@@ -337,6 +350,10 @@ func RunToolLoop(config ToolLoopConfig) (ToolLoopResult, error) {
 			Tools:         advertised,
 			ToolChoice:    LLMToolChoice{Mode: "auto"},
 			HasToolChoice: true,
+		}
+		if err := loopCtx.Err(); err != nil {
+			emitToolAudit(result.RunID, result.TraceID, agentID, agentName, owner, "", auditOutcomeDenied, "loop deadline exceeded")
+			return fail(ToolLoopCancelled, "loop deadline exceeded", fmt.Errorf("tool loop cancelled: deadline exceeded"))
 		}
 		rawResponse, err := executeProviderCall(config.Provider, loopCtx, req)
 		if err != nil {
@@ -495,20 +512,33 @@ func processToolCall(
 	callCtx, callCancel := context.WithCancel(loopCtx)
 	defer callCancel()
 	handlerResult, err := tool.Execute(ContextWithToolRuntime(callCtx, runtime), args)
-	var observation map[string]any
 	status := "executed"
-	if err != nil {
+	reasonCode := ""
+	var observation map[string]any
+	if failure, failed := asToolExecutionFailure(err); failed {
+		observation = sanitizeToolResult(failure.Observation)
+		if len(observation) == 0 {
+			observation = map[string]any{"error": "tool execution failed"}
+		}
+		status = "failed"
+		reasonCode = failure.Code
+		if strings.TrimSpace(reasonCode) == "" {
+			reasonCode = "tool_execution_failed"
+		}
+	} else if err != nil {
 		observation = map[string]any{"error": sanitizeToolError(err)}
 		status = "failed"
+		reasonCode = "tool_execution_failed"
 	} else {
 		observation = sanitizeToolResult(handlerResult)
 	}
-	emitToolAudit(auth.RunID, auth.TraceID, agentID, agentName, owner, call.Name, auditOutcomeFor(status), status)
+	emitToolAudit(auth.RunID, auth.TraceID, agentID, agentName, owner, call.Name, auditOutcomeFor(status), auditReasonFor(status, reasonCode))
 	serialized, serErr := json.Marshal(observation)
 	if serErr != nil || len(serialized) > config.Limits.MaxResultBytes {
 		observation = map[string]any{"error": "result_too_large", "truncated": true}
 		serialized, _ = json.Marshal(observation)
 		status = "failed"
+		reasonCode = "result_too_large"
 	}
 	state.totalResultBytes += len(serialized)
 	if state.totalResultBytes > config.Limits.MaxTotalResultBytes {
@@ -519,7 +549,7 @@ func processToolCall(
 	state.toolCalls++
 	state.messages = append(state.messages, toolResultMessage(callID, observation))
 	summary = ToolCallSummary{Name: call.Name, ID: callID, Index: call.Index,
-		Status: status, ResultBytes: len(serialized)}
+		Status: status, ReasonCode: reasonCode, ResultBytes: len(serialized)}
 	state.summaries = append(state.summaries, summary)
 	if status == "failed" && config.StopOnToolError {
 		result := state.terminal(ToolLoopToolError, "tool execution failed")
@@ -672,6 +702,18 @@ func auditOutcomeFor(status string) string {
 		return auditOutcomeAllowed
 	}
 	return auditOutcomeError
+}
+
+// auditReasonFor keeps successful reads and tool-level failures
+// distinguishable in the audit trail.
+func auditReasonFor(status, reasonCode string) string {
+	if status == "executed" {
+		return "executed"
+	}
+	if strings.TrimSpace(reasonCode) != "" {
+		return reasonCode
+	}
+	return "tool_execution_failed"
 }
 
 // sliceToSourceSet converts an allowlist slice to a lookup set.

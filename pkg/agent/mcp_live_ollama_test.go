@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
 
 // TestMCPLiveOllamaToolLoopOptional proves a real model can call an approved
@@ -107,4 +109,61 @@ func TestMCPLiveOllamaGoalOptional(t *testing.T) {
 		t.Fatalf("live MCP goal terminal = %s, want criteria_met: %+v", result.Status, result)
 	}
 	t.Logf("live MCP goal: status=%s model_rounds=%d tool_calls=%d evidence=%d", result.Status, result.ModelRounds, result.ToolCallCount, len(result.Evidence))
+}
+
+// TestMCPLiveOllamaFailedToolCannotSatisfyGoalOptional proves that a real model
+// invoking an approved MCP tool whose server reports IsError=true cannot turn
+// that failed invocation into successful goal evidence.
+func TestMCPLiveOllamaFailedToolCannotSatisfyGoalOptional(t *testing.T) {
+	baseURL, model := ollamaSmokeConfig(t)
+	server := mcpFixtureServerConfig(t, "normal")
+	server.ApprovedTools = []cfg.MCPApprovedTool{{Name: "fail", ReadOnly: true}}
+	config := mcpTestConfigFor(server)
+	setMCPTestConfig(t, config)
+	identity := mcpTestIdentity()
+	alias := MCPToolAlias("fixture", "fail")
+	manager, err := NewMCPToolManager(context.Background(), config, identity, []string{alias}, nil)
+	if err != nil {
+		t.Fatalf("new live MCP error manager: %v", err)
+	}
+	t.Cleanup(func() { _ = manager.Close() })
+	registry := NewAgentToolRegistry()
+	if err := manager.Register(registry); err != nil {
+		t.Fatalf("register live MCP error tool: %v", err)
+	}
+	provider := NewOllamaProvider([]string{model})
+	spec := &AgentGoalSpec{
+		GoalID: "mcp-live-error-goal", Objective: "prove that a failed MCP tool is not success evidence",
+		Provider: "ollama", URL: baseURL, Model: model,
+		Prompt:    `Call the approved MCP tool ` + alias + ` exactly once with {}. After the tool result, reply with: done. Do not call any other tool.`,
+		Allowlist: []string{alias},
+		Evidence:  EvidencePolicy{Allow: []EvidenceKind{EvidenceToolObservation}, DefaultMaxAge: 15 * time.Minute, MaxPayloadBytes: 4096},
+		Budgets: GoalBudgets{MaxModelRounds: 3, MaxToolCalls: 2, MaxEvidenceRecords: 4, MaxEvidenceBytes: 8192,
+			MaxTotalResultBytes: 16384, MaxElapsed: 25 * time.Second, MaxConsecutiveDenials: 2},
+		Acceptance: AcceptanceSpec{Mode: AcceptanceAll, Criteria: []CriterionSpec{{
+			ID: "failed-observation", Description: "the MCP tool must return successful evidence",
+			Predicate: Predicate{Kind: PredicateEvidenceExists, Evidence: EvidenceToolObservation,
+				Where: &EvidenceSelector{Tool: alias, ArgumentsSHA256: argumentsHash(map[string]any{})}},
+		}}},
+	}
+	spec.SpecHash = computeGoalSpecHash(spec)
+	result, err := RunGoal(goalRunConfig{
+		Spec: spec, Identity: identity, Registry: registry,
+		EvidenceRegistry: NewGoalEvidenceRegistry(), Provider: provider,
+		RunID: "mcp-live-error-goal-run", TraceID: "mcp-live-error-goal-trace",
+	})
+	if err != nil {
+		t.Fatalf("live failed MCP goal run: %v", err)
+	}
+	if result.Status == GoalCriteriaMet {
+		t.Fatalf("live failed MCP tool satisfied goal evidence: %+v", result)
+	}
+	if len(result.ToolCalls) != 1 || result.ToolCalls[0].Status != "failed" ||
+		result.ToolCalls[0].ReasonCode != "mcp_tool_error" {
+		t.Fatalf("live model did not produce a classified MCP failure: %+v", result.ToolCalls)
+	}
+	if len(result.Evidence) != 0 {
+		t.Fatalf("live failed MCP call recorded evidence: %+v", result.Evidence)
+	}
+	t.Logf("live MCP error goal: status=%s calls=%+v evidence=%d", result.Status, result.ToolCalls, len(result.Evidence))
 }

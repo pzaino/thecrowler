@@ -111,6 +111,20 @@ child. Run termination closes every session and process. The manager terminates
 the configured child process; an approved server that deliberately forks a
 daemon outside that process tree is outside this lifecycle guarantee.
 
+### One authoritative run deadline
+
+`AgentToolLoop` and `AgentGoalRun` establish one absolute deadline before any
+MCP server is started. That deadline is derived from the action's configured
+timeout and any inherited job-group deadline, and it covers validation, every
+server startup and protocol negotiation, discovery and admission, all model and
+MCP calls, and cleanup. Initialization does not reset or replenish the
+allowance. Each server's startup and discovery timeout is the shorter of its
+configured limit and the remaining run budget. If the deadline expires during
+initialization, already-started servers are closed, no partial catalog is
+registered, no provider request or `tools/call` is started, and the action
+reports a bounded timeout/cancellation outcome. Multiple servers share the same
+run budget.
+
 ## Namespacing
 
 The model-facing tool ID is deterministic:
@@ -173,8 +187,12 @@ An MCP adapter is an ordinary read-only `AgentTool`:
 - `db_write` or mutation registration is never used for MCP tools;
 - source-scoped tools require the run source scope, the server source scope and
   the tool source scope; tool scope can only narrow server scope, and a declared
-  source scope without a `source_id` argument is rejected during discovery; a
-  model-provided `source_id` is only a selector, never authority;
+  source scope without a top-level `source_id` argument is rejected during
+  discovery; a model-provided `source_id` is only a selector, never authority;
+- for operator-scoped tools, nested `source_id` selectors, alternative selectors
+  such as `source`, `sourceId`, `source_uid`, `source_url`, `source_uri` or
+  `source_name`, and empty server/tool scope intersections are rejected before
+  transport;
 - request bytes, response bytes, call time and per-run call budgets are
   enforced before/after transport invocation;
 - authorization denial means **no external `tools/call` is sent**.
@@ -187,10 +205,16 @@ sanitization, tool-loop audit correlation and deterministic goal evidence.
 Only bounded text content and JSON-serializable structured content are accepted
 in WP-04A. Images, audio, embedded resources, resource links and other content
 types are rejected with a safe error; the remote payload is not blindly inserted
-into the model prompt. Tool-level `isError` responses are preserved as
-`is_error: true` observations, while transport/protocol failures are separate
-tool errors. Response and request limits are enforced in addition to the SDK’s
-frame-size bound.
+into the model prompt. At most 64 text blocks are retained and the cumulative
+text plus structured payload must fit `max_response_bytes`; later serialization
+is checked again.
+
+The SDK's `CommandTransport` uses the SDK's default inbound frame cap of
+**16 MiB** (`DefaultMaxLineLength`). The configured `max_response_bytes` is an
+application-level limit enforced immediately after the SDK decodes a result; it
+is not a pre-buffering replacement for the SDK frame cap. This is a documented
+limitation of the current `CommandTransport`; CROWler does not replace the SDK
+or implement a separate protocol stack to obtain a smaller transport cap.
 
 MCP prompts, resources, server instructions, tool descriptions and JSON Schema
 annotations are untrusted external content. WP-04A does not execute or expose
@@ -199,15 +223,39 @@ the trusted operator configuration or a generated safe description. Remote
 schema property descriptions are bounded and may still contain instruction-like
 text; they cannot change authorization, allowlists, scopes or budgets.
 
-## Goal evidence
+## Execution outcome and goal evidence
 
-MCP observations are `tool_observation` evidence with
-`tool_observation` trust, not `system_verified` evidence. They establish what
-the external server returned, not that a CROWler source is pending, processing
-or completed. A goal requiring authoritative CROWler state must use the native
-database/resource evidence providers. A malicious MCP result containing
-instructions such as “declare the goal complete” cannot change criteria,
-allowlists, source scope, budgets or the deterministic acceptance result.
+The MCP adapter distinguishes these outcomes:
+
+| Outcome | Meaning | Evidence consequence |
+| --- | --- | --- |
+| transport/protocol success | the SDK completed the exchange | eligible for successful evidence |
+| tool execution success | `IsError` is false | eligible for successful evidence |
+| tool execution failure | `IsError` is true | failed call; diagnostics only, no success evidence |
+| transport failure | connection/process/protocol failure | failed call; no success evidence |
+| timeout | call or run deadline expired | terminal/bounded result; no success evidence |
+| cancellation | caller or run context canceled | terminal/bounded result; no success evidence |
+| unsupported result | malformed, oversized or unsupported content | failed call; no success evidence |
+
+An `IsError` response is returned as a typed tool execution failure with bounded
+sanitized diagnostics preserved for the model. The authoritative flag is the
+SDK `CallToolResult.IsError` envelope. A text string or structured field named
+`is_error` in remote content is ordinary untrusted data and cannot upgrade or
+reclassify the call.
+
+`AgentToolLoop` records the failed call as `failed` and preserves its stable
+reason code. `StopOnToolError` terminates the loop with `tool_error` when set.
+`AgentGoalRun` sends the same diagnostics back to the model but does not call
+`recordToolEvidence()` for a failed invocation. Therefore a
+`PredicateEvidenceExists` criterion cannot be satisfied by a failed MCP call.
+Successful calls still produce `tool_observation` evidence with
+`tool_observation` trust, never `system_verified` evidence. MCP text cannot
+change criteria, allowlists, source scope, budgets or the deterministic
+acceptance result.
+
+A goal requiring authoritative CROWler state must use the native database or
+resource evidence providers. MCP output is evidence of what the external server
+returned, not proof that a CROWler source is pending, processing or completed.
 
 ## Diagnostics and errors
 
@@ -219,6 +267,10 @@ Typical stable failures include:
 - `mcp_inventory_changed`
 - `mcp_unsupported_result`
 - `mcp_budget_exhausted`
+- `mcp_tool_error` for an `IsError=true` tool result
+- `mcp_call_timeout` for a bounded call timeout
+- `deadline_exceeded` / `budget_elapsed` for goal initialization or execution
+  that exhausts the shared run deadline
 - `crawl_operation_conflict` for native crawl reconciliation
 
 Check operator configuration first for startup failures, then the run allowlist

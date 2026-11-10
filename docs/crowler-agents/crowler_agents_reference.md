@@ -1105,7 +1105,11 @@ pinned argument hash, authorized source IDs, observation time, evidence ID and
 a bounded payload hash. Verified paths are limited to authoritative metadata
 (`source_id`, `source_uid`, `status`, safe timestamps and `count`); raw scraped
 values and artifact contents remain untrusted and are not eligible for
-deterministic verification.
+deterministic verification. An MCP tool that reports `IsError=true` is a failed
+call: its bounded diagnostics are returned to the model, but no successful
+`tool_observation` record is created and it cannot satisfy an
+`evidence_exists` criterion. A successful MCP call remains ordinary
+`tool_observation` evidence and never becomes `system_verified` evidence.
 
 Selector and source binding are enforced: a provider must return the requested
 kind, an explicit source identity matching the selector and run scope, and

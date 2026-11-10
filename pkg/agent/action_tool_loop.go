@@ -244,6 +244,26 @@ func normalizeToolLoopConfig(params, config map[string]interface{}, ictx InputCo
 		loop.GroupDeadline = deadline
 	}
 
+	// Establish one authoritative execution deadline before any MCP server is
+	// started. Initialization and provider execution share this context; it is
+	// never reset to a fresh full allowance after setup.
+	deadline := time.Now().Add(loop.Limits.Timeout)
+	if !loop.GroupDeadline.IsZero() {
+		if !time.Now().Before(loop.GroupDeadline) {
+			return loop, fmt.Errorf("tool loop denied: group deadline exceeded")
+		}
+		if loop.GroupDeadline.Before(deadline) {
+			deadline = loop.GroupDeadline
+		}
+	}
+	runCtx, runCancel := context.WithDeadline(context.Background(), deadline)
+	keepContext := false
+	defer func() {
+		if !keepContext {
+			runCancel()
+		}
+	}()
+
 	registry, err := DefaultToolRegistry()
 	if err != nil {
 		return loop, err
@@ -256,7 +276,7 @@ func normalizeToolLoopConfig(params, config map[string]interface{}, ictx InputCo
 		if !containsString(loop.Allowlist, crawlRequestToolName) {
 			return loop, fmt.Errorf("tool loop denied: %s must be in the explicit tool allowlist when mutation is enabled", crawlRequestToolName)
 		}
-		crawlRuntime, err := BuildCrawlRequestToolRuntime(context.Background(), CrawlRequestToolRuntimeConfig{
+		crawlRuntime, err := BuildCrawlRequestToolRuntime(runCtx, CrawlRequestToolRuntimeConfig{
 			Enabled:           true,
 			DB:                dbHandler,
 			Identity:          identity,
@@ -277,7 +297,7 @@ func normalizeToolLoopConfig(params, config map[string]interface{}, ictx InputCo
 		loop.MutationAllowed = true
 		loop.AllowedOperations = mutation.OperationsSet()
 	}
-	mcpManager, err := NewMCPToolManager(context.Background(), CurrentMCPOperatorConfig(), identity, loop.Allowlist, loop.AllowedSources)
+	mcpManager, err := NewMCPToolManager(runCtx, CurrentMCPOperatorConfig(), identity, loop.Allowlist, loop.AllowedSources)
 	if err != nil {
 		return loop, fmt.Errorf("tool loop denied: %v", err)
 	}
@@ -288,6 +308,9 @@ func normalizeToolLoopConfig(params, config map[string]interface{}, ictx InputCo
 		}
 		loop.MCPManager = mcpManager
 	}
+	loop.Ctx = runCtx
+	loop.cancel = runCancel
+	keepContext = true
 	loop.Registry = registry
 	return loop, nil
 }

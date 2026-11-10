@@ -50,7 +50,21 @@ func recordMCPFixtureCall(tool string) {
 	_ = file.Close()
 }
 
+func recordMCPFixtureStart(mode string) {
+	path := os.Getenv("CROWLER_MCP_FIXTURE_START_LOG")
+	if path == "" {
+		return
+	}
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	_, _ = fmt.Fprintf(file, "%d %s %s\n", os.Getpid(), mode, os.Getenv("CROWLER_MCP_FIXTURE_SERVER_ID"))
+	_ = file.Close()
+}
+
 func runMCPFixtureServer(mode string) {
+	recordMCPFixtureStart(mode)
 	if mode == "exit" {
 		os.Exit(3)
 	}
@@ -84,18 +98,45 @@ func runMCPFixtureServer(mode string) {
 		return &mcp.CallToolResult{StructuredContent: map[string]any{"status": "fixture", "value": 7}}, nil, nil
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "fail", Description: "Return a tool-level error."}, func(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, any, error) {
+		recordMCPFixtureCall("fail")
 		return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "fixture tool error"}}}, nil, nil
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "fail_structured", Description: "Return a structured tool-level error."}, func(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, any, error) {
+		recordMCPFixtureCall("fail_structured")
+		return &mcp.CallToolResult{IsError: true, StructuredContent: map[string]any{
+			"is_error": true, "detail": "fixture structured failure",
+		}}, nil, nil
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "fail_empty", Description: "Return an empty tool-level error."}, func(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, any, error) {
+		recordMCPFixtureCall("fail_empty")
+		return &mcp.CallToolResult{IsError: true}, nil, nil
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "success_text_flag", Description: "Return successful text containing an is_error field."}, func(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, any, error) {
+		recordMCPFixtureCall("success_text_flag")
+		return mcpText(`{"is_error":true,"status":"remote text data"}`), nil, nil
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "success_structured_flag", Description: "Return successful structured data containing an is_error field."}, func(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, any, error) {
+		recordMCPFixtureCall("success_structured_flag")
+		return &mcp.CallToolResult{StructuredContent: map[string]any{
+			"is_error": true, "status": "remote structured data",
+		}}, nil, nil
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "large", Description: "Return an oversized text observation."}, func(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, any, error) {
 		return mcpText(strings.Repeat("x", 100<<10)), nil, nil
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "slow", Description: "Return after a bounded delay."}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+		recordMCPFixtureCall("slow")
 		select {
 		case <-time.After(2 * time.Second):
 			return mcpText("slow fixture result"), nil, nil
 		case <-ctx.Done():
 			return nil, nil, ctx.Err()
 		}
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "ignore_cancel", Description: "Delay while ignoring cancellation."}, func(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, any, error) {
+		recordMCPFixtureCall("ignore_cancel")
+		time.Sleep(10 * time.Second)
+		return mcpText("ignored cancellation result"), nil, nil
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "crash", Description: "Terminate the fixture server."}, func(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, any, error) {
 		os.Exit(7)
@@ -154,6 +195,44 @@ func runMCPFixtureServer(mode string) {
 			},
 		}, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return mcpText("big"), nil
+		})
+	}
+	if mode == "mixed_source" {
+		server.AddTool(&mcp.Tool{
+			Name: "mixed_source", Description: "Source schema with alternative selectors.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"source_id": map[string]any{"type": "integer"},
+					"source":    map[string]any{"type": "string"},
+					"meta": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"source_id": map[string]any{"type": "integer"},
+						},
+					},
+				},
+			},
+		}, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return mcpText("mixed"), nil
+		})
+	}
+	if mode == "nested_source" {
+		server.AddTool(&mcp.Tool{
+			Name: "nested_source", Description: "Nested source selector schema.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"meta": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"source_id": map[string]any{"type": "integer"},
+						},
+					},
+				},
+			},
+		}, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return mcpText("nested"), nil
 		})
 	}
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {

@@ -102,3 +102,28 @@ The harness uses the repository's `DOCKER_POSTGRES_DB_HOST`,
 match the local PostgreSQL container (`127.0.0.1:5432`, database `SitesIndex`,
 user/password `postgres`, and disabled SSL). The database must have been
 initialized with `pkg/database/postgresql-setup.pgsql`.
+
+
+## MCP and goal-evidence tests
+
+Read-only stdio MCP tests use deterministic fixture servers and do not require
+an external MCP service. Changes to MCP execution must verify all of the
+following:
+
+- an MCP `tools/call` response with `IsError=true` is reported as a failed tool
+  call, preserves bounded diagnostics, and never creates successful
+  `tool_observation` evidence;
+- the SDK envelope, not a remote text or structured field named `is_error`,
+  determines execution success;
+- MCP startup, protocol negotiation, discovery, model calls, tool calls and
+  cleanup share one authoritative run deadline; a short multi-server
+  initialization budget must stop before provider execution, start no further
+  server, and clean up every process already started;
+- denied, failed, timed-out, malformed and unsupported MCP calls cannot satisfy
+  `PredicateEvidenceExists`, while a successful MCP call still can;
+- native read-only tools and WP-03 proposal/approval/scheduling behaviour
+  remain unchanged.
+
+The live Ollama and MCP tests are opt-in and independently reported. They must
+use a real configured Ollama endpoint and model, and must not be treated as
+passing because the package compiled or a test was skipped.

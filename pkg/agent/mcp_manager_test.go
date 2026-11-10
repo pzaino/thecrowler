@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
@@ -216,20 +219,72 @@ func TestMCPEnvironmentAndSourceScopesAreIsolated(t *testing.T) {
 	}
 }
 
-func TestMCPResultSafetyAndRemoteErrors(t *testing.T) {
+func TestMCPResultSafetyAndToolOutcomeClassification(t *testing.T) {
 	server := mcpFixtureServerConfig(t, "normal")
 	server.ApprovedTools = []cfg.MCPApprovedTool{
 		{Name: "fail", ReadOnly: true},
+		{Name: "fail_structured", ReadOnly: true},
+		{Name: "fail_empty", ReadOnly: true},
+		{Name: "success_text_flag", ReadOnly: true},
+		{Name: "success_structured_flag", ReadOnly: true},
 		{Name: "image", ReadOnly: true},
 		{Name: "large", ReadOnly: true},
 	}
-	_, registry, identity := newMCPTestRuntime(t, server, []string{
-		MCPToolAlias("fixture", "fail"), MCPToolAlias("fixture", "image"), MCPToolAlias("fixture", "large"),
-	}, []uint64{42})
-	failed, err := callMCPTool(t, registry, identity, MCPToolAlias("fixture", "fail"), map[string]any{}, []uint64{42})
-	if err != nil || failed["is_error"] != true {
-		t.Fatalf("MCP tool-level error not preserved: %+v err=%v", failed, err)
+	tools := []string{"fail", "fail_structured", "fail_empty", "success_text_flag", "success_structured_flag", "image", "large"}
+	allowlist := make([]string, 0, len(tools))
+	for _, name := range tools {
+		allowlist = append(allowlist, MCPToolAlias("fixture", name))
 	}
+	_, registry, identity := newMCPTestRuntime(t, server, allowlist, []uint64{42})
+
+	failures := []struct {
+		tool string
+		want func(map[string]any) bool
+	}{
+		{"fail", func(result map[string]any) bool { return result["content"] == "fixture tool error" }},
+		{"fail_structured", func(result map[string]any) bool {
+			structured, _ := result["structured_content"].(map[string]any)
+			return structured["is_error"] == true
+		}},
+		{"fail_empty", func(result map[string]any) bool {
+			_, hasContent := result["content"]
+			_, hasStructured := result["structured_content"]
+			return !hasContent && !hasStructured
+		}},
+	}
+	for _, tc := range failures {
+		result, err := callMCPTool(t, registry, identity, MCPToolAlias("fixture", tc.tool), map[string]any{}, []uint64{42})
+		failure, ok := asToolExecutionFailure(err)
+		if !ok {
+			t.Fatalf("%s error = %v, want ToolExecutionFailure", tc.tool, err)
+		}
+		if failure.Code != "mcp_tool_error" || result["is_error"] != true || !tc.want(result) {
+			t.Fatalf("%s failure was not preserved: result=%+v failure=%+v", tc.tool, result, failure)
+		}
+	}
+
+	successes := []struct {
+		tool string
+		want func(map[string]any) bool
+	}{
+		{"success_text_flag", func(result map[string]any) bool {
+			return result["is_error"] == false && result["content"] == `{"is_error":true,"status":"remote text data"}`
+		}},
+		{"success_structured_flag", func(result map[string]any) bool {
+			structured, _ := result["structured_content"].(map[string]any)
+			return result["is_error"] == false && structured["is_error"] == true
+		}},
+	}
+	for _, tc := range successes {
+		result, err := callMCPTool(t, registry, identity, MCPToolAlias("fixture", tc.tool), map[string]any{}, []uint64{42})
+		if err != nil {
+			t.Fatalf("%s returned an error: %v", tc.tool, err)
+		}
+		if !tc.want(result) {
+			t.Fatalf("%s successful result was misclassified: %+v", tc.tool, result)
+		}
+	}
+
 	if _, err := callMCPTool(t, registry, identity, MCPToolAlias("fixture", "image"), map[string]any{}, []uint64{42}); !errors.Is(err, ErrMCPUnsupportedResult) {
 		t.Fatalf("unsupported MCP image error = %v", err)
 	}
@@ -743,5 +798,210 @@ func TestMCPBudgetAndInvalidArgumentsReachNoExternalCall(t *testing.T) {
 	}
 	if got := strings.Count(string(data), "echo"); got != 1 {
 		t.Fatalf("denied MCP calls reached the server: %d calls", got)
+	}
+}
+
+func TestMCPRejectsUnsafeOrEmptySourceSelectors(t *testing.T) {
+	cases := []struct {
+		name          string
+		mode          string
+		tool          string
+		serverSources []uint64
+		toolSources   []uint64
+	}{
+		{
+			name: "nested source selector", mode: "nested_source", tool: "nested_source",
+			serverSources: []uint64{42}, toolSources: []uint64{42},
+		},
+		{
+			name: "alternative and nested selectors", mode: "mixed_source", tool: "mixed_source",
+			serverSources: []uint64{42}, toolSources: []uint64{42},
+		},
+		{
+			name: "empty server and tool intersection", mode: "normal", tool: "source_status",
+			serverSources: []uint64{42}, toolSources: []uint64{43},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := mcpFixtureServerConfig(t, tc.mode, cfg.MCPApprovedTool{
+				Name: tc.tool, ReadOnly: true, AllowedSources: tc.toolSources,
+			})
+			server.AllowedSources = tc.serverSources
+			setMCPTestConfig(t, mcpTestConfigFor(server))
+			manager, err := NewMCPToolManager(context.Background(), mcpTestConfigFor(server),
+				mcpTestIdentity(), []string{MCPToolAlias("fixture", tc.tool)}, []uint64{42})
+			if err == nil {
+				_ = manager.Close()
+				t.Fatalf("unsafe source selector was admitted")
+			}
+		})
+	}
+}
+
+func TestMCPToolLoopClassifiesToolErrorAsFailed(t *testing.T) {
+	server := mcpFixtureServerConfig(t, "normal", cfg.MCPApprovedTool{Name: "fail", ReadOnly: true})
+	config := mcpTestConfigFor(server)
+	setMCPTestConfig(t, config)
+	identity := mcpTestIdentity()
+	alias := MCPToolAlias("fixture", "fail")
+	manager, err := NewMCPToolManager(context.Background(), config, identity, []string{alias}, nil)
+	if err != nil {
+		t.Fatalf("new MCP manager: %v", err)
+	}
+	registry := NewAgentToolRegistry()
+	if err := manager.Register(registry); err != nil {
+		_ = manager.Close()
+		t.Fatalf("register MCP tool: %v", err)
+	}
+	provider := &scriptedProvider{name: "scripted", responses: []any{
+		chatWithCalls(stringCall("mcp-loop-fail", alias, `{}`)),
+		chatWithText("done"),
+	}}
+	result, err := RunToolLoop(ToolLoopConfig{
+		Provider: provider, ProviderName: "scripted", Model: "scripted",
+		URL: "https://example.com/v1/chat", Prompt: "call the MCP tool",
+		Registry: registry, Allowlist: []string{alias}, Identity: identity, Enforcement: true,
+		MCPManager: manager, Limits: DefaultToolLoopLimits(),
+		RunID: "mcp-loop-fail-run", TraceID: "mcp-loop-fail-trace",
+	})
+	if err != nil {
+		t.Fatalf("MCP tool loop: %v", err)
+	}
+	if len(result.ToolCalls) != 1 || result.ToolCalls[0].Status != "failed" ||
+		result.ToolCalls[0].ReasonCode != "mcp_tool_error" {
+		t.Fatalf("MCP tool error was not classified as failed: %+v", result.ToolCalls)
+	}
+}
+
+func TestMCPToolLoopStopOnToolError(t *testing.T) {
+	server := mcpFixtureServerConfig(t, "normal", cfg.MCPApprovedTool{Name: "fail", ReadOnly: true})
+	config := mcpTestConfigFor(server)
+	setMCPTestConfig(t, config)
+	identity := mcpTestIdentity()
+	alias := MCPToolAlias("fixture", "fail")
+	manager, err := NewMCPToolManager(context.Background(), config, identity, []string{alias}, nil)
+	if err != nil {
+		t.Fatalf("new MCP manager: %v", err)
+	}
+	registry := NewAgentToolRegistry()
+	if err := manager.Register(registry); err != nil {
+		_ = manager.Close()
+		t.Fatalf("register MCP tool: %v", err)
+	}
+	provider := &scriptedProvider{name: "scripted", responses: []any{
+		chatWithCalls(stringCall("mcp-stop-fail", alias, `{}`)),
+	}}
+	result, err := RunToolLoop(ToolLoopConfig{
+		Provider: provider, ProviderName: "scripted", Model: "scripted",
+		URL: "https://example.com/v1/chat", Prompt: "call the MCP tool",
+		Registry: registry, Allowlist: []string{alias}, Identity: identity, Enforcement: true,
+		MCPManager: manager, Limits: DefaultToolLoopLimits(), StopOnToolError: true,
+		RunID: "mcp-loop-stop-run", TraceID: "mcp-loop-stop-trace",
+	})
+	if err == nil || result.Status != ToolLoopToolError {
+		t.Fatalf("StopOnToolError result = %s, err=%v", result.Status, err)
+	}
+}
+
+func TestMCPManagerCloseWhileServerIgnoresCancellation(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "calls.log")
+	server := mcpFixtureServerConfig(t, "normal", cfg.MCPApprovedTool{Name: "ignore_cancel", ReadOnly: true})
+	server.Environment["CROWLER_MCP_FIXTURE_CALL_LOG"] = logPath
+	manager, registry, identity := newMCPTestRuntime(t, server, []string{MCPToolAlias("fixture", "ignore_cancel")}, nil)
+	if len(manager.servers) != 1 || manager.servers[0].cmd == nil || manager.servers[0].cmd.Process == nil {
+		t.Fatalf("MCP child process was not started")
+	}
+	pid := manager.servers[0].cmd.Process.Pid
+	tool, ok := registry.Get(MCPToolAlias("fixture", "ignore_cancel"))
+	if !ok {
+		t.Fatalf("MCP tool not registered")
+	}
+	callResult := make(chan error, 1)
+	go func() {
+		_, err := tool.Execute(mcpToolContext(identity, tool.Name(), nil, "mcp-close-run"), map[string]any{})
+		callResult <- err
+	}()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		data, _ := os.ReadFile(logPath)
+		if strings.Contains(string(data), "ignore_cancel") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("fixture did not begin the active call")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	started := time.Now()
+	firstCloseErr := manager.Close()
+	if elapsed := time.Since(started); elapsed > 6*time.Second {
+		t.Fatalf("MCP close was not bounded while a call was active: %s", elapsed)
+	}
+	select {
+	case <-callResult:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("active MCP call did not terminate on manager close")
+	}
+	waitForMCPProcessExit(t, pid)
+	secondCloseErr := manager.Close()
+	if (firstCloseErr == nil) != (secondCloseErr == nil) ||
+		(firstCloseErr != nil && firstCloseErr.Error() != secondCloseErr.Error()) {
+		t.Fatalf("repeated MCP close changed its result: first=%v second=%v", firstCloseErr, secondCloseErr)
+	}
+}
+
+func TestMCPResultMapBoundsContentBlocksAndStructuredContent(t *testing.T) {
+	tool := &mcpAgentTool{server: &mcpServerRuntime{config: cfg.MCPServerConfig{ID: "fixture", MaxResponseBytes: 32 << 10}}}
+	if _, err := tool.resultMap(nil); !errors.Is(err, ErrMCPTransport) {
+		t.Fatalf("nil MCP result error = %v", err)
+	}
+	blocks := make([]mcp.Content, 0, mcpMaxContentBlocks+1)
+	for i := 0; i < mcpMaxContentBlocks+1; i++ {
+		blocks = append(blocks, &mcp.TextContent{Text: "x"})
+	}
+	if _, err := tool.resultMap(&mcp.CallToolResult{Content: blocks}); !errors.Is(err, ErrMCPUnsupportedResult) {
+		t.Fatalf("too many MCP content blocks error = %v", err)
+	}
+	if _, err := tool.resultMap(&mcp.CallToolResult{StructuredContent: map[string]any{
+		"value": strings.Repeat("x", 40<<10),
+	}}); !errors.Is(err, ErrMCPUnsupportedResult) {
+		t.Fatalf("oversized MCP structured content error = %v", err)
+	}
+}
+
+func TestMCPManagerDoesNotLeakSessionGoroutines(t *testing.T) {
+	server := mcpFixtureServerConfig(t, "normal")
+	config := mcpTestConfigFor(server)
+	setMCPTestConfig(t, config)
+	before := runtime.NumGoroutine()
+	for i := 0; i < 3; i++ {
+		manager, err := NewMCPToolManager(context.Background(), config, mcpTestIdentity(), []string{MCPToolAlias("fixture", "echo")}, nil)
+		if err != nil {
+			t.Fatalf("new MCP manager: %v", err)
+		}
+		registry := NewAgentToolRegistry()
+		if err := manager.Register(registry); err != nil {
+			_ = manager.Close()
+			t.Fatalf("register MCP tool: %v", err)
+		}
+		if _, err := callMCPTool(t, registry, mcpTestIdentity(), MCPToolAlias("fixture", "echo"), map[string]any{"text": "leak-check"}, nil); err != nil {
+			_ = manager.Close()
+			t.Fatalf("MCP leak-check call: %v", err)
+		}
+		if err := manager.Close(); err != nil {
+			t.Logf("MCP close returned %v", err)
+		}
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		runtime.GC()
+		if runtime.NumGoroutine() <= before+3 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("MCP manager leaked goroutines: before=%d after=%d", before, runtime.NumGoroutine())
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }

@@ -24,6 +24,10 @@ const (
 	mcpMaxToolCount   = 64
 	mcpMaxServerIDLen = 32
 	mcpMaxRawToolLen  = 128
+	// mcpMaxContentBlocks bounds the number of text blocks retained from one
+	// result. The SDK already bounds a decoded frame; this keeps our own
+	// result-shaping allocation bounded as well.
+	mcpMaxContentBlocks = 64
 )
 
 var (

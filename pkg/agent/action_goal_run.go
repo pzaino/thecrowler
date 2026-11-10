@@ -86,21 +86,50 @@ func (a *AgentGoalRunAction) Execute(params map[string]interface{}) (map[string]
 		rval[StrMessage] = "goal run denied: tool registry unavailable"
 		return rval, err
 	}
-	var mcpManager *MCPToolManager
-	if hasMCPAllowlistEntry(stringSet(spec.Allowlist)) {
-		mcpManager, err = NewMCPToolManager(context.Background(), CurrentMCPOperatorConfig(), identity, spec.Allowlist, spec.AllowedSources)
-		if err != nil {
+
+	// One authoritative deadline covers MCP initialization, evidence checks,
+	// provider calls, tool calls and cleanup. The goal loop receives the same
+	// absolute deadline rather than a fresh MaxElapsed allowance.
+	inheritedDeadline, _ := groupDeadline(params)
+	runID := uuid.NewString()
+	traceID := toolLoopRunFieldValue(params, "trace_id")
+	if strings.TrimSpace(traceID) == "" {
+		traceID = uuid.NewString()
+	}
+	runDeadline := goalExecutionDeadline(spec, inheritedDeadline, time.Now())
+	runCtx, runCancel := context.WithDeadline(context.Background(), runDeadline)
+	defer runCancel()
+	failInitialization := func(err error) (map[string]interface{}, error) {
+		if runCtx.Err() == nil {
 			rval[StrStatus] = StatusError
 			rval[StrMessage] = "goal run denied: " + err.Error()
 			return rval, err
+		}
+		status, code, reason := goalDeadlineTerminal(inheritedDeadline, time.Now())
+		result := goalInitializationFailureResult(spec, runID, traceID, status, code, reason)
+		rval[StrStatus] = StatusError
+		rval[StrMessage] = result.Reason
+		rval[StrResponse] = goalRunResultMap(result)
+		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+			return rval, fmt.Errorf("goal run terminated: %s", result.Status)
+		}
+		return rval, fmt.Errorf("goal run cancelled: %w", runCtx.Err())
+	}
+	if err := runCtx.Err(); err != nil {
+		return failInitialization(fmt.Errorf("goal execution deadline elapsed before initialization"))
+	}
+
+	var mcpManager *MCPToolManager
+	if hasMCPAllowlistEntry(stringSet(spec.Allowlist)) {
+		mcpManager, err = NewMCPToolManager(runCtx, CurrentMCPOperatorConfig(), identity, spec.Allowlist, spec.AllowedSources)
+		if err != nil {
+			return failInitialization(err)
 		}
 		if mcpManager != nil {
 			defer func() { _ = mcpManager.Close() }()
 			if err := mcpManager.Register(registry); err != nil {
 				_ = mcpManager.Close()
-				rval[StrStatus] = StatusError
-				rval[StrMessage] = "goal run denied: " + err.Error()
-				return rval, err
+				return failInitialization(err)
 			}
 		}
 	}
@@ -112,7 +141,7 @@ func (a *AgentGoalRunAction) Execute(params map[string]interface{}) (map[string]
 			rval[StrMessage] = err.Error()
 			return rval, err
 		}
-		crawlRuntime, err = BuildCrawlRequestToolRuntime(context.Background(), CrawlRequestToolRuntimeConfig{
+		crawlRuntime, err = BuildCrawlRequestToolRuntime(runCtx, CrawlRequestToolRuntimeConfig{
 			Enabled:           true,
 			DB:                dbHandler,
 			Identity:          identity,
@@ -124,9 +153,7 @@ func (a *AgentGoalRunAction) Execute(params map[string]interface{}) (map[string]
 			ProposalTTL:       spec.MutationPolicy.ProposalTTL,
 		})
 		if err != nil {
-			rval[StrStatus] = StatusError
-			rval[StrMessage] = "goal run denied: " + err.Error()
-			return rval, err
+			return failInitialization(err)
 		}
 		if err := RegisterCrawlRequestTool(registry, crawlRuntime); err != nil {
 			rval[StrStatus] = StatusError
@@ -153,6 +180,8 @@ func (a *AgentGoalRunAction) Execute(params map[string]interface{}) (map[string]
 			Status: GoalProviderError, ReasonCode: "provider_unavailable",
 			Reason: "unsupported AI provider", GoalID: spec.GoalID,
 			GoalSpecHash: spec.SpecHash, RequestedGoal: goalSummary(spec),
+			ToolCalls: []ToolCallSummary{}, Evidence: []EvidenceSummary{},
+			CompletionDecision: CompletionDecision{DecidedBy: "deterministic_verifier"},
 		}
 		rval[StrStatus] = StatusError
 		rval[StrMessage] = result.Reason
@@ -166,7 +195,6 @@ func (a *AgentGoalRunAction) Execute(params map[string]interface{}) (map[string]
 		rval[StrMessage] = "goal run denied: prompt/messages could not be resolved"
 		return rval, err
 	}
-	inheritedDeadline, _ := groupDeadline(params)
 	runConfig := goalRunConfig{
 		Spec: runtimeSpec, Identity: identity, DB: dbHandler,
 		Registry: registry, EvidenceRegistry: evidenceRegistry,
@@ -175,13 +203,12 @@ func (a *AgentGoalRunAction) Execute(params map[string]interface{}) (map[string]
 		CrawlRuntime:      crawlRuntime,
 		MCPManager:        mcpManager,
 		Provider:          provider,
-		RunID:             uuid.NewString(),
-		TraceID:           toolLoopRunFieldValue(params, "trace_id"),
+		RunID:             runID,
+		TraceID:           traceID,
 		CorrelationID:     toolLoopRunFieldValue(params, "run_id"),
 		GroupDeadline:     inheritedDeadline,
-	}
-	if strings.TrimSpace(runConfig.TraceID) == "" {
-		runConfig.TraceID = uuid.NewString()
+		ExecutionDeadline: runDeadline,
+		Ctx:               runCtx,
 	}
 	result, err := RunGoal(runConfig)
 	rval[StrResponse] = goalRunResultMap(result)
@@ -232,6 +259,39 @@ func toolLoopRunFieldValue(params map[string]interface{}, key string) string {
 	return strings.TrimSpace(value)
 }
 
+// goalExecutionDeadline computes the absolute deadline for the whole goal
+// lifecycle. It never grants a fresh MaxElapsed window after initialization.
+func goalExecutionDeadline(spec *AgentGoalSpec, inherited time.Time, now time.Time) time.Time {
+	elapsed := defaultGoalMaxElapsed
+	if spec != nil && spec.Budgets.MaxElapsed > 0 {
+		elapsed = spec.Budgets.MaxElapsed
+	}
+	deadline := now.Add(elapsed)
+	if !inherited.IsZero() && inherited.Before(deadline) {
+		deadline = inherited
+	}
+	return deadline
+}
+
+func goalDeadlineTerminal(inherited time.Time, now time.Time) (GoalTerminalStatus, string, string) {
+	if !inherited.IsZero() && !now.Before(inherited) {
+		return GoalCancelled, "deadline_exceeded", "group deadline exceeded"
+	}
+	return GoalBudgetExhausted, "budget_elapsed", "goal run budget elapsed"
+}
+
+func goalInitializationFailureResult(spec *AgentGoalSpec, runID, traceID string, status GoalTerminalStatus, code, reason string) GoalRunResult {
+	return GoalRunResult{
+		Status: status, ReasonCode: code, Reason: reason,
+		RunID: runID, TraceID: traceID,
+		GoalID: spec.GoalID, GoalSpecHash: spec.SpecHash,
+		RequestedGoal:      goalSummary(spec),
+		ToolCalls:          []ToolCallSummary{},
+		Evidence:           []EvidenceSummary{},
+		CompletionDecision: CompletionDecision{DecidedBy: "deterministic_verifier"},
+	}
+}
+
 func goalSpecFromRuntime(params map[string]interface{}) *AgentGoalSpec {
 	if params == nil {
 		return nil
@@ -270,6 +330,7 @@ type goalRunConfig struct {
 	TraceID           string
 	CorrelationID     string
 	GroupDeadline     time.Time
+	ExecutionDeadline time.Time
 	Ctx               context.Context
 }
 
@@ -338,22 +399,29 @@ func RunGoal(config goalRunConfig) (GoalRunResult, error) {
 		parent = context.Background()
 	}
 	if err := parent.Err(); err != nil {
+		if !config.ExecutionDeadline.IsZero() && !time.Now().Before(config.ExecutionDeadline) {
+			return run.finish(run.timeoutStatus(), run.timeoutReason(), "goal loop expired"), nil
+		}
 		return run.finish(GoalCancelled, "cancelled_by_caller", "run context expired"), nil
 	}
-	ctx, cancel := context.WithDeadline(parent, time.Now().Add(timeout))
+	deadline := time.Now().Add(timeout)
+	if inherited, ok := parent.Deadline(); ok && inherited.Before(deadline) {
+		deadline = inherited
+	}
+	ctx, cancel := context.WithDeadline(parent, deadline)
 	defer cancel()
-	deadline, _ := ctx.Deadline()
+	actualDeadline, _ := ctx.Deadline()
 	run.ctx = ctx
-	run.deadline = deadline
+	run.deadline = actualDeadline
 	run.ledger = NewGoalEvidenceLedger(
 		run.result.RunID, nonce, run.result.TraceID, config.Spec.GoalID,
 		config.Spec.SpecHash, config.Identity.AgentID, config.Identity.Owner,
-		config.Spec.AllowedSources, config.Spec.Evidence, config.Spec.Budgets, deadline)
+		config.Spec.AllowedSources, config.Spec.Evidence, config.Spec.Budgets, actualDeadline)
 	run.queries = map[string]EvidenceQueryResult{}
 	run.state = &goalRunState{
 		messages: initialGoalMessages(config.Spec),
 		seenIDs:  map[string]bool{},
-		deadline: deadline,
+		deadline: actualDeadline,
 	}
 	auth := ToolAuthContext{
 		Identity: config.Identity, Enforcement: true,
@@ -481,10 +549,22 @@ func (r *goalRunner) processToolCall(ctx context.Context, call LLMToolCall, call
 		}
 	}
 	status := "executed"
+	reasonCode := ""
 	var observation map[string]any
-	if err != nil {
+	if failure, failed := asToolExecutionFailure(err); failed {
+		observation = sanitizeToolResult(failure.Observation)
+		if len(observation) == 0 {
+			observation = map[string]any{"error": "tool execution failed"}
+		}
+		status = "failed"
+		reasonCode = failure.Code
+		if strings.TrimSpace(reasonCode) == "" {
+			reasonCode = "tool_execution_failed"
+		}
+	} else if err != nil {
 		observation = map[string]any{"error": sanitizeToolError(err)}
 		status = "failed"
+		reasonCode = "tool_execution_failed"
 	} else {
 		observation = sanitizeToolResult(handlerResult)
 	}
@@ -493,6 +573,7 @@ func (r *goalRunner) processToolCall(ctx context.Context, call LLMToolCall, call
 		observation = map[string]any{"error": "result_too_large", "truncated": true}
 		serialized, _ = json.Marshal(observation)
 		status = "failed"
+		reasonCode = "result_too_large"
 	}
 	r.state.totalResultBytes += len(serialized)
 	if r.state.totalResultBytes > r.config.Spec.Budgets.MaxTotalResultBytes {
@@ -500,10 +581,11 @@ func (r *goalRunner) processToolCall(ctx context.Context, call LLMToolCall, call
 	}
 	r.state.messages = append(r.state.messages, toolResultMessage(callID, observation))
 	r.state.summaries = append(r.state.summaries, ToolCallSummary{
-		Name: call.Name, ID: callID, Index: call.Index, Status: status, ResultBytes: len(serialized),
+		Name: call.Name, ID: callID, Index: call.Index, Status: status,
+		ReasonCode: reasonCode, ResultBytes: len(serialized),
 	})
 	outcome := auditOutcomeFor(status)
-	emitGoalAudit(r.result.RunID, r.result.TraceID, r.config.Identity.AgentID, r.config.Identity.Name, r.config.Identity.Owner, r.config.Spec.GoalID, call.Name, outcome, status, "tool execution finished", nil)
+	emitGoalAudit(r.result.RunID, r.result.TraceID, r.config.Identity.AgentID, r.config.Identity.Name, r.config.Identity.Owner, r.config.Spec.GoalID, call.Name, outcome, auditReasonFor(status, reasonCode), "tool execution finished", nil)
 	if status == "executed" {
 		r.state.toolCalls++
 		r.state.consecutiveDenials = 0
