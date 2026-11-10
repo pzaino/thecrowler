@@ -115,6 +115,7 @@ type ToolLoopConfig struct {
 	MutationAllowed   bool
 	CrawlRuntime      *CrawlRequestToolRuntime
 	MCPManager        *MCPToolManager
+	Principal         MCPMutationPrincipal
 	DB                cdb.Handler
 	Limits            ToolLoopLimits
 	StopOnToolError   bool
@@ -503,11 +504,12 @@ func processToolCall(
 
 	state.consecutiveDenials = 0
 	runtime := ToolRuntime{
-		DB:       toolRuntimeDB(config),
-		Auth:     auth,
-		Deadline: state.deadline,
-		CallID:   callID,
-		Crawl:    config.CrawlRuntime,
+		DB:        toolRuntimeDB(config),
+		Auth:      auth,
+		Deadline:  state.deadline,
+		CallID:    callID,
+		Crawl:     config.CrawlRuntime,
+		Principal: config.Principal,
 	}
 	callCtx, callCancel := context.WithCancel(loopCtx)
 	defer callCancel()

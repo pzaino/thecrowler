@@ -350,11 +350,12 @@ type toolRuntimeKey struct{}
 // deadline. Adapters obtain it via ToolRuntimeFromContext; model arguments
 // never carry these values.
 type ToolRuntime struct {
-	DB       cdb.Handler
-	Auth     ToolAuthContext
-	Deadline time.Time
-	CallID   string
-	Crawl    *CrawlRequestToolRuntime
+	DB        cdb.Handler
+	Auth      ToolAuthContext
+	Deadline  time.Time
+	CallID    string
+	Crawl     *CrawlRequestToolRuntime
+	Principal MCPMutationPrincipal
 }
 
 // ToolRuntimeFromContext extracts trusted execution dependencies. The second

@@ -33,6 +33,10 @@ type mcpSourceInput struct {
 	SourceID uint64 `json:"source_id" jsonschema:"approved source identifier"`
 }
 
+type mcpMutationInput struct {
+	Resource string `json:"resource,omitempty" jsonschema:"approved external resource"`
+}
+
 func mcpText(text string) *mcp.CallToolResult {
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}
 }
@@ -96,6 +100,28 @@ func runMCPFixtureServer(mode string) {
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "structured", Description: "Return bounded structured fixture data."}, func(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, any, error) {
 		return &mcp.CallToolResult{StructuredContent: map[string]any{"status": "fixture", "value": 7}}, nil, nil
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "mutate_source_counter", Description: "Increment an isolated source-scoped fixture counter if executed."}, func(_ context.Context, _ *mcp.CallToolRequest, _ mcpSourceInput) (*mcp.CallToolResult, any, error) {
+		path := os.Getenv("CROWLER_MCP_MUTATION_COUNTER")
+		if path != "" {
+			file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+			if err == nil {
+				_, _ = fmt.Fprintln(file, "executed")
+				_ = file.Close()
+			}
+		}
+		return mcpText("source mutation fixture executed"), nil, nil
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "mutate_counter", Description: "Increment an isolated fixture counter if executed."}, func(_ context.Context, _ *mcp.CallToolRequest, _ mcpMutationInput) (*mcp.CallToolResult, any, error) {
+		path := os.Getenv("CROWLER_MCP_MUTATION_COUNTER")
+		if path != "" {
+			file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+			if err == nil {
+				_, _ = fmt.Fprintln(file, "executed")
+				_ = file.Close()
+			}
+		}
+		return mcpText("mutation fixture executed"), nil, nil
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "fail", Description: "Return a tool-level error."}, func(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, any, error) {
 		recordMCPFixtureCall("fail")

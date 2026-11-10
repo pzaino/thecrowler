@@ -78,14 +78,18 @@ type MCPHTTPProtocolConfig struct {
 }
 
 // MCPApprovedTool is an explicit operator attestation for one server/tool
-// pair. ReadOnly must be true in WP-04A; server-provided read-only hints are
-// never trusted.
+// pair. Effect is the authoritative classification: read_only or mutation.
+// ReadOnly is retained for compatibility with existing read-only
+// configurations. A missing effect is only accepted when ReadOnly is true;
+// read_only:false alone never grants mutation authority.
 type MCPApprovedTool struct {
-	Name                 string   `yaml:"name" json:"name"`
-	ReadOnly             bool     `yaml:"read_only" json:"read_only"`
-	Description          string   `yaml:"description" json:"description"`
-	AllowedSources       []uint64 `yaml:"allowed_sources" json:"allowed_sources"`
-	RequiredCapabilities []string `yaml:"required_capabilities" json:"required_capabilities"`
+	Name                  string   `yaml:"name" json:"name"`
+	ReadOnly              bool     `yaml:"read_only" json:"read_only"`
+	Effect                string   `yaml:"effect" json:"effect"`
+	AllowMutationProposal bool     `yaml:"allow_mutation_proposal" json:"allow_mutation_proposal"`
+	Description           string   `yaml:"description" json:"description"`
+	AllowedSources        []uint64 `yaml:"allowed_sources" json:"allowed_sources"`
+	RequiredCapabilities  []string `yaml:"required_capabilities" json:"required_capabilities"`
 }
 
 // String deliberately avoids printing executable arguments, environment

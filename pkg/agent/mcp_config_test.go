@@ -215,3 +215,46 @@ func TestMCPLoopbackHTTPFixturePolicyIsExplicit(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = SetMCPOperatorConfig(cfg.MCPConfig{}) })
 }
+
+func TestMCPMutationEffectClassification(t *testing.T) {
+	base := validMCPConfig("/bin/true")
+	mutation := cfg.MCPApprovedTool{
+		Name: "mutate_counter", Effect: "mutation", AllowMutationProposal: true,
+		Description: "fixture mutation", RequiredCapabilities: []string{"tool_execution"},
+	}
+	server := base.Servers[0]
+	server.ApprovedTools = []cfg.MCPApprovedTool{mutation}
+	if err := SetMCPOperatorConfig(cfg.MCPConfig{Servers: []cfg.MCPServerConfig{server}}); err != nil {
+		t.Fatalf("explicit mutation tool rejected: %v", err)
+	}
+	t.Cleanup(func() { _ = SetMCPOperatorConfig(cfg.MCPConfig{}) })
+	alias := MCPToolAlias("fixture", "mutate_counter")
+	if _, ok := CurrentMCPApprovedMutationTool(alias); !ok {
+		t.Fatalf("mutation approval lookup failed")
+	}
+	if _, ok := CurrentMCPApprovedTool(alias); ok {
+		t.Fatalf("mutation tool exposed through read-only lookup")
+	}
+
+	cases := []struct {
+		name string
+		tool cfg.MCPApprovedTool
+	}{
+		{"read_only false without effect", cfg.MCPApprovedTool{Name: "mutate_counter", ReadOnly: false}},
+		{"unknown effect", cfg.MCPApprovedTool{Name: "mutate_counter", Effect: "write"}},
+		{"mutation marked read-only", cfg.MCPApprovedTool{Name: "mutate_counter", ReadOnly: true, Effect: "mutation", AllowMutationProposal: true}},
+		{"mutation without proposal opt-in", cfg.MCPApprovedTool{Name: "mutate_counter", Effect: "mutation"}},
+		{"read-only effect with false flag", cfg.MCPApprovedTool{Name: "mutate_counter", Effect: "read_only"}},
+		{"mutation proposal flag on read-only", cfg.MCPApprovedTool{Name: "mutate_counter", ReadOnly: true, Effect: "read_only", AllowMutationProposal: true}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := base.Servers[0]
+			server.ApprovedTools = []cfg.MCPApprovedTool{tc.tool}
+			if err := SetMCPOperatorConfig(cfg.MCPConfig{Servers: []cfg.MCPServerConfig{server}}); err == nil {
+				t.Fatalf("%s was accepted", tc.name)
+			}
+			_ = SetMCPOperatorConfig(cfg.MCPConfig{})
+		})
+	}
+}

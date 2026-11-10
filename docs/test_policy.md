@@ -147,3 +147,15 @@ exception; the exception must never be enabled in production defaults.
 The live Ollama and MCP tests are opt-in and independently reported. They must
 use a real configured Ollama endpoint and model, and must not be treated as
 passing because the package compiled or a test was skipped.
+
+
+## MCP mutation proposal tests
+
+WP-04C1 mutation tests must prove inertness: the mutating fixture counter must
+remain zero for every proposal, denial, replay, approval verification and
+concurrency case. Test trusted effect classification, unknown/contradictory
+effects, read-only registration rejection, missing or forged approvals,
+proposal fingerprint stability, run/agent/principal/server/tool/source/resource
+binding, expiry/revocation, store failures, cancellation and proposal limits.
+Production proposal/approval persistence and public approval APIs are not
+enabled until the schema 1.17 design and operator permission model are reviewed.

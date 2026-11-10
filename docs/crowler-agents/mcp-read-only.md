@@ -2,7 +2,10 @@
 
 Status: WP-04A supports approved **stdio** MCP servers. WP-04B adds an explicitly
 selected, read-only **Streamable HTTP** transport for approved remote servers.
-Mutation-capable MCP tools remain deferred to WP-04C and are disabled.
+WP-04C1 adds the trusted mutation classification and inert proposal foundation
+without enabling execution; see
+[`mcp-mutation-authorization.md`](mcp-mutation-authorization.md). Mutation
+execution remains deferred to WP-04C2.
 
 ## SDK and protocol
 

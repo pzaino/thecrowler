@@ -63,9 +63,12 @@ type AuditEvent struct {
 	SourceOwnershipOutcome  string `json:"source_ownership_outcome,omitempty"`
 	SchedulingState         string `json:"scheduling_state,omitempty"`
 	// WP-04A MCP provenance. Empty for non-MCP actions.
-	MCPServerID string     `json:"mcp_server_id,omitempty"`
-	MCPToolName string     `json:"mcp_tool_name,omitempty"`
-	Timestamp   *time.Time `json:"timestamp,omitempty"`
+	MCPServerID       string     `json:"mcp_server_id,omitempty"`
+	MCPToolName       string     `json:"mcp_tool_name,omitempty"`
+	MCPProposalID     string     `json:"mcp_proposal_id,omitempty"`
+	MCPProposalSHA256 string     `json:"mcp_proposal_sha256,omitempty"`
+	MCPPolicyID       string     `json:"mcp_policy_id,omitempty"`
+	Timestamp         *time.Time `json:"timestamp,omitempty"`
 }
 
 func (je *JobEngine) startGovernanceRun() {

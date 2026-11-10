@@ -325,6 +325,7 @@ type goalRunConfig struct {
 	MutationAllowed   bool
 	CrawlRuntime      *CrawlRequestToolRuntime
 	MCPManager        *MCPToolManager
+	Principal         MCPMutationPrincipal
 	Provider          LLMProvider
 	RunID             string
 	TraceID           string
@@ -538,7 +539,7 @@ func (r *goalRunner) processToolCall(ctx context.Context, call LLMToolCall, call
 	if err := ctx.Err(); err != nil {
 		return r.finish(r.timeoutStatus(), r.timeoutReason(), "goal loop expired"), true
 	}
-	runtime := ToolRuntime{DB: r.config.DB, Auth: r.auth, Deadline: r.state.deadline, CallID: callID, Crawl: r.config.CrawlRuntime}
+	runtime := ToolRuntime{DB: r.config.DB, Auth: r.auth, Deadline: r.state.deadline, CallID: callID, Crawl: r.config.CrawlRuntime, Principal: r.config.Principal}
 	callCtx, cancel := context.WithDeadline(ctx, r.state.deadline)
 	defer cancel()
 	handlerResult, err := tool.Execute(ContextWithToolRuntime(callCtx, runtime), args)

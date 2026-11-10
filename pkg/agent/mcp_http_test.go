@@ -39,6 +39,17 @@ func mcpHTTPFixtureServer(t *testing.T, mode string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{Name: "source_status", Description: "Return a fixture source observation."}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpSourceInput) (*mcp.CallToolResult, any, error) {
 		return mcpText(fmt.Sprintf("fixture source %d status: observed", in.SourceID)), nil, nil
 	})
+	mcp.AddTool(server, &mcp.Tool{Name: "mutate_counter", Description: "Increment an isolated fixture counter if executed."}, func(_ context.Context, _ *mcp.CallToolRequest, _ mcpMutationInput) (*mcp.CallToolResult, any, error) {
+		path := os.Getenv("CROWLER_MCP_MUTATION_COUNTER")
+		if path != "" {
+			file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+			if err == nil {
+				_, _ = fmt.Fprintln(file, "executed")
+				_ = file.Close()
+			}
+		}
+		return mcpText("mutation fixture executed"), nil, nil
+	})
 	mcp.AddTool(server, &mcp.Tool{Name: "fail", Description: "Return a tool-level error."}, func(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, any, error) {
 		return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "fixture HTTP tool error"}}}, nil, nil
 	})

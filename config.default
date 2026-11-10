@@ -732,6 +732,8 @@ rulesets:
 # streamable_http servers and exact read-only server/tool approvals here.
 # Agent manifests may reference the namespaced tool names, never the executable,
 # endpoint, TLS roots, credentials, environment or network policy.
+# Mutation-capable MCP tools require an explicit `effect: mutation` and
+# `allow_mutation_proposal: true`; WP-04C1 has no production execution path.
 mcp:
   servers: []
 

@@ -994,7 +994,10 @@ HTTP endpoint and its exact read-only tool pairs. The model-facing tool ID is
 namespaced as `mcp_<server>_<tool>`; unapproved, mutation-capable or dynamically
 advertised tools never enter the registry. HTTP endpoints, TLS roots,
 credentials, network exceptions and redirect policy are operator-only values.
-See [`mcp-read-only.md`](mcp-read-only.md).
+Mutation tools require an explicit `effect: mutation` and proposal opt-in and
+are never registered through the read-only path. See
+[`mcp-read-only.md`](mcp-read-only.md) and
+[`mcp-mutation-authorization.md`](mcp-mutation-authorization.md).
 
 State-changing crawl scheduling is **not** in the default read-only catalog.
 WP-03B2C adds an opt-in `request_source_crawl` mutation tool. It is admitted

@@ -19,9 +19,9 @@ import (
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
 
-// WP-04A is deliberately a read-only stdio MCP boundary. The operator owns the
-// server executable, arguments, environment, inventory and limits. Agent
-// manifests may only reference the resulting namespaced tool names.
+// The MCP boundary is operator-controlled. WP-04A/WP-04B admit read-only tools;
+// WP-04C1 adds explicit mutation classification and inert proposal descriptors.
+// Agent manifests may only reference the resulting namespaced tool names.
 
 const (
 	mcpTransportStdio          = "stdio"
@@ -92,12 +92,34 @@ func CurrentMCPApprovedTool(alias string) (MCPApprovedToolLookup, bool) {
 			continue
 		}
 		for _, tool := range server.ApprovedTools {
-			if MCPToolAlias(server.ID, tool.Name) == alias && tool.ReadOnly {
+			if MCPToolAlias(server.ID, tool.Name) == alias && mcpToolIsReadOnly(tool) {
 				return MCPApprovedToolLookup{ServerID: server.ID, Tool: cloneMCPApprovedTool(tool)}, true
 			}
 		}
 	}
 	return MCPApprovedToolLookup{}, false
+}
+
+// CurrentMCPApprovedMutationTool returns an explicitly classified mutation
+// tool approved for proposal-only handling. It never grants execution.
+func CurrentMCPApprovedMutationTool(alias string) (MCPApprovedToolLookup, bool) {
+	mcpConfigMu.RLock()
+	defer mcpConfigMu.RUnlock()
+	for _, server := range mcpConfigValue.Servers {
+		if !server.Enabled || (server.Transport != mcpTransportStdio && server.Transport != mcpTransportStreamableHTTP) {
+			continue
+		}
+		for _, tool := range server.ApprovedTools {
+			if MCPToolAlias(server.ID, tool.Name) == alias && tool.Effect == "mutation" && tool.AllowMutationProposal {
+				return MCPApprovedToolLookup{ServerID: server.ID, Tool: cloneMCPApprovedTool(tool)}, true
+			}
+		}
+	}
+	return MCPApprovedToolLookup{}, false
+}
+
+func mcpToolIsReadOnly(tool cfg.MCPApprovedTool) bool {
+	return tool.Effect == "" && tool.ReadOnly || tool.Effect == "read_only"
 }
 
 // MCPToolAlias returns the stable model-facing identifier for a server/tool
@@ -209,8 +231,29 @@ func normalizeMCPServerConfig(server cfg.MCPServerConfig) (cfg.MCPServerConfig, 
 			return cfg.MCPServerConfig{}, fmt.Errorf("duplicate approved tool %q", tool.Name)
 		}
 		toolNames[tool.Name] = true
-		if !tool.ReadOnly {
-			return cfg.MCPServerConfig{}, fmt.Errorf("approved tool %q is not read-only; mutation MCP tools are disabled in WP-04A", tool.Name)
+		tool.Effect = strings.ToLower(strings.TrimSpace(tool.Effect))
+		switch tool.Effect {
+		case "":
+			if !tool.ReadOnly {
+				return cfg.MCPServerConfig{}, fmt.Errorf("approved tool %q must declare effect read_only or mutation; read_only:false alone does not authorize mutation", tool.Name)
+			}
+			tool.Effect = "read_only"
+		case "read_only":
+			if !tool.ReadOnly {
+				return cfg.MCPServerConfig{}, fmt.Errorf("approved tool %q has contradictory effect read_only and read_only:false", tool.Name)
+			}
+			if tool.AllowMutationProposal {
+				return cfg.MCPServerConfig{}, fmt.Errorf("approved tool %q allow_mutation_proposal is only valid for effect mutation", tool.Name)
+			}
+		case "mutation":
+			if tool.ReadOnly {
+				return cfg.MCPServerConfig{}, fmt.Errorf("approved tool %q has contradictory effect mutation and read_only:true", tool.Name)
+			}
+			if !tool.AllowMutationProposal {
+				return cfg.MCPServerConfig{}, fmt.Errorf("approved mutation tool %q requires allow_mutation_proposal:true", tool.Name)
+			}
+		default:
+			return cfg.MCPServerConfig{}, fmt.Errorf("approved tool %q has unknown effect %q", tool.Name, tool.Effect)
 		}
 		if len(tool.Description) > 2048 {
 			return cfg.MCPServerConfig{}, fmt.Errorf("approved tool %q description exceeds 2048 bytes", tool.Name)

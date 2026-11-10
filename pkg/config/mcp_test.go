@@ -93,3 +93,29 @@ mcp:
 		}
 	}
 }
+
+func TestMCPMutationYAMLParsing(t *testing.T) {
+	raw := []byte(`
+mcp:
+  servers:
+    - id: remotewrite
+      enabled: true
+      transport: streamable_http
+      endpoint: https://mcp.example.com/mcp
+      approved_tools:
+        - name: create_record
+          effect: mutation
+          allow_mutation_proposal: true
+          read_only: false
+          description: Propose an external record creation.
+          required_capabilities: [tool_execution]
+`)
+	var config Config
+	if err := yaml.Unmarshal(raw, &config); err != nil {
+		t.Fatalf("parse mutation config: %v", err)
+	}
+	tool := config.MCP.Servers[0].ApprovedTools[0]
+	if tool.Effect != "mutation" || !tool.AllowMutationProposal || tool.ReadOnly {
+		t.Fatalf("unexpected mutation tool config: %+v", tool)
+	}
+}
