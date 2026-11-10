@@ -130,8 +130,19 @@ resolution and SSRF filtering at the dial boundary, mixed DNS answers failing
 closed, no ambient proxy inheritance, redirect rejection for all 3xx codes,
 bearer-token isolation and absence from audit/model output, JSON and bounded SSE
 responses, response/event limits, cancellation, connection cleanup and protocol
-negotiation. Local fixtures use a TLS `httptest` server and an explicit loopback
-network exception; the exception must never be enabled in production defaults.
+negotiation. IPv4-mapped IPv6 must be normalized before policy evaluation, and
+standard translation/transition prefixes (`64:ff9b::/96`, `64:ff9b:1::/48`,
+6to4, Teredo and discard-only ranges) must fail closed unless a future explicit
+policy is designed. Tests must prove denied destinations invoke no underlying
+dialer and that a new connection revalidates DNS.
+
+Body-limit tests must cover empty, under-limit, exact-limit, one-byte-over and
+substantially oversized bodies with known, unknown and chunked content lengths;
+a body exactly equal to the allowance is valid. SSE event limits must be tested
+across arbitrary read boundaries and both LF and CRLF line endings.
+
+Local fixtures use a TLS `httptest` server and an explicit loopback network
+exception; the exception must never be enabled in production defaults.
 
 The live Ollama and MCP tests are opt-in and independently reported. They must
 use a real configured Ollama endpoint and model, and must not be treated as

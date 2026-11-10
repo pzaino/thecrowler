@@ -39,11 +39,16 @@ var mcpHTTPReservedPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("203.0.113.0/24"),
 	netip.MustParsePrefix("240.0.0.0/4"),
 	netip.MustParsePrefix("0.0.0.0/8"),
+	netip.MustParsePrefix("2001::/32"), // Teredo
 	netip.MustParsePrefix("2001:2::/48"),
 	netip.MustParsePrefix("2001:10::/28"),
 	netip.MustParsePrefix("2001:20::/28"),
 	netip.MustParsePrefix("2001:db8::/32"),
+	netip.MustParsePrefix("2002::/16"), // 6to4
 	netip.MustParsePrefix("3fff::/20"),
+	netip.MustParsePrefix("64:ff9b::/96"),   // well-known NAT64
+	netip.MustParsePrefix("64:ff9b:1::/48"), // local-use NAT64
+	netip.MustParsePrefix("100::/64"),       // discard-only
 }
 
 // newMCPHTTPClient builds one per-run HTTP client for an exact approved
@@ -156,8 +161,13 @@ func parseMCPHTTPPrivateCIDRs(values []string) ([]netip.Prefix, error) {
 }
 
 type mcpHTTPLookupIPFunc func(context.Context, string) ([]net.IPAddr, error)
+type mcpHTTPDialFunc func(context.Context, string, string) (net.Conn, error)
 
 func mcpHTTPDialContext(dialer *net.Dialer, allowed []netip.Prefix, lookup mcpHTTPLookupIPFunc) func(context.Context, string, string) (net.Conn, error) {
+	return mcpHTTPDialContextWithDial(dialer.DialContext, allowed, lookup)
+}
+
+func mcpHTTPDialContextWithDial(dial mcpHTTPDialFunc, allowed []netip.Prefix, lookup mcpHTTPLookupIPFunc) func(context.Context, string, string) (net.Conn, error) {
 	return func(ctx context.Context, network, address string) (net.Conn, error) {
 		host, port, err := net.SplitHostPort(address)
 		if err != nil {
@@ -190,7 +200,7 @@ func mcpHTTPDialContext(dialer *net.Dialer, allowed []netip.Prefix, lookup mcpHT
 		}
 		var lastErr error
 		for _, addr := range permitted {
-			conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(addr.String(), port))
+			conn, err := dial(ctx, network, net.JoinHostPort(addr.String(), port))
 			if err == nil {
 				return conn, nil
 			}
@@ -201,6 +211,9 @@ func mcpHTTPDialContext(dialer *net.Dialer, allowed []netip.Prefix, lookup mcpHT
 }
 
 func mcpHTTPAddressDenied(addr netip.Addr) bool {
+	// A mapped IPv6 address must be judged as its embedded IPv4 destination;
+	// otherwise a prohibited IPv4 target can appear to be a public IPv6 one.
+	addr = addr.Unmap()
 	if addr.IsLoopback() || addr.IsPrivate() || addr.IsLinkLocalUnicast() ||
 		addr.IsLinkLocalMulticast() || addr.IsMulticast() || addr.IsUnspecified() ||
 		addr.IsInterfaceLocalMulticast() {
@@ -288,8 +301,21 @@ type mcpHTTPBodyLimit struct {
 }
 
 func (b *mcpHTTPBodyLimit) Read(p []byte) (int, error) {
-	if b.remaining <= 0 {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if b.remaining < 0 {
 		return 0, errMCPHTTPResponseTooLarge
+	}
+	if b.remaining == 0 {
+		// The limit was consumed exactly by previous reads. Probe one byte so
+		// EOF is accepted but any additional payload is rejected.
+		var probe [1]byte
+		n, err := b.body.Read(probe[:])
+		if n > 0 {
+			return 0, errMCPHTTPResponseTooLarge
+		}
+		return 0, err
 	}
 	if int64(len(p)) > b.remaining {
 		p = p[:b.remaining]

@@ -141,12 +141,26 @@ invalid port. The agent cannot supply or override any connection field.
 
 Network destinations are validated at the connection boundary, not only by
 hostname. By default CROWler rejects loopback, private, link-local, multicast,
-unspecified, IPv4-mapped prohibited and reserved destinations. DNS is resolved
-for each new connection and every answer must be permitted; mixed public and
-prohibited answers fail closed. TLS still verifies the originally configured
-hostname when CROWler dials a validated IP. `network.allowed_private_cidrs` is
-an explicit, narrow operator exception and must contain only private, loopback
-or link-local ranges; it cannot include a range spanning public addresses.
+unspecified, IPv4-mapped prohibited and reserved destinations, including
+standard IPv4/IPv6 translation and transition prefixes such as
+`64:ff9b::/96`, `64:ff9b:1::/48`, `2002::/16` (6to4), `2001::/32` (Teredo)
+and `100::/64`. IPv4-mapped IPv6 addresses are normalized to their IPv4 form
+before the policy is applied.
+
+The translation-prefix list is deliberately fail-closed. It prevents an
+apparently public IPv6 representation from reaching an otherwise prohibited
+embedded IPv4 destination through standard NAT64, 6to4 or Teredo forms. It
+cannot prove the absence of custom translation gateways whose prefixes are not
+knowable from an IPv6 address alone. High-security deployments must also apply
+network-level egress restrictions at the container or host boundary; the
+address policy is one layer, not proof of network isolation.
+
+DNS is resolved for each new connection and every answer must be permitted;
+mixed public and prohibited answers fail closed. TLS still verifies the
+originally configured hostname when CROWler dials a validated IP.
+`network.allowed_private_cidrs` is an explicit, narrow operator exception and
+must contain only private, loopback or link-local ranges; it cannot include a
+range spanning public addresses.
 
 Ambient proxies (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`) are not inherited.
 HTTP redirects are never followed; 301, 302, 303, 307 and 308 responses fail
@@ -159,10 +173,17 @@ cancelled, idle connections are closed, and no persistent background SSE or
 reconnect loop is started. The transport bounds each response body to the
 configured `max_response_bytes` plus a bounded JSON-RPC/SSE envelope allowance.
 Request-scoped SSE streams are additionally limited to 256 events, and every
-event is bounded by the same envelope allowance. The SDK also uses its own
-inbound frame cap. The operator limit is therefore a pre-decode body bound for
-HTTP, not a claim that the SDK frame cap has been replaced. Malformed events,
-idle streams and cancellation fail closed through the SDK and request deadline.
+event is bounded by the same envelope allowance. The body limit has exact
+boundary semantics: a body of exactly the permitted size is accepted after an
+EOF probe, while one additional byte is rejected. Known oversized
+`Content-Length` values are rejected before reading, and the reader never
+buffers more than the configured allowance.
+
+`max_response_bytes` is therefore a post-decode/HTTP body bound for HTTP, not a
+replacement for the SDK's inbound frame cap. `mcpMaxContentBlocks` and the
+final sanitized tool-result limit apply after MCP decoding. Malformed events,
+idle streams, excessive event counts and cancellation fail closed through the
+SDK and request deadline. The SDK's own inbound frame cap remains in force.
 
 ### Environment and process isolation
 

@@ -301,13 +301,17 @@ func TestMCPHTTPAddressPolicy(t *testing.T) {
 		"127.0.0.1", "::1", "10.0.0.1", "172.16.0.1", "192.168.1.1",
 		"fc00::1", "fe80::1", "169.254.169.254", "::ffff:127.0.0.1",
 		"224.0.0.1", "0.0.0.0", "::", "100.64.0.1",
+		"64:ff9b::7f00:1", "64:ff9b::a00:1", "64:ff9b::808:808",
+		"64:ff9b:1::7f00:1", "2002:7f00:1::1", "2002:808:808::1",
+		"2001::1", "2001:0:4136:e378:8000:63bf:3fff:fdd2",
+		"100::1", "3fff::1", "2001:db8::1", "::ffff:169.254.169.254",
 	}
 	for _, raw := range denied {
 		if addr := netip.MustParseAddr(raw); !mcpHTTPAddressDenied(addr) {
 			t.Errorf("address %s was not denied", raw)
 		}
 	}
-	for _, raw := range []string{"8.8.8.8", "1.1.1.1", "2606:4700:4700::1111"} {
+	for _, raw := range []string{"8.8.8.8", "1.1.1.1", "2606:4700:4700::1111", "::ffff:8.8.8.8"} {
 		if addr := netip.MustParseAddr(raw); mcpHTTPAddressDenied(addr) {
 			t.Errorf("public address %s was denied", raw)
 		}
@@ -745,5 +749,296 @@ func TestMCPHTTPSSEEventCountLimit(t *testing.T) {
 	defer resp.Body.Close()
 	if _, err := io.ReadAll(resp.Body); !errors.Is(err, errMCPHTTPTooManyEvents) {
 		t.Fatalf("excessive SSE events error = %v", err)
+	}
+}
+
+func TestMCPHTTPBodyLimitExactBoundary(t *testing.T) {
+	cases := []struct {
+		name      string
+		limit     int64
+		body      string
+		wantBytes int
+		wantErr   error
+	}{
+		{"empty", 5, "", 0, nil},
+		{"one byte", 5, "a", 1, nil},
+		{"below limit", 5, "abcd", 4, nil},
+		{"exact limit", 5, "abcde", 5, nil},
+		{"one over", 5, "abcdef", 5, errMCPHTTPResponseTooLarge},
+		{"far over", 5, strings.Repeat("x", 50), 5, errMCPHTTPResponseTooLarge},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reader := &mcpHTTPBodyLimit{body: io.NopCloser(strings.NewReader(tc.body)), remaining: tc.limit}
+			data, err := io.ReadAll(reader)
+			if tc.wantErr == nil && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
+				t.Fatalf("error = %v, want %v", err, tc.wantErr)
+			}
+			if len(data) != tc.wantBytes {
+				t.Fatalf("read %d bytes, want %d", len(data), tc.wantBytes)
+			}
+		})
+	}
+}
+
+func TestMCPHTTPBodyLimitSmallReads(t *testing.T) {
+	reader := &mcpHTTPBodyLimit{body: io.NopCloser(strings.NewReader("abcde")), remaining: 5}
+	var out []byte
+	buf := make([]byte, 2)
+	for {
+		n, err := reader.Read(buf)
+		out = append(out, buf[:n]...)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("small-read error: %v", err)
+		}
+	}
+	if string(out) != "abcde" {
+		t.Fatalf("small-read bytes = %q", out)
+	}
+}
+
+func TestMCPHTTPBodyLimitReaderEdgeCases(t *testing.T) {
+	t.Run("data and EOF together at exact limit", func(t *testing.T) {
+		body := &mcpHTTPDataEOFReader{data: []byte("abcde")}
+		reader := &mcpHTTPBodyLimit{body: body, remaining: 5}
+		data, err := io.ReadAll(reader)
+		if err != nil || string(data) != "abcde" {
+			t.Fatalf("data+EOF read = %q, %v", data, err)
+		}
+	})
+	t.Run("reader error preserved", func(t *testing.T) {
+		sentinel := errors.New("fixture read error")
+		body := &mcpHTTPErrorReader{data: []byte("abc"), err: sentinel}
+		reader := &mcpHTTPBodyLimit{body: body, remaining: 10}
+		data, err := io.ReadAll(reader)
+		if !errors.Is(err, sentinel) || string(data) != "abc" {
+			t.Fatalf("reader error result = %q, %v", data, err)
+		}
+	})
+}
+
+type mcpHTTPDataEOFReader struct {
+	data []byte
+	done bool
+}
+
+func (r *mcpHTTPDataEOFReader) Read(p []byte) (int, error) {
+	if r.done {
+		return 0, io.EOF
+	}
+	r.done = true
+	n := copy(p, r.data)
+	return n, io.EOF
+}
+func (r *mcpHTTPDataEOFReader) Close() error { return nil }
+
+type mcpHTTPErrorReader struct {
+	data []byte
+	err  error
+	done bool
+}
+
+func (r *mcpHTTPErrorReader) Read(p []byte) (int, error) {
+	if r.done {
+		return 0, r.err
+	}
+	r.done = true
+	n := copy(p, r.data)
+	return n, r.err
+}
+func (r *mcpHTTPErrorReader) Close() error { return nil }
+
+func TestMCPHTTPClientExactBodyLimit(t *testing.T) {
+	limit := int64(1024)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = w.Write([]byte(strings.Repeat("x", int(limit+mcpHTTPBodyOverhead))))
+	}))
+	t.Cleanup(server.Close)
+	caFile := writeMCPHTTPCA(t, server)
+	cfgServer := mcpHTTPFixtureConfig(t, server.URL, caFile)
+	cfgServer.MaxResponseBytes = int(limit)
+	setMCPTestConfig(t, mcpTestConfigFor(cfgServer))
+	client, err := newMCPHTTPClient(cfgServer)
+	if err != nil {
+		t.Fatalf("new exact-bound HTTP client: %v", err)
+	}
+	resp, err := client.Get(server.URL)
+	if err != nil {
+		t.Fatalf("exact-bound HTTP GET: %v", err)
+	}
+	data, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil || int64(len(data)) != limit+mcpHTTPBodyOverhead {
+		t.Fatalf("exact-bound HTTP body = %d bytes, %v", len(data), err)
+	}
+}
+
+func TestMCPHTTPDialRejectsDeniedDestinationsWithoutDialing(t *testing.T) {
+	lookups := map[string][]net.IPAddr{
+		"loopback":     {{IP: net.ParseIP("127.0.0.1")}},
+		"private":      {{IP: net.ParseIP("10.0.0.1")}},
+		"nat64":        {{IP: net.ParseIP("64:ff9b::7f00:1")}},
+		"six-to-four":  {{IP: net.ParseIP("2002:7f00:1::1")}},
+		"mapped":       {{IP: net.ParseIP("::ffff:10.0.0.1")}},
+		"zoned":        {{IP: net.ParseIP("fe80::1"), Zone: "eth0"}},
+		"no-addresses": {},
+	}
+	for name, addresses := range lookups {
+		t.Run(name, func(t *testing.T) {
+			dials := 0
+			dial := func(context.Context, string, string) (net.Conn, error) {
+				dials++
+				return nil, errors.New("unexpected dial")
+			}
+			lookup := func(context.Context, string) ([]net.IPAddr, error) { return addresses, nil }
+			connector := mcpHTTPDialContextWithDial(dial, nil, lookup)
+			if _, err := connector(context.Background(), "tcp", "example.com:443"); err == nil {
+				t.Fatalf("denied destination unexpectedly succeeded")
+			}
+			if dials != 0 {
+				t.Fatalf("underlying dialer was invoked %d times for a denied destination", dials)
+			}
+		})
+	}
+}
+
+func TestMCPHTTPDialResolutionFailureDoesNotDial(t *testing.T) {
+	dials := 0
+	dial := func(context.Context, string, string) (net.Conn, error) {
+		dials++
+		return nil, errors.New("unexpected dial")
+	}
+	lookup := func(context.Context, string) ([]net.IPAddr, error) {
+		return nil, errors.New("fixture DNS failure")
+	}
+	connector := mcpHTTPDialContextWithDial(dial, nil, lookup)
+	if _, err := connector(context.Background(), "tcp", "example.com:443"); err == nil {
+		t.Fatalf("DNS failure unexpectedly succeeded")
+	}
+	if dials != 0 {
+		t.Fatalf("dialer was invoked %d times after DNS failure", dials)
+	}
+}
+
+func TestMCPHTTPDialRevalidatesOnNewConnection(t *testing.T) {
+	lookups := [][]net.IPAddr{
+		{{IP: net.ParseIP("8.8.8.8")}},
+		{{IP: net.ParseIP("64:ff9b::7f00:1")}},
+		{{IP: net.ParseIP("127.0.0.1")}},
+	}
+	calls := 0
+	dial := func(context.Context, string, string) (net.Conn, error) {
+		calls++
+		return nil, errors.New("fixture dial failure")
+	}
+	lookup := func(context.Context, string) ([]net.IPAddr, error) {
+		addresses := lookups[0]
+		lookups = lookups[1:]
+		return addresses, nil
+	}
+	connector := mcpHTTPDialContextWithDial(dial, nil, lookup)
+	if _, err := connector(context.Background(), "tcp", "example.com:443"); err == nil {
+		t.Fatalf("first public connection unexpectedly succeeded without a dial error")
+	}
+	if calls != 1 {
+		t.Fatalf("first public connection dials = %d, want 1", calls)
+	}
+	if _, err := connector(context.Background(), "tcp", "example.com:443"); !errors.Is(err, errMCPHTTPDestinationDenied) {
+		t.Fatalf("second translated destination error = %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("denied reused host invoked dialer: %d", calls)
+	}
+	if _, err := connector(context.Background(), "tcp", "example.com:443"); !errors.Is(err, errMCPHTTPDestinationDenied) {
+		t.Fatalf("third loopback destination error = %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("denied new connection invoked dialer: %d", calls)
+	}
+}
+
+func TestMCPHTTPDialPreservesApprovedHostnameForTLSDial(t *testing.T) {
+	// The connector receives the approved URL hostname and returns a validated
+	// IP connection; HTTP transport keeps the URL hostname for TLS ServerName.
+	lookup := func(context.Context, string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("8.8.8.8")}}, nil
+	}
+	var dialedAddress string
+	dial := func(_ context.Context, _ string, address string) (net.Conn, error) {
+		dialedAddress = address
+		return nil, errors.New("fixture dial failure")
+	}
+	connector := mcpHTTPDialContextWithDial(dial, nil, lookup)
+	_, _ = connector(context.Background(), "tcp", "mcp.example.com:443")
+	if dialedAddress != "8.8.8.8:443" {
+		t.Fatalf("validated IP dial address = %q", dialedAddress)
+	}
+}
+
+func TestMCPHTTPClientChunkedExactBodyLimit(t *testing.T) {
+	limit := int64(1024)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		flusher, _ := w.(http.Flusher)
+		payload := strings.Repeat("x", int(limit+mcpHTTPBodyOverhead))
+		half := len(payload) / 2
+		_, _ = w.Write([]byte(payload[:half]))
+		if flusher != nil {
+			flusher.Flush()
+		}
+		_, _ = w.Write([]byte(payload[half:]))
+	}))
+	t.Cleanup(server.Close)
+	caFile := writeMCPHTTPCA(t, server)
+	cfgServer := mcpHTTPFixtureConfig(t, server.URL, caFile)
+	cfgServer.MaxResponseBytes = int(limit)
+	setMCPTestConfig(t, mcpTestConfigFor(cfgServer))
+	client, err := newMCPHTTPClient(cfgServer)
+	if err != nil {
+		t.Fatalf("new chunked-bound HTTP client: %v", err)
+	}
+	resp, err := client.Get(server.URL)
+	if err != nil {
+		t.Fatalf("chunked exact-bound HTTP GET: %v", err)
+	}
+	data, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil || int64(len(data)) != limit+mcpHTTPBodyOverhead {
+		t.Fatalf("chunked exact-bound body = %d bytes, %v", len(data), err)
+	}
+}
+
+func TestMCPHTTPSSEEventLimitAcrossReadBoundariesAndLineEndings(t *testing.T) {
+	for _, lineEnding := range []string{"\n", "\r\n"} {
+		t.Run(fmt.Sprintf("line_ending_%q", lineEnding), func(t *testing.T) {
+			body := "data: one" + lineEnding + lineEnding + "data: two" + lineEnding + lineEnding
+			reader := &mcpHTTPBodyLimit{
+				body:      io.NopCloser(strings.NewReader(body)),
+				remaining: int64(len(body)),
+				maxEvents: 1,
+			}
+			var out []byte
+			buf := make([]byte, 3)
+			for {
+				n, err := reader.Read(buf)
+				out = append(out, buf[:n]...)
+				if err != nil {
+					if !errors.Is(err, errMCPHTTPTooManyEvents) {
+						t.Fatalf("SSE event limit error = %v", err)
+					}
+					break
+				}
+			}
+			if !strings.Contains(string(out), "one") {
+				t.Fatalf("SSE data before error = %q", out)
+			}
+		})
 	}
 }
