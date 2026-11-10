@@ -988,6 +988,12 @@ missing source is reported as `scope_denied`; database failures are generic tool
 errors without driver text. The new search tools use bound field/value
 parameters and never construct SQL from model input.
 
+Read-only external MCP tools can be admitted alongside the native catalog when
+an operator approves a local stdio server and its exact read-only tool pairs.
+The model-facing tool ID is namespaced as `mcp_<server>_<tool>`; unapproved,
+mutation-capable or dynamically advertised tools never enter the registry. See
+[`mcp-read-only.md`](mcp-read-only.md).
+
 State-changing crawl scheduling is **not** in the default read-only catalog.
 WP-03B2C adds an opt-in `request_source_crawl` mutation tool. It is admitted
 only through `RegisterMutation()`, a `mutation_policy` with `enabled: true`, an

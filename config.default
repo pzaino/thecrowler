@@ -728,6 +728,12 @@ rulesets:
 # --------------------------
 # Agents loader (automation flows)
 # --------------------------
+# Read-only MCP integration (WP-04A). Disabled by default: add only explicit
+# stdio servers and exact read-only server/tool approvals here. Agent manifests
+# may reference the namespaced tool names, never the executable or environment.
+mcp:
+  servers: []
+
 agents:
   # local | http | s3 – where agent files are located
   - type: local

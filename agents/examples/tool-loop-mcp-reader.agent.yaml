@@ -1,0 +1,74 @@
+# Read-only MCP tool loop with a native CROWler tool.
+#
+# Operator prerequisite: approve a local stdio MCP server in the top-level
+# `mcp.servers` configuration before using this manifest. Example:
+#
+# mcp:
+#   servers:
+#     - id: localread
+#       enabled: true
+#       transport: stdio
+#       command: /opt/crowler/bin/approved-mcp-server
+#       args: []
+#       environment_allowlist: [PATH]
+#       environment:
+#         MCP_MODE: read-only
+#       approved_tools:
+#         - name: echo
+#           read_only: true
+#           description: Echo a bounded operator-approved fixture value.
+#       max_startup_seconds: 5
+#       max_call_seconds: 10
+#       max_request_bytes: 32768
+#       max_response_bytes: 65536
+#       max_tool_calls: 4
+#
+# The model-facing name is `mcp_localread_echo`. The executable, arguments,
+# environment, allowlist and limits are operator authority, never model input.
+format_version: v2
+agent_identity:
+  agent_id: mcp-reader
+  name: MCP Read-Only Reader
+  agent_type: executor
+  owner: platform
+  trust_level: trusted
+  capabilities:
+    - ai_reasoning
+    - db_read
+    - tool_execution
+  memory:
+    scope: none
+  constraints:
+    max_steps: 4
+    time_budget: 2m
+jobs:
+  - name: MCP Read-Only Reader
+    process: serial
+    trigger_type: manual
+    trigger_name: run_mcp_reader
+    steps:
+      - action: AgentToolLoop
+        params:
+          provider: ollama
+          url: "http://OLLAMA_HOST:11434"
+          model: "tool-capable-model"
+          prompt: "Call mcp_localread_echo once with {\"text\":\"hello\"}, then call get_source_status for source 7. After both results, summarize what each returned."
+          allowlist:
+            - mcp_localread_echo
+            - get_source_status
+          allowed_sources:
+            - 7
+          limits:
+            max_model_rounds: 3
+            max_tool_calls: 4
+            max_result_bytes: 8192
+            max_total_result_bytes: 32768
+            timeout: 25s
+      - action: CreateEvent
+        params:
+          event_name: ai.mcp.tool_loop.completed
+          event_type: ai.mcp.tool_loop.completed
+          source: "0"
+          severity: info
+          details:
+            result: "$response"

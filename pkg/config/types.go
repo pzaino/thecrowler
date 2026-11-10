@@ -927,6 +927,9 @@ type Config struct {
 	RulesetsSchemaPath string          `json:"rulesets_schema_path" yaml:"rulesets_schema_path"` // Path to the JSON schema file for rulesets
 	Rulesets           []RulesetConfig `json:"rulesets" yaml:"rulesets"`
 
+	// MCP operator-controlled server inventory
+	MCP MCPConfig `json:"mcp" yaml:"mcp"`
+
 	// Agents configuration
 	Agents []AgentsConfig `json:"agents" yaml:"agents"`
 	// Agent runtime rollout flags (compatibility guards for identity-enabled execution).

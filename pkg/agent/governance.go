@@ -51,18 +51,21 @@ type AuditEvent struct {
 	ReasonCode  string   `json:"reason_code,omitempty"`
 	EvidenceIDs []string `json:"evidence_ids,omitempty"`
 	// WP-03B1 scheduling correlation fields. Empty for non-scheduling actions.
-	PrincipalUserID         uint64     `json:"principal_user_id,omitempty"`
-	SourceID                uint64     `json:"source_id,omitempty"`
-	RequestID               string     `json:"request_id,omitempty"`
-	OperationType           string     `json:"operation_type,omitempty"`
-	IdempotencyKey          string     `json:"idempotency_key,omitempty"`
-	AuthorizationOutcome    string     `json:"authorization_outcome,omitempty"`
-	AuthorizationReasonCode string     `json:"authorization_reason_code,omitempty"`
-	AuthorizationStage      string     `json:"authorization_stage,omitempty"`
-	ApprovalOutcome         string     `json:"approval_outcome,omitempty"`
-	SourceOwnershipOutcome  string     `json:"source_ownership_outcome,omitempty"`
-	SchedulingState         string     `json:"scheduling_state,omitempty"`
-	Timestamp               *time.Time `json:"timestamp,omitempty"`
+	PrincipalUserID         uint64 `json:"principal_user_id,omitempty"`
+	SourceID                uint64 `json:"source_id,omitempty"`
+	RequestID               string `json:"request_id,omitempty"`
+	OperationType           string `json:"operation_type,omitempty"`
+	IdempotencyKey          string `json:"idempotency_key,omitempty"`
+	AuthorizationOutcome    string `json:"authorization_outcome,omitempty"`
+	AuthorizationReasonCode string `json:"authorization_reason_code,omitempty"`
+	AuthorizationStage      string `json:"authorization_stage,omitempty"`
+	ApprovalOutcome         string `json:"approval_outcome,omitempty"`
+	SourceOwnershipOutcome  string `json:"source_ownership_outcome,omitempty"`
+	SchedulingState         string `json:"scheduling_state,omitempty"`
+	// WP-04A MCP provenance. Empty for non-MCP actions.
+	MCPServerID string     `json:"mcp_server_id,omitempty"`
+	MCPToolName string     `json:"mcp_tool_name,omitempty"`
+	Timestamp   *time.Time `json:"timestamp,omitempty"`
 }
 
 func (je *JobEngine) startGovernanceRun() {

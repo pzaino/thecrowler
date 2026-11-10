@@ -277,6 +277,17 @@ func normalizeToolLoopConfig(params, config map[string]interface{}, ictx InputCo
 		loop.MutationAllowed = true
 		loop.AllowedOperations = mutation.OperationsSet()
 	}
+	mcpManager, err := NewMCPToolManager(context.Background(), CurrentMCPOperatorConfig(), identity, loop.Allowlist, loop.AllowedSources)
+	if err != nil {
+		return loop, fmt.Errorf("tool loop denied: %v", err)
+	}
+	if mcpManager != nil {
+		if err := mcpManager.Register(registry); err != nil {
+			_ = mcpManager.Close()
+			return loop, fmt.Errorf("tool loop denied: %v", err)
+		}
+		loop.MCPManager = mcpManager
+	}
 	loop.Registry = registry
 	return loop, nil
 }

@@ -114,6 +114,7 @@ type ToolLoopConfig struct {
 	AllowedOperations map[string]bool
 	MutationAllowed   bool
 	CrawlRuntime      *CrawlRequestToolRuntime
+	MCPManager        *MCPToolManager
 	DB                cdb.Handler
 	Limits            ToolLoopLimits
 	StopOnToolError   bool
@@ -208,6 +209,9 @@ func emitToolAudit(runID, traceID, agentID, agentName, owner, tool, outcome, rea
 
 // RunToolLoop executes the bounded synchronous loop.
 func RunToolLoop(config ToolLoopConfig) (ToolLoopResult, error) {
+	if config.MCPManager != nil {
+		defer func() { _ = config.MCPManager.Close() }()
+	}
 	result := ToolLoopResult{
 		ToolCalls: []ToolCallSummary{},
 		RunID:     config.RunID,

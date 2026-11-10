@@ -1300,6 +1300,10 @@ func validateGoalTools(spec *AgentGoalSpec) error {
 				allow[name] = true
 				continue
 			}
+			if approved, mcpOK := CurrentMCPApprovedTool(name); mcpOK && approved.Tool.ReadOnly {
+				allow[name] = true
+				continue
+			}
 			return fmt.Errorf("allowlisted tool %q is not registered", name)
 		}
 		allow[name] = true
@@ -1313,6 +1317,12 @@ func validateGoalTools(spec *AgentGoalSpec) error {
 			return fmt.Errorf("tool_observation tool %q is not in allowlist", selector.Tool)
 		}
 		meta, ok := registry.EvidenceMetadata(selector.Tool)
+		if !ok {
+			if approved, mcpOK := CurrentMCPApprovedTool(selector.Tool); mcpOK && approved.Tool.ReadOnly {
+				meta = EvidenceMetadata{Kind: EvidenceToolObservation, Trust: TrustToolObservation, ReadOnly: true, Supported: true}
+				ok = true
+			}
+		}
 		if !ok || !meta.Supported || !meta.ReadOnly {
 			return fmt.Errorf("tool_observation tool %q is not read-only evidence-capable", selector.Tool)
 		}

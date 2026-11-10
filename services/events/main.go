@@ -549,6 +549,10 @@ func initAll(configFile *string, config *cfg.Config, lmt **rate.Limiter) error {
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Initializing agents engine...")
 	agt.AgentsEngine = agt.NewJobEngine()
 	agt.RegisterActions(agt.AgentsEngine) // Use the initialized `agt.AgentsEngine`
+	if err := agt.SetMCPOperatorConfig(config.MCP); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "invalid MCP operator configuration: %v", err)
+		return fmt.Errorf("invalid MCP operator configuration: %w", err)
+	}
 	agtCfg := config.Agents
 	agt.AgentsRegistry = agt.NewJobConfig()
 	err = agt.AgentsRegistry.LoadConfig(agtCfg)

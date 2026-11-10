@@ -86,6 +86,24 @@ func (a *AgentGoalRunAction) Execute(params map[string]interface{}) (map[string]
 		rval[StrMessage] = "goal run denied: tool registry unavailable"
 		return rval, err
 	}
+	var mcpManager *MCPToolManager
+	if hasMCPAllowlistEntry(stringSet(spec.Allowlist)) {
+		mcpManager, err = NewMCPToolManager(context.Background(), CurrentMCPOperatorConfig(), identity, spec.Allowlist, spec.AllowedSources)
+		if err != nil {
+			rval[StrStatus] = StatusError
+			rval[StrMessage] = "goal run denied: " + err.Error()
+			return rval, err
+		}
+		if mcpManager != nil {
+			defer func() { _ = mcpManager.Close() }()
+			if err := mcpManager.Register(registry); err != nil {
+				_ = mcpManager.Close()
+				rval[StrStatus] = StatusError
+				rval[StrMessage] = "goal run denied: " + err.Error()
+				return rval, err
+			}
+		}
+	}
 	var crawlRuntime *CrawlRequestToolRuntime
 	if spec.MutationPolicy.EnabledOperations(crawlRequestToolName) {
 		if !containsString(spec.Allowlist, crawlRequestToolName) {
@@ -155,6 +173,7 @@ func (a *AgentGoalRunAction) Execute(params map[string]interface{}) (map[string]
 		AllowedOperations: spec.MutationPolicy.OperationsSet(),
 		MutationAllowed:   crawlRuntime != nil,
 		CrawlRuntime:      crawlRuntime,
+		MCPManager:        mcpManager,
 		Provider:          provider,
 		RunID:             uuid.NewString(),
 		TraceID:           toolLoopRunFieldValue(params, "trace_id"),
@@ -245,6 +264,7 @@ type goalRunConfig struct {
 	AllowedOperations map[string]bool
 	MutationAllowed   bool
 	CrawlRuntime      *CrawlRequestToolRuntime
+	MCPManager        *MCPToolManager
 	Provider          LLMProvider
 	RunID             string
 	TraceID           string
@@ -268,6 +288,9 @@ type goalRunState struct {
 
 // RunGoal executes the bounded synchronous goal loop.
 func RunGoal(config goalRunConfig) (GoalRunResult, error) {
+	if config.MCPManager != nil {
+		defer func() { _ = config.MCPManager.Close() }()
+	}
 	if config.Spec == nil {
 		return GoalRunResult{}, fmt.Errorf("goal run denied: missing spec")
 	}
