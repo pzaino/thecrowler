@@ -25,9 +25,12 @@ carry the `delegate` capability, and `CreateEvent` steps use numeric sources.
   `CROWLER_OLLAMA_TOOL_MODELS` before relying on tool execution.
 - `ai-tool-calling-probe.agent.yaml` uses `provider: ollama` for inert
   tool-call proposals. Nothing it returns is executed.
-- `tool-loop-mcp-reader.agent.yaml` shows an approved read-only MCP tool used
-  alongside the native `get_source_status` tool. The operator must configure the
-  `mcp.servers` inventory before this manifest can run.
+- `tool-loop-mcp-reader.agent.yaml` shows an approved read-only stdio MCP tool
+  used alongside the native `get_source_status` tool.
+- `tool-loop-mcp-http-reader.agent.yaml` shows an approved read-only Streamable
+  HTTP MCP tool alongside the native tool. The operator must configure the
+  `mcp.servers` inventory, endpoint policy and any TLS/auth material before
+  either manifest can run.
 - `tool-loop-crawl-requester.agent.yaml` is a disabled-by-default controlled
   crawl requester. It records a durable `request_source_crawl` proposal but
   cannot approve or schedule it; an authenticated operator must issue the exact

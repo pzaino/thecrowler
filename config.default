@@ -728,9 +728,10 @@ rulesets:
 # --------------------------
 # Agents loader (automation flows)
 # --------------------------
-# Read-only MCP integration (WP-04A). Disabled by default: add only explicit
-# stdio servers and exact read-only server/tool approvals here. Agent manifests
-# may reference the namespaced tool names, never the executable or environment.
+# Read-only MCP integration. Disabled by default: add only explicit stdio or
+# streamable_http servers and exact read-only server/tool approvals here.
+# Agent manifests may reference the namespaced tool names, never the executable,
+# endpoint, TLS roots, credentials, environment or network policy.
 mcp:
   servers: []
 

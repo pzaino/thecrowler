@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"sort"
@@ -57,13 +58,15 @@ type MCPToolManager struct {
 }
 
 type mcpServerRuntime struct {
-	config   cfg.MCPServerConfig
-	session  *mcp.ClientSession
-	cmd      *exec.Cmd
-	sem      chan struct{}
-	calls    atomic.Int64
-	approved map[string]cfg.MCPApprovedTool
-	tools    map[string]*mcpAgentTool
+	config     cfg.MCPServerConfig
+	transport  string
+	session    *mcp.ClientSession
+	cmd        *exec.Cmd
+	httpClient *http.Client
+	sem        chan struct{}
+	calls      atomic.Int64
+	approved   map[string]cfg.MCPApprovedTool
+	tools      map[string]*mcpAgentTool
 }
 
 type mcpAgentTool struct {
@@ -195,6 +198,9 @@ func (m *MCPToolManager) Close() error {
 				_ = server.cmd.Process.Kill()
 				_, _ = server.cmd.Process.Wait()
 			}
+			if server.httpClient != nil {
+				server.httpClient.CloseIdleConnections()
+			}
 		}
 		m.cancel()
 	})
@@ -202,6 +208,17 @@ func (m *MCPToolManager) Close() error {
 }
 
 func (m *MCPToolManager) startServer(serverConfig cfg.MCPServerConfig, wanted map[string]bool) (*mcpServerRuntime, error) {
+	switch serverConfig.Transport {
+	case mcpTransportStdio:
+		return m.startStdioServer(serverConfig, wanted)
+	case mcpTransportStreamableHTTP:
+		return m.startHTTPServer(serverConfig, wanted)
+	default:
+		return nil, fmt.Errorf("%w: server %q has unsupported transport %q", ErrMCPConfigInvalid, serverConfig.ID, serverConfig.Transport)
+	}
+}
+
+func (m *MCPToolManager) startStdioServer(serverConfig cfg.MCPServerConfig, wanted map[string]bool) (*mcpServerRuntime, error) {
 	cmd := exec.CommandContext(m.ctx, serverConfig.Command, serverConfig.Args...)
 	if serverConfig.WorkingDirectory != "" {
 		cmd.Dir = serverConfig.WorkingDirectory
@@ -229,7 +246,7 @@ func (m *MCPToolManager) startServer(serverConfig cfg.MCPServerConfig, wanted ma
 		return nil, fmt.Errorf("%w: server %q negotiated unsupported protocol version", ErrMCPProtocol, serverConfig.ID)
 	}
 	server := &mcpServerRuntime{
-		config: serverConfig, session: session, cmd: cmd,
+		config: serverConfig, transport: mcpTransportStdio, session: session, cmd: cmd,
 		sem:      make(chan struct{}, serverConfig.MaxConcurrentCalls),
 		approved: make(map[string]cfg.MCPApprovedTool),
 		tools:    make(map[string]*mcpAgentTool),
@@ -242,6 +259,61 @@ func (m *MCPToolManager) startServer(serverConfig cfg.MCPServerConfig, wanted ma
 		return nil, err
 	}
 	return server, nil
+}
+
+func (m *MCPToolManager) startHTTPServer(serverConfig cfg.MCPServerConfig, wanted map[string]bool) (*mcpServerRuntime, error) {
+	client, err := newMCPHTTPClient(serverConfig)
+	if err != nil {
+		return nil, fmt.Errorf("%w: server %q HTTP client: %v", ErrMCPConfigInvalid, serverConfig.ID, err)
+	}
+	transport := &mcp.StreamableClientTransport{
+		Endpoint:             serverConfig.Endpoint,
+		HTTPClient:           client,
+		MaxRetries:           -1, // no implicit reconnect loop; a new run reconnects and revalidates
+		DisableStandaloneSSE: true,
+		MaxEventSize:         serverConfig.MaxResponseBytes + mcpHTTPBodyOverhead,
+	}
+	startCtx, cancel := context.WithTimeout(m.ctx, time.Duration(serverConfig.MaxStartupSeconds)*time.Second)
+	defer cancel()
+	session, err := m.client.Connect(startCtx, transport, nil)
+	if err != nil {
+		client.CloseIdleConnections()
+		if lifecycleErr := mcpLifecycleFailure(startCtx, "startup", serverConfig.ID); lifecycleErr != nil {
+			return nil, lifecycleErr
+		}
+		return nil, fmt.Errorf("%w: server %q startup failed", ErrMCPTransport, serverConfig.ID)
+	}
+	initialized := session.InitializeResult()
+	if initialized == nil || !supportedMCPProtocolVersion(initialized.ProtocolVersion) ||
+		(!serverConfig.Protocol.AllowLegacy && initialized.ProtocolVersion < mcpModernProtocolVersion) {
+		_ = session.Close()
+		client.CloseIdleConnections()
+		return nil, fmt.Errorf("%w: server %q negotiated unsupported or legacy protocol version %q (allow_legacy=%t)",
+			ErrMCPProtocol, serverConfig.ID, protocolVersionOf(initialized), serverConfig.Protocol.AllowLegacy)
+	}
+	server := &mcpServerRuntime{
+		config: serverConfig, transport: mcpTransportStreamableHTTP,
+		session: session, httpClient: client,
+		sem:      make(chan struct{}, serverConfig.MaxConcurrentCalls),
+		approved: make(map[string]cfg.MCPApprovedTool),
+		tools:    make(map[string]*mcpAgentTool),
+	}
+	for _, tool := range serverConfig.ApprovedTools {
+		server.approved[tool.Name] = tool
+	}
+	if err := m.discoverServer(server, wanted); err != nil {
+		_ = session.Close()
+		client.CloseIdleConnections()
+		return nil, err
+	}
+	return server, nil
+}
+
+func protocolVersionOf(initialized *mcp.InitializeResult) string {
+	if initialized == nil {
+		return ""
+	}
+	return initialized.ProtocolVersion
 }
 
 func (m *MCPToolManager) discoverServer(server *mcpServerRuntime, wanted map[string]bool) error {
@@ -342,11 +414,32 @@ func validateMCPToolSchema(raw any, maxBytes int) error {
 	if err := checkParameterSchema(schema, 0); err != nil {
 		return err
 	}
+	if containsMCPKey(schema, "x-mcp-header") {
+		return fmt.Errorf("x-mcp-header annotations are not supported")
+	}
 	encoded, err := json.Marshal(schema)
 	if err != nil || len(encoded) > maxBytes {
 		return fmt.Errorf("schema exceeds metadata limits")
 	}
 	return nil
+}
+
+func containsMCPKey(value any, key string) bool {
+	switch v := value.(type) {
+	case map[string]any:
+		for k, child := range v {
+			if strings.EqualFold(k, key) || containsMCPKey(child, key) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range v {
+			if containsMCPKey(child, key) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func mcpSchemaMap(raw any) map[string]any {

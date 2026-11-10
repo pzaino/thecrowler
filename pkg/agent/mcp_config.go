@@ -4,10 +4,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"net"
+	"net/netip"
+	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -19,11 +24,13 @@ import (
 // manifests may only reference the resulting namespaced tool names.
 
 const (
-	mcpTransportStdio = "stdio"
-	mcpToolPrefix     = "mcp_"
-	mcpMaxToolCount   = 64
-	mcpMaxServerIDLen = 32
-	mcpMaxRawToolLen  = 128
+	mcpTransportStdio          = "stdio"
+	mcpTransportStreamableHTTP = "streamable_http"
+	mcpModernProtocolVersion   = "2026-07-28"
+	mcpToolPrefix              = "mcp_"
+	mcpMaxToolCount            = 64
+	mcpMaxServerIDLen          = 32
+	mcpMaxRawToolLen           = 128
 	// mcpMaxContentBlocks bounds the number of text blocks retained from one
 	// result. The SDK already bounds a decoded frame; this keeps our own
 	// result-shaping allocation bounded as well.
@@ -81,7 +88,7 @@ func CurrentMCPApprovedTool(alias string) (MCPApprovedToolLookup, bool) {
 	mcpConfigMu.RLock()
 	defer mcpConfigMu.RUnlock()
 	for _, server := range mcpConfigValue.Servers {
-		if !server.Enabled || server.Transport != mcpTransportStdio {
+		if !server.Enabled || (server.Transport != mcpTransportStdio && server.Transport != mcpTransportStreamableHTTP) {
 			continue
 		}
 		for _, tool := range server.ApprovedTools {
@@ -170,56 +177,18 @@ func normalizeMCPServerConfig(server cfg.MCPServerConfig) (cfg.MCPServerConfig, 
 	if strings.TrimSpace(server.Transport) == "" {
 		server.Transport = mcpTransportStdio
 	}
-	if server.Transport != mcpTransportStdio {
-		return cfg.MCPServerConfig{}, fmt.Errorf("transport %q is not supported in WP-04A (stdio only)", server.Transport)
-	}
-	if err := validateMCPCommand(server.Command); err != nil {
-		return cfg.MCPServerConfig{}, err
-	}
-	if len(server.Args) > 64 {
-		return cfg.MCPServerConfig{}, fmt.Errorf("args exceeds 64 entries")
-	}
-	for _, arg := range server.Args {
-		if len(arg) > 4096 || strings.IndexByte(arg, 0) >= 0 {
-			return cfg.MCPServerConfig{}, fmt.Errorf("arg is oversized or contains NUL")
+	switch server.Transport {
+	case mcpTransportStdio:
+		if err := validateMCPStdioConfig(&server); err != nil {
+			return cfg.MCPServerConfig{}, err
 		}
-		for _, r := range arg {
-			if r < 0x20 && r != '\t' || r == 0x7f {
-				return cfg.MCPServerConfig{}, fmt.Errorf("arg contains a control character")
-			}
+	case mcpTransportStreamableHTTP:
+		if err := validateMCPHTTPConfig(&server); err != nil {
+			return cfg.MCPServerConfig{}, err
 		}
-	}
-	if server.WorkingDirectory != "" {
-		if !filepath.IsAbs(server.WorkingDirectory) {
-			return cfg.MCPServerConfig{}, fmt.Errorf("working_directory must be absolute")
-		}
-		info, err := os.Stat(server.WorkingDirectory)
-		if err != nil || !info.IsDir() {
-			return cfg.MCPServerConfig{}, fmt.Errorf("working_directory is not a readable directory")
-		}
-	}
-	envSeen := map[string]bool{}
-	for index, name := range server.EnvironmentAllowlist {
-		name = strings.TrimSpace(name)
-		if !mcpEnvNamePattern.MatchString(name) {
-			return cfg.MCPServerConfig{}, fmt.Errorf("invalid environment allowlist name %q", name)
-		}
-		if mcpSecretEnvironmentName(name) {
-			return cfg.MCPServerConfig{}, fmt.Errorf("environment allowlist may not inherit sensitive variable %q", name)
-		}
-		if envSeen[name] {
-			return cfg.MCPServerConfig{}, fmt.Errorf("duplicate environment allowlist name %q", name)
-		}
-		envSeen[name] = true
-		server.EnvironmentAllowlist[index] = name
-	}
-	for name, value := range server.Environment {
-		if !mcpEnvNamePattern.MatchString(name) {
-			return cfg.MCPServerConfig{}, fmt.Errorf("invalid environment name %q", name)
-		}
-		if len(value) > 8192 || strings.IndexByte(value, 0) >= 0 {
-			return cfg.MCPServerConfig{}, fmt.Errorf("environment value for %q is oversized or contains NUL", name)
-		}
+	default:
+		return cfg.MCPServerConfig{}, fmt.Errorf("transport %q is not supported (use %q or %q)",
+			server.Transport, mcpTransportStdio, mcpTransportStreamableHTTP)
 	}
 	if len(server.ApprovedTools) == 0 {
 		return cfg.MCPServerConfig{}, fmt.Errorf("approved_tools must not be empty")
@@ -271,6 +240,248 @@ func normalizeMCPServerConfig(server cfg.MCPServerConfig) (cfg.MCPServerConfig, 
 	return server, nil
 }
 
+func validateMCPStdioConfig(server *cfg.MCPServerConfig) error {
+	if strings.TrimSpace(server.Endpoint) != "" || server.Auth.Mode != "" ||
+		server.Auth.TokenEnv != "" || server.Auth.TokenFile != "" ||
+		server.TLS.CAFile != "" || len(server.Network.AllowedPrivateCIDRs) > 0 ||
+		server.Network.AllowInsecureLoopback || server.Protocol.AllowLegacy {
+		return fmt.Errorf("streamable HTTP connection fields are only valid for transport %q", mcpTransportStreamableHTTP)
+	}
+	if err := validateMCPCommand(server.Command); err != nil {
+		return err
+	}
+	if len(server.Args) > 64 {
+		return fmt.Errorf("args exceeds 64 entries")
+	}
+	for _, arg := range server.Args {
+		if len(arg) > 4096 || strings.IndexByte(arg, 0) >= 0 {
+			return fmt.Errorf("arg is oversized or contains NUL")
+		}
+		for _, r := range arg {
+			if r < 0x20 && r != '\t' || r == 0x7f {
+				return fmt.Errorf("arg contains a control character")
+			}
+		}
+	}
+	if server.WorkingDirectory != "" {
+		if !filepath.IsAbs(server.WorkingDirectory) {
+			return fmt.Errorf("working_directory must be absolute")
+		}
+		info, err := os.Stat(server.WorkingDirectory)
+		if err != nil || !info.IsDir() {
+			return fmt.Errorf("working_directory is not a readable directory")
+		}
+	}
+	envSeen := map[string]bool{}
+	for index, name := range server.EnvironmentAllowlist {
+		name = strings.TrimSpace(name)
+		if !mcpEnvNamePattern.MatchString(name) {
+			return fmt.Errorf("invalid environment allowlist name %q", name)
+		}
+		if mcpSecretEnvironmentName(name) {
+			return fmt.Errorf("environment allowlist may not inherit sensitive variable %q", name)
+		}
+		if envSeen[name] {
+			return fmt.Errorf("duplicate environment allowlist name %q", name)
+		}
+		envSeen[name] = true
+		server.EnvironmentAllowlist[index] = name
+	}
+	for name, value := range server.Environment {
+		if !mcpEnvNamePattern.MatchString(name) {
+			return fmt.Errorf("invalid environment name %q", name)
+		}
+		if len(value) > 8192 || strings.IndexByte(value, 0) >= 0 {
+			return fmt.Errorf("environment value for %q is oversized or contains NUL", name)
+		}
+	}
+	return nil
+}
+
+func validateMCPHTTPConfig(server *cfg.MCPServerConfig) error {
+	if server.Command != "" || len(server.Args) > 0 || server.WorkingDirectory != "" ||
+		len(server.EnvironmentAllowlist) > 0 || len(server.Environment) > 0 {
+		return fmt.Errorf("stdio process fields are only valid for transport %q", mcpTransportStdio)
+	}
+	endpoint, err := normalizeMCPHTTPEndpoint(server.Endpoint)
+	if err != nil {
+		return err
+	}
+	server.Endpoint = endpoint
+	parsed, _ := url.Parse(endpoint)
+	if parsed.Scheme == "http" && !server.Network.AllowInsecureLoopback {
+		return fmt.Errorf("remote MCP endpoints must use HTTPS; plain HTTP is only allowed with allow_insecure_loopback for a loopback fixture")
+	}
+	if parsed.Scheme == "http" && !mcpLoopbackHost(parsed.Hostname()) {
+		return fmt.Errorf("plain HTTP MCP endpoints are restricted to loopback hosts")
+	}
+
+	server.Auth.Mode = strings.ToLower(strings.TrimSpace(server.Auth.Mode))
+	if server.Auth.Mode == "" {
+		server.Auth.Mode = "none"
+	}
+	switch server.Auth.Mode {
+	case "none":
+		if server.Auth.TokenEnv != "" || server.Auth.TokenFile != "" {
+			return fmt.Errorf("auth.token_env and auth.token_file require auth.mode bearer")
+		}
+	case "bearer":
+		if (server.Auth.TokenEnv == "") == (server.Auth.TokenFile == "") {
+			return fmt.Errorf("bearer authentication requires exactly one of token_env or token_file")
+		}
+		if server.Auth.TokenEnv != "" {
+			server.Auth.TokenEnv = strings.TrimSpace(server.Auth.TokenEnv)
+			if !mcpEnvNamePattern.MatchString(server.Auth.TokenEnv) {
+				return fmt.Errorf("invalid auth.token_env name")
+			}
+		}
+		if server.Auth.TokenFile != "" {
+			server.Auth.TokenFile = strings.TrimSpace(server.Auth.TokenFile)
+			if !filepath.IsAbs(server.Auth.TokenFile) {
+				return fmt.Errorf("auth.token_file must be absolute")
+			}
+			info, err := os.Stat(server.Auth.TokenFile)
+			if err != nil || !info.Mode().IsRegular() {
+				return fmt.Errorf("auth.token_file is not a readable regular file")
+			}
+		}
+	default:
+		return fmt.Errorf("auth.mode %q is not supported (use none or bearer)", server.Auth.Mode)
+	}
+	if server.TLS.CAFile != "" {
+		server.TLS.CAFile = strings.TrimSpace(server.TLS.CAFile)
+		if !filepath.IsAbs(server.TLS.CAFile) {
+			return fmt.Errorf("tls.ca_file must be absolute")
+		}
+		info, err := os.Stat(server.TLS.CAFile)
+		if err != nil || !info.Mode().IsRegular() {
+			return fmt.Errorf("tls.ca_file is not a readable regular file")
+		}
+	}
+	seenCIDRs := map[string]bool{}
+	normalizedCIDRs := make([]string, 0, len(server.Network.AllowedPrivateCIDRs))
+	for _, raw := range server.Network.AllowedPrivateCIDRs {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(raw))
+		if err != nil {
+			return fmt.Errorf("invalid network.allowed_private_cidrs entry %q", raw)
+		}
+		addr := prefix.Addr()
+		last := mcpPrefixLastAddr(prefix)
+		if addr.IsUnspecified() || last.IsUnspecified() ||
+			(!mcpPrivateRangeAddr(addr) && !mcpPrivateRangeAddr(last)) {
+			return fmt.Errorf("network.allowed_private_cidrs entry %q must be a private, loopback or link-local range", raw)
+		}
+		if !mcpPrivateRangeAddr(addr) || !mcpPrivateRangeAddr(last) {
+			return fmt.Errorf("network.allowed_private_cidrs entry %q spans a non-private address", raw)
+		}
+		normalized := prefix.Masked().String()
+		if seenCIDRs[normalized] {
+			continue
+		}
+		seenCIDRs[normalized] = true
+		normalizedCIDRs = append(normalizedCIDRs, normalized)
+	}
+	server.Network.AllowedPrivateCIDRs = normalizedCIDRs
+	return nil
+}
+
+func normalizeMCPHTTPEndpoint(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", fmt.Errorf("endpoint is required for streamable_http")
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("invalid endpoint URL")
+	}
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
+		return "", fmt.Errorf("endpoint scheme must be https (http is allowed only for an explicitly approved loopback fixture)")
+	}
+	if parsed.Opaque != "" || parsed.User != nil {
+		return "", fmt.Errorf("endpoint must not contain opaque or userinfo components")
+	}
+	if parsed.Fragment != "" || parsed.RawFragment != "" || parsed.RawQuery != "" || parsed.ForceQuery {
+		return "", fmt.Errorf("endpoint must not contain a query or fragment")
+	}
+	host := strings.ToLower(strings.TrimSpace(parsed.Hostname()))
+	if host == "" || strings.Contains(host, "%") || strings.HasSuffix(host, ".") {
+		return "", fmt.Errorf("endpoint host is invalid")
+	}
+	if ip := net.ParseIP(host); ip == nil {
+		if len(host) > 253 {
+			return "", fmt.Errorf("endpoint host is too long")
+		}
+		for _, label := range strings.Split(host, ".") {
+			if label == "" || len(label) > 63 || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+				return "", fmt.Errorf("endpoint host is not a valid DNS name")
+			}
+			for _, r := range label {
+				if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
+					return "", fmt.Errorf("endpoint host is not a valid DNS name")
+				}
+			}
+		}
+	}
+	port := parsed.Port()
+	if port == "" {
+		if parsed.Scheme == "https" {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+	portNumber, err := strconv.Atoi(port)
+	if err != nil || portNumber < 1 || portNumber > 65535 {
+		return "", fmt.Errorf("endpoint port is invalid")
+	}
+	urlPath := parsed.EscapedPath()
+	if urlPath == "" {
+		urlPath = "/"
+	}
+	if !strings.HasPrefix(urlPath, "/") || strings.Contains(urlPath, "%") ||
+		strings.Contains(urlPath, "\\") || path.Clean(urlPath) != urlPath {
+		return "", fmt.Errorf("endpoint path is ambiguous or invalid")
+	}
+	normalized := url.URL{
+		Scheme: parsed.Scheme,
+		Host:   net.JoinHostPort(host, port),
+		Path:   urlPath,
+	}
+	return normalized.String(), nil
+}
+
+func mcpPrivateRangeAddr(addr netip.Addr) bool {
+	return addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast()
+}
+
+func mcpPrefixLastAddr(prefix netip.Prefix) netip.Addr {
+	addr := prefix.Addr()
+	bits := prefix.Bits()
+	if addr.Is4() {
+		raw := addr.As4()
+		for bit := bits; bit < 32; bit++ {
+			raw[bit/8] |= 1 << (7 - uint(bit%8))
+		}
+		return netip.AddrFrom4(raw)
+	}
+	raw := addr.As16()
+	for bit := bits; bit < 128; bit++ {
+		raw[bit/8] |= 1 << (7 - uint(bit%8))
+	}
+	return netip.AddrFrom16(raw)
+}
+
+func mcpLoopbackHost(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "localhost" {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
+}
+
 func validateMCPCommand(command string) error {
 	command = strings.TrimSpace(command)
 	if command == "" {
@@ -293,7 +504,6 @@ func validateMCPCommand(command string) error {
 	}
 	return nil
 }
-
 func mcpSecretEnvironmentName(name string) bool {
 	upper := strings.ToUpper(name)
 	for _, prefix := range mcpSecretEnvPrefixes {
@@ -372,6 +582,7 @@ func cloneMCPConfig(config cfg.MCPConfig) cfg.MCPConfig {
 		out.Servers[i].EnvironmentAllowlist = append([]string(nil), server.EnvironmentAllowlist...)
 		out.Servers[i].AllowedAgents = append([]string(nil), server.AllowedAgents...)
 		out.Servers[i].AllowedSources = append([]uint64(nil), server.AllowedSources...)
+		out.Servers[i].Network.AllowedPrivateCIDRs = append([]string(nil), server.Network.AllowedPrivateCIDRs...)
 		out.Servers[i].Environment = cloneStringMap(server.Environment)
 		out.Servers[i].ApprovedTools = make([]cfg.MCPApprovedTool, len(server.ApprovedTools))
 		for j, tool := range server.ApprovedTools {

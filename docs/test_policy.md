@@ -124,6 +124,15 @@ following:
 - native read-only tools and WP-03 proposal/approval/scheduling behaviour
   remain unchanged.
 
+For Streamable HTTP MCP, tests must also verify exact endpoint binding, HTTPS,
+TLS hostname/certificate verification, optional operator CA trust, DNS
+resolution and SSRF filtering at the dial boundary, mixed DNS answers failing
+closed, no ambient proxy inheritance, redirect rejection for all 3xx codes,
+bearer-token isolation and absence from audit/model output, JSON and bounded SSE
+responses, response/event limits, cancellation, connection cleanup and protocol
+negotiation. Local fixtures use a TLS `httptest` server and an explicit loopback
+network exception; the exception must never be enabled in production defaults.
+
 The live Ollama and MCP tests are opt-in and independently reported. They must
 use a real configured Ollama endpoint and model, and must not be treated as
 passing because the package compiled or a test was skipped.

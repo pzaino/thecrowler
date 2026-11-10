@@ -142,3 +142,76 @@ func TestMCPGoalSpecValidationUsesOperatorInventory(t *testing.T) {
 		t.Fatalf("unapproved MCP goal tool was accepted")
 	}
 }
+
+func validMCPHTTPConfig() cfg.MCPServerConfig {
+	return cfg.MCPServerConfig{
+		ID: "remote", Enabled: true, Transport: mcpTransportStreamableHTTP,
+		Endpoint:      "https://mcp.example.com/mcp",
+		ApprovedTools: []cfg.MCPApprovedTool{{Name: "echo", ReadOnly: true}},
+	}
+}
+
+func TestMCPHTTPOperatorConfigValidation(t *testing.T) {
+	if err := SetMCPOperatorConfig(mcpTestConfigFor(validMCPHTTPConfig())); err != nil {
+		t.Fatalf("valid HTTP MCP config rejected: %v", err)
+	}
+	if approved, ok := CurrentMCPApprovedTool(MCPToolAlias("remote", "echo")); !ok || approved.ServerID != "remote" {
+		t.Fatalf("HTTP approved tool lookup failed: %+v ok=%v", approved, ok)
+	}
+	t.Cleanup(func() { _ = SetMCPOperatorConfig(cfg.MCPConfig{}) })
+
+	cases := []struct {
+		name   string
+		mutate func(*cfg.MCPServerConfig)
+	}{
+		{"remote plain HTTP", func(c *cfg.MCPServerConfig) { c.Endpoint = "http://mcp.example.com/mcp" }},
+		{"non-loopback insecure HTTP", func(c *cfg.MCPServerConfig) {
+			c.Endpoint = "http://mcp.example.com/mcp"
+			c.Network.AllowInsecureLoopback = true
+		}},
+		{"userinfo", func(c *cfg.MCPServerConfig) { c.Endpoint = "https://user:pass@mcp.example.com/mcp" }},
+		{"fragment", func(c *cfg.MCPServerConfig) { c.Endpoint = "https://mcp.example.com/mcp#fragment" }},
+		{"query", func(c *cfg.MCPServerConfig) { c.Endpoint = "https://mcp.example.com/mcp?token=bad" }},
+		{"unsupported scheme", func(c *cfg.MCPServerConfig) { c.Endpoint = "ftp://mcp.example.com/mcp" }},
+		{"ambiguous path", func(c *cfg.MCPServerConfig) { c.Endpoint = "https://mcp.example.com/a/../mcp" }},
+		{"invalid port", func(c *cfg.MCPServerConfig) { c.Endpoint = "https://mcp.example.com:notaport/mcp" }},
+		{"public private-CIDR exception", func(c *cfg.MCPServerConfig) {
+			c.Network.AllowedPrivateCIDRs = []string{"8.8.8.0/24"}
+		}},
+		{"private CIDR spanning public range", func(c *cfg.MCPServerConfig) {
+			c.Network.AllowedPrivateCIDRs = []string{"192.168.0.0/15"}
+		}},
+		{"bearer without source", func(c *cfg.MCPServerConfig) { c.Auth.Mode = "bearer" }},
+		{"bearer with two sources", func(c *cfg.MCPServerConfig) {
+			c.Auth = cfg.MCPHTTPAuthConfig{Mode: "bearer", TokenEnv: "MCP_TOKEN", TokenFile: "/tmp/mcp-token"}
+		}},
+		{"stdio HTTP fields", func(c *cfg.MCPServerConfig) {
+			c.Transport = mcpTransportStdio
+			c.Command = "/bin/true"
+			c.Endpoint = "https://mcp.example.com/mcp"
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := validMCPHTTPConfig()
+			tc.mutate(&server)
+			if err := SetMCPOperatorConfig(mcpTestConfigFor(server)); err == nil {
+				t.Fatalf("%s was accepted", tc.name)
+			}
+			_ = SetMCPOperatorConfig(cfg.MCPConfig{})
+		})
+	}
+}
+
+func TestMCPLoopbackHTTPFixturePolicyIsExplicit(t *testing.T) {
+	server := validMCPHTTPConfig()
+	server.Endpoint = "http://127.0.0.1:8080/mcp"
+	server.Network = cfg.MCPHTTPNetworkConfig{
+		AllowInsecureLoopback: true,
+		AllowedPrivateCIDRs:   []string{"127.0.0.1/32"},
+	}
+	if err := SetMCPOperatorConfig(mcpTestConfigFor(server)); err != nil {
+		t.Fatalf("explicit loopback HTTP test policy rejected: %v", err)
+	}
+	t.Cleanup(func() { _ = SetMCPOperatorConfig(cfg.MCPConfig{}) })
+}

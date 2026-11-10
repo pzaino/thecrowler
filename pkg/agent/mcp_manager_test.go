@@ -1005,3 +1005,17 @@ func TestMCPManagerDoesNotLeakSessionGoroutines(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 }
+
+func TestMCPRejectsXMCPHeaderAnnotation(t *testing.T) {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"tenant": map[string]any{
+				"type": "string", "x-mcp-header": "X-Tenant",
+			},
+		},
+	}
+	if err := validateMCPToolSchema(schema, 64<<10); err == nil {
+		t.Fatalf("x-mcp-header annotation was admitted")
+	}
+}

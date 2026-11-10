@@ -1,8 +1,8 @@
 # Read-only MCP client integration (WP-04A)
 
-Status: WP-04A implements approved **stdio** MCP tools only. Streamable HTTP is
-deferred to WP-04B. Mutation-capable MCP tools are deferred to WP-04C and remain
-disabled.
+Status: WP-04A supports approved **stdio** MCP servers. WP-04B adds an explicitly
+selected, read-only **Streamable HTTP** transport for approved remote servers.
+Mutation-capable MCP tools remain deferred to WP-04C and are disabled.
 
 ## SDK and protocol
 
@@ -18,9 +18,14 @@ or newer; the repository builds with Go 1.26.6. The SDK is licensed under the
 project’s MIT/Apache-2.0 transition terms. It is pinned in `go.mod`; unrelated
 dependencies are not upgraded by this feature.
 
-The SDK owns stdio framing, protocol negotiation, list pagination and tool-call
-transport. CROWler does not implement JSON-RPC framing or an independent MCP
-protocol stack.
+The SDK owns stdio and Streamable HTTP framing, protocol negotiation, list
+pagination and tool-call transport. CROWler does not implement JSON-RPC framing
+or an independent MCP protocol stack. Streamable HTTP uses the SDK's
+`StreamableClientTransport`: request-scoped POST exchanges, JSON or
+request-scoped SSE responses, no persistent GET listener, and no automatic
+reconnect loop. The modern `2026-07-28` revision is the default. Older protocol
+negotiation is rejected unless the operator explicitly sets
+`protocol.allow_legacy: true`.
 
 ## Trust boundary
 
@@ -81,8 +86,83 @@ mcp:
       max_tool_calls: 8
 ```
 
-Only `transport: stdio` is accepted. `enabled` defaults to false. A disabled
-server needs no executable and exposes no tools.
+Only `transport: stdio` and `transport: streamable_http` are accepted.
+`enabled` defaults to false. A disabled server needs no executable or endpoint
+and exposes no tools.
+
+### Remote Streamable HTTP configuration
+
+```yaml
+mcp:
+  servers:
+    - id: remoteread
+      enabled: true
+      transport: streamable_http
+      endpoint: https://mcp.example.com/mcp
+      auth:
+        mode: bearer
+        token_env: CROWLER_MCP_REMOTE_TOKEN
+      tls:
+        ca_file: /etc/crowler/mcp-ca.pem
+      network:
+        allowed_private_cidrs: []
+        allow_insecure_loopback: false
+      protocol:
+        allow_legacy: false
+      allowed_agents: [mcp-reader]
+      allowed_sources: [7]
+      approved_tools:
+        - name: source_lookup
+          read_only: true
+          description: Read a bounded remote source observation.
+          allowed_sources: [7]
+          required_capabilities: [tool_execution]
+      max_startup_seconds: 5
+      max_discovery_seconds: 10
+      max_call_seconds: 15
+      max_concurrent_calls: 1
+      max_request_bytes: 32768
+      max_response_bytes: 65536
+      max_tool_calls: 8
+```
+
+`auth.mode` is `none` or `bearer`. Bearer credentials come from exactly one of
+`auth.token_env` or `auth.token_file`; values are never placed in URLs, logs,
+audit records, model prompts or tool observations. `tls.ca_file` is an optional
+operator-supplied CA bundle for a deliberately trusted private CA. TLS
+verification and hostname verification cannot be disabled.
+
+The endpoint is pinned by scheme, host, port and path. HTTPS is required for
+remote servers. Plain HTTP is rejected except when
+`network.allow_insecure_loopback` and an explicit loopback CIDR are configured
+for a local fixture; that exception is never enabled by default. `endpoint`
+must not contain userinfo, query data, a fragment, an ambiguous path or an
+invalid port. The agent cannot supply or override any connection field.
+
+Network destinations are validated at the connection boundary, not only by
+hostname. By default CROWler rejects loopback, private, link-local, multicast,
+unspecified, IPv4-mapped prohibited and reserved destinations. DNS is resolved
+for each new connection and every answer must be permitted; mixed public and
+prohibited answers fail closed. TLS still verifies the originally configured
+hostname when CROWler dials a validated IP. `network.allowed_private_cidrs` is
+an explicit, narrow operator exception and must contain only private, loopback
+or link-local ranges; it cannot include a range spanning public addresses.
+
+Ambient proxies (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`) are not inherited.
+HTTP redirects are never followed; 301, 302, 303, 307 and 308 responses fail
+closed before a second destination is selected. Credentials are only attached
+to the exact approved endpoint and are not forwarded across a redirect.
+
+HTTP JSON and request-scoped SSE responses are supported through the SDK. The
+per-run client and session are closed at run termination, active requests are
+cancelled, idle connections are closed, and no persistent background SSE or
+reconnect loop is started. The transport bounds each response body to the
+configured `max_response_bytes` plus a bounded JSON-RPC/SSE envelope allowance.
+Request-scoped SSE streams are additionally limited to 256 events, and every
+event is bounded by the same envelope allowance. The SDK also uses its own
+inbound frame cap. The operator limit is therefore a pre-decode body bound for
+HTTP, not a claim that the SDK frame cap has been replaced. Malformed events,
+idle streams and cancellation fail closed through the SDK and request deadline.
 
 ### Environment and process isolation
 
@@ -195,7 +275,10 @@ An MCP adapter is an ordinary read-only `AgentTool`:
   transport;
 - request bytes, response bytes, call time and per-run call budgets are
   enforced before/after transport invocation;
-- authorization denial means **no external `tools/call` is sent**.
+- authorization denial means **no external `tools/call` is sent**; for HTTP this
+  applies before any POST request body is sent;
+- remote endpoints, TLS roots, credentials, proxy policy and network exceptions
+  are operator-only values and are never read from an agent manifest.
 
 The adapter reuses `ToolRuntimeFromContext`, `checkToolArguments`, result
 sanitization, tool-loop audit correlation and deterministic goal evidence.
@@ -216,8 +299,10 @@ is not a pre-buffering replacement for the SDK frame cap. This is a documented
 limitation of the current `CommandTransport`; CROWler does not replace the SDK
 or implement a separate protocol stack to obtain a smaller transport cap.
 
-MCP prompts, resources, server instructions, tool descriptions and JSON Schema
-annotations are untrusted external content. WP-04A does not execute or expose
+MCP `x-mcp-header` schema annotations are rejected because WP-04B does not need
+per-tool HTTP routing headers and must not let remote metadata influence request
+headers. MCP prompts, resources, server instructions, tool descriptions and
+JSON Schema annotations are untrusted external content. WP-04A does not execute or expose
 MCP prompts/resources as instructions. Model-facing tool descriptions come from
 the trusted operator configuration or a generated safe description. Remote
 schema property descriptions are bounded and may still contain instruction-like
@@ -268,6 +353,11 @@ Typical stable failures include:
 - `mcp_unsupported_result`
 - `mcp_budget_exhausted`
 - `mcp_tool_error` for an `IsError=true` tool result
+- `MCP HTTP redirect is not permitted`
+- `MCP HTTP destination is not permitted`
+- `MCP HTTP response exceeds configured limit`
+- `MCP TLS`/certificate verification failures
+- `legacy`/`unsupported protocol version` when HTTP negotiation is outside policy
 - `mcp_call_timeout` for a bounded call timeout
 - `deadline_exceeded` / `budget_elapsed` for goal initialization or execution
   that exhausts the shared run deadline
@@ -279,7 +369,14 @@ rather than silently widening the inventory.
 
 ## Future work
 
-WP-04B will add an explicitly selected Streamable HTTP transport with endpoint,
-TLS, redirect, DNS/address, authentication and credential-isolation policy.
-WP-04C will require a separate mutation authorization contract. Neither is
-enabled by WP-04A, and no schema version beyond 1.17 is used.
+WP-04B adds the read-only Streamable HTTP transport described above, with
+endpoint, TLS, redirect, DNS/address, authentication and credential-isolation
+policy. WP-04C will require a separate mutation authorization contract. No
+schema version beyond 1.17 is used.
+
+Limitations: HTTP OAuth authorization-code flows, dynamic client registration,
+arbitrary proxies, persistent sessions, resource subscriptions, MCP Tasks,
+prompts/resources execution and mutation tools are not implemented. Private
+network exceptions are explicit trust expansions and should be used only for
+deliberately approved deployments. A configured server remains responsible for
+its own authorization and read-only behaviour.
