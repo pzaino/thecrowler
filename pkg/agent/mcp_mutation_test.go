@@ -2,6 +2,9 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,7 +38,7 @@ func mcpMutationTestPolicy(alias string) MCPMutationPolicy {
 			MinTrustLevel:          "trusted",
 			AllowedResources:       []string{"fixture-resource"},
 			RequiredArgumentFields: []string{"resource"},
-			AllowedArgumentFields:  []string{"resource", "source_id"},
+			AllowedArgumentFields:  []string{"resource", "source_id", "amount"},
 			ProposalTTL:            5 * time.Minute,
 			MaxProposalsPerRun:     4, MaxPendingProposals: 8,
 			MaxInputBytes: 4096, MaxOutputBytes: 4096,
@@ -246,6 +249,38 @@ func TestMCPMutationApprovalContract(t *testing.T) {
 	wrongApprover := MCPMutationPrincipal{UserID: 100, Username: "other", Issuer: "test-issuer"}
 	if _, err := verifier.Verify(context.Background(), proposal, approval.ApprovalID, wrongApprover); err == nil {
 		t.Fatalf("wrong approver accepted")
+	}
+	expiredProposal := proposal
+	expiredProposal.ExpiresAt = time.Now().UTC().Add(-time.Second)
+	if _, err := verifier.Verify(context.Background(), expiredProposal, approval.ApprovalID, approver); err == nil {
+		t.Fatalf("approval for an expired proposal accepted")
+	}
+	futureApproval := approval
+	futureApproval.ApprovalID = "approval-future"
+	futureApproval.ApprovedAt = time.Now().UTC().Add(time.Hour)
+	futureApproval.ExpiresAt = futureApproval.ApprovedAt.Add(time.Hour)
+	_ = approvalStore.Put(context.Background(), futureApproval)
+	if _, err := verifier.Verify(context.Background(), proposal, futureApproval.ApprovalID, approver); err == nil {
+		t.Fatalf("future-dated approval accepted")
+	}
+	earlyApproval := approval
+	earlyApproval.ApprovalID = "approval-early"
+	earlyApproval.ApprovedAt = proposal.CreatedAt.Add(-time.Second)
+	_ = approvalStore.Put(context.Background(), earlyApproval)
+	if _, err := verifier.Verify(context.Background(), proposal, earlyApproval.ApprovalID, approver); err == nil {
+		t.Fatalf("approval predating the proposal accepted")
+	}
+	changedPolicy := approval
+	changedPolicy.ApprovalID = "approval-policy"
+	changedPolicy.PolicySHA256 = "changed-policy"
+	_ = approvalStore.Put(context.Background(), changedPolicy)
+	if _, err := verifier.Verify(context.Background(), proposal, changedPolicy.ApprovalID, approver); err == nil {
+		t.Fatalf("approval bound to a changed policy accepted")
+	}
+	changedScope := proposal
+	changedScope.SourceIDs = []uint64{99}
+	if _, err := verifier.Verify(context.Background(), changedScope, approval.ApprovalID, approver); err == nil {
+		t.Fatalf("approval reused for a changed proposal scope")
 	}
 }
 
@@ -498,7 +533,7 @@ func TestMCPMutationFingerprintBindsPrincipal(t *testing.T) {
 		Auth: ToolAuthContext{Identity: identity, Enforcement: true,
 			Allowlist: map[string]bool{alias: true}, AllowedOperations: map[string]bool{alias: true},
 			MutationAllowed: true, RunID: "principal-run", TraceID: "trace"},
-		CallID: "principal-call", Principal: MCPMutationPrincipal{UserID: 8, Username: identity.Owner, Issuer: "test-issuer"},
+		CallID: "principal-call-2", Principal: MCPMutationPrincipal{UserID: 8, Username: identity.Owner, Issuer: "test-issuer"},
 	})
 	second, err := tool.Execute(changed, map[string]any{"resource": "fixture-resource"})
 	if err != nil {
@@ -509,5 +544,346 @@ func TestMCPMutationFingerprintBindsPrincipal(t *testing.T) {
 	}
 	if count, _ := store.CountByRun(context.Background(), "principal-run"); count != 2 {
 		t.Fatalf("principal-bound proposal count = %d", count)
+	}
+}
+
+func TestMCPMutationCanonicalJSONNumbersRemainNumbers(t *testing.T) {
+	type testCase struct {
+		name  string
+		left  map[string]any
+		right map[string]any
+		same  bool
+	}
+	cases := []testCase{
+		{"number vs numeric string", map[string]any{"x": 1.25}, map[string]any{"x": "1.25"}, false},
+		{"integer vs numeric string", map[string]any{"x": 1}, map[string]any{"x": "1"}, false},
+		{"decimal and integer equivalence", map[string]any{"x": json.Number("1.0")}, map[string]any{"x": json.Number("1")}, true},
+		{"exponent and integer equivalence", map[string]any{"x": json.Number("1e0")}, map[string]any{"x": json.Number("1")}, true},
+		{"exponent decimal equivalence", map[string]any{"x": json.Number("1e-3")}, map[string]any{"x": json.Number("0.001")}, true},
+		{"scaled exponent equivalence", map[string]any{"x": json.Number("1000e-3")}, map[string]any{"x": json.Number("1")}, true},
+		{"trailing decimal zeros", map[string]any{"x": json.Number("1.250")}, map[string]any{"x": json.Number("1.25")}, true},
+		{"scaled decimal equivalence", map[string]any{"x": json.Number("125e-2")}, map[string]any{"x": json.Number("1.25")}, true},
+		{"positive exponent", map[string]any{"x": json.Number("1e2")}, map[string]any{"x": json.Number("100")}, true},
+		{"decimal exponent to integer", map[string]any{"x": json.Number("1.2e1")}, map[string]any{"x": json.Number("12")}, true},
+		{"large integer exactness", map[string]any{"x": json.Number("9007199254740993")}, map[string]any{"x": json.Number("9007199254740993.0")}, true},
+		{"negative zero", map[string]any{"x": json.Number("-0")}, map[string]any{"x": json.Number("0.0")}, true},
+		{"nested numeric/string distinction", map[string]any{"a": []any{map[string]any{"x": json.Number("2.5")}}}, map[string]any{"a": []any{map[string]any{"x": "2.5"}}}, false},
+		{"unicode preserved", map[string]any{"x": "café"}, map[string]any{"x": "café"}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			left, _, err := canonicalMCPArguments(tc.left, 4096)
+			if err != nil {
+				t.Fatalf("left canonicalization: %v", err)
+			}
+			right, _, err := canonicalMCPArguments(tc.right, 4096)
+			if err != nil {
+				t.Fatalf("right canonicalization: %v", err)
+			}
+			if same := string(left) == string(right); same != tc.same {
+				t.Fatalf("canonical equality = %t, want %t: %s vs %s", same, tc.same, left, right)
+			}
+			if !tc.same && sha256Hex(left) == sha256Hex(right) {
+				t.Fatalf("distinct canonical values collided")
+			}
+		})
+	}
+}
+
+func TestMCPMutationCanonicalNumberRejections(t *testing.T) {
+	bad := []any{
+		math.NaN(), math.Inf(1), math.Inf(-1),
+		json.Number("01"), json.Number("1."), json.Number(".1"),
+		json.Number("1e99999"), json.Number("1e-99999"),
+		json.Number("1e999999999999999999999"),
+		string([]byte{0xff, 0xfe}),
+		map[string]any{string([]byte{0xff}): "value"},
+	}
+	for _, value := range bad {
+		if _, _, err := canonicalMCPArguments(map[string]any{"x": value}, 4096); err == nil {
+			t.Errorf("invalid canonical value %T %v was accepted", value, value)
+		}
+	}
+	if _, _, err := canonicalMCPArguments(map[string]any{"x": 9007199254740993.0}, 4096); err == nil {
+		t.Fatalf("inexact large float64 was accepted")
+	}
+}
+
+func TestMCPMutationProposalUsesCanonicalArguments(t *testing.T) {
+	_, tool, store, identity, _, alias := newMCPMutationHarness(t)
+	args := map[string]any{"resource": "fixture-resource", "amount": json.Number("1.25")}
+	result, err := tool.Execute(mcpMutationRuntime(identity, alias, "canonical-run", "canonical-call"), args)
+	if err != nil {
+		t.Fatalf("canonical proposal: %v", err)
+	}
+	proposal, ok, err := store.Get(context.Background(), result["proposal_id"].(string))
+	if err != nil || !ok {
+		t.Fatalf("canonical proposal lookup: %v %v", ok, err)
+	}
+	encodedArgs, err := json.Marshal(proposal.Arguments)
+	if err != nil {
+		t.Fatalf("marshal proposal arguments: %v", err)
+	}
+	if string(encodedArgs) != string(proposal.CanonicalArguments) {
+		t.Fatalf("proposal Arguments and CanonicalArguments differ: %s vs %s", encodedArgs, proposal.CanonicalArguments)
+	}
+	if proposal.ArgumentsSHA256 != sha256Hex(proposal.CanonicalArguments) {
+		t.Fatalf("argument fingerprint is not the canonical bytes hash")
+	}
+	if _, ok := proposal.Arguments["amount"].(json.Number); !ok {
+		t.Fatalf("canonical number lost its JSON number type: %T", proposal.Arguments["amount"])
+	}
+	// Mutating the caller's map must not alter the immutable proposal.
+	args["resource"] = "changed-after-admission"
+	if proposal.Arguments["resource"] != "fixture-resource" {
+		t.Fatalf("proposal arguments were mutable after admission")
+	}
+}
+
+func TestMCPMutationSameLogicalCallChangedArgumentsConflicts(t *testing.T) {
+	_, tool, store, identity, _, alias := newMCPMutationHarness(t)
+	ctx := mcpMutationRuntime(identity, alias, "conflict-run", "conflict-call")
+	first, err := tool.Execute(ctx, map[string]any{"resource": "fixture-resource", "amount": float64(1)})
+	if err != nil {
+		t.Fatalf("first logical call: %v", err)
+	}
+	second, err := tool.Execute(ctx, map[string]any{"resource": "fixture-resource", "amount": float64(2)})
+	if err == nil {
+		t.Fatalf("changed arguments for the same run/call were accepted: %+v", second)
+	}
+	if !errors.Is(err, ErrMCPMutationProposalConflict) {
+		t.Fatalf("changed argument error = %v, want conflict", err)
+	}
+	if count, _ := store.CountByRun(context.Background(), "conflict-run"); count != 1 {
+		t.Fatalf("conflicting proposal count = %d", count)
+	}
+	if first["proposal_id"] == "" {
+		t.Fatalf("first proposal identity lost")
+	}
+}
+
+func TestMCPMutationAtomicQuotaUnderConcurrentDistinctCalls(t *testing.T) {
+	_, tool, store, identity, _, alias := newMCPMutationHarness(t)
+	policy := mcpMutationTestPolicy(alias)
+	policy.Operations[0].MaxProposalsPerRun = 1
+	policy.Operations[0].MaxPendingProposals = 2
+	limited, err := NewMCPMutationProposalTool(tool.descriptor.manager, policy, store)
+	if err != nil {
+		t.Fatalf("limited proposal tool: %v", err)
+	}
+	results := make(chan error, 2)
+	go func() {
+		_, err := limited.Execute(mcpMutationRuntime(identity, alias, "quota-run", "quota-call-1"),
+			map[string]any{"resource": "fixture-resource", "amount": float64(1)})
+		results <- err
+	}()
+	go func() {
+		_, err := limited.Execute(mcpMutationRuntime(identity, alias, "quota-run", "quota-call-2"),
+			map[string]any{"resource": "fixture-resource", "amount": float64(2)})
+		results <- err
+	}()
+	successes, quotaErrors := 0, 0
+	for i := 0; i < 2; i++ {
+		err := <-results
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, ErrMCPMutationQuota):
+			quotaErrors++
+		default:
+			t.Fatalf("unexpected quota error: %v", err)
+		}
+	}
+	if successes != 1 || quotaErrors != 1 {
+		t.Fatalf("atomic quota results: success=%d quota=%d", successes, quotaErrors)
+	}
+}
+
+func TestMCPMutationExpiredReplayDoesNotRefresh(t *testing.T) {
+	_, tool, store, identity, _, alias := newMCPMutationHarness(t)
+	now := time.Now().UTC()
+	store.Now = func() time.Time { return now }
+	ctx := mcpMutationRuntime(identity, alias, "expiry-run", "expiry-call")
+	first, err := tool.Execute(ctx, map[string]any{"resource": "fixture-resource"})
+	if err != nil {
+		t.Fatalf("initial proposal: %v", err)
+	}
+	proposalID := first["proposal_id"].(string)
+	before, ok, _ := store.Get(context.Background(), proposalID)
+	if !ok {
+		t.Fatalf("proposal missing before expiry")
+	}
+	store.Now = func() time.Time { return before.ExpiresAt.Add(time.Second) }
+	if _, err := tool.Execute(ctx, map[string]any{"resource": "fixture-resource"}); !errors.Is(err, ErrMCPMutationProposalExpired) {
+		t.Fatalf("expired replay error = %v", err)
+	}
+	after, ok, _ := store.Get(context.Background(), proposalID)
+	if !ok || !after.ExpiresAt.Equal(before.ExpiresAt) || after.ProposalID != before.ProposalID {
+		t.Fatalf("expired replay refreshed the proposal: before=%+v after=%+v", before, after)
+	}
+}
+
+func TestMCPMutationSameLogicalCallChangedPrincipalConflicts(t *testing.T) {
+	_, tool, _, identity, _, alias := newMCPMutationHarness(t)
+	first := mcpMutationRuntime(identity, alias, "principal-conflict-run", "principal-conflict-call")
+	if _, err := tool.Execute(first, map[string]any{"resource": "fixture-resource"}); err != nil {
+		t.Fatalf("first principal proposal: %v", err)
+	}
+	second := ContextWithToolRuntime(context.Background(), ToolRuntime{
+		Auth: ToolAuthContext{Identity: identity, Enforcement: true,
+			Allowlist: map[string]bool{alias: true}, AllowedOperations: map[string]bool{alias: true},
+			MutationAllowed: true, RunID: "principal-conflict-run", TraceID: "trace"},
+		CallID:    "principal-conflict-call",
+		Principal: MCPMutationPrincipal{UserID: 8, Username: identity.Owner, Issuer: "test-issuer"},
+	})
+	if _, err := tool.Execute(second, map[string]any{"resource": "fixture-resource"}); !errors.Is(err, ErrMCPMutationProposalConflict) {
+		t.Fatalf("changed principal for the same run/call error = %v, want conflict", err)
+	}
+}
+
+func TestMCPMutationPendingQuotaIsPerPrincipalAcrossRuns(t *testing.T) {
+	_, tool, store, identity, _, alias := newMCPMutationHarness(t)
+	policy := mcpMutationTestPolicy(alias)
+	policy.Operations[0].MaxProposalsPerRun = 4
+	policy.Operations[0].MaxPendingProposals = 1
+	limited, err := NewMCPMutationProposalTool(tool.descriptor.manager, policy, store)
+	if err != nil {
+		t.Fatalf("limited proposal tool: %v", err)
+	}
+	if _, err := limited.Execute(mcpMutationRuntime(identity, alias, "pending-run-1", "call-1"),
+		map[string]any{"resource": "fixture-resource"}); err != nil {
+		t.Fatalf("first pending proposal: %v", err)
+	}
+	if _, err := limited.Execute(mcpMutationRuntime(identity, alias, "pending-run-2", "call-2"),
+		map[string]any{"resource": "fixture-resource"}); !errors.Is(err, ErrMCPMutationQuota) {
+		t.Fatalf("cross-run pending quota error = %v, want quota", err)
+	}
+}
+
+func TestMCPMutationQuotaStateSemantics(t *testing.T) {
+	cases := map[MCPMutationProposalState]bool{
+		MCPProposalProposed:               true,
+		MCPProposalApprovalRequired:       true,
+		MCPProposalApproved:               true,
+		MCPProposalDispatching:            true,
+		MCPProposalUncertain:              true,
+		MCPProposalReconciliationRequired: true,
+		MCPProposalDenied:                 false,
+		MCPProposalExpired:                false,
+		MCPProposalSucceeded:              false,
+		MCPProposalFailed:                 false,
+	}
+	for state, want := range cases {
+		if got := mcpProposalConsumesQuota(state); got != want {
+			t.Errorf("state %q consumes quota = %t, want %t", state, got, want)
+		}
+	}
+}
+
+func TestMCPMutationAdmissionDefensiveInvariants(t *testing.T) {
+	_, tool, store, identity, _, alias := newMCPMutationHarness(t)
+	result, err := tool.Execute(mcpMutationRuntime(identity, alias, "invariant-run", "invariant-call"),
+		map[string]any{"resource": "fixture-resource"})
+	if err != nil {
+		t.Fatalf("initial proposal: %v", err)
+	}
+	base, ok, err := store.Get(context.Background(), result["proposal_id"].(string))
+	if err != nil || !ok {
+		t.Fatalf("initial proposal lookup: %v %v", ok, err)
+	}
+	t.Run("canonical argument mismatch", func(t *testing.T) {
+		tampered := base
+		tampered.ProposalID = "tampered-canonical"
+		tampered.RunID = "tampered-canonical-run"
+		tampered.EffectiveCallID = "tampered-canonical-call"
+		tampered.CanonicalArguments = []byte(`{"resource":"other-resource"}`)
+		tampered.ProposalSHA256 = proposalFingerprint(tampered)
+		if _, err := store.Admit(context.Background(), tampered, 8, 8); !errors.Is(err, ErrMCPMutationArguments) {
+			t.Fatalf("canonical mismatch error = %v, want arguments error", err)
+		}
+	})
+	t.Run("fingerprint mismatch", func(t *testing.T) {
+		mismatched := base
+		mismatched.ProposalID = "mismatched-fingerprint"
+		mismatched.RunID = "mismatched-fingerprint-run"
+		mismatched.EffectiveCallID = "mismatched-fingerprint-call"
+		mismatched.ProposalSHA256 = "not-the-recomputed-fingerprint"
+		if _, err := store.Admit(context.Background(), mismatched, 8, 8); !errors.Is(err, ErrMCPMutationProposalConflict) {
+			t.Fatalf("fingerprint mismatch error = %v, want conflict", err)
+		}
+	})
+	t.Run("proposal ID reuse", func(t *testing.T) {
+		reused := base
+		reused.RunID = "reused-id-run"
+		reused.EffectiveCallID = "reused-id-call"
+		reused.ProposalSHA256 = proposalFingerprint(reused)
+		if _, err := store.Admit(context.Background(), reused, 8, 8); !errors.Is(err, ErrMCPMutationProposalConflict) {
+			t.Fatalf("proposal ID reuse error = %v, want conflict", err)
+		}
+	})
+	t.Run("non-initial state", func(t *testing.T) {
+		dispatched := base
+		dispatched.ProposalID = "dispatched-direct"
+		dispatched.RunID = "dispatched-direct-run"
+		dispatched.EffectiveCallID = "dispatched-direct-call"
+		dispatched.ProposalSHA256 = proposalFingerprint(dispatched)
+		dispatched.State = MCPProposalDispatching
+		if _, err := store.Admit(context.Background(), dispatched, 8, 8); !errors.Is(err, ErrMCPMutationProposalConflict) {
+			t.Fatalf("direct dispatching admission error = %v, want conflict", err)
+		}
+	})
+	t.Run("cancelled context", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		cancelled := base
+		cancelled.ProposalID = "cancelled-admission"
+		cancelled.RunID = "cancelled-admission-run"
+		cancelled.EffectiveCallID = "cancelled-admission-call"
+		cancelled.ProposalSHA256 = "cancelled-admission-fingerprint"
+		if _, err := store.Admit(ctx, cancelled, 8, 8); !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancelled admission error = %v, want context cancellation", err)
+		}
+	})
+}
+
+func TestMCPMutationScopeRejectsMixedSelectors(t *testing.T) {
+	sourceOperation := MCPMutationOperationPolicy{
+		AllowedSources: []uint64{42},
+	}
+	if _, _, err := mcpMutationScope(sourceOperation, map[string]any{
+		"source_id": float64(42), "resource": "fixture-resource",
+	}); !errors.Is(err, ErrMCPMutationArguments) {
+		t.Fatalf("mixed source/resource selectors error = %v, want arguments error", err)
+	}
+	if _, _, err := mcpMutationScope(sourceOperation, map[string]any{
+		"source_id": float64(42), "resource_id": "fixture-resource",
+	}); !errors.Is(err, ErrMCPMutationArguments) {
+		t.Fatalf("mixed source/resource_id selectors error = %v, want arguments error", err)
+	}
+	resourceOperation := MCPMutationOperationPolicy{
+		AllowedResources: []string{"fixture-resource"},
+	}
+	if _, _, err := mcpMutationScope(resourceOperation, map[string]any{
+		"source_id": float64(42), "resource": "fixture-resource",
+	}); !errors.Is(err, ErrMCPMutationArguments) {
+		t.Fatalf("mixed resource/source selector error = %v, want arguments error", err)
+	}
+}
+
+func TestMCPMutationFingerprintNormalizesSourceIDs(t *testing.T) {
+	base := MCPMutationProposal{
+		RunID: "normalize-run", EffectiveCallID: "normalize-call",
+		AgentID: "agent", Owner: "owner", ServerID: "server",
+		RawToolName: "tool", ToolAlias: "alias", Transport: "stdio",
+		TransportIdentity: "command", SchemaSHA256: "schema",
+		ArgumentsSHA256: "arguments", PolicyID: "policy",
+		PolicyVersion: "1", PolicySHA256: "policy-hash",
+	}
+	withoutSources := base
+	withoutSources.SourceIDs = nil
+	withEmptySources := base
+	withEmptySources.SourceIDs = []uint64{}
+	if proposalFingerprint(withoutSources) != proposalFingerprint(withEmptySources) {
+		t.Fatalf("nil and empty source lists produced different fingerprints")
 	}
 }

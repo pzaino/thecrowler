@@ -8,10 +8,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"math/big"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
@@ -42,6 +46,8 @@ var (
 	ErrMCPMutationPrincipal        = errors.New("trusted mutation principal is required")
 	ErrMCPMutationStoreUnavailable = errors.New("MCP mutation proposal store is unavailable")
 	ErrMCPMutationProposalConflict = errors.New("MCP mutation proposal conflicts with an existing logical proposal")
+	ErrMCPMutationQuota            = errors.New("MCP mutation proposal quota reached")
+	ErrMCPMutationProposalExpired  = errors.New("MCP mutation proposal has expired")
 	ErrMCPMutationApproval         = errors.New("MCP mutation approval is invalid")
 )
 
@@ -207,60 +213,81 @@ func (p *MCPMutationPolicy) SHA256() string {
 // MCPMutationProposal is immutable trusted proposal state. It is not evidence
 // that any external operation occurred.
 type MCPMutationProposal struct {
-	ProposalID        string
-	State             MCPMutationProposalState
-	RunID             string
-	TraceID           string
-	EffectiveCallID   string
-	AgentID           string
-	Owner             string
-	Principal         MCPMutationPrincipal
-	ServerID          string
-	RawToolName       string
-	ToolAlias         string
-	Transport         string
-	TransportIdentity string
-	SchemaSHA256      string
-	Arguments         map[string]any
-	ArgumentsSHA256   string
-	ProposalSHA256    string
-	PolicyID          string
-	PolicyVersion     string
-	PolicySHA256      string
-	SourceIDs         []uint64
-	ExternalResource  string
-	Destructive       bool
-	CreatedAt         time.Time
-	ExpiresAt         time.Time
-	ApprovalRequired  bool
-	ExecutionBackend  string
-	AuditRequired     bool
+	ProposalID         string
+	State              MCPMutationProposalState
+	RunID              string
+	TraceID            string
+	EffectiveCallID    string
+	AgentID            string
+	Owner              string
+	Principal          MCPMutationPrincipal
+	ServerID           string
+	RawToolName        string
+	ToolAlias          string
+	Transport          string
+	TransportIdentity  string
+	SchemaSHA256       string
+	Arguments          map[string]any
+	CanonicalArguments []byte
+	ArgumentsSHA256    string
+	ProposalSHA256     string
+	PolicyID           string
+	PolicyVersion      string
+	PolicySHA256       string
+	SourceIDs          []uint64
+	ExternalResource   string
+	Destructive        bool
+	CreatedAt          time.Time
+	ExpiresAt          time.Time
+	ApprovalRequired   bool
+	ExecutionBackend   string
+	AuditRequired      bool
 }
 
 // MCPMutationProposalStore is the narrow persistence boundary. The only
 // implementation in WP-04C1 is test-only/in-memory; production durability
 // requires the separate schema 1.17 review described in the design document.
 type MCPMutationProposalStore interface {
-	Create(ctx context.Context, proposal MCPMutationProposal) (MCPMutationProposal, error)
+	// Admit performs fingerprint lookup, run-call conflict detection, quota
+	// checks and immutable creation as one atomic operation.
+	Admit(ctx context.Context, proposal MCPMutationProposal, maxPerRun, maxPendingPerPrincipal int) (MCPMutationProposal, error)
 	Get(ctx context.Context, proposalID string) (MCPMutationProposal, bool, error)
-	GetByFingerprint(ctx context.Context, fingerprint string) (MCPMutationProposal, bool, error)
-	CountByRun(ctx context.Context, runID string) (int, error)
-	CountPendingByPrincipal(ctx context.Context, userID uint64) (int, error)
 }
 
 type InMemoryMCPMutationProposalStore struct {
-	mu       sync.Mutex
-	byID     map[string]MCPMutationProposal
-	byFinger map[string]string
+	mu        sync.Mutex
+	byID      map[string]MCPMutationProposal
+	byFinger  map[string]string
+	byRunCall map[string]string
+	Now       func() time.Time
 }
 
 func NewInMemoryMCPMutationProposalStore() *InMemoryMCPMutationProposalStore {
 	return &InMemoryMCPMutationProposalStore{
 		byID: map[string]MCPMutationProposal{}, byFinger: map[string]string{},
+		byRunCall: map[string]string{},
 	}
 }
 
-func (s *InMemoryMCPMutationProposalStore) Create(ctx context.Context, proposal MCPMutationProposal) (MCPMutationProposal, error) {
+// admitNow is test-seam friendly: tests may set Now.
+func (s *InMemoryMCPMutationProposalStore) admitNow() time.Time {
+	if s != nil && s.Now != nil {
+		return s.Now().UTC()
+	}
+	return time.Now().UTC()
+}
+
+func mcpProposalConsumesQuota(state MCPMutationProposalState) bool {
+	switch state {
+	case MCPProposalProposed, MCPProposalApprovalRequired, MCPProposalApproved,
+		MCPProposalDispatching, MCPProposalUncertain, MCPProposalReconciliationRequired:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *InMemoryMCPMutationProposalStore) Admit(ctx context.Context, proposal MCPMutationProposal, maxPerRun, maxPendingPerPrincipal int) (MCPMutationProposal, error) {
 	if ctx != nil {
 		if err := ctx.Err(); err != nil {
 			return MCPMutationProposal{}, err
@@ -269,20 +296,82 @@ func (s *InMemoryMCPMutationProposalStore) Create(ctx context.Context, proposal 
 	if s == nil {
 		return MCPMutationProposal{}, ErrMCPMutationStoreUnavailable
 	}
+	// Take ownership of the authoritative bytes before hashing or storing them
+	// so a caller cannot change the dispatch identity after admission.
+	proposal.CanonicalArguments = append([]byte(nil), proposal.CanonicalArguments...)
+	proposal.SourceIDs = normalizeMCPSourceIDs(proposal.SourceIDs)
+	if proposal.ProposalID == "" || proposal.ProposalSHA256 == "" ||
+		proposal.RunID == "" || proposal.EffectiveCallID == "" ||
+		proposal.AgentID == "" || proposal.ServerID == "" || proposal.ToolAlias == "" {
+		return MCPMutationProposal{}, ErrMCPMutationProposalConflict
+	}
+	if proposal.ProposalSHA256 != proposalFingerprint(proposal) {
+		return MCPMutationProposal{}, fmt.Errorf("%w: proposal fingerprint does not match its content", ErrMCPMutationProposalConflict)
+	}
+	if proposal.State != MCPProposalApprovalRequired && proposal.State != MCPProposalProposed {
+		return MCPMutationProposal{}, ErrMCPMutationProposalConflict
+	}
+	if proposal.ApprovalRequired && proposal.Principal.Validate() != nil {
+		return MCPMutationProposal{}, ErrMCPMutationPrincipal
+	}
+	if len(proposal.CanonicalArguments) == 0 || proposal.ArgumentsSHA256 == "" ||
+		sha256Hex(proposal.CanonicalArguments) != proposal.ArgumentsSHA256 {
+		return MCPMutationProposal{}, fmt.Errorf("%w: canonical arguments do not match their fingerprint", ErrMCPMutationArguments)
+	}
+	if maxPerRun <= 0 || maxPendingPerPrincipal <= 0 {
+		return MCPMutationProposal{}, ErrMCPMutationQuota
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	now := s.admitNow()
+	if !proposal.ExpiresAt.After(now) {
+		return MCPMutationProposal{}, ErrMCPMutationProposalExpired
+	}
+	runCallKey := proposal.RunID + "\x00" + proposal.EffectiveCallID
 	if existingID, ok := s.byFinger[proposal.ProposalSHA256]; ok {
+		existing := s.byID[existingID]
+		if !existing.ExpiresAt.After(now) {
+			return MCPMutationProposal{}, ErrMCPMutationProposalExpired
+		}
+		return cloneMCPMutationProposal(existing), nil
+	}
+	if existingID, ok := s.byRunCall[runCallKey]; ok {
 		existing := s.byID[existingID]
 		if existing.ProposalSHA256 != proposal.ProposalSHA256 {
 			return MCPMutationProposal{}, ErrMCPMutationProposalConflict
 		}
-		return existing, nil
+		if !existing.ExpiresAt.After(now) {
+			return MCPMutationProposal{}, ErrMCPMutationProposalExpired
+		}
+		return cloneMCPMutationProposal(existing), nil
 	}
-	if _, exists := s.byID[proposal.ProposalID]; exists {
+	runCount := 0
+	pendingCount := 0
+	for _, existing := range s.byID {
+		if !mcpProposalConsumesQuota(existing.State) {
+			continue
+		}
+		if existing.RunID == proposal.RunID {
+			runCount++
+		}
+		if proposal.Principal.UserID != 0 && existing.Principal.UserID == proposal.Principal.UserID &&
+			(existing.State == MCPProposalProposed || existing.State == MCPProposalApprovalRequired ||
+				existing.State == MCPProposalApproved || existing.State == MCPProposalDispatching) {
+			pendingCount++
+		}
+	}
+	if runCount >= maxPerRun {
+		return MCPMutationProposal{}, ErrMCPMutationQuota
+	}
+	if pendingCount >= maxPendingPerPrincipal {
+		return MCPMutationProposal{}, ErrMCPMutationQuota
+	}
+	if existing, ok := s.byID[proposal.ProposalID]; ok && existing.ProposalSHA256 != proposal.ProposalSHA256 {
 		return MCPMutationProposal{}, ErrMCPMutationProposalConflict
 	}
 	s.byID[proposal.ProposalID] = cloneMCPMutationProposal(proposal)
 	s.byFinger[proposal.ProposalSHA256] = proposal.ProposalID
+	s.byRunCall[runCallKey] = proposal.ProposalID
 	return cloneMCPMutationProposal(proposal), nil
 }
 
@@ -361,6 +450,7 @@ func (s *InMemoryMCPMutationProposalStore) Get(ctx context.Context, proposalID s
 
 func cloneMCPMutationProposal(p MCPMutationProposal) MCPMutationProposal {
 	p.Arguments = cloneAnyMap(p.Arguments)
+	p.CanonicalArguments = append([]byte(nil), p.CanonicalArguments...)
 	p.SourceIDs = append([]uint64(nil), p.SourceIDs...)
 	return p
 }
@@ -485,7 +575,7 @@ func (p *MCPMutationProposer) Propose(ctx context.Context, tool AgentTool, descr
 	if err := validateMCPMutationArguments(operation, args); err != nil {
 		return MCPMutationProposal{}, err
 	}
-	canonical, err := canonicalMCPArguments(args, operation.MaxInputBytes)
+	canonical, canonicalArgs, err := canonicalMCPArguments(args, operation.MaxInputBytes)
 	if err != nil {
 		return MCPMutationProposal{}, err
 	}
@@ -493,6 +583,7 @@ func (p *MCPMutationProposer) Propose(ctx context.Context, tool AgentTool, descr
 	if err != nil {
 		return MCPMutationProposal{}, err
 	}
+	sourceIDs = normalizeMCPSourceIDs(sourceIDs)
 	if len(operation.AllowedSources) > 0 {
 		approvedScope := effectiveMCPSources(descriptor.server.config, descriptor.approved)
 		for _, sourceID := range sourceIDs {
@@ -522,63 +613,41 @@ func (p *MCPMutationProposer) Propose(ctx context.Context, tool AgentTool, descr
 	schemaJSON, _ := json.Marshal(descriptor.schema)
 	schemaHash := sha256Hex(schemaJSON)
 	proposal := MCPMutationProposal{
-		State:             MCPProposalApprovalRequired,
-		RunID:             runtime.Auth.RunID,
-		TraceID:           runtime.Auth.TraceID,
-		EffectiveCallID:   runtime.CallID,
-		AgentID:           runtime.Auth.Identity.AgentID,
-		Owner:             runtime.Auth.Identity.Owner,
-		Principal:         runtime.Principal,
-		ServerID:          descriptor.server.config.ID,
-		RawToolName:       descriptor.approved.Name,
-		ToolAlias:         descriptor.alias,
-		Transport:         descriptor.server.config.Transport,
-		TransportIdentity: mcpTransportIdentity(descriptor.server.config),
-		SchemaSHA256:      schemaHash,
-		Arguments:         cloneAnyMap(args),
-		ArgumentsSHA256:   argumentsHash,
-		PolicyID:          p.Policy.PolicyID,
-		PolicyVersion:     p.Policy.Version,
-		PolicySHA256:      p.Policy.SHA256(),
-		SourceIDs:         sourceIDs,
-		ExternalResource:  resource,
-		Destructive:       operation.Destructive,
-		CreatedAt:         now,
-		ExpiresAt:         expiresAt,
-		ApprovalRequired:  operation.RequireApproval,
-		ExecutionBackend:  "none",
-		AuditRequired:     operation.AuditRequired,
+		State:              MCPProposalApprovalRequired,
+		RunID:              runtime.Auth.RunID,
+		TraceID:            runtime.Auth.TraceID,
+		EffectiveCallID:    runtime.CallID,
+		AgentID:            runtime.Auth.Identity.AgentID,
+		Owner:              runtime.Auth.Identity.Owner,
+		Principal:          runtime.Principal,
+		ServerID:           descriptor.server.config.ID,
+		RawToolName:        descriptor.approved.Name,
+		ToolAlias:          descriptor.alias,
+		Transport:          descriptor.server.config.Transport,
+		TransportIdentity:  mcpTransportIdentity(descriptor.server.config),
+		SchemaSHA256:       schemaHash,
+		Arguments:          canonicalArgs,
+		CanonicalArguments: append([]byte(nil), canonical...),
+		ArgumentsSHA256:    argumentsHash,
+		PolicyID:           p.Policy.PolicyID,
+		PolicyVersion:      p.Policy.Version,
+		PolicySHA256:       p.Policy.SHA256(),
+		SourceIDs:          sourceIDs,
+		ExternalResource:   resource,
+		Destructive:        operation.Destructive,
+		CreatedAt:          now,
+		ExpiresAt:          expiresAt,
+		ApprovalRequired:   operation.RequireApproval,
+		ExecutionBackend:   "none",
+		AuditRequired:      operation.AuditRequired,
 	}
 	proposal.ProposalSHA256 = proposalFingerprint(proposal)
-	if existing, found, err := p.Store.GetByFingerprint(ctx, proposal.ProposalSHA256); err != nil {
-		return MCPMutationProposal{}, ErrMCPMutationStoreUnavailable
-	} else if found {
-		if existing.RunID != proposal.RunID || existing.AgentID != proposal.AgentID ||
-			existing.EffectiveCallID != proposal.EffectiveCallID {
-			return MCPMutationProposal{}, ErrMCPMutationProposalConflict
-		}
-		return existing, nil
-	}
-	runCount, err := p.Store.CountByRun(ctx, runtime.Auth.RunID)
-	if err != nil {
-		return MCPMutationProposal{}, ErrMCPMutationStoreUnavailable
-	}
-	if runCount >= operation.MaxProposalsPerRun {
-		return MCPMutationProposal{}, fmt.Errorf("%w: per-run proposal limit reached", ErrMCPMutationPolicyInvalid)
-	}
-	pendingCount, err := p.Store.CountPendingByPrincipal(ctx, runtime.Principal.UserID)
-	if err != nil {
-		return MCPMutationProposal{}, ErrMCPMutationStoreUnavailable
-	}
-	if pendingCount >= operation.MaxPendingProposals {
-		return MCPMutationProposal{}, fmt.Errorf("%w: pending proposal limit reached", ErrMCPMutationPolicyInvalid)
-	}
 	proposalID, err := newMCPProposalID()
 	if err != nil {
 		return MCPMutationProposal{}, ErrMCPMutationStoreUnavailable
 	}
 	proposal.ProposalID = proposalID
-	created, err := p.Store.Create(ctx, proposal)
+	created, err := p.Store.Admit(ctx, proposal, operation.MaxProposalsPerRun, operation.MaxPendingProposals)
 	if err != nil {
 		return MCPMutationProposal{}, err
 	}
@@ -611,6 +680,15 @@ func validateMCPMutationArguments(operation MCPMutationOperationPolicy, args map
 
 func mcpMutationScope(operation MCPMutationOperationPolicy, args map[string]any) ([]uint64, string, error) {
 	if len(operation.AllowedSources) > 0 {
+		// A source-scoped operation must not also carry an external-resource
+		// selector. Accepting both would let the canonical fingerprint bind one
+		// scope while the remote tool could interpret the other.
+		if _, ok := args["resource"]; ok {
+			return nil, "", fmt.Errorf("%w: resource is not allowed for a source-scoped mutation", ErrMCPMutationArguments)
+		}
+		if _, ok := args["resource_id"]; ok {
+			return nil, "", fmt.Errorf("%w: resource_id is not allowed for a source-scoped mutation", ErrMCPMutationArguments)
+		}
 		raw, ok := args["source_id"]
 		if !ok {
 			return nil, "", fmt.Errorf("%w: source_id is required", ErrMCPMutationArguments)
@@ -620,6 +698,9 @@ func mcpMutationScope(operation MCPMutationOperationPolicy, args map[string]any)
 			return nil, "", fmt.Errorf("%w: source is outside the approved mutation scope", ErrMCPMutationArguments)
 		}
 		return []uint64{sourceID}, "", nil
+	}
+	if _, ok := args["source_id"]; ok {
+		return nil, "", fmt.Errorf("%w: source_id is not allowed for an external-resource mutation", ErrMCPMutationArguments)
 	}
 	rawResource, ok := args["resource"]
 	if !ok {
@@ -644,65 +725,97 @@ func mcpTransportIdentity(server cfg.MCPServerConfig) string {
 	return server.Command
 }
 
-func canonicalMCPArguments(args map[string]any, maxBytes int) ([]byte, error) {
+var mcpJSONNumberPattern = regexp.MustCompile(`^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$`)
+
+const (
+	mcpCanonicalMaxDepth     = 32
+	mcpCanonicalMaxFields    = 256
+	mcpCanonicalMaxItems     = 1024
+	mcpCanonicalMaxNumberLen = 1024
+	mcpCanonicalMaxExponent  = 1024
+	mcpCanonicalMaxDigits    = 4096
+)
+
+// canonicalMCPArguments returns the exact canonical JSON bytes and a decoded
+// map containing json.Number values. JSON numbers remain numbers; JSON strings
+// remain strings. The canonical bytes are the value that must be retained for
+// any future dispatch.
+func canonicalMCPArguments(args map[string]any, maxBytes int) ([]byte, map[string]any, error) {
 	normalized, err := canonicalMCPValue(args, 0)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	encoded, err := json.Marshal(normalized)
 	if err != nil {
-		return nil, fmt.Errorf("%w: arguments are not serializable", ErrMCPMutationArguments)
+		return nil, nil, fmt.Errorf("%w: arguments are not serializable", ErrMCPMutationArguments)
 	}
 	if len(encoded) > maxBytes {
-		return nil, fmt.Errorf("%w: arguments exceed the configured size", ErrMCPMutationArguments)
+		return nil, nil, fmt.Errorf("%w: arguments exceed the configured size", ErrMCPMutationArguments)
 	}
-	return encoded, nil
+	decoder := json.NewDecoder(strings.NewReader(string(encoded)))
+	decoder.UseNumber()
+	var decoded map[string]any
+	if err := decoder.Decode(&decoded); err != nil {
+		return nil, nil, fmt.Errorf("%w: canonical arguments are invalid", ErrMCPMutationArguments)
+	}
+	if decoder.More() {
+		return nil, nil, fmt.Errorf("%w: trailing canonical arguments", ErrMCPMutationArguments)
+	}
+	return encoded, decoded, nil
 }
 
 func canonicalMCPValue(value any, depth int) (any, error) {
-	if depth > 32 {
+	if depth > mcpCanonicalMaxDepth {
 		return nil, fmt.Errorf("%w: arguments are nested too deeply", ErrMCPMutationArguments)
 	}
 	switch v := value.(type) {
-	case nil, string, bool:
+	case nil, bool:
+		return v, nil
+	case string:
+		if !utf8.ValidString(v) {
+			return nil, fmt.Errorf("%w: invalid UTF-8 string", ErrMCPMutationArguments)
+		}
 		return v, nil
 	case json.Number:
-		return normalizeMCPNumber(string(v))
+		return canonicalMCPNumber(string(v))
 	case float64:
-		if v != v || v > 1e308 || v < -1e308 {
+		if math.IsNaN(v) || math.IsInf(v, 0) {
 			return nil, fmt.Errorf("%w: non-finite number", ErrMCPMutationArguments)
 		}
-		if v == float64(int64(v)) {
-			return int64(v), nil
+		if v == 0 {
+			return json.Number("0"), nil
 		}
-		return strconv.FormatFloat(v, 'g', -1, 64), nil
+		if v == math.Trunc(v) {
+			if v > 9007199254740991 || v < -9007199254740991 {
+				return nil, fmt.Errorf("%w: integer exceeds the exact float64 range", ErrMCPMutationArguments)
+			}
+			return json.Number(strconv.FormatInt(int64(v), 10)), nil
+		}
+		return canonicalMCPNumber(strconv.FormatFloat(v, 'g', -1, 64))
 	case float32:
 		return canonicalMCPValue(float64(v), depth)
 	case int:
-		return int64(v), nil
+		return json.Number(strconv.FormatInt(int64(v), 10)), nil
 	case int8:
-		return int64(v), nil
+		return json.Number(strconv.FormatInt(int64(v), 10)), nil
 	case int16:
-		return int64(v), nil
+		return json.Number(strconv.FormatInt(int64(v), 10)), nil
 	case int32:
-		return int64(v), nil
+		return json.Number(strconv.FormatInt(int64(v), 10)), nil
 	case int64:
-		return v, nil
+		return json.Number(strconv.FormatInt(v, 10)), nil
 	case uint:
-		return int64(v), nil
+		return json.Number(strconv.FormatUint(uint64(v), 10)), nil
 	case uint8:
-		return int64(v), nil
+		return json.Number(strconv.FormatUint(uint64(v), 10)), nil
 	case uint16:
-		return int64(v), nil
+		return json.Number(strconv.FormatUint(uint64(v), 10)), nil
 	case uint32:
-		return int64(v), nil
+		return json.Number(strconv.FormatUint(uint64(v), 10)), nil
 	case uint64:
-		if v > uint64(^uint64(0)>>1) {
-			return nil, fmt.Errorf("%w: integer is too large", ErrMCPMutationArguments)
-		}
-		return int64(v), nil
+		return json.Number(strconv.FormatUint(v, 10)), nil
 	case []any:
-		if len(v) > 1024 {
+		if len(v) > mcpCanonicalMaxItems {
 			return nil, fmt.Errorf("%w: array is too large", ErrMCPMutationArguments)
 		}
 		out := make([]any, len(v))
@@ -715,12 +828,12 @@ func canonicalMCPValue(value any, depth int) (any, error) {
 		}
 		return out, nil
 	case map[string]any:
-		if len(v) > 256 {
+		if len(v) > mcpCanonicalMaxFields {
 			return nil, fmt.Errorf("%w: object has too many fields", ErrMCPMutationArguments)
 		}
 		out := make(map[string]any, len(v))
 		for key, item := range v {
-			if len(key) > 256 || containsMCPControl(key) {
+			if !utf8.ValidString(key) || len(key) > 256 || containsMCPControl(key) {
 				return nil, fmt.Errorf("%w: invalid argument name", ErrMCPMutationArguments)
 			}
 			normalized, err := canonicalMCPValue(item, depth+1)
@@ -735,18 +848,83 @@ func canonicalMCPValue(value any, depth int) (any, error) {
 	}
 }
 
-func normalizeMCPNumber(raw string) (any, error) {
-	if integer, err := strconv.ParseInt(raw, 10, 64); err == nil {
-		return integer, nil
+func canonicalMCPNumber(raw string) (json.Number, error) {
+	if len(raw) == 0 || len(raw) > mcpCanonicalMaxNumberLen || !mcpJSONNumberPattern.MatchString(raw) {
+		return "", fmt.Errorf("%w: invalid JSON number", ErrMCPMutationArguments)
 	}
-	value, err := strconv.ParseFloat(raw, 64)
-	if err != nil || value != value || value > 1e308 || value < -1e308 {
-		return nil, fmt.Errorf("%w: invalid number", ErrMCPMutationArguments)
+	// Bound exponent magnitude before arbitrary-precision expansion.
+	if index := strings.IndexAny(raw, "eE"); index >= 0 {
+		exp, err := strconv.Atoi(raw[index+1:])
+		if err != nil || exp > mcpCanonicalMaxExponent || exp < -mcpCanonicalMaxExponent {
+			return "", fmt.Errorf("%w: numeric exponent is out of bounds", ErrMCPMutationArguments)
+		}
 	}
-	if value == float64(int64(value)) {
-		return int64(value), nil
+	rat, ok := new(big.Rat).SetString(raw)
+	if !ok {
+		return "", fmt.Errorf("%w: invalid numeric value", ErrMCPMutationArguments)
 	}
-	return strconv.FormatFloat(value, 'g', -1, 64), nil
+	if rat.Sign() == 0 {
+		return json.Number("0"), nil
+	}
+	den := new(big.Int).Set(rat.Denom())
+	twos, fives := 0, 0
+	two := big.NewInt(2)
+	five := big.NewInt(5)
+	zero := big.NewInt(0)
+	for new(big.Int).Mod(den, two).Cmp(zero) == 0 {
+		den.Div(den, two)
+		twos++
+	}
+	for new(big.Int).Mod(den, five).Cmp(zero) == 0 {
+		den.Div(den, five)
+		fives++
+	}
+	if den.Cmp(big.NewInt(1)) != 0 {
+		return "", fmt.Errorf("%w: non-decimal numeric value", ErrMCPMutationArguments)
+	}
+	scale := twos
+	if fives > scale {
+		scale = fives
+	}
+	if scale > mcpCanonicalMaxDigits {
+		return "", fmt.Errorf("%w: numeric precision is too large", ErrMCPMutationArguments)
+	}
+	scaled := new(big.Int).Mul(rat.Num(), new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(scale)), nil))
+	scaled.Quo(scaled, rat.Denom())
+	digits := scaled.String()
+	if len(digits) > mcpCanonicalMaxDigits {
+		return "", fmt.Errorf("%w: numeric value is too large", ErrMCPMutationArguments)
+	}
+	negative := strings.HasPrefix(digits, "-")
+	if negative {
+		digits = strings.TrimPrefix(digits, "-")
+	}
+	if scale > 0 {
+		if len(digits) <= scale {
+			digits = "0." + strings.Repeat("0", scale-len(digits)) + digits
+		} else {
+			digits = digits[:len(digits)-scale] + "." + digits[len(digits)-scale:]
+		}
+		digits = strings.TrimRight(digits, "0")
+		digits = strings.TrimRight(digits, ".")
+	}
+	if digits == "" || digits == "0" {
+		return json.Number("0"), nil
+	}
+	if negative {
+		digits = "-" + digits
+	}
+	return json.Number(digits), nil
+}
+
+// normalizeMCPSourceIDs keeps a nil source list and an empty SQL array
+// representation identical for fingerprinting. PostgreSQL/SQLite round-trips
+// commonly return an empty non-nil slice for a resource-scoped proposal.
+func normalizeMCPSourceIDs(ids []uint64) []uint64 {
+	if ids == nil {
+		return []uint64{}
+	}
+	return ids
 }
 
 func proposalFingerprint(p MCPMutationProposal) string {
@@ -768,7 +946,7 @@ func proposalFingerprint(p MCPMutationProposal) string {
 		p.Transport, p.TransportIdentity,
 		p.SchemaSHA256, p.ArgumentsSHA256,
 		p.PolicyID, p.PolicyVersion, p.PolicySHA256,
-		p.SourceIDs, p.ExternalResource,
+		normalizeMCPSourceIDs(p.SourceIDs), p.ExternalResource,
 	}
 	encoded, _ := json.Marshal(payload)
 	return sha256Hex(encoded)
@@ -865,6 +1043,15 @@ func (v MCPMutationApprovalVerifier) Verify(ctx context.Context, proposal MCPMut
 	if err := approver.Validate(); err != nil {
 		return MCPMutationApproval{}, ErrMCPMutationApproval
 	}
+	// The verifier must not trust a caller-assembled proposal struct. Recompute
+	// the fingerprint and check the canonical argument bytes so a changed
+	// scope, resource, tool or argument cannot be matched against an approval
+	// for the original content.
+	if proposal.ProposalSHA256 == "" || proposalFingerprint(proposal) != proposal.ProposalSHA256 ||
+		len(proposal.CanonicalArguments) == 0 ||
+		sha256Hex(proposal.CanonicalArguments) != proposal.ArgumentsSHA256 {
+		return MCPMutationApproval{}, ErrMCPMutationApproval
+	}
 	approval, ok, err := v.Store.Lookup(ctx, approvalID)
 	if err != nil {
 		return MCPMutationApproval{}, ErrMCPMutationStoreUnavailable
@@ -884,6 +1071,16 @@ func (v MCPMutationApprovalVerifier) Verify(ctx context.Context, proposal MCPMut
 		return MCPMutationApproval{}, ErrMCPMutationApproval
 	}
 	if approval.ApprovedByUserID != approver.UserID || approval.ApprovedBy != approver.Username || approval.Issuer != approver.Issuer {
+		return MCPMutationApproval{}, ErrMCPMutationApproval
+	}
+	// A binding check for an inert future dispatcher. It deliberately rejects
+	// approvals that predate the proposal, are future-dated, or authorize an
+	// already expired proposal. It still cannot check account status, current
+	// policy or a durable execution counter; dispatch must revalidate those
+	// atomically.
+	if approval.ApprovedAt.IsZero() || approval.ApprovedAt.After(now) ||
+		approval.ApprovedAt.Before(proposal.CreatedAt) ||
+		!proposal.ExpiresAt.After(now) {
 		return MCPMutationApproval{}, ErrMCPMutationApproval
 	}
 	if !approval.ExpiresAt.After(now) || approval.RevokedAt != nil || approval.MaxExecutions <= 0 {

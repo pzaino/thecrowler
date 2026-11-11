@@ -34,7 +34,8 @@ type mcpSourceInput struct {
 }
 
 type mcpMutationInput struct {
-	Resource string `json:"resource,omitempty" jsonschema:"approved external resource"`
+	Resource string  `json:"resource,omitempty" jsonschema:"approved external resource"`
+	Amount   float64 `json:"amount,omitempty" jsonschema:"bounded numeric amount"`
 }
 
 func mcpText(text string) *mcp.CallToolResult {

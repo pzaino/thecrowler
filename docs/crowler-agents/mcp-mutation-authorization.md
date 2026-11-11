@@ -142,9 +142,14 @@ values.
 - revocation timestamp;
 - permitted execution count.
 
-`MCPMutationApprovalVerifier` checks exact proposal/run/agent/server/tool/
-argument/policy binding, approver identity, expiry, revocation and a positive
-execution count. It does not dispatch.
+`MCPMutationApprovalVerifier` recomputes the proposal fingerprint and verifies
+the retained canonical argument bytes before checking exact proposal/run/agent/
+server/tool/argument/policy binding, approver identity, approval timestamps,
+proposal and approval expiry, revocation and a positive execution allowance.
+It rejects approvals that predate the proposal or are future-dated. It still
+does not check current account status, a durable consumed-execution counter,
+current policy or external target state, and it must never be treated as
+dispatch authorization by itself.
 
 A model cannot approve its own proposal, and a remote server cannot issue an
 approval. The in-memory approval store is test-only; no public operator API or
@@ -399,3 +404,73 @@ Future WP-04C2 audit events should add proposal rejected/accepted, approval
 verified/denied/revoked, proposal expired, operation conflict, store unavailable,
 dispatch uncertain and reconciliation-required reason codes. Durable audit
 history is not claimed until the schema 1.17 persistence design is approved.
+
+## 20. Implemented WP-04C2-A hardening
+
+### Exact numeric canonicalization
+
+The WP-04C1 canonicalizer converted non-integral JSON numbers to Go strings
+before marshaling, which made JSON `1.25` and JSON string `"1.25"` collide. The
+hardened canonicalizer retains numbers as `json.Number` values and JSON strings
+as strings. The canonical bytes are the exact bytes retained in the proposal
+for future dispatch.
+
+Equivalence policy:
+
+- `1`, `1.0`, `1e0` and `1000e-3` normalize to the JSON number `1`.
+- `-0`, `0.0` and `0e5` normalize to the JSON number `0`.
+- `1.25`, `1.250` and `125e-2` normalize to `1.25`.
+- Numeric tokens are parsed with arbitrary-precision decimal arithmetic;
+  leading zeros, trailing dots, non-JSON forms, non-finite values, excessive
+  exponents, excessive precision and values outside the supported bounds are
+  rejected.
+- Integer-valued `float64` values outside the exact IEEE-754 integer range are
+  rejected rather than silently rounded. Callers requiring exact large numbers
+  must use `json.Number`.
+- Unicode strings and keys are preserved as valid UTF-8; invalid UTF-8 is
+  rejected. Object keys are deterministically sorted by JSON marshaling.
+- The stored `Arguments` map is decoded from the canonical bytes with
+  `UseNumber`; `CanonicalArguments` is the immutable byte sequence that a
+  future dispatcher must use.
+- Source IDs are normalized to an empty list for resource-scoped proposals, so
+  a database round-trip of an empty array cannot change the proposal
+  fingerprint.
+
+Fingerprint/identity versioning is explicitly new for this hardening; WP-04C1
+proposals were test-only and there is no durability migration of old
+fingerprints.
+
+### Atomic admission
+
+`MCPMutationProposalStore.Admit` is the sole admission API. Under one store
+transaction/mutex it performs:
+
+1. exact fingerprint lookup;
+2. `(run_id, effective_call_id)` conflict detection;
+3. per-run active-proposal quota;
+4. pending-per-principal quota;
+5. immutable creation.
+
+Separate check-then-create sequences are not used by the proposer. Admission
+also rejects non-initial proposal states, a proposal ID reused for different
+content, a missing trusted principal when approval is required, a proposal
+fingerprint that does not match its reconstructed content, and canonical
+argument bytes whose SHA-256 does not match `ArgumentsSHA256`. Those checks
+prevent a caller from bypassing approval state or binding a future dispatch to
+arguments that differ from the fingerprinted bytes.
+
+Quota semantics for WP-04C2-A:
+
+- active run quota includes `proposed`, `approval_required`, `approved`,
+  `dispatching`, `uncertain` and `reconciliation_required`;
+- terminal `denied`, `expired`, `succeeded` and `failed` do not consume quota;
+- pending-per-principal includes `proposed`, `approval_required`, `approved`
+  and `dispatching`;
+- an identical fingerprint replay returns the existing immutable proposal and
+  does not refresh expiry or quotas;
+- an expired replay fails with `ErrMCPMutationProposalExpired`;
+- the same run/effective call ID with changed arguments fails with
+  `ErrMCPMutationProposalConflict`.
+
+The in-memory store is test-only. The SQL transaction design is documented in
+`artifacts/agentic/WP-04C2A_SQL_TRANSACTIONS.md` and is not applied.

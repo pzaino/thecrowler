@@ -159,3 +159,27 @@ proposal fingerprint stability, run/agent/principal/server/tool/source/resource
 binding, expiry/revocation, store failures, cancellation and proposal limits.
 Production proposal/approval persistence and public approval APIs are not
 enabled until the schema 1.17 design and operator permission model are reviewed.
+
+## WP-04C2-A canonicalization and admission tests
+
+Mutation proposal tests must prove that JSON numbers and JSON strings never
+share a canonical fingerprint (`1.25` vs `"1.25"`), while declared numeric
+equivalence (`1`, `1.0`, `1e0`, exponent-equivalent decimals) is deterministic.
+Large exact numbers must use `json.Number`; inexact float64 integers beyond the
+safe range, non-finite values, invalid UTF-8, excessive precision/exponents and
+ambiguous JSON numbers must be rejected. The stored canonical bytes must hash to
+`ArgumentsSHA256` and must be the exact bytes intended for future dispatch.
+
+Admission tests must use `MCPMutationProposalStore.Admit` under concurrency:
+distinct calls at quota 1 may admit only one; identical fingerprints must return
+the same proposal; same run/effective-call with changed arguments or principal
+must conflict; expired replay must not refresh expiry; cancellation/store
+failure must fail closed; a proposal ID reused for different content and
+canonical bytes that do not hash to `ArgumentsSHA256` must be rejected. Run
+these tests with `-race`.
+
+Approval-verifier tests must cover forged argument/policy bindings, changed
+scope, wrong approver, revocation, approval expiry, proposal expiry,
+future-dated approval and approval predating the proposal. They must not claim
+that the verifier checks current account status or a durable execution counter;
+those belong to the future atomic dispatch claim.
