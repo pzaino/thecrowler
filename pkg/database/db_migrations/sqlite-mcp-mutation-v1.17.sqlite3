@@ -1,0 +1,230 @@
+-- WP-04C2-B additive MCP mutation persistence capability.
+--
+-- This migration is additive within schema 1.17. It does not change the schema
+-- version or the writer generation. It is safe to run repeatedly.
+PRAGMA foreign_keys = ON;
+BEGIN IMMEDIATE;
+
+CREATE TABLE IF NOT EXISTS MCPMutationProposals (
+    proposal_id             CHAR(64) PRIMARY KEY,
+    proposal_sha256         CHAR(64) NOT NULL UNIQUE,
+    identity_version        INTEGER NOT NULL CHECK (identity_version >= 1),
+
+    run_id                  TEXT NOT NULL,
+    trace_id                TEXT NOT NULL DEFAULT '',
+    effective_call_id       TEXT NOT NULL,
+    agent_id                TEXT NOT NULL,
+    owner                   TEXT NOT NULL,
+
+    principal_user_id       INTEGER NOT NULL CHECK (principal_user_id > 0),
+    principal_username      TEXT NOT NULL,
+    principal_issuer        TEXT NOT NULL,
+
+    server_id               TEXT NOT NULL,
+    raw_tool_name           TEXT NOT NULL,
+    tool_alias              TEXT NOT NULL,
+    transport               TEXT NOT NULL CHECK (transport IN ('stdio', 'streamable_http')),
+    transport_identity      TEXT NOT NULL,
+    schema_sha256           CHAR(64) NOT NULL,
+
+    canonical_arguments     BLOB NOT NULL,
+    arguments_sha256        CHAR(64) NOT NULL,
+    policy_id               TEXT NOT NULL,
+    policy_version          TEXT NOT NULL,
+    policy_sha256           CHAR(64) NOT NULL,
+    policy_snapshot         TEXT NOT NULL,
+
+    source_ids              TEXT NOT NULL DEFAULT '[]',
+    external_resource       TEXT,
+    destructive             INTEGER NOT NULL DEFAULT 0 CHECK (destructive IN (0, 1)),
+    approval_required       INTEGER NOT NULL DEFAULT 1 CHECK (approval_required IN (0, 1)),
+    execution_backend       TEXT NOT NULL DEFAULT 'none'
+                            CHECK (execution_backend IN ('none', 'single_submission')),
+
+    state                   TEXT NOT NULL CHECK (state IN (
+        'proposed', 'approval_required', 'approved', 'denied', 'expired',
+        'dispatching', 'succeeded', 'failed', 'uncertain',
+        'reconciliation_required')),
+
+    created_at              TIMESTAMP NOT NULL,
+    last_updated_at         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at              TIMESTAMP NOT NULL,
+    approved_at             TIMESTAMP,
+    terminal_at             TIMESTAMP,
+    terminal_reason         TEXT,
+
+    UNIQUE (run_id, effective_call_id),
+    CHECK (length(proposal_id) = 64 AND length(proposal_sha256) = 64 AND
+           length(schema_sha256) = 64 AND length(arguments_sha256) = 64 AND
+           length(policy_sha256) = 64),
+    CHECK (length(canonical_arguments) BETWEEN 2 AND 1048576),
+    CHECK (json_valid(policy_snapshot) AND json_type(policy_snapshot) = 'object'),
+    CHECK (json_valid(source_ids) AND json_type(source_ids) = 'array'),
+    CHECK ((json_array_length(source_ids) > 0 AND external_resource IS NULL) OR
+           (json_array_length(source_ids) = 0 AND external_resource IS NOT NULL)),
+    CHECK (julianday(expires_at) > julianday(created_at)),
+    CHECK (approved_at IS NULL OR julianday(approved_at) >= julianday(created_at)),
+    CHECK ((state IN ('denied', 'expired', 'succeeded', 'failed') AND terminal_at IS NOT NULL) OR
+           (state NOT IN ('denied', 'expired', 'succeeded', 'failed') AND terminal_at IS NULL))
+);
+
+CREATE INDEX IF NOT EXISTS idx_mcp_proposals_pending
+    ON MCPMutationProposals (state, expires_at);
+CREATE INDEX IF NOT EXISTS idx_mcp_proposals_principal
+    ON MCPMutationProposals (principal_user_id, state, created_at);
+CREATE INDEX IF NOT EXISTS idx_mcp_proposals_run
+    ON MCPMutationProposals (run_id, state);
+CREATE INDEX IF NOT EXISTS idx_mcp_proposals_expiry
+    ON MCPMutationProposals (expires_at)
+    WHERE state IN ('proposed', 'approval_required', 'approved', 'dispatching',
+                    'uncertain', 'reconciliation_required');
+
+CREATE TABLE IF NOT EXISTS MCPMutationApprovals (
+    approval_id             CHAR(64) PRIMARY KEY,
+    proposal_id             CHAR(64) NOT NULL REFERENCES MCPMutationProposals(proposal_id) ON DELETE RESTRICT,
+    proposal_sha256         CHAR(64) NOT NULL REFERENCES MCPMutationProposals(proposal_sha256) ON DELETE RESTRICT,
+
+    run_id                  TEXT NOT NULL,
+    agent_id                TEXT NOT NULL,
+    server_id               TEXT NOT NULL,
+    tool_alias              TEXT NOT NULL,
+    arguments_sha256        CHAR(64) NOT NULL,
+    policy_sha256           CHAR(64) NOT NULL,
+
+    approved_by_user_id     INTEGER NOT NULL CHECK (approved_by_user_id > 0),
+    approved_by             TEXT NOT NULL,
+    approved_by_issuer      TEXT NOT NULL,
+
+    approved_at             TIMESTAMP NOT NULL,
+    expires_at              TIMESTAMP NOT NULL,
+    state                   TEXT NOT NULL DEFAULT 'active'
+                            CHECK (state IN ('active', 'revoked', 'expired', 'exhausted')),
+
+    revoked_at              TIMESTAMP,
+    revoked_by_user_id      INTEGER,
+    revoked_by              TEXT,
+    revocation_reason       TEXT,
+
+    max_executions          INTEGER NOT NULL CHECK (max_executions > 0),
+    executions_started      INTEGER NOT NULL DEFAULT 0 CHECK (executions_started >= 0),
+    last_updated_at         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CHECK (length(approval_id) = 64 AND length(proposal_sha256) = 64 AND
+           length(arguments_sha256) = 64 AND length(policy_sha256) = 64),
+    CHECK (julianday(expires_at) > julianday(approved_at)),
+    CHECK (executions_started <= max_executions),
+    CHECK ((state = 'revoked' AND revoked_at IS NOT NULL AND revoked_by_user_id IS NOT NULL) OR
+           (state <> 'revoked' AND revoked_at IS NULL)),
+    CHECK (state <> 'exhausted' OR executions_started = max_executions)
+);
+
+CREATE INDEX IF NOT EXISTS idx_mcp_approvals_pending
+    ON MCPMutationApprovals (state, expires_at);
+CREATE INDEX IF NOT EXISTS idx_mcp_approvals_proposal
+    ON MCPMutationApprovals (proposal_sha256, approved_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_mcp_approvals_one_active
+    ON MCPMutationApprovals (proposal_sha256)
+    WHERE state = 'active';
+
+CREATE TABLE IF NOT EXISTS MCPMutationDispatchAttempts (
+    attempt_id              CHAR(64) PRIMARY KEY,
+    proposal_id             CHAR(64) NOT NULL REFERENCES MCPMutationProposals(proposal_id) ON DELETE RESTRICT,
+    proposal_sha256         CHAR(64) NOT NULL REFERENCES MCPMutationProposals(proposal_sha256) ON DELETE RESTRICT,
+    approval_id             CHAR(64) NOT NULL REFERENCES MCPMutationApprovals(approval_id) ON DELETE RESTRICT,
+
+    submission_identity     CHAR(64) NOT NULL,
+    claimed_by              TEXT NOT NULL,
+    claimed_at              TIMESTAMP NOT NULL,
+    lease_expires_at        TIMESTAMP NOT NULL,
+    backend_identity        TEXT NOT NULL,
+    external_operation_id   TEXT,
+    reconciliation_key      TEXT,
+
+    state                   TEXT NOT NULL CHECK (state IN (
+        'dispatching', 'succeeded', 'failed', 'uncertain',
+        'reconciliation_required')),
+    response_digest         CHAR(64),
+    reason_code             TEXT,
+    terminal_at             TIMESTAMP,
+    last_updated_at         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    UNIQUE (proposal_sha256, submission_identity),
+    CHECK (length(attempt_id) = 64 AND length(proposal_sha256) = 64 AND
+           length(submission_identity) = 64),
+    CHECK (julianday(lease_expires_at) > julianday(claimed_at)),
+    CHECK ((state IN ('succeeded', 'failed') AND terminal_at IS NOT NULL) OR
+           (state NOT IN ('succeeded', 'failed') AND terminal_at IS NULL))
+);
+
+CREATE INDEX IF NOT EXISTS idx_mcp_attempts_reconciliation
+    ON MCPMutationDispatchAttempts (state, lease_expires_at);
+CREATE INDEX IF NOT EXISTS idx_mcp_attempts_proposal
+    ON MCPMutationDispatchAttempts (proposal_sha256, claimed_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_mcp_attempts_one_unresolved
+    ON MCPMutationDispatchAttempts (proposal_sha256)
+    WHERE state IN ('dispatching', 'uncertain', 'reconciliation_required');
+
+CREATE TABLE IF NOT EXISTS MCPMutationAudit (
+    event_id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    occurred_at             TIMESTAMP NOT NULL,
+    event_type              TEXT NOT NULL,
+    actor_type              TEXT NOT NULL CHECK (actor_type IN ('agent', 'operator', 'system')),
+    actor_id                TEXT NOT NULL,
+    actor_issuer            TEXT,
+    proposal_id             CHAR(64),
+    proposal_sha256         CHAR(64),
+    approval_id             CHAR(64),
+    attempt_id              CHAR(64),
+    run_id                  TEXT,
+    trace_id                TEXT,
+    agent_id                TEXT,
+    principal_user_id       INTEGER,
+    server_id               TEXT,
+    tool_alias              TEXT,
+    reason_code             TEXT,
+    redacted_detail         TEXT NOT NULL DEFAULT '{}',
+    CHECK (json_valid(redacted_detail) AND json_type(redacted_detail) = 'object')
+);
+
+CREATE INDEX IF NOT EXISTS idx_mcp_audit_proposal
+    ON MCPMutationAudit (proposal_id, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_mcp_audit_type
+    ON MCPMutationAudit (event_type, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_mcp_audit_actor
+    ON MCPMutationAudit (actor_id, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_mcp_audit_run
+    ON MCPMutationAudit (run_id, occurred_at);
+
+CREATE TABLE IF NOT EXISTS MCPMutationRunQuota (
+    run_id                  TEXT PRIMARY KEY,
+    active_count            INTEGER NOT NULL DEFAULT 0 CHECK (active_count >= 0),
+    last_updated_at         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS MCPMutationPrincipalQuota (
+    principal_user_id       INTEGER PRIMARY KEY CHECK (principal_user_id > 0),
+    pending_count           INTEGER NOT NULL DEFAULT 0 CHECK (pending_count >= 0),
+    last_updated_at         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS SchemaCapabilities (
+    capability              TEXT PRIMARY KEY,
+    applied_at              TIMESTAMP NOT NULL,
+    applied_by              TEXT NOT NULL,
+    checksum                CHAR(64) NOT NULL,
+    details                 TEXT NOT NULL DEFAULT '{}',
+    CHECK (length(checksum) = 64),
+    CHECK (json_valid(details) AND json_type(details) = 'object')
+);
+
+INSERT INTO SchemaCapabilities (capability, applied_at, applied_by, checksum, details)
+VALUES ('mcp-mutation-authorization-v1', CURRENT_TIMESTAMP, 'migration',
+        '00cb16b3efc2a3a619335c4e3bc2b1c470bb34b2378d249a81e746cddc704eed',
+        '{"schema_version":"1.17"}')
+ON CONFLICT (capability) DO UPDATE
+    SET applied_at = excluded.applied_at,
+        applied_by = excluded.applied_by,
+        checksum = excluded.checksum,
+        details = excluded.details;
+
+COMMIT;

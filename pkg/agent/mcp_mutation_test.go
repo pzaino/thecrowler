@@ -282,6 +282,20 @@ func TestMCPMutationApprovalContract(t *testing.T) {
 	if _, err := verifier.Verify(context.Background(), changedScope, approval.ApprovalID, approver); err == nil {
 		t.Fatalf("approval reused for a changed proposal scope")
 	}
+	exhausted := approval
+	exhausted.ApprovalID = "approval-exhausted"
+	exhausted.ExecutionsStarted = exhausted.MaxExecutions
+	_ = approvalStore.Put(context.Background(), exhausted)
+	if _, err := verifier.Verify(context.Background(), proposal, exhausted.ApprovalID, approver); err == nil {
+		t.Fatalf("exhausted approval accepted")
+	}
+	revokedState := approval
+	revokedState.ApprovalID = "approval-revoked-state"
+	revokedState.State = "revoked"
+	_ = approvalStore.Put(context.Background(), revokedState)
+	if _, err := verifier.Verify(context.Background(), proposal, revokedState.ApprovalID, approver); err == nil {
+		t.Fatalf("revoked-state approval accepted")
+	}
 }
 
 func TestMCPMutationPolicyFailsClosed(t *testing.T) {

@@ -91,10 +91,9 @@ type MCPMutationOperationPolicy struct {
 	AuditRequired          bool
 }
 
-// MCPMutationPolicy is trusted operator/configuration policy. It is
-// deliberately a Go contract in WP-04C1; it is not yet exposed as an agent
-// manifest field because production durable proposal persistence has not been
-// approved.
+// MCPMutationPolicy is trusted operator/configuration policy. It remains a Go
+// contract; it is not exposed as an agent manifest field because agent-facing
+// mutation proposal creation has not been approved.
 type MCPMutationPolicy struct {
 	Enabled    bool
 	PolicyID   string
@@ -214,6 +213,7 @@ func (p *MCPMutationPolicy) SHA256() string {
 // that any external operation occurred.
 type MCPMutationProposal struct {
 	ProposalID         string
+	IdentityVersion    int
 	State              MCPMutationProposalState
 	RunID              string
 	TraceID            string
@@ -234,19 +234,24 @@ type MCPMutationProposal struct {
 	PolicyID           string
 	PolicyVersion      string
 	PolicySHA256       string
+	PolicySnapshot     []byte
 	SourceIDs          []uint64
 	ExternalResource   string
 	Destructive        bool
 	CreatedAt          time.Time
+	LastUpdatedAt      time.Time
 	ExpiresAt          time.Time
+	ApprovedAt         time.Time
+	TerminalAt         time.Time
+	TerminalReason     string
 	ApprovalRequired   bool
 	ExecutionBackend   string
 	AuditRequired      bool
 }
 
-// MCPMutationProposalStore is the narrow persistence boundary. The only
-// implementation in WP-04C1 is test-only/in-memory; production durability
-// requires the separate schema 1.17 review described in the design document.
+// MCPMutationProposalStore is the narrow persistence boundary. The in-memory
+// implementation is test-only; DatabaseMCPMutationProposalStore provides the
+// additive schema-1.17 durable implementation without enabling dispatch.
 type MCPMutationProposalStore interface {
 	// Admit performs fingerprint lookup, run-call conflict detection, quota
 	// checks and immutable creation as one atomic operation.
@@ -299,24 +304,10 @@ func (s *InMemoryMCPMutationProposalStore) Admit(ctx context.Context, proposal M
 	// Take ownership of the authoritative bytes before hashing or storing them
 	// so a caller cannot change the dispatch identity after admission.
 	proposal.CanonicalArguments = append([]byte(nil), proposal.CanonicalArguments...)
+	proposal.PolicySnapshot = append([]byte(nil), proposal.PolicySnapshot...)
 	proposal.SourceIDs = normalizeMCPSourceIDs(proposal.SourceIDs)
-	if proposal.ProposalID == "" || proposal.ProposalSHA256 == "" ||
-		proposal.RunID == "" || proposal.EffectiveCallID == "" ||
-		proposal.AgentID == "" || proposal.ServerID == "" || proposal.ToolAlias == "" {
-		return MCPMutationProposal{}, ErrMCPMutationProposalConflict
-	}
-	if proposal.ProposalSHA256 != proposalFingerprint(proposal) {
-		return MCPMutationProposal{}, fmt.Errorf("%w: proposal fingerprint does not match its content", ErrMCPMutationProposalConflict)
-	}
-	if proposal.State != MCPProposalApprovalRequired && proposal.State != MCPProposalProposed {
-		return MCPMutationProposal{}, ErrMCPMutationProposalConflict
-	}
-	if proposal.ApprovalRequired && proposal.Principal.Validate() != nil {
-		return MCPMutationProposal{}, ErrMCPMutationPrincipal
-	}
-	if len(proposal.CanonicalArguments) == 0 || proposal.ArgumentsSHA256 == "" ||
-		sha256Hex(proposal.CanonicalArguments) != proposal.ArgumentsSHA256 {
-		return MCPMutationProposal{}, fmt.Errorf("%w: canonical arguments do not match their fingerprint", ErrMCPMutationArguments)
+	if err := validateMCPMutationProposalForAdmission(proposal); err != nil {
+		return MCPMutationProposal{}, err
 	}
 	if maxPerRun <= 0 || maxPendingPerPrincipal <= 0 {
 		return MCPMutationProposal{}, ErrMCPMutationQuota
@@ -373,6 +364,34 @@ func (s *InMemoryMCPMutationProposalStore) Admit(ctx context.Context, proposal M
 	s.byFinger[proposal.ProposalSHA256] = proposal.ProposalID
 	s.byRunCall[runCallKey] = proposal.ProposalID
 	return cloneMCPMutationProposal(proposal), nil
+}
+
+func validateMCPMutationProposalForAdmission(proposal MCPMutationProposal) error {
+	if proposal.IdentityVersion <= 0 {
+		return ErrMCPMutationProposalConflict
+	}
+	if proposal.ProposalID == "" || proposal.ProposalSHA256 == "" ||
+		proposal.RunID == "" || proposal.EffectiveCallID == "" ||
+		proposal.AgentID == "" || proposal.ServerID == "" || proposal.ToolAlias == "" {
+		return ErrMCPMutationProposalConflict
+	}
+	if proposal.ProposalSHA256 != proposalFingerprint(proposal) {
+		return fmt.Errorf("%w: proposal fingerprint does not match its content", ErrMCPMutationProposalConflict)
+	}
+	if proposal.State != MCPProposalApprovalRequired && proposal.State != MCPProposalProposed {
+		return ErrMCPMutationProposalConflict
+	}
+	if proposal.ApprovalRequired && proposal.Principal.Validate() != nil {
+		return ErrMCPMutationPrincipal
+	}
+	if len(proposal.CanonicalArguments) == 0 || proposal.ArgumentsSHA256 == "" ||
+		sha256Hex(proposal.CanonicalArguments) != proposal.ArgumentsSHA256 {
+		return fmt.Errorf("%w: canonical arguments do not match their fingerprint", ErrMCPMutationArguments)
+	}
+	if len(proposal.PolicySnapshot) > 0 && sha256Hex(proposal.PolicySnapshot) != proposal.PolicySHA256 {
+		return fmt.Errorf("%w: policy snapshot does not match its hash", ErrMCPMutationPolicyInvalid)
+	}
+	return nil
 }
 
 func (s *InMemoryMCPMutationProposalStore) GetByFingerprint(ctx context.Context, fingerprint string) (MCPMutationProposal, bool, error) {
@@ -451,6 +470,7 @@ func (s *InMemoryMCPMutationProposalStore) Get(ctx context.Context, proposalID s
 func cloneMCPMutationProposal(p MCPMutationProposal) MCPMutationProposal {
 	p.Arguments = cloneAnyMap(p.Arguments)
 	p.CanonicalArguments = append([]byte(nil), p.CanonicalArguments...)
+	p.PolicySnapshot = append([]byte(nil), p.PolicySnapshot...)
 	p.SourceIDs = append([]uint64(nil), p.SourceIDs...)
 	return p
 }
@@ -612,7 +632,12 @@ func (p *MCPMutationProposer) Propose(ctx context.Context, tool AgentTool, descr
 	argumentsHash := sha256Hex(canonical)
 	schemaJSON, _ := json.Marshal(descriptor.schema)
 	schemaHash := sha256Hex(schemaJSON)
+	policySnapshot, err := json.Marshal(p.Policy)
+	if err != nil {
+		return MCPMutationProposal{}, fmt.Errorf("%w: policy snapshot is not serializable", ErrMCPMutationPolicyInvalid)
+	}
 	proposal := MCPMutationProposal{
+		IdentityVersion:    1,
 		State:              MCPProposalApprovalRequired,
 		RunID:              runtime.Auth.RunID,
 		TraceID:            runtime.Auth.TraceID,
@@ -632,6 +657,7 @@ func (p *MCPMutationProposer) Propose(ctx context.Context, tool AgentTool, descr
 		PolicyID:           p.Policy.PolicyID,
 		PolicyVersion:      p.Policy.Version,
 		PolicySHA256:       p.Policy.SHA256(),
+		PolicySnapshot:     append([]byte(nil), policySnapshot...),
 		SourceIDs:          sourceIDs,
 		ExternalResource:   resource,
 		Destructive:        operation.Destructive,
@@ -929,6 +955,7 @@ func normalizeMCPSourceIDs(ids []uint64) []uint64 {
 
 func proposalFingerprint(p MCPMutationProposal) string {
 	payload := struct {
+		IdentityVersion                        int
 		RunID, EffectiveCallID, AgentID, Owner string
 		PrincipalUserID                        uint64
 		PrincipalUsername, PrincipalIssuer     string
@@ -939,6 +966,7 @@ func proposalFingerprint(p MCPMutationProposal) string {
 		SourceIDs                              []uint64
 		ExternalResource                       string
 	}{
+		p.IdentityVersion,
 		p.RunID, p.EffectiveCallID, p.AgentID, p.Owner,
 		p.Principal.UserID,
 		p.Principal.Username, p.Principal.Issuer,
@@ -966,23 +994,27 @@ func newMCPProposalID() (string, error) {
 }
 
 // MCPMutationApproval is an approval contract for a future WP-04C2 dispatch.
-// WP-04C1 only defines and verifies the binding; it never dispatches.
+// WP-04C2-B durably issues and revokes approvals and the verifier checks their
+// binding; neither path dispatches an external operation.
 type MCPMutationApproval struct {
-	ApprovalID       string
-	ProposalSHA256   string
-	RunID            string
-	AgentID          string
-	ServerID         string
-	ToolAlias        string
-	ArgumentsSHA256  string
-	PolicySHA256     string
-	ApprovedByUserID uint64
-	ApprovedBy       string
-	Issuer           string
-	ApprovedAt       time.Time
-	ExpiresAt        time.Time
-	RevokedAt        *time.Time
-	MaxExecutions    int
+	ApprovalID        string
+	ProposalID        string
+	ProposalSHA256    string
+	RunID             string
+	AgentID           string
+	ServerID          string
+	ToolAlias         string
+	ArgumentsSHA256   string
+	PolicySHA256      string
+	ApprovedByUserID  uint64
+	ApprovedBy        string
+	Issuer            string
+	ApprovedAt        time.Time
+	ExpiresAt         time.Time
+	RevokedAt         *time.Time
+	MaxExecutions     int
+	ExecutionsStarted int
+	State             string
 }
 
 type MCPMutationApprovalStore interface {
@@ -1084,6 +1116,12 @@ func (v MCPMutationApprovalVerifier) Verify(ctx context.Context, proposal MCPMut
 		return MCPMutationApproval{}, ErrMCPMutationApproval
 	}
 	if !approval.ExpiresAt.After(now) || approval.RevokedAt != nil || approval.MaxExecutions <= 0 {
+		return MCPMutationApproval{}, ErrMCPMutationApproval
+	}
+	if approval.State != "" && approval.State != "active" {
+		return MCPMutationApproval{}, ErrMCPMutationApproval
+	}
+	if approval.ExecutionsStarted >= approval.MaxExecutions {
 		return MCPMutationApproval{}, ErrMCPMutationApproval
 	}
 	return approval, nil

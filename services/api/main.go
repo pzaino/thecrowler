@@ -761,6 +761,38 @@ func initAPIv1() {
 			"Read a durable operator crawl approval (console)", tagsNone,
 			true, false, 200, nil, StdAPIBasicQuery{}, crawlApprovalResponse{})
 
+		// Durable MCP mutation proposal/approval operator endpoints. There is
+		// deliberately no propose, dispatch or execute route.
+		http.Handle("GET /v1/console/mcp/mutations/proposals", withAuthenticatedPublicMiddlewares(mcpMutationListHandler))
+		cmn.RegisterAPIRoute("/v1/console/mcp/mutations/proposals", []string{"GET"},
+			"List durable MCP mutation proposals visible to the operator (console)", tagsNone,
+			true, false, 200, nil, nil, mcpMutationListResponse{})
+
+		http.Handle("GET /v1/console/mcp/mutations/proposals/{proposal_id}", withAuthenticatedPublicMiddlewares(mcpMutationDetailHandler))
+		cmn.RegisterAPIRoute("/v1/console/mcp/mutations/proposals/{proposal_id}", []string{"GET"},
+			"Read one durable MCP mutation proposal (console)", tagsNone,
+			true, false, 200, nil, nil, mcpMutationProposalResponse{})
+
+		http.Handle("POST /v1/console/mcp/mutations/proposals/{proposal_id}/approve", withAuthenticatedPublicMiddlewares(mcpMutationApproveHandler))
+		cmn.RegisterAPIRoute("/v1/console/mcp/mutations/proposals/{proposal_id}/approve", []string{"POST"},
+			"Approve one durable MCP mutation proposal (console)", tagsNone,
+			true, false, 200, mcpMutationApproveRequest{}, nil, nil)
+
+		http.Handle("POST /v1/console/mcp/mutations/proposals/{proposal_id}/deny", withAuthenticatedPublicMiddlewares(mcpMutationDenyHandler))
+		cmn.RegisterAPIRoute("/v1/console/mcp/mutations/proposals/{proposal_id}/deny", []string{"POST"},
+			"Deny one durable MCP mutation proposal (console)", tagsNone,
+			true, false, 200, mcpMutationDenyRequest{}, nil, nil)
+
+		http.Handle("POST /v1/console/mcp/mutations/proposals/{proposal_id}/revoke", withAuthenticatedPublicMiddlewares(mcpMutationRevokeHandler))
+		cmn.RegisterAPIRoute("/v1/console/mcp/mutations/proposals/{proposal_id}/revoke", []string{"POST"},
+			"Revoke one durable MCP mutation approval (console)", tagsNone,
+			true, false, 200, mcpMutationRevokeRequest{}, nil, nil)
+
+		http.Handle("GET /v1/console/mcp/mutations/proposals/{proposal_id}/attempts", withAuthenticatedPublicMiddlewares(mcpMutationAttemptsHandler))
+		cmn.RegisterAPIRoute("/v1/console/mcp/mutations/proposals/{proposal_id}/attempts", []string{"GET"},
+			"List MCP mutation dispatch attempts (dispatch is disabled)", tagsNone,
+			true, false, 200, nil, nil, nil)
+
 		// Administrative source-ownership verification. This is the only
 		// authenticated path that can turn a legacy usr_id into verified
 		// provenance; it is never derived from model or request-body claims.

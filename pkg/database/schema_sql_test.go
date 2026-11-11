@@ -657,3 +657,35 @@ func TestNoSchemaVersionAfter117(t *testing.T) {
 		}
 	}
 }
+
+func TestMCPMutationSchemaCapabilityCoverage(t *testing.T) {
+	t.Parallel()
+	files := []string{
+		"postgresql-setup.pgsql",
+		"sqlite-setup.sqlite3",
+		"db_migrations/postgresql-mcp-mutation-v1.17.pgsql",
+		"db_migrations/sqlite-mcp-mutation-v1.17.sqlite3",
+	}
+	fragments := []string{
+		"MCPMutationProposals",
+		"MCPMutationApprovals",
+		"MCPMutationDispatchAttempts",
+		"MCPMutationAudit",
+		"MCPMutationRunQuota",
+		"MCPMutationPrincipalQuota",
+		"SchemaCapabilities",
+		"mcp-mutation-authorization-v1",
+		MCPMutationCapabilityChecksum,
+	}
+	for _, file := range files {
+		content, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read %s: %v", file, err)
+		}
+		for _, fragment := range fragments {
+			if !strings.Contains(string(content), fragment) {
+				t.Errorf("%s missing MCP mutation capability fragment %q", file, fragment)
+			}
+		}
+	}
+}

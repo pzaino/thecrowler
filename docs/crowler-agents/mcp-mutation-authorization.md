@@ -152,29 +152,29 @@ current policy or external target state, and it must never be treated as
 dispatch authorization by itself.
 
 A model cannot approve its own proposal, and a remote server cannot issue an
-approval. The in-memory approval store is test-only; no public operator API or
-production approval persistence is enabled.
+approval. The in-memory stores remain test-only. WP-04C2-B adds a durable
+PostgreSQL/SQLite proposal and approval store plus authenticated operator
+approval routes; it does not dispatch.
 
 ## 7. Persistence decision
 
-WP-04C1 deliberately uses `MCPMutationProposalStore` and `InMemoryMCPMutationProposalStore`
-for deterministic tests. It does **not** claim restart recovery or production
-durability. The existing `CrawlProposals` and `CrawlApprovals` tables are
-crawl-specific and are not repurposed.
+WP-04C1 used `MCPMutationProposalStore` and `InMemoryMCPMutationProposalStore`
+for deterministic tests. WP-04C2-B adds an additive schema 1.17 capability with:
 
-Production WP-04C2 persistence requires an approved additive schema 1.17
-design, likely including:
-
-- proposal identity, run/agent/principal/server/tool bindings;
-- canonical argument and proposal fingerprints;
-- policy snapshot and version;
+- immutable proposal identity, run/agent/principal/server/tool bindings;
+- canonical argument bytes and proposal/argument fingerprints;
+- policy ID, version, hash and a bounded policy snapshot;
 - source/external-resource scope;
-- state and expiry;
-- approval identity and revocation;
-- dispatch attempt, external correlation and reconciliation state;
-- terminal outcome and audit timestamps.
+- proposal state and expiry;
+- durable approval identity, expiry, revocation and execution allowance;
+- a dispatch-attempt table reserved for the future dispatcher;
+- append-only audit records and per-run/per-principal quota counters;
+- a capability marker that distinguishes older 1.17 databases from databases
+  with this additive capability.
 
-That design is not applied here. No schema 1.18 is introduced.
+`CrawlProposals` and `CrawlApprovals` are crawl-specific and are not reused.
+The dispatch-attempt table exists but is never written by this phase: no
+dispatcher, worker or remote mutation is enabled. No schema 1.18 is introduced.
 
 ## 8. State and uncertainty model
 
@@ -193,10 +193,12 @@ uncertain
 reconciliation_required
 ```
 
-WP-04C1 only creates `approval_required` proposals and verifies approval
-contracts. It does not enter `dispatching` or perform external calls.
+WP-04C1 created `approval_required` proposals and verified approval contracts.
+WP-04C2-B durably stores `approval_required` and `approved` proposals and adds
+operator denial/revocation. It does not enter `dispatching` or perform external
+calls.
 
-WP-04C2 must treat a lost response after dispatch as `uncertain` or
+A future WP-04C2 dispatcher must treat a lost response as `uncertain` or
 `reconciliation_required`, not as failure or success. A remote mutation must
 not be retried automatically after an uncertain outcome unless the external
 system exposes an authoritative idempotency/reconciliation mechanism. The MCP
@@ -268,17 +270,22 @@ APIs are approved.
   implemented.
 - No mutation-capable MCP tool is available through the production agent
   manifest path.
-- The in-memory stores are test-only and are not restart-safe.
+- The in-memory stores are test-only and are not restart-safe. WP-04C2-B adds
+  a durable PostgreSQL/SQLite store, but dispatch remains disabled.
 - MCP annotations remain untrusted hints.
 - Custom NAT64/translation gateways still require deployment-level egress
   controls; this document inherits WP-04B's network limitations.
 
-## 15. Proposed schema 1.17 extension for WP-04C2 (not applied)
+## 15. Schema 1.17 extension design baseline
 
-The following is a **design proposal only**. It is not in any migration or
-clean-install schema and must not be applied without maintainer approval.
-It extends schema 1.17 and does not create schema 1.18. `CrawlProposals` and
-`CrawlApprovals` remain crawl-specific.
+The DDL below is the earlier design baseline. The implemented capability uses
+exact `BYTEA`/`BLOB` canonical bytes, quota counters and a capability marker as
+described in section 21 and
+`artifacts/agentic/WP-04C2A_SCHEMA_1_17_DESIGN.md`. It is present in new
+additive migration scripts and the clean-install setup, but has not been
+applied to a shared or production database in this worktree. It extends schema
+1.17 and does not create schema 1.18. `CrawlProposals` and `CrawlApprovals`
+remain crawl-specific.
 
 Proposed additive tables:
 
@@ -374,19 +381,28 @@ An `idempotentHint` is not an idempotency contract. Exactly-once behavior is
 not claimed unless the external system provides an authoritative operation ID
 and reconciliation API.
 
-## 18. Approval API contract (future)
+## 18. Approval API contract (implemented for WP-04C2-B)
 
-No public approval endpoint is implemented in WP-04C1. A future authenticated
-operator endpoint must:
+Authenticated operator routes are registered under
+`/v1/console/mcp/mutations/proposals`:
 
-- require an active, authorized principal distinct from the proposing agent;
-- bind the exact proposal fingerprint, server/tool, run/agent, argument hash,
-  policy hash and source/external resource;
-- enforce a bounded approval lifetime and execution count;
-- support revocation and record the revoking principal;
-- re-check current principal status and policy at approval and dispatch;
-- never accept a model-supplied approval identity;
-- return only bounded approval metadata and reason codes.
+- list and detail;
+- approve;
+- deny;
+- revoke;
+- bounded dispatch-attempt history (always empty while dispatch is disabled).
+
+Every route resolves the current account through `auth.ResolveActiveIdentity`
+and reloads roles/scopes from the database. Approval and observation require
+either administrator authority or verified ownership of every source in the
+proposal scope; external-resource proposals require administrator authority.
+The routes bind the exact proposal fingerprint and identity version, clamp the
+approval expiry to the proposal lifetime, permit one execution for the initial
+non-idempotent mode, record the revoking principal and return only bounded
+metadata. Model-supplied approval identities are never accepted.
+
+There is deliberately no propose, dispatch or reconciliation route in this
+phase. The proposal tool remains test-registered only.
 
 ## 19. WP-04C1 audit vocabulary
 
@@ -400,10 +416,10 @@ mcp_proposal_sha256
 mcp_policy_id
 ```
 
-Future WP-04C2 audit events should add proposal rejected/accepted, approval
-verified/denied/revoked, proposal expired, operation conflict, store unavailable,
-dispatch uncertain and reconciliation-required reason codes. Durable audit
-history is not claimed until the schema 1.17 persistence design is approved.
+WP-04C2-B records durable proposal-created, proposal-denied, proposal-expired,
+approval-issued and approval-revoked audit events with bounded redacted detail.
+Future dispatch/reconciliation work must add dispatch-claimed, succeeded,
+failed, uncertain and reconciliation-required events.
 
 ## 20. Implemented WP-04C2-A hardening
 
@@ -472,5 +488,89 @@ Quota semantics for WP-04C2-A:
 - the same run/effective call ID with changed arguments fails with
   `ErrMCPMutationProposalConflict`.
 
-The in-memory store is test-only. The SQL transaction design is documented in
-`artifacts/agentic/WP-04C2A_SQL_TRANSACTIONS.md` and is not applied.
+The in-memory store is test-only. The durable PostgreSQL/SQLite implementation
+is described in section 21; dispatch, uncertain-outcome and reconciliation SQL
+in `artifacts/agentic/WP-04C2A_SQL_TRANSACTIONS.md` remains design-only.
+
+## 21. Implemented WP-04C2-B durable persistence and approval API
+
+### Schema 1.17 capability
+
+The durable objects are additive within schema 1.17:
+`MCPMutationProposals`, `MCPMutationApprovals`,
+`MCPMutationDispatchAttempts`, `MCPMutationAudit`,
+`MCPMutationRunQuota`, `MCPMutationPrincipalQuota` and
+`SchemaCapabilities`.
+
+The capability is named `mcp-mutation-authorization-v1` and carries checksum
+`00cb16b3efc2a3a619335c4e3bc2b1c470bb34b2378d249a81e746cddc704eed`.
+The additive scripts are:
+
+- `pkg/database/db_migrations/postgresql-mcp-mutation-v1.17.pgsql`
+- `pkg/database/db_migrations/sqlite-mcp-mutation-v1.17.sqlite3`
+
+The same DDL is present in the clean-install PostgreSQL and SQLite setup
+scripts. `RequiredSchemaVersion` remains `1.17` and the writer generation
+remains `verified-ownership-v1.17`.
+
+A database that advertises 1.17 but lacks the capability fails closed when a
+durable MCP mutation store or route is used. The global startup compatibility
+check is unchanged so read-only deployments can still start; the mutation
+routes return `503` until the capability is present. There is no automatic
+runtime DDL application.
+
+Canonical argument bytes are stored as `BYTEA`/`BLOB`; `JSONB`/`TEXT` is used
+only for bounded policy snapshots and redacted audit detail. This preserves the
+exact bytes a future dispatcher must submit.
+
+### Atomic admission and quota counters
+
+`DatabaseMCPMutationProposalStore.Admit` uses one transaction:
+
+1. ensure and lock the run/principal quota rows in a fixed order;
+2. expire a matching expired proposal and decrement its counters;
+3. return an identical fingerprint replay without refreshing expiry;
+4. reject a changed fingerprint for the same run/effective-call ID;
+5. check the per-run and pending-per-principal counters;
+6. insert the immutable proposal and increment both counters;
+7. append a bounded audit event.
+
+The in-memory store remains the deterministic test implementation. The durable
+store is the PostgreSQL/SQLite production-shaped implementation. MySQL is not
+supported for durable MCP mutation persistence in this release.
+
+Quota counters are decremented on denial and on the expiry path exercised by a
+lookup/admission/approval. There is no background expiry reaper in this phase.
+If a proposal expires without a later transition, its counters may remain
+temporarily strict; the implementation never over-admits. A maintenance reaper
+is a future decision.
+
+### Approval lifecycle
+
+Approval issuance locks the quota rows and the proposal, verifies the exact
+proposal fingerprint/identity version and state, rejects expired proposals,
+inserts one active approval, moves the proposal to `approved` and appends an
+audit event. Re-approval after revocation is allowed; a second active approval
+for the same proposal is rejected. Approval expiry is clamped to the proposal
+expiry and the initial mode permits one execution.
+
+Denial moves the proposal to `denied`, decrements counters and revokes any
+active approval in the same transaction. Revocation records the operator and
+reason without deleting approval history. The verifier remains a binding check,
+not dispatch authorization.
+
+### Operator routes
+
+The implemented routes are listed in section 18. There is no propose, dispatch,
+execute or reconciliation route. The attempts route returns an empty list and
+`dispatch_enabled: false`. The mutation proposal tool remains test-registered
+only; no agent manifest or production agent path can create a durable proposal
+in this phase.
+
+### Operational note
+
+Apply the additive script explicitly to an existing 1.17 database after
+maintainer approval, or use the clean-install setup for a fresh database. The
+script is idempotent and does not alter crawl proposals, crawl approvals,
+sources, events or ownership history. Do not apply it to a shared or production
+database without the normal deployment review.

@@ -183,3 +183,26 @@ scope, wrong approver, revocation, approval expiry, proposal expiry,
 future-dated approval and approval predating the proposal. They must not claim
 that the verifier checks current account status or a durable execution counter;
 those belong to the future atomic dispatch claim.
+
+## WP-04C2-B durable persistence and approval API tests
+
+Durable MCP mutation tests must apply the additive schema-1.17 migration to a
+disposable SQLite database, verify the capability marker/checksum and prove:
+fingerprint replay is immutable; a changed fingerprint for the same run/call is
+a conflict; per-run and pending-per-principal quotas are atomic; denial and
+expiry decrement counters; approval issuance/revocation/denial are durable and
+audited; an active approval is revoked when its proposal is denied; and a
+missing schema capability fails closed.
+
+PostgreSQL coverage must run only against an explicitly supplied disposable
+database with the additive migration applied. Use
+`CROWLER_MCP_POSTGRES_DSN` and the `integration` build tag; never point it at a
+shared or production database.
+
+Operator API tests must cover authenticated approve/deny/revoke/list/detail,
+fingerprint and identity-version preconditions, source-owner versus
+cross-tenant authorization, external-resource administrator authorization,
+disabled authentication, missing schema (`503`), bounded pagination, and the
+absence of raw argument values in responses. The attempts route must remain an
+empty, explicitly dispatch-disabled response. No test may dispatch an external
+mutation.
