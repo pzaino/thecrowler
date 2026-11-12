@@ -127,6 +127,12 @@ type MCPMutationProposalFilter struct {
 	CreatedBefore time.Time
 	BeforeID      string
 	Limit         int
+	// ViewerUserID and ViewerAdmin apply the caller's trusted visibility
+	// predicate before LIMIT. Non-admin viewers see only source-scoped
+	// proposals where every source has verified ownership by ViewerUserID.
+	// External-resource proposals are administrator-only.
+	ViewerUserID uint64
+	ViewerAdmin  bool
 }
 
 // MCPMutationAuditEvent is one append-only, already-redacted audit record.
@@ -354,8 +360,11 @@ func ListMCPMutationProposals(ctx context.Context, db *Handler, filter MCPMutati
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
-	conditions := make([]string, 0, 5)
-	args := make([]any, 0, 7)
+	if !filter.ViewerAdmin && filter.ViewerUserID == 0 {
+		return []MCPMutationProposalRow{}, nil
+	}
+	conditions := make([]string, 0, 7)
+	args := make([]any, 0, 9)
 	placeholder := func(value any) string {
 		args = append(args, value)
 		return mcpMutationPlaceholder(*db, len(args))
@@ -369,6 +378,24 @@ func ListMCPMutationProposals(ctx context.Context, db *Handler, filter MCPMutati
 	if strings.TrimSpace(filter.RunID) != "" {
 		conditions = append(conditions, `run_id = `+placeholder(strings.TrimSpace(filter.RunID)))
 	}
+	if !filter.ViewerAdmin {
+		switch normalizeInformationSeedDBMS((*db).DBMS()) {
+		case DBPostgresStr:
+			conditions = append(conditions, `cardinality(p.source_ids) > 0 AND NOT EXISTS (
+				SELECT 1 FROM unnest(p.source_ids) AS sid(source_id)
+				 WHERE NOT EXISTS (
+				   SELECT 1 FROM SourceOwnership so
+				    WHERE so.source_id = sid.source_id AND so.user_id = `+placeholder(filter.ViewerUserID)+`))`)
+		case DBSQLiteStr:
+			conditions = append(conditions, `json_array_length(p.source_ids) > 0 AND NOT EXISTS (
+				SELECT 1 FROM json_each(p.source_ids) AS sid
+				 WHERE NOT EXISTS (
+				   SELECT 1 FROM SourceOwnership so
+				    WHERE so.source_id = CAST(sid.value AS INTEGER) AND so.user_id = `+placeholder(filter.ViewerUserID)+`))`)
+		default:
+			return nil, ErrMCPMutationStoreUnsupported
+		}
+	}
 	if !filter.CreatedBefore.IsZero() {
 		before := filter.CreatedBefore.UTC()
 		if strings.TrimSpace(filter.BeforeID) != "" {
@@ -377,7 +404,7 @@ func ListMCPMutationProposals(ctx context.Context, db *Handler, filter MCPMutati
 			conditions = append(conditions, `created_at < `+placeholder(before))
 		}
 	}
-	query := `SELECT ` + mcpProposalColumns() + ` FROM MCPMutationProposals`
+	query := `SELECT ` + mcpProposalColumns() + ` FROM MCPMutationProposals p`
 	if len(conditions) > 0 {
 		query += ` WHERE ` + strings.Join(conditions, ` AND `)
 	}
@@ -485,6 +512,61 @@ func CheckMCPMutationCapability(ctx context.Context, db *Handler) error {
 	} {
 		if !metadataObjectExists(ctx, *db, "index", index) {
 			missing = append(missing, "index "+index)
+		}
+	}
+	for _, table := range []string{
+		"MCPMutationProposals", "MCPMutationApprovals",
+		"MCPMutationDispatchAttempts", "MCPMutationAudit",
+		"MCPMutationRunQuota", "MCPMutationPrincipalQuota", "SchemaCapabilities",
+	} {
+		if !tableConstraintExists(ctx, *db, table, "PRIMARY KEY") {
+			missing = append(missing, "primary key on "+table)
+		}
+	}
+	if !tableUniqueColumnsExist(ctx, *db, "MCPMutationProposals", []string{"run_id", "effective_call_id"}) {
+		missing = append(missing, "unique (run_id,effective_call_id) on MCPMutationProposals")
+	}
+	if !tableUniqueColumnsExist(ctx, *db, "MCPMutationProposals", []string{"proposal_sha256"}) {
+		missing = append(missing, "unique proposal_sha256 on MCPMutationProposals")
+	}
+	if !tableUniqueColumnsExist(ctx, *db, "MCPMutationDispatchAttempts", []string{"proposal_sha256", "submission_identity"}) {
+		missing = append(missing, "unique (proposal_sha256,submission_identity) on MCPMutationDispatchAttempts")
+	}
+	for _, table := range []string{"MCPMutationApprovals", "MCPMutationDispatchAttempts"} {
+		if !tableConstraintExists(ctx, *db, table, "FOREIGN KEY") {
+			missing = append(missing, "foreign key on "+table)
+		}
+	}
+	if normalizeDBMS((*db).DBMS()) == "postgres" {
+		expectedTypes := map[string]map[string]string{
+			"MCPMutationProposals": {
+				"canonical_arguments": "bytea",
+				"policy_snapshot":     "jsonb",
+				"source_ids":          "array",
+				"principal_user_id":   "bigint",
+				"created_at":          "timestamp with time zone",
+			},
+			"MCPMutationApprovals": {
+				"max_executions": "integer",
+				"expires_at":     "timestamp with time zone",
+			},
+		}
+		for table, columns := range expectedTypes {
+			for column, expected := range columns {
+				var dataType, udtName string
+				err := (*db).QueryRowContext(ctx, `SELECT data_type, udt_name
+					FROM information_schema.columns
+					WHERE table_schema = current_schema()
+					  AND lower(table_name) = lower($1)
+					  AND lower(column_name) = lower($2)`, table, column).Scan(&dataType, &udtName)
+				actual := strings.ToLower(dataType)
+				if actual == "array" && strings.HasPrefix(strings.ToLower(udtName), "_") {
+					actual = "array"
+				}
+				if err != nil || actual != expected {
+					missing = append(missing, "type "+table+"."+column)
+				}
+			}
 		}
 	}
 	var checksum string
@@ -733,6 +815,11 @@ func expireMCPMutationProposalTx(ctx context.Context, tx *sql.Tx, db Handler, ro
 // AdmitMCPMutationProposal atomically checks fingerprint replay, logical-call
 // conflicts, quota counters and immutable creation.
 func AdmitMCPMutationProposal(ctx context.Context, db *Handler, row MCPMutationProposalRow, maxPerRun, maxPendingPerPrincipal int) (MCPMutationProposalRow, bool, error) {
+	return AdmitMCPMutationProposalAt(ctx, db, row, maxPerRun, maxPendingPerPrincipal, time.Now().UTC())
+}
+
+// AdmitMCPMutationProposalAt is the deterministic-clock admission boundary.
+func AdmitMCPMutationProposalAt(ctx context.Context, db *Handler, row MCPMutationProposalRow, maxPerRun, maxPendingPerPrincipal int, now time.Time) (MCPMutationProposalRow, bool, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -753,7 +840,9 @@ func AdmitMCPMutationProposal(ctx context.Context, db *Handler, row MCPMutationP
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	now := time.Now().UTC()
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
 	if row.SourceIDs == nil {
 		row.SourceIDs = []uint64{}
 	}
@@ -898,17 +987,99 @@ func GetMCPMutationApproval(ctx context.Context, db *Handler, approvalID string)
 		`approval_id = `+mcpMutationPlaceholder(*db, 1), approvalID)
 }
 
-// GetActiveMCPMutationApprovalByProposal returns the current active approval.
-func GetActiveMCPMutationApprovalByProposal(ctx context.Context, db *Handler, proposalSHA256 string) (MCPMutationApprovalRow, bool, error) {
+// GetActiveMCPMutationApprovalByProposal returns an approval that is usable at
+// the supplied trusted time. The SQL predicate is deliberately named "active
+// at now": a row whose state is still active but whose expiry has passed is not
+// returned. State reconciliation happens in the approval/revocation
+// transactions, not on this read path.
+func GetActiveMCPMutationApprovalByProposal(ctx context.Context, db *Handler, proposalSHA256 string, now time.Time) (MCPMutationApprovalRow, bool, error) {
 	if db == nil || *db == nil {
 		return MCPMutationApprovalRow{}, false, fmt.Errorf("database handler is nil")
 	}
 	if !supportsMCPMutationStore(*db) {
 		return MCPMutationApprovalRow{}, false, ErrMCPMutationStoreUnsupported
 	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
 	return getMCPMutationApprovalWhere(ctx, *db, (*db).DBMS(),
-		`proposal_sha256 = `+mcpMutationPlaceholder(*db, 1)+` AND state = 'active'`,
+		`proposal_sha256 = `+mcpMutationPlaceholder(*db, 1)+`
+		 AND state = 'active'
+		 AND expires_at > `+mcpMutationPlaceholder(*db, 2)+`
+		 AND executions_started < max_executions
+		 AND EXISTS (
+		   SELECT 1 FROM MCPMutationProposals p
+		    WHERE p.proposal_sha256 = MCPMutationApprovals.proposal_sha256
+		      AND p.state = 'approved'
+		      AND p.expires_at > `+mcpMutationPlaceholder(*db, 3)+`)`,
+		proposalSHA256, now.UTC(), now.UTC())
+}
+
+func mcpApprovalIsUsable(approval MCPMutationApprovalRow, proposal MCPMutationProposalRow, now time.Time) bool {
+	return approval.State == "active" && !approval.RevokedAt.Valid &&
+		approval.ExpiresAt.After(now) && approval.ExecutionsStarted < approval.MaxExecutions &&
+		proposal.State == MCPMutationStateApproved && proposal.ExpiresAt.After(now)
+}
+
+func getMCPMutationActiveApprovalTx(ctx context.Context, tx *sql.Tx, db Handler, proposalSHA256 string) (MCPMutationApprovalRow, bool, error) {
+	return getMCPMutationApprovalWhere(ctx, tx, db.DBMS(),
+		`proposal_sha256 = `+mcpMutationPlaceholder(db, 1)+` AND state = 'active'`,
 		proposalSHA256)
+}
+
+func expireMCPMutationApprovalTx(ctx context.Context, tx *sql.Tx, db Handler, approval MCPMutationApprovalRow, now time.Time, reason string) error {
+	state := "expired"
+	eventType := "mcp_mutation_approval_expired"
+	if reason == "exhausted" {
+		state = "exhausted"
+		eventType = "mcp_mutation_approval_exhausted"
+	}
+	p := func(n int) string { return mcpMutationPlaceholder(db, n) }
+	result, err := tx.ExecContext(ctx, `UPDATE MCPMutationApprovals
+		SET state = `+p(1)+`, last_updated_at = `+p(2)+`
+		WHERE approval_id = `+p(3)+` AND state = 'active'`,
+		state, now.UTC(), approval.ApprovalID)
+	if err != nil {
+		return mcpMutationStoreError(err)
+	}
+	affected, _ := result.RowsAffected()
+	if affected != 1 {
+		return ErrMCPMutationApprovalConflict
+	}
+	return insertMCPMutationAuditTx(ctx, tx, db, MCPMutationAuditEvent{
+		OccurredAt: now, EventType: eventType, ActorType: "system",
+		ActorID: "system", ProposalID: approval.ProposalID,
+		ProposalSHA256: approval.ProposalSHA256, ApprovalID: approval.ApprovalID,
+		RunID: approval.RunID, AgentID: approval.AgentID,
+		PrincipalUserID: 0, ServerID: approval.ServerID, ToolAlias: approval.ToolAlias,
+		ReasonCode: reason,
+	})
+}
+
+func reopenMCPMutationProposalTx(ctx context.Context, tx *sql.Tx, db Handler, proposal MCPMutationProposalRow, now time.Time, reason string) error {
+	if proposal.State != MCPMutationStateApproved {
+		return nil
+	}
+	p := func(n int) string { return mcpMutationPlaceholder(db, n) }
+	result, err := tx.ExecContext(ctx, `UPDATE MCPMutationProposals
+		SET state = 'approval_required', approved_at = NULL, last_updated_at = `+p(1)+`
+		WHERE proposal_id = `+p(2)+` AND state = 'approved'`,
+		now.UTC(), proposal.ProposalID)
+	if err != nil {
+		return mcpMutationStoreError(err)
+	}
+	affected, _ := result.RowsAffected()
+	if affected != 1 {
+		return ErrMCPMutationProposalConflict
+	}
+	return insertMCPMutationAuditTx(ctx, tx, db, MCPMutationAuditEvent{
+		OccurredAt: now, EventType: "mcp_mutation_proposal_reopened",
+		ActorType: "system", ActorID: "system", ProposalID: proposal.ProposalID,
+		ProposalSHA256: proposal.ProposalSHA256, RunID: proposal.RunID,
+		TraceID: proposal.TraceID, AgentID: proposal.AgentID,
+		PrincipalUserID: proposal.PrincipalUserID, ServerID: proposal.ServerID,
+		ToolAlias: proposal.ToolAlias, ReasonCode: reason,
+	})
 }
 
 func insertMCPMutationApprovalTx(ctx context.Context, tx *sql.Tx, db Handler, row MCPMutationApprovalRow) error {
@@ -1011,13 +1182,11 @@ func IssueMCPMutationApproval(ctx context.Context, db *Handler, approval MCPMuta
 	default:
 		return MCPMutationApprovalRow{}, false, ErrMCPMutationProposalConflict
 	}
-	existing, found, err := getMCPMutationApprovalWhere(txCtx, tx, (*db).DBMS(),
-		`proposal_sha256 = `+mcpMutationPlaceholder(*db, 1)+` AND state = 'active'`,
-		proposal.ProposalSHA256)
+	existing, found, err := getMCPMutationActiveApprovalTx(txCtx, tx, *db, proposal.ProposalSHA256)
 	if err != nil {
 		return MCPMutationApprovalRow{}, false, err
 	}
-	if found {
+	if found && mcpApprovalIsUsable(existing, proposal, now) {
 		if existing.ApprovedByUserID != approval.ApprovedByUserID {
 			return MCPMutationApprovalRow{}, false, ErrMCPMutationApprovalConflict
 		}
@@ -1025,6 +1194,30 @@ func IssueMCPMutationApproval(ctx context.Context, db *Handler, approval MCPMuta
 			return MCPMutationApprovalRow{}, false, NormalizeTransactionError(txCtx, err)
 		}
 		return existing, false, nil
+	}
+	if found {
+		reason := "expired"
+		if existing.ExecutionsStarted >= existing.MaxExecutions {
+			reason = "exhausted"
+		} else if proposal.State != MCPMutationStateApproved || !existing.ExpiresAt.After(now) {
+			reason = "expired"
+		}
+		if err := expireMCPMutationApprovalTx(txCtx, tx, *db, existing, now, reason); err != nil {
+			return MCPMutationApprovalRow{}, false, err
+		}
+		if proposal.State == MCPMutationStateApproved {
+			if err := reopenMCPMutationProposalTx(txCtx, tx, *db, proposal, now, "approval_"+reason); err != nil {
+				return MCPMutationApprovalRow{}, false, err
+			}
+			proposal.State = MCPMutationStateApprovalRequired
+			proposal.ApprovedAt = sql.NullTime{}
+		}
+	} else if proposal.State == MCPMutationStateApproved {
+		if err := reopenMCPMutationProposalTx(txCtx, tx, *db, proposal, now, "approval_missing"); err != nil {
+			return MCPMutationApprovalRow{}, false, err
+		}
+		proposal.State = MCPMutationStateApprovalRequired
+		proposal.ApprovedAt = sql.NullTime{}
 	}
 	if approval.MaxExecutions <= 0 {
 		return MCPMutationApprovalRow{}, false, ErrMCPMutationApprovalConflict
@@ -1075,7 +1268,10 @@ func IssueMCPMutationApproval(ctx context.Context, db *Handler, approval MCPMuta
 	return approval, true, nil
 }
 
-// RevokeMCPMutationApproval revokes one active approval without deleting it.
+// RevokeMCPMutationApproval revokes one usable active approval without
+// deleting history. If it was the proposal's only usable approval, the proposal
+// returns to approval_required; an expired or exhausted approval is classified
+// rather than being reported as revoked.
 func RevokeMCPMutationApproval(ctx context.Context, db *Handler, approvalID string, principalUserID uint64, revokedBy, reason string, now time.Time) (MCPMutationApprovalRow, bool, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -1085,6 +1281,9 @@ func RevokeMCPMutationApproval(ctx context.Context, db *Handler, approvalID stri
 	}
 	if !supportsMCPMutationStore(*db) {
 		return MCPMutationApprovalRow{}, false, ErrMCPMutationStoreUnsupported
+	}
+	if principalUserID == 0 || strings.TrimSpace(revokedBy) == "" {
+		return MCPMutationApprovalRow{}, false, ErrMCPMutationApprovalConflict
 	}
 	if now.IsZero() {
 		now = time.Now().UTC()
@@ -1096,31 +1295,105 @@ func RevokeMCPMutationApproval(ctx context.Context, db *Handler, approvalID stri
 		return MCPMutationApprovalRow{}, false, NormalizeTransactionError(txCtx, err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	p := func(n int) string { return mcpMutationPlaceholder(*db, n) }
-	if _, err := tx.ExecContext(txCtx,
-		`UPDATE MCPMutationApprovals SET last_updated_at = last_updated_at WHERE approval_id = `+p(1),
-		approvalID); err != nil {
-		return MCPMutationApprovalRow{}, false, mcpMutationStoreError(err)
-	}
-	row, found, err := getMCPMutationApprovalWhere(txCtx, tx, (*db).DBMS(),
-		`approval_id = `+p(1), approvalID)
+
+	approval, found, err := getMCPMutationApprovalWhere(txCtx, tx, (*db).DBMS(),
+		`approval_id = `+mcpMutationPlaceholder(*db, 1), approvalID)
 	if err != nil {
 		return MCPMutationApprovalRow{}, false, err
 	}
 	if !found {
 		return MCPMutationApprovalRow{}, false, ErrMCPMutationApprovalNotFound
 	}
-	if row.State == "revoked" {
+	proposal, found, err := getMCPMutationProposalWhere(txCtx, tx, (*db).DBMS(),
+		`proposal_id = `+mcpMutationPlaceholder(*db, 1), approval.ProposalID)
+	if err != nil {
+		return MCPMutationApprovalRow{}, false, err
+	}
+	if !found {
+		return MCPMutationApprovalRow{}, false, ErrMCPMutationProposalNotFound
+	}
+	if _, _, err := ensureAndLockMCPMutationQuotaTx(txCtx, tx, *db, proposal.RunID, proposal.PrincipalUserID); err != nil {
+		return MCPMutationApprovalRow{}, false, err
+	}
+	proposal, found, err = lockMCPMutationProposalTx(txCtx, tx, *db, proposal.ProposalID)
+	if err != nil {
+		return MCPMutationApprovalRow{}, false, err
+	}
+	if !found {
+		return MCPMutationApprovalRow{}, false, ErrMCPMutationProposalNotFound
+	}
+	approval, found, err = getMCPMutationApprovalWhere(txCtx, tx, (*db).DBMS(),
+		`approval_id = `+mcpMutationPlaceholder(*db, 1), approvalID)
+	if err != nil {
+		return MCPMutationApprovalRow{}, false, err
+	}
+	if !found {
+		return MCPMutationApprovalRow{}, false, ErrMCPMutationApprovalNotFound
+	}
+	p := func(n int) string { return mcpMutationPlaceholder(*db, n) }
+
+	reopenIfNeeded := func(reasonCode string) error {
+		active, activeFound, err := getMCPMutationActiveApprovalTx(txCtx, tx, *db, proposal.ProposalSHA256)
+		if err != nil {
+			return err
+		}
+		if activeFound && mcpApprovalIsUsable(active, proposal, now) {
+			return nil
+		}
+		if activeFound && !mcpApprovalIsUsable(active, proposal, now) {
+			activeReason := "expired"
+			if active.ExecutionsStarted >= active.MaxExecutions {
+				activeReason = "exhausted"
+			}
+			if err := expireMCPMutationApprovalTx(txCtx, tx, *db, active, now, activeReason); err != nil {
+				return err
+			}
+		}
+		if proposal.State == MCPMutationStateApproved {
+			return reopenMCPMutationProposalTx(txCtx, tx, *db, proposal, now, reasonCode)
+		}
+		return nil
+	}
+
+	if approval.State == "revoked" {
+		if err := reopenIfNeeded("approval_revoked"); err != nil {
+			return MCPMutationApprovalRow{}, false, err
+		}
 		if err := tx.Commit(); err != nil {
 			return MCPMutationApprovalRow{}, false, NormalizeTransactionError(txCtx, err)
 		}
-		return row, false, nil
+		return approval, false, nil
 	}
-	if row.State != "active" {
-		return MCPMutationApprovalRow{}, false, ErrMCPMutationApprovalExpired
+	if approval.State != "active" {
+		if err := reopenIfNeeded("approval_" + approval.State); err != nil {
+			return MCPMutationApprovalRow{}, false, err
+		}
+		if err := tx.Commit(); err != nil {
+			return MCPMutationApprovalRow{}, false, NormalizeTransactionError(txCtx, err)
+		}
+		return approval, false, nil
 	}
-	if principalUserID == 0 || strings.TrimSpace(revokedBy) == "" {
-		return MCPMutationApprovalRow{}, false, ErrMCPMutationApprovalConflict
+	if !mcpApprovalIsUsable(approval, proposal, now) {
+		reasonCode := "expired"
+		if approval.ExecutionsStarted >= approval.MaxExecutions {
+			reasonCode = "exhausted"
+		}
+		if err := expireMCPMutationApprovalTx(txCtx, tx, *db, approval, now, reasonCode); err != nil {
+			return MCPMutationApprovalRow{}, false, err
+		}
+		approval.State = reasonCode
+		if reasonCode == "exhausted" {
+			approval.State = "exhausted"
+		} else {
+			approval.State = "expired"
+		}
+		if err := reopenIfNeeded("approval_" + reasonCode); err != nil {
+			return MCPMutationApprovalRow{}, false, err
+		}
+		if err := tx.Commit(); err != nil {
+			return MCPMutationApprovalRow{}, false, NormalizeTransactionError(txCtx, err)
+		}
+		return approval, false, nil
 	}
 	result, err := tx.ExecContext(txCtx, `UPDATE MCPMutationApprovals
 		SET state = 'revoked', revoked_at = `+p(1)+`, revoked_by_user_id = `+p(2)+`,
@@ -1136,26 +1409,29 @@ func RevokeMCPMutationApproval(ctx context.Context, db *Handler, approvalID stri
 	if affected != 1 {
 		return MCPMutationApprovalRow{}, false, ErrMCPMutationApprovalConflict
 	}
-	row.State = "revoked"
-	row.RevokedAt = sql.NullTime{Time: now.UTC(), Valid: true}
-	row.RevokedByUserID = sql.NullInt64{Int64: int64(principalUserID), Valid: true}
-	row.RevokedBy = sql.NullString{String: strings.TrimSpace(revokedBy), Valid: true}
-	row.RevocationReason = sql.NullString{String: strings.TrimSpace(reason), Valid: true}
-	row.LastUpdatedAt = now.UTC()
+	approval.State = "revoked"
+	approval.RevokedAt = sql.NullTime{Time: now.UTC(), Valid: true}
+	approval.RevokedByUserID = sql.NullInt64{Int64: int64(principalUserID), Valid: true}
+	approval.RevokedBy = sql.NullString{String: strings.TrimSpace(revokedBy), Valid: true}
+	approval.RevocationReason = sql.NullString{String: strings.TrimSpace(reason), Valid: true}
+	approval.LastUpdatedAt = now.UTC()
+	if err := reopenIfNeeded("approval_revoked"); err != nil {
+		return MCPMutationApprovalRow{}, false, err
+	}
 	if err := insertMCPMutationAuditTx(txCtx, tx, *db, MCPMutationAuditEvent{
 		OccurredAt: now, EventType: "mcp_mutation_approval_revoked",
 		ActorType: "operator", ActorID: strings.TrimSpace(revokedBy),
-		ProposalID: row.ProposalID, ProposalSHA256: row.ProposalSHA256,
-		ApprovalID: row.ApprovalID, RunID: row.RunID, AgentID: row.AgentID,
-		PrincipalUserID: principalUserID, ServerID: row.ServerID,
-		ToolAlias: row.ToolAlias, ReasonCode: "operator_revoked",
+		ProposalID: approval.ProposalID, ProposalSHA256: approval.ProposalSHA256,
+		ApprovalID: approval.ApprovalID, RunID: approval.RunID, AgentID: approval.AgentID,
+		PrincipalUserID: principalUserID, ServerID: approval.ServerID,
+		ToolAlias: approval.ToolAlias, ReasonCode: "operator_revoked",
 	}); err != nil {
 		return MCPMutationApprovalRow{}, false, err
 	}
 	if err := tx.Commit(); err != nil {
 		return MCPMutationApprovalRow{}, false, NormalizeTransactionError(txCtx, err)
 	}
-	return row, true, nil
+	return approval, true, nil
 }
 
 // DenyMCPMutationProposal terminally denies one proposal.
@@ -1220,6 +1496,24 @@ func DenyMCPMutationProposal(ctx context.Context, db *Handler, proposalID string
 	default:
 		return MCPMutationProposalRow{}, false, ErrMCPMutationProposalConflict
 	}
+	// Classify a stale active approval before denial. A row that is already
+	// expired must become expired, not be mislabeled as operator-revoked.
+	var deniedApproval MCPMutationApprovalRow
+	deniedApprovalFound := false
+	if active, activeFound, activeErr := getMCPMutationActiveApprovalTx(txCtx, tx, *db, proposal.ProposalSHA256); activeErr != nil {
+		return MCPMutationProposalRow{}, false, activeErr
+	} else if activeFound && !mcpApprovalIsUsable(active, proposal, now) {
+		reasonCode := "expired"
+		if active.ExecutionsStarted >= active.MaxExecutions {
+			reasonCode = "exhausted"
+		}
+		if err := expireMCPMutationApprovalTx(txCtx, tx, *db, active, now, reasonCode); err != nil {
+			return MCPMutationProposalRow{}, false, err
+		}
+	} else if activeFound {
+		deniedApproval = active
+		deniedApprovalFound = true
+	}
 	p := func(n int) string { return mcpMutationPlaceholder(*db, n) }
 	result, err := tx.ExecContext(txCtx, `UPDATE MCPMutationProposals
 		SET state = 'denied', terminal_at = `+p(1)+`, terminal_reason = `+p(2)+`,
@@ -1250,6 +1544,19 @@ func DenyMCPMutationProposal(ctx context.Context, db *Handler, proposalID string
 		now.UTC(), actorUserID, strings.TrimSpace(actorID), now.UTC(),
 		proposal.ProposalSHA256); err != nil {
 		return MCPMutationProposalRow{}, false, mcpMutationStoreError(err)
+	}
+	if deniedApprovalFound {
+		if err := insertMCPMutationAuditTx(txCtx, tx, *db, MCPMutationAuditEvent{
+			OccurredAt: now, EventType: "mcp_mutation_approval_revoked",
+			ActorType: "operator", ActorID: strings.TrimSpace(actorID),
+			ProposalID: proposal.ProposalID, ProposalSHA256: proposal.ProposalSHA256,
+			ApprovalID: deniedApproval.ApprovalID, RunID: proposal.RunID,
+			AgentID: proposal.AgentID, PrincipalUserID: proposal.PrincipalUserID,
+			ServerID: proposal.ServerID, ToolAlias: proposal.ToolAlias,
+			ReasonCode: "proposal_denied",
+		}); err != nil {
+			return MCPMutationProposalRow{}, false, err
+		}
 	}
 	proposal.State = MCPMutationStateDenied
 	proposal.TerminalAt = sql.NullTime{Time: now.UTC(), Valid: true}
@@ -1301,4 +1608,116 @@ func ListMCPMutationApprovalsByProposal(ctx context.Context, db *Handler, propos
 		return nil, mcpMutationStoreError(err)
 	}
 	return out, nil
+}
+
+// tableUniqueColumnsExist verifies an exact unique column set, not merely the
+// presence of some unique constraint. This catches a dropped or widened
+// logical-call key that would otherwise pass a table-only probe.
+func tableUniqueColumnsExist(ctx context.Context, db Handler, table string, columns []string) bool {
+	expected := make(map[string]bool, len(columns))
+	for _, column := range columns {
+		expected[strings.ToLower(strings.TrimSpace(column))] = true
+	}
+	same := func(actual []string) bool {
+		if len(actual) != len(expected) {
+			return false
+		}
+		seen := make(map[string]bool, len(actual))
+		for _, column := range actual {
+			column = strings.ToLower(strings.TrimSpace(column))
+			if !expected[column] || seen[column] {
+				return false
+			}
+			seen[column] = true
+		}
+		return true
+	}
+	switch normalizeDBMS(db.DBMS()) {
+	case "sqlite":
+		rows, err := db.QueryContext(ctx, `SELECT name, "unique" FROM pragma_index_list(?)`, table)
+		if err != nil {
+			return false
+		}
+		type index struct {
+			name   string
+			unique int
+		}
+		var indexes []index
+		for rows.Next() {
+			var item index
+			if err := rows.Scan(&item.name, &item.unique); err != nil {
+				_ = rows.Close()
+				return false
+			}
+			indexes = append(indexes, item)
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return false
+		}
+		_ = rows.Close()
+		for _, item := range indexes {
+			if item.unique == 0 {
+				continue
+			}
+			columnRows, err := db.QueryContext(ctx, `SELECT name FROM pragma_index_info(?) ORDER BY seqno`, item.name)
+			if err != nil {
+				return false
+			}
+			var actual []string
+			for columnRows.Next() {
+				var name sql.NullString
+				if err := columnRows.Scan(&name); err != nil {
+					_ = columnRows.Close()
+					return false
+				}
+				if name.Valid {
+					actual = append(actual, name.String)
+				}
+			}
+			if err := columnRows.Err(); err != nil {
+				_ = columnRows.Close()
+				return false
+			}
+			_ = columnRows.Close()
+			if same(actual) {
+				return true
+			}
+		}
+		return false
+	case "postgres":
+		rows, err := db.QueryContext(ctx, `SELECT i.relname, a.attname
+			FROM pg_index ix
+			JOIN pg_class t ON t.oid = ix.indrelid
+			JOIN pg_namespace n ON n.oid = t.relnamespace
+			JOIN pg_class i ON i.oid = ix.indexrelid
+			JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
+			WHERE n.nspname = current_schema()
+			  AND lower(t.relname) = lower($1)
+			  AND ix.indisunique
+			ORDER BY i.relname, a.attnum`, table)
+		if err != nil {
+			return false
+		}
+		defer rows.Close()
+		indexes := make(map[string][]string)
+		for rows.Next() {
+			var indexName, columnName string
+			if err := rows.Scan(&indexName, &columnName); err != nil {
+				return false
+			}
+			indexes[indexName] = append(indexes[indexName], columnName)
+		}
+		if err := rows.Err(); err != nil {
+			return false
+		}
+		for _, actual := range indexes {
+			if same(actual) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
 }

@@ -281,7 +281,9 @@ APIs are approved.
 The DDL below is the earlier design baseline. The implemented capability uses
 exact `BYTEA`/`BLOB` canonical bytes, quota counters and a capability marker as
 described in section 21 and
-`artifacts/agentic/WP-04C2A_SCHEMA_1_17_DESIGN.md`. It is present in new
+`docs/crowler-agents/reviews/WP-04C2C_SCHEMA_API_REVIEW.md`; the original
+local design artifact `artifacts/agentic/WP-04C2A_SCHEMA_1_17_DESIGN.md` is
+gitignored. It is present in new
 additive migration scripts and the clean-install setup, but has not been
 applied to a shared or production database in this worktree. It extends schema
 1.17. `CrawlProposals` and `CrawlApprovals`
@@ -490,7 +492,9 @@ Quota semantics for WP-04C2-A:
 
 The in-memory store is test-only. The durable PostgreSQL/SQLite implementation
 is described in section 21; dispatch, uncertain-outcome and reconciliation SQL
-in `artifacts/agentic/WP-04C2A_SQL_TRANSACTIONS.md` remains design-only.
+in the local gitignored `artifacts/agentic/WP-04C2A_SQL_TRANSACTIONS.md`
+remains design-only; the tracked summary is
+`docs/crowler-agents/reviews/WP-04C2C_SCHEMA_API_REVIEW.md`.
 
 ## 21. Implemented WP-04C2-B durable persistence and approval API
 
@@ -574,3 +578,77 @@ maintainer approval, or use the clean-install setup for a fresh database. The
 script is idempotent and does not alter crawl proposals, crawl approvals,
 sources, events or ownership history. Do not apply it to a shared or production
 database without the normal deployment review.
+
+## 22. WP-04C2-C stabilization
+
+This section records the review and hardening applied after the first durable
+persistence/API implementation. The additive schema and operator routes remain
+**not deployment-approved**; no shared or production database was migrated.
+
+### PostgreSQL integration isolation
+
+The PostgreSQL integration test no longer truncates caller-selected tables. It
+requires `CROWLER_MCP_POSTGRES_TEST_DISPOSABLE=1`, creates a uniquely named
+throwaway database, applies the additive migration there, runs the tests, and
+drops only that database. A maintenance-database sentinel proves unrelated rows
+are not affected. Missing opt-in or DSN fails/skips closed.
+
+### Approval expiry and proposal reopening
+
+An "active" approval now means an unrevoked, unexpired approval with remaining
+execution allowance, attached to a live proposal in `approved`. Reads require a
+trusted `now`. Approval issuance classifies a stale active row as
+`expired`/`exhausted`, audits the transition and reopens a live proposal to
+`approval_required` before inserting a replacement. Revocation and denial use
+the same lock ordering and leave no usable approval behind. Read responses
+derive `approval_required` when a stored `approved` proposal has no usable
+approval; the transaction persists that state on the next approval action.
+
+### Corrupt durable proposals
+
+Stored proposals are now validated at the agent/store/API boundary. Invalid
+identity versions, hashes, canonical arguments, trailing/duplicate/noncanonical
+JSON, policy snapshots, scopes, lifetimes, terminal timestamps or fingerprints
+produce `ErrMCPMutationProposalCorrupt` instead of a partially constructed
+proposal. The operator API returns a bounded `503` and refuses approval. The
+policy snapshot is validated by decoding into the typed policy and re-marshaling
+before hash comparison, which tolerates PostgreSQL `JSONB` key normalization.
+
+### Tenant-aware pagination
+
+Listing applies the caller's visibility predicate in SQL before `LIMIT`.
+Non-admin viewers see only source-scoped proposals where every source has
+verified ownership; external-resource proposals are administrator-only.
+Administrators can observe all proposals, including after ownership provenance
+changes, and retain emergency deny/revoke authority. Approval still requires
+current proposal-principal and source ownership. Cursor ordering remains
+`(created_at, proposal_id)` and filter/cursor lengths are bounded.
+
+### Quota parity
+
+In-memory admission now performs the same exact run/principal expiry sweep as
+SQL admission. SQL admission has an explicit clock seam for deterministic tests.
+Counter consistency is checked after denial/expiry, and SQLite restart
+persistence is tested.
+
+### Production proposal gate
+
+A production inert proposal producer is **not enabled**. The runtime has typed
+`Principal` fields, but no production constructor installs an authenticated
+principal; manifest owner strings are not principals, and no background
+service-principal contract exists. There is also no approved public YAML/JSON
+loader for the full `MCPMutationPolicy`; the existing
+`allow_mutation_proposal` flag is only a discovery/approval flag. The proposed
+minimal public contract and principal-provenance design are in
+`docs/crowler-agents/reviews/WP-04C2C_AUTHORIZATION_MODEL.md`; they require
+maintainer approval before implementation.
+
+### SQLite foreign keys
+
+The SQLite schema declares foreign keys, but the runtime connection string does
+not enable `_foreign_keys=on`. The setup/migration pragma applies only to those
+connections. This is a maintainer decision; this patch does not change global
+SQLite behavior.
+
+No dispatcher, dispatch claim, remote mutation, retry or reconciliation worker
+was added. The dispatch-attempt table remains unused.

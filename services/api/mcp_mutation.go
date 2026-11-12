@@ -140,6 +140,34 @@ func authorizeMCPMutationProposal(ctx context.Context, principal agentpkg.MCPMut
 	return nil
 }
 
+func validateStoredMCPMutationProposal(row cdb.MCPMutationProposalRow) error {
+	if _, err := agentpkg.ValidateStoredMCPMutationProposal(row); err != nil {
+		return err
+	}
+	return nil
+}
+
+// authorizeMCPMutationAdministration allows an administrator to deny or revoke
+// a proposal even when source ownership provenance changed after proposal
+// creation. Approval separately requires current proposal-principal ownership.
+func authorizeMCPMutationAdministration(ctx context.Context, principal agentpkg.MCPMutationPrincipal, identity auth.Identity, row cdb.MCPMutationProposalRow) error {
+	if mcpMutationIsAdmin(identity) {
+		return nil
+	}
+	return authorizeMCPMutationProposal(ctx, principal, identity, row)
+}
+
+// authorizeMCPMutationObservation allows administrators to observe every
+// proposal, including source-scoped proposals whose ownership provenance has
+// changed. Non-admin observation still requires verified ownership of every
+// source; external-resource proposals remain administrator-only.
+func authorizeMCPMutationObservation(ctx context.Context, principal agentpkg.MCPMutationPrincipal, identity auth.Identity, row cdb.MCPMutationProposalRow) error {
+	if mcpMutationIsAdmin(identity) {
+		return nil
+	}
+	return authorizeMCPMutationProposal(ctx, principal, identity, row)
+}
+
 func requireActiveMCPProposalPrincipal(ctx context.Context, proposal cdb.MCPMutationProposalRow) error {
 	if proposal.PrincipalUserID == 0 {
 		return errMCPMutationForbidden
@@ -185,7 +213,8 @@ func mcpMutationErrorCode(err error) int {
 		errors.Is(err, cdb.ErrMCPMutationProposalConflict), errors.Is(err, cdb.ErrMCPMutationApprovalConflict),
 		errors.Is(err, cdb.ErrMCPMutationApprovalExpired), errors.Is(err, cdb.ErrMCPMutationApprovalRevoked):
 		return http.StatusConflict
-	case errors.Is(err, agentpkg.ErrMCPMutationStoreUnavailable), errors.Is(err, cdb.ErrMCPMutationSchemaUnavailable),
+	case errors.Is(err, agentpkg.ErrMCPMutationProposalCorrupt), errors.Is(err, agentpkg.ErrMCPMutationApprovalCorrupt),
+		errors.Is(err, agentpkg.ErrMCPMutationStoreUnavailable), errors.Is(err, cdb.ErrMCPMutationSchemaUnavailable),
 		errors.Is(err, cdb.ErrMCPMutationStoreUnsupported):
 		return http.StatusServiceUnavailable
 	case errors.Is(err, context.Canceled):
@@ -297,6 +326,13 @@ func mcpMutationProposalResponseFromRow(row cdb.MCPMutationProposalRow, active *
 		t := row.TerminalAt.Time.UTC()
 		response.TerminalAt = &t
 	}
+	if row.State == cdb.MCPMutationStateApproved && active == nil {
+		// The stored state is reconciled transactionally on the next approval
+		// action. The read model must not present an approved proposal without a
+		// currently usable approval.
+		response.State = cdb.MCPMutationStateApprovalRequired
+		response.ApprovedAt = nil
+	}
 	if active != nil {
 		summary := mcpMutationApprovalSummaryFromRow(*active)
 		response.ActiveApproval = &summary
@@ -357,13 +393,26 @@ func mcpMutationListHandler(w http.ResponseWriter, r *http.Request) {
 	if limit > 100 {
 		limit = 100
 	}
+	stateFilter := strings.TrimSpace(r.URL.Query().Get("state"))
+	serverFilter := strings.TrimSpace(r.URL.Query().Get("server_id"))
+	runFilter := strings.TrimSpace(r.URL.Query().Get("run_id"))
+	if len(stateFilter) > 64 || len(serverFilter) > 256 || len(runFilter) > 256 {
+		handleErrorAndRespond(w, errors.New("filter is too long"), nil, "Invalid MCP mutation query", http.StatusBadRequest, 0)
+		return
+	}
 	filter := cdb.MCPMutationProposalFilter{
-		State:    strings.TrimSpace(r.URL.Query().Get("state")),
-		ServerID: strings.TrimSpace(r.URL.Query().Get("server_id")),
-		RunID:    strings.TrimSpace(r.URL.Query().Get("run_id")),
-		Limit:    limit,
+		State:        stateFilter,
+		ServerID:     serverFilter,
+		RunID:        runFilter,
+		Limit:        limit,
+		ViewerUserID: principal.UserID,
+		ViewerAdmin:  mcpMutationIsAdmin(identity),
 	}
 	if raw := strings.TrimSpace(r.URL.Query().Get("cursor")); raw != "" {
+		if len(raw) > 512 {
+			handleErrorAndRespond(w, errors.New("cursor is too long"), nil, "Invalid MCP mutation query", http.StatusBadRequest, 0)
+			return
+		}
 		cursor, err := decodeMCPMutationCursor(raw)
 		if err != nil {
 			handleErrorAndRespond(w, errors.New("invalid cursor"), nil, "Invalid MCP mutation query", http.StatusBadRequest, 0)
@@ -386,10 +435,14 @@ func mcpMutationListHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	response := mcpMutationListResponse{Items: make([]mcpMutationProposalResponse, 0, len(rows))}
 	for _, row := range rows {
-		if err := authorizeMCPMutationProposal(r.Context(), principal, identity, row); err != nil {
+		if err := validateStoredMCPMutationProposal(row); err != nil {
+			handleErrorAndRespond(w, err, nil, "MCP mutation proposal store is corrupt", mcpMutationErrorCode(err), 0)
+			return
+		}
+		if err := authorizeMCPMutationObservation(r.Context(), principal, identity, row); err != nil {
 			continue
 		}
-		active, found, err := cdb.GetActiveMCPMutationApprovalByProposal(r.Context(), &dbHandler, row.ProposalSHA256)
+		active, found, err := cdb.GetActiveMCPMutationApprovalByProposal(r.Context(), &dbHandler, row.ProposalSHA256, time.Now().UTC())
 		if err != nil {
 			handleErrorAndRespond(w, err, nil, "MCP mutation approval lookup failed", mcpMutationErrorCode(err), 0)
 			return
@@ -431,12 +484,16 @@ func mcpMutationDetailHandler(w http.ResponseWriter, r *http.Request) {
 		handleErrorAndRespond(w, cdb.ErrMCPMutationProposalNotFound, nil, "MCP mutation proposal not found", http.StatusNotFound, 0)
 		return
 	}
-	if err := authorizeMCPMutationProposal(r.Context(), principal, identity, row); err != nil {
+	if err := validateStoredMCPMutationProposal(row); err != nil {
+		handleErrorAndRespond(w, err, nil, "MCP mutation proposal store is corrupt", mcpMutationErrorCode(err), 0)
+		return
+	}
+	if err := authorizeMCPMutationObservation(r.Context(), principal, identity, row); err != nil {
 		handleErrorAndRespond(w, cdb.ErrMCPMutationProposalNotFound, nil,
 			"MCP mutation proposal not found", http.StatusNotFound, 0)
 		return
 	}
-	active, found, err := cdb.GetActiveMCPMutationApprovalByProposal(r.Context(), &dbHandler, row.ProposalSHA256)
+	active, found, err := cdb.GetActiveMCPMutationApprovalByProposal(r.Context(), &dbHandler, row.ProposalSHA256, time.Now().UTC())
 	if err != nil {
 		handleErrorAndRespond(w, err, nil, "MCP mutation approval lookup failed", mcpMutationErrorCode(err), 0)
 		return
@@ -473,7 +530,11 @@ func mcpMutationAttemptsHandler(w http.ResponseWriter, r *http.Request) {
 		handleErrorAndRespond(w, cdb.ErrMCPMutationProposalNotFound, nil, "MCP mutation proposal not found", http.StatusNotFound, 0)
 		return
 	}
-	if err := authorizeMCPMutationProposal(r.Context(), principal, identity, proposal); err != nil {
+	if err := validateStoredMCPMutationProposal(proposal); err != nil {
+		handleErrorAndRespond(w, err, nil, "MCP mutation proposal store is corrupt", mcpMutationErrorCode(err), 0)
+		return
+	}
+	if err := authorizeMCPMutationObservation(r.Context(), principal, identity, proposal); err != nil {
 		handleErrorAndRespond(w, cdb.ErrMCPMutationProposalNotFound, nil,
 			"MCP mutation proposal not found", http.StatusNotFound, 0)
 		return
@@ -519,6 +580,10 @@ func mcpMutationApproveHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if !found {
 		handleErrorAndRespond(w, cdb.ErrMCPMutationProposalNotFound, nil, "MCP mutation proposal not found", http.StatusNotFound, 0)
+		return
+	}
+	if err := validateStoredMCPMutationProposal(proposal); err != nil {
+		handleErrorAndRespond(w, err, nil, "MCP mutation proposal store is corrupt", mcpMutationErrorCode(err), 0)
 		return
 	}
 	if request.IdentityVersion == 0 || proposal.ProposalSHA256 != request.ProposalSHA256 ||
@@ -590,17 +655,17 @@ func mcpMutationDenyHandler(w http.ResponseWriter, r *http.Request) {
 		handleErrorAndRespond(w, cdb.ErrMCPMutationProposalNotFound, nil, "MCP mutation proposal not found", http.StatusNotFound, 0)
 		return
 	}
+	if err := validateStoredMCPMutationProposal(proposal); err != nil {
+		handleErrorAndRespond(w, err, nil, "MCP mutation proposal store is corrupt", mcpMutationErrorCode(err), 0)
+		return
+	}
 	if proposal.ProposalSHA256 != request.ProposalSHA256 {
 		handleErrorAndRespond(w, cdb.ErrMCPMutationProposalConflict, nil,
 			"MCP mutation proposal content changed", http.StatusConflict, 0)
 		return
 	}
-	if err := authorizeMCPMutationProposal(r.Context(), principal, identity, proposal); err != nil {
+	if err := authorizeMCPMutationAdministration(r.Context(), principal, identity, proposal); err != nil {
 		handleErrorAndRespond(w, err, nil, "MCP mutation denial is not authorized", mcpMutationErrorCode(err), 0)
-		return
-	}
-	if err := requireActiveMCPProposalPrincipal(r.Context(), proposal); err != nil {
-		handleErrorAndRespond(w, err, nil, "MCP mutation proposal principal is not active", mcpMutationErrorCode(err), 0)
 		return
 	}
 	denied, transitioned, err := cdb.DenyMCPMutationProposal(r.Context(), &dbHandler, proposalID,
@@ -648,17 +713,17 @@ func mcpMutationRevokeHandler(w http.ResponseWriter, r *http.Request) {
 		handleErrorAndRespond(w, cdb.ErrMCPMutationProposalNotFound, nil, "MCP mutation proposal not found", http.StatusNotFound, 0)
 		return
 	}
+	if err := validateStoredMCPMutationProposal(proposal); err != nil {
+		handleErrorAndRespond(w, err, nil, "MCP mutation proposal store is corrupt", mcpMutationErrorCode(err), 0)
+		return
+	}
 	if proposal.ProposalSHA256 != request.ProposalSHA256 {
 		handleErrorAndRespond(w, cdb.ErrMCPMutationProposalConflict, nil,
 			"MCP mutation proposal content changed", http.StatusConflict, 0)
 		return
 	}
-	if err := authorizeMCPMutationProposal(r.Context(), principal, identity, proposal); err != nil {
+	if err := authorizeMCPMutationAdministration(r.Context(), principal, identity, proposal); err != nil {
 		handleErrorAndRespond(w, err, nil, "MCP mutation revocation is not authorized", mcpMutationErrorCode(err), 0)
-		return
-	}
-	if err := requireActiveMCPProposalPrincipal(r.Context(), proposal); err != nil {
-		handleErrorAndRespond(w, err, nil, "MCP mutation proposal principal is not active", mcpMutationErrorCode(err), 0)
 		return
 	}
 	approvalRow, found, err := cdb.GetMCPMutationApproval(r.Context(), &dbHandler, request.ApprovalID)

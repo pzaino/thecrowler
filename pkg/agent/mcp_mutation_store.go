@@ -1,13 +1,16 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 )
@@ -16,7 +19,15 @@ import (
 // implements the same Admit/Get contract as the in-memory test store; it never
 // dispatches an external operation.
 type DatabaseMCPMutationProposalStore struct {
-	DB *cdb.Handler
+	DB  *cdb.Handler
+	Now func() time.Time
+}
+
+func (s *DatabaseMCPMutationProposalStore) now() time.Time {
+	if s != nil && s.Now != nil {
+		return s.Now().UTC()
+	}
+	return time.Now().UTC()
 }
 
 // NewDatabaseMCPMutationProposalStore verifies the additive schema-1.17
@@ -81,7 +92,72 @@ func mcpProposalDBRow(proposal MCPMutationProposal) cdb.MCPMutationProposalRow {
 	return row
 }
 
-func mcpProposalFromDBRow(row cdb.MCPMutationProposalRow) MCPMutationProposal {
+func isMCPMutationHash(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, r := range value {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func isMCPMutationState(value string) bool {
+	switch value {
+	case cdb.MCPMutationStateProposed, cdb.MCPMutationStateApprovalRequired,
+		cdb.MCPMutationStateApproved, cdb.MCPMutationStateDenied,
+		cdb.MCPMutationStateExpired, cdb.MCPMutationStateDispatching,
+		cdb.MCPMutationStateSucceeded, cdb.MCPMutationStateFailed,
+		cdb.MCPMutationStateUncertain, cdb.MCPMutationStateReconciliationRequired:
+		return true
+	default:
+		return false
+	}
+}
+
+func mcpProposalFromDBRow(row cdb.MCPMutationProposalRow) (MCPMutationProposal, error) {
+	corrupt := func(reason string) (MCPMutationProposal, error) {
+		return MCPMutationProposal{}, fmt.Errorf("%w: %s", ErrMCPMutationProposalCorrupt, reason)
+	}
+	if row.IdentityVersion != MCPMutationIdentityVersion {
+		return corrupt("unsupported identity version")
+	}
+	if !isMCPMutationHash(row.ProposalID) || !isMCPMutationHash(row.ProposalSHA256) ||
+		!isMCPMutationHash(row.SchemaSHA256) || !isMCPMutationHash(row.ArgumentsSHA256) ||
+		!isMCPMutationHash(row.PolicySHA256) {
+		return corrupt("invalid stored hash or identifier")
+	}
+	if !isMCPMutationState(row.State) {
+		return corrupt("invalid stored state")
+	}
+	if strings.TrimSpace(row.RunID) == "" || strings.TrimSpace(row.EffectiveCallID) == "" ||
+		strings.TrimSpace(row.AgentID) == "" || strings.TrimSpace(row.Owner) == "" ||
+		row.PrincipalUserID == 0 || strings.TrimSpace(row.PrincipalUsername) == "" ||
+		strings.TrimSpace(row.PrincipalIssuer) == "" || strings.TrimSpace(row.ServerID) == "" ||
+		strings.TrimSpace(row.RawToolName) == "" || strings.TrimSpace(row.ToolAlias) == "" ||
+		strings.TrimSpace(row.Transport) == "" || strings.TrimSpace(row.TransportIdentity) == "" {
+		return corrupt("missing trusted proposal identity")
+	}
+	decoded, err := canonicalMCPArgumentsFromBytes(row.CanonicalArguments)
+	if err != nil {
+		return corrupt("canonical arguments are invalid")
+	}
+	if sha256Hex(row.CanonicalArguments) != row.ArgumentsSHA256 {
+		return corrupt("canonical argument hash mismatch")
+	}
+	if len(row.PolicySnapshot) == 0 {
+		return corrupt("policy snapshot is missing")
+	}
+	var policy MCPMutationPolicy
+	if err := json.Unmarshal(row.PolicySnapshot, &policy); err != nil {
+		return corrupt("policy snapshot is invalid")
+	}
+	policyBytes, err := json.Marshal(policy)
+	if err != nil || sha256Hex(policyBytes) != row.PolicySHA256 {
+		return corrupt("policy snapshot hash mismatch")
+	}
 	proposal := MCPMutationProposal{
 		ProposalID:         row.ProposalID,
 		ProposalSHA256:     row.ProposalSHA256,
@@ -99,6 +175,7 @@ func mcpProposalFromDBRow(row cdb.MCPMutationProposalRow) MCPMutationProposal {
 		Transport:          row.Transport,
 		TransportIdentity:  row.TransportIdentity,
 		SchemaSHA256:       row.SchemaSHA256,
+		Arguments:          decoded,
 		CanonicalArguments: append([]byte(nil), row.CanonicalArguments...),
 		ArgumentsSHA256:    row.ArgumentsSHA256,
 		PolicyID:           row.PolicyID,
@@ -114,11 +191,6 @@ func mcpProposalFromDBRow(row cdb.MCPMutationProposalRow) MCPMutationProposal {
 		LastUpdatedAt:      row.LastUpdatedAt.UTC(),
 		ExpiresAt:          row.ExpiresAt.UTC(),
 	}
-	// The canonical bytes are authoritative; decoding them for callers keeps
-	// the stored map and bytes aligned without retaining caller-owned memory.
-	if decoded, err := canonicalMCPArgumentsFromBytes(row.CanonicalArguments); err == nil {
-		proposal.Arguments = decoded
-	}
 	if row.ApprovedAt.Valid {
 		proposal.ApprovedAt = row.ApprovedAt.Time.UTC()
 	}
@@ -128,7 +200,40 @@ func mcpProposalFromDBRow(row cdb.MCPMutationProposalRow) MCPMutationProposal {
 	if row.TerminalReason.Valid {
 		proposal.TerminalReason = row.TerminalReason.String
 	}
-	return proposal
+	if row.CreatedAt.IsZero() || !row.ExpiresAt.After(row.CreatedAt) {
+		return corrupt("invalid proposal lifetime")
+	}
+	if row.ApprovedAt.Valid && row.ApprovedAt.Time.Before(row.CreatedAt) {
+		return corrupt("approval predates proposal")
+	}
+	terminal := row.State == cdb.MCPMutationStateDenied || row.State == cdb.MCPMutationStateExpired ||
+		row.State == cdb.MCPMutationStateSucceeded || row.State == cdb.MCPMutationStateFailed
+	if terminal != row.TerminalAt.Valid {
+		return corrupt("terminal timestamp inconsistent with state")
+	}
+	if len(row.SourceIDs) > 0 && strings.TrimSpace(row.ExternalResource) != "" {
+		return corrupt("proposal has both source and external-resource scope")
+	}
+	if len(row.SourceIDs) == 0 && strings.TrimSpace(row.ExternalResource) == "" {
+		return corrupt("proposal has no scope")
+	}
+	if proposalFingerprint(proposal) != row.ProposalSHA256 {
+		return corrupt("proposal fingerprint mismatch")
+	}
+	return proposal, nil
+}
+
+// ValidateStoredMCPMutationProposal validates a durable row before the
+// operator API or a future dispatcher treats it as authoritative. It is the
+// single conversion/validation boundary for stored proposals.
+func ValidateStoredMCPMutationProposal(row cdb.MCPMutationProposalRow) (MCPMutationProposal, error) {
+	return mcpProposalFromDBRow(row)
+}
+
+// MCPMutationProposalFingerprint exposes the stable proposal identity for
+// trusted stores and tests; it does not grant authority.
+func MCPMutationProposalFingerprint(proposal MCPMutationProposal) string {
+	return proposalFingerprint(proposal)
 }
 
 func mapMCPMutationDatabaseError(err error) error {
@@ -173,11 +278,15 @@ func (s *DatabaseMCPMutationProposalStore) Admit(ctx context.Context, proposal M
 	if len(proposal.PolicySnapshot) == 0 {
 		return MCPMutationProposal{}, fmt.Errorf("%w: policy snapshot is required for durable persistence", ErrMCPMutationPolicyInvalid)
 	}
-	row, _, err := cdb.AdmitMCPMutationProposal(ctx, s.DB, mcpProposalDBRow(proposal), maxPerRun, maxPendingPerPrincipal)
+	row, _, err := cdb.AdmitMCPMutationProposalAt(ctx, s.DB, mcpProposalDBRow(proposal), maxPerRun, maxPendingPerPrincipal, s.now())
 	if err != nil {
 		return MCPMutationProposal{}, mapMCPMutationDatabaseError(err)
 	}
-	return mcpProposalFromDBRow(row), nil
+	converted, err := mcpProposalFromDBRow(row)
+	if err != nil {
+		return MCPMutationProposal{}, err
+	}
+	return converted, nil
 }
 
 // Get implements MCPMutationProposalStore using the durable schema.
@@ -192,7 +301,11 @@ func (s *DatabaseMCPMutationProposalStore) Get(ctx context.Context, proposalID s
 	if !found {
 		return MCPMutationProposal{}, false, nil
 	}
-	return mcpProposalFromDBRow(row), true, nil
+	converted, err := mcpProposalFromDBRow(row)
+	if err != nil {
+		return MCPMutationProposal{}, true, err
+	}
+	return converted, true, nil
 }
 
 // MCPMutationApprovalRequest is one trusted operator approval request.
@@ -236,7 +349,31 @@ func (s *DatabaseMCPMutationApprovalStore) now() time.Time {
 	return time.Now().UTC()
 }
 
-func mcpApprovalFromDBRow(row cdb.MCPMutationApprovalRow) MCPMutationApproval {
+func mcpApprovalFromDBRow(row cdb.MCPMutationApprovalRow) (MCPMutationApproval, error) {
+	corrupt := func(reason string) (MCPMutationApproval, error) {
+		return MCPMutationApproval{}, fmt.Errorf("%w: %s", ErrMCPMutationApprovalCorrupt, reason)
+	}
+	if !isMCPMutationHash(row.ApprovalID) || !isMCPMutationHash(row.ProposalID) ||
+		!isMCPMutationHash(row.ProposalSHA256) || !isMCPMutationHash(row.ArgumentsSHA256) ||
+		!isMCPMutationHash(row.PolicySHA256) {
+		return corrupt("invalid stored hash or identifier")
+	}
+	if row.State != "active" && row.State != "revoked" && row.State != "expired" && row.State != "exhausted" {
+		return corrupt("invalid approval state")
+	}
+	if row.ApprovedByUserID == 0 || strings.TrimSpace(row.ApprovedBy) == "" ||
+		strings.TrimSpace(row.ApprovedByIssuer) == "" {
+		return corrupt("missing approver identity")
+	}
+	if row.MaxExecutions <= 0 || row.ExecutionsStarted < 0 || row.ExecutionsStarted > row.MaxExecutions {
+		return corrupt("invalid execution allowance")
+	}
+	if row.ApprovedAt.IsZero() || !row.ExpiresAt.After(row.ApprovedAt) {
+		return corrupt("invalid approval lifetime")
+	}
+	if (row.State == "revoked") != row.RevokedAt.Valid {
+		return corrupt("revocation state inconsistent with timestamp")
+	}
 	approval := MCPMutationApproval{
 		ApprovalID:        row.ApprovalID,
 		ProposalID:        row.ProposalID,
@@ -260,7 +397,7 @@ func mcpApprovalFromDBRow(row cdb.MCPMutationApprovalRow) MCPMutationApproval {
 		t := row.RevokedAt.Time.UTC()
 		approval.RevokedAt = &t
 	}
-	return approval
+	return approval, nil
 }
 
 // Lookup implements MCPMutationApprovalStore for the verifier.
@@ -275,7 +412,11 @@ func (s *DatabaseMCPMutationApprovalStore) Lookup(ctx context.Context, approvalI
 	if !found {
 		return MCPMutationApproval{}, false, nil
 	}
-	return mcpApprovalFromDBRow(row), true, nil
+	converted, err := mcpApprovalFromDBRow(row)
+	if err != nil {
+		return MCPMutationApproval{}, true, err
+	}
+	return converted, true, nil
 }
 
 // Issue persists one operator approval and moves the proposal to approved.
@@ -304,6 +445,9 @@ func (s *DatabaseMCPMutationApprovalStore) Issue(ctx context.Context, request MC
 	}
 	if !found {
 		return MCPMutationApproval{}, false, ErrMCPMutationProposalConflict
+	}
+	if _, err := mcpProposalFromDBRow(proposalRow); err != nil {
+		return MCPMutationApproval{}, false, err
 	}
 	if proposalRow.ProposalSHA256 != fingerprint {
 		return MCPMutationApproval{}, false, ErrMCPMutationProposalConflict
@@ -343,7 +487,11 @@ func (s *DatabaseMCPMutationApprovalStore) Issue(ctx context.Context, request MC
 	if err != nil {
 		return MCPMutationApproval{}, false, mapMCPMutationDatabaseError(err)
 	}
-	return mcpApprovalFromDBRow(stored), inserted, nil
+	converted, err := mcpApprovalFromDBRow(stored)
+	if err != nil {
+		return MCPMutationApproval{}, inserted, err
+	}
+	return converted, inserted, nil
 }
 
 // Revoke revokes one active approval without deleting history.
@@ -359,7 +507,11 @@ func (s *DatabaseMCPMutationApprovalStore) Revoke(ctx context.Context, approvalI
 	if err != nil {
 		return MCPMutationApproval{}, false, mapMCPMutationDatabaseError(err)
 	}
-	return mcpApprovalFromDBRow(row), revoked, nil
+	converted, err := mcpApprovalFromDBRow(row)
+	if err != nil {
+		return MCPMutationApproval{}, revoked, err
+	}
+	return converted, revoked, nil
 }
 
 // GetActiveForProposal returns the current active approval for a proposal.
@@ -367,26 +519,37 @@ func (s *DatabaseMCPMutationApprovalStore) GetActiveForProposal(ctx context.Cont
 	if s == nil || s.DB == nil || *s.DB == nil {
 		return MCPMutationApproval{}, false, ErrMCPMutationStoreUnavailable
 	}
-	row, found, err := cdb.GetActiveMCPMutationApprovalByProposal(ctx, s.DB, proposalSHA256)
+	row, found, err := cdb.GetActiveMCPMutationApprovalByProposal(ctx, s.DB, proposalSHA256, s.now())
 	if err != nil {
 		return MCPMutationApproval{}, false, mapMCPMutationDatabaseError(err)
 	}
 	if !found {
 		return MCPMutationApproval{}, false, nil
 	}
-	return mcpApprovalFromDBRow(row), true, nil
+	converted, err := mcpApprovalFromDBRow(row)
+	if err != nil {
+		return MCPMutationApproval{}, true, err
+	}
+	return converted, true, nil
 }
 
 // canonicalMCPArgumentsFromBytes decodes retained canonical bytes without
 // accepting a different representation.
 func canonicalMCPArgumentsFromBytes(raw []byte) (map[string]any, error) {
-	if len(raw) == 0 {
+	if len(raw) == 0 || !utf8.Valid(raw) {
 		return nil, ErrMCPMutationArguments
 	}
-	var decoded map[string]any
-	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
+	var decoded map[string]any
 	if err := decoder.Decode(&decoded); err != nil {
+		return nil, ErrMCPMutationArguments
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return nil, ErrMCPMutationArguments
+	}
+	canonical, err := json.Marshal(decoded)
+	if err != nil || !bytes.Equal(canonical, raw) {
 		return nil, ErrMCPMutationArguments
 	}
 	return decoded, nil

@@ -901,3 +901,34 @@ func TestMCPMutationFingerprintNormalizesSourceIDs(t *testing.T) {
 		t.Fatalf("nil and empty source lists produced different fingerprints")
 	}
 }
+
+func TestMCPMutationInMemoryExpirySweepReleasesQuota(t *testing.T) {
+	_, tool, store, identity, _, alias := newMCPMutationHarness(t)
+	policy := mcpMutationTestPolicy(alias)
+	policy.Operations[0].MaxProposalsPerRun = 1
+	policy.Operations[0].MaxPendingProposals = 2
+	limited, err := NewMCPMutationProposalTool(tool.descriptor.manager, policy, store)
+	if err != nil {
+		t.Fatalf("new limited proposal tool: %v", err)
+	}
+	first, err := limited.Execute(mcpMutationRuntime(identity, alias, "memory-sweep-run", "memory-sweep-call-1"),
+		map[string]any{"resource": "fixture-resource"})
+	if err != nil {
+		t.Fatalf("first in-memory sweep proposal: %v", err)
+	}
+	firstStored, found, err := store.Get(context.Background(), first["proposal_id"].(string))
+	if err != nil || !found {
+		t.Fatalf("first in-memory proposal lookup: found=%v err=%v", found, err)
+	}
+	advanced := firstStored.ExpiresAt.Add(time.Second)
+	store.Now = func() time.Time { return advanced }
+	limited.proposer.Now = func() time.Time { return advanced }
+	if _, err := limited.Execute(mcpMutationRuntime(identity, alias, "memory-sweep-run", "memory-sweep-call-2"),
+		map[string]any{"resource": "fixture-resource"}); err != nil {
+		t.Fatalf("admission after in-memory expiry sweep: %v", err)
+	}
+	expired, found, err := store.Get(context.Background(), firstStored.ProposalID)
+	if err != nil || !found || expired.State != MCPProposalExpired {
+		t.Fatalf("swept in-memory proposal = %+v found=%v err=%v", expired, found, err)
+	}
+}

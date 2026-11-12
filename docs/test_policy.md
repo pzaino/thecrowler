@@ -195,9 +195,11 @@ audited; an active approval is revoked when its proposal is denied; and a
 missing schema capability fails closed.
 
 PostgreSQL coverage must run only against an explicitly supplied disposable
-database with the additive migration applied. Use
-`CROWLER_MCP_POSTGRES_DSN` and the `integration` build tag; never point it at a
-shared or production database.
+instance. Require `CROWLER_MCP_POSTGRES_TEST_DISPOSABLE=1` plus
+`CROWLER_MCP_POSTGRES_DSN` and the `integration` build tag. The test creates and
+drops its own uniquely named database; it must never truncate or delete rows in
+the caller-selected database. Never point it at a shared or production
+database.
 
 Operator API tests must cover authenticated approve/deny/revoke/list/detail,
 fingerprint and identity-version preconditions, source-owner versus
@@ -206,3 +208,25 @@ disabled authentication, missing schema (`503`), bounded pagination, and the
 absence of raw argument values in responses. The attempts route must remain an
 empty, explicitly dispatch-disabled response. No test may dispatch an external
 mutation.
+
+## WP-04C2-C durable authorization stabilization tests
+
+PostgreSQL integration tests must require an explicit disposable opt-in and must
+create a unique throwaway database; `TRUNCATE ... CASCADE` must not be used
+against a caller-selected database. Preserve a sentinel row in the maintenance
+database and verify it survives.
+
+Approval tests must use a controllable clock and cover: expired approval before
+proposal, reapproval/expiry transition, new approval after expiry, revocation
+reopening the proposal, denial with an expired approval, duplicate valid
+approval, concurrent issue/revoke across separate PostgreSQL connections, and
+counter/audit consistency.
+
+Durable reads must reject truncated, noncanonical, trailing, duplicate-key,
+tampered-hash, tampered-policy or malformed-scope proposals. The API must refuse
+approval of corrupt rows and return bounded errors.
+
+Operator listing tests must mix tenants before, within and after a page, include
+external-resource proposals, revoke source ownership, verify admin observation,
+and reject malformed/oversized cursors. Quota tests must compare counters with
+live state after denial/expiry and verify restart persistence.

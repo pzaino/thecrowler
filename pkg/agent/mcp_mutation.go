@@ -25,6 +25,10 @@ import (
 type MCPMutationProposalState string
 
 const (
+	// MCPMutationIdentityVersion identifies the canonicalization and binding
+	// contract stored with durable proposals.
+	MCPMutationIdentityVersion = 1
+
 	MCPProposalProposed               MCPMutationProposalState = "proposed"
 	MCPProposalApprovalRequired       MCPMutationProposalState = "approval_required"
 	MCPProposalApproved               MCPMutationProposalState = "approved"
@@ -48,6 +52,8 @@ var (
 	ErrMCPMutationProposalConflict = errors.New("MCP mutation proposal conflicts with an existing logical proposal")
 	ErrMCPMutationQuota            = errors.New("MCP mutation proposal quota reached")
 	ErrMCPMutationProposalExpired  = errors.New("MCP mutation proposal has expired")
+	ErrMCPMutationProposalCorrupt  = errors.New("MCP mutation proposal record is corrupt")
+	ErrMCPMutationApprovalCorrupt  = errors.New("MCP mutation approval record is corrupt")
 	ErrMCPMutationApproval         = errors.New("MCP mutation approval is invalid")
 )
 
@@ -317,6 +323,21 @@ func (s *InMemoryMCPMutationProposalStore) Admit(ctx context.Context, proposal M
 	now := s.admitNow()
 	if !proposal.ExpiresAt.After(now) {
 		return MCPMutationProposal{}, ErrMCPMutationProposalExpired
+	}
+	// Match the SQL admission sweep: expire records for the exact run and
+	// principal before quota counting. Other expired records stay strict until
+	// their own admission or an explicit transition.
+	for id, existing := range s.byID {
+		if existing.RunID != proposal.RunID || existing.Principal.UserID != proposal.Principal.UserID {
+			continue
+		}
+		if !existing.ExpiresAt.After(now) && mcpProposalConsumesQuota(existing.State) {
+			existing.State = MCPProposalExpired
+			existing.TerminalAt = now
+			existing.TerminalReason = "expired"
+			existing.LastUpdatedAt = now
+			s.byID[id] = existing
+		}
 	}
 	runCallKey := proposal.RunID + "\x00" + proposal.EffectiveCallID
 	if existingID, ok := s.byFinger[proposal.ProposalSHA256]; ok {
@@ -637,7 +658,7 @@ func (p *MCPMutationProposer) Propose(ctx context.Context, tool AgentTool, descr
 		return MCPMutationProposal{}, fmt.Errorf("%w: policy snapshot is not serializable", ErrMCPMutationPolicyInvalid)
 	}
 	proposal := MCPMutationProposal{
-		IdentityVersion:    1,
+		IdentityVersion:    MCPMutationIdentityVersion,
 		State:              MCPProposalApprovalRequired,
 		RunID:              runtime.Auth.RunID,
 		TraceID:            runtime.Auth.TraceID,

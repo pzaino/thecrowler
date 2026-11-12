@@ -3,6 +3,8 @@ package agent
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -57,6 +59,18 @@ func (h *mcpMutationSQLiteHandler) TransactionTimeoutSeconds() int {
 	return 30
 }
 
+func stripMCPMutationStoreSQLComments(statement string) string {
+	lines := strings.Split(statement, "\n")
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "--") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.TrimSpace(strings.Join(kept, "\n"))
+}
+
 func newMCPMutationStoreTestHandler(t *testing.T) cdb.Handler {
 	t.Helper()
 	db, err := sql.Open("sqlite3", ":memory:")
@@ -72,7 +86,7 @@ func newMCPMutationStoreTestHandler(t *testing.T) cdb.Handler {
 		t.Fatalf("read MCP mutation migration: %v", err)
 	}
 	for _, statement := range strings.Split(string(script), ";") {
-		statement = strings.TrimSpace(statement)
+		statement = stripMCPMutationStoreSQLComments(statement)
 		if statement == "" || strings.HasPrefix(strings.ToUpper(statement), "BEGIN IMMEDIATE") ||
 			strings.EqualFold(statement, "COMMIT") || strings.HasPrefix(strings.ToUpper(statement), "PRAGMA") {
 			continue
@@ -140,5 +154,166 @@ func TestDatabaseMCPMutationStoreAdmitAndApproval(t *testing.T) {
 	}
 	if _, err := verifier.Verify(ctx, proposal, approval.ApprovalID, approver); err == nil {
 		t.Fatalf("revoked durable approval verified")
+	}
+}
+
+func mcpMutationDurableTestProposal(t *testing.T, handler cdb.Handler, seed string) MCPMutationProposal {
+	t.Helper()
+	_, tool, memStore, identity, _, alias := newMCPMutationHarness(t)
+	result, err := tool.Execute(mcpMutationRuntime(identity, alias, "durable-"+seed, "call-"+seed),
+		map[string]any{"resource": "fixture-resource"})
+	if err != nil {
+		t.Fatalf("proposal tool %s: %v", seed, err)
+	}
+	proposal, found, err := memStore.Get(context.Background(), result["proposal_id"].(string))
+	if err != nil || !found {
+		t.Fatalf("load proposal %s: found=%v err=%v", seed, found, err)
+	}
+	store, err := NewDatabaseMCPMutationProposalStore(&handler)
+	if err != nil {
+		t.Fatalf("new durable store %s: %v", seed, err)
+	}
+	admitted, err := store.Admit(context.Background(), proposal, 4, 8)
+	if err != nil {
+		t.Fatalf("durable admission %s: %v", seed, err)
+	}
+	return admitted
+}
+
+func TestDatabaseMCPMutationStoreRejectsCorruptProposal(t *testing.T) {
+	handler := newMCPMutationStoreTestHandler(t)
+	db := handler.(*mcpMutationSQLiteHandler).db
+	proposal := mcpMutationDurableTestProposal(t, handler, "corrupt")
+	store, err := NewDatabaseMCPMutationProposalStore(&handler)
+	if err != nil {
+		t.Fatalf("new durable store: %v", err)
+	}
+	cases := []struct {
+		name string
+		args []byte
+	}{
+		{"truncated", []byte(`{"resource":`)},
+		{"noncanonical-whitespace", []byte(`{ "resource" : "fixture-resource" }`)},
+		{"trailing-json", append(append([]byte(nil), proposal.CanonicalArguments...), []byte(`{}`)...)},
+		{"duplicate-keys", []byte(`{"resource":"fixture-resource","resource":"fixture-resource"}`)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := db.Exec(`UPDATE MCPMutationProposals SET canonical_arguments=?, arguments_sha256=? WHERE proposal_id=?`,
+				tc.args, sha256Hex(tc.args), proposal.ProposalID); err != nil {
+				t.Fatalf("corrupt canonical arguments: %v", err)
+			}
+			if _, found, err := store.Get(context.Background(), proposal.ProposalID); !found || !errors.Is(err, ErrMCPMutationProposalCorrupt) {
+				t.Fatalf("corrupt get found=%v err=%v", found, err)
+			}
+		})
+	}
+	t.Run("missing owner identity", func(t *testing.T) {
+		if _, err := db.Exec(`UPDATE MCPMutationProposals SET canonical_arguments=?, arguments_sha256=?, owner='' WHERE proposal_id=?`,
+			proposal.CanonicalArguments, proposal.ArgumentsSHA256, proposal.ProposalID); err != nil {
+			t.Fatalf("corrupt owner: %v", err)
+		}
+		if _, found, err := store.Get(context.Background(), proposal.ProposalID); !found || !errors.Is(err, ErrMCPMutationProposalCorrupt) {
+			t.Fatalf("corrupt owner get found=%v err=%v", found, err)
+		}
+	})
+	t.Run("policy snapshot", func(t *testing.T) {
+		if _, err := db.Exec(`UPDATE MCPMutationProposals SET canonical_arguments=?, arguments_sha256=?, policy_snapshot=? WHERE proposal_id=?`,
+			proposal.CanonicalArguments, proposal.ArgumentsSHA256, []byte(`{"tampered":true}`), proposal.ProposalID); err != nil {
+			t.Fatalf("corrupt policy snapshot: %v", err)
+		}
+		if _, found, err := store.Get(context.Background(), proposal.ProposalID); !found || !errors.Is(err, ErrMCPMutationProposalCorrupt) {
+			t.Fatalf("corrupt policy get found=%v err=%v", found, err)
+		}
+	})
+}
+
+func TestDatabaseMCPMutationApprovalRejectsCorruptProposal(t *testing.T) {
+	handler := newMCPMutationStoreTestHandler(t)
+	db := handler.(*mcpMutationSQLiteHandler).db
+	proposal := mcpMutationDurableTestProposal(t, handler, "corrupt-approval")
+	bad := []byte(`{"resource":`)
+	if _, err := db.Exec(`UPDATE MCPMutationProposals SET canonical_arguments=?, arguments_sha256=? WHERE proposal_id=?`,
+		bad, sha256Hex(bad), proposal.ProposalID); err != nil {
+		t.Fatalf("corrupt proposal before approval: %v", err)
+	}
+	approvalStore, err := NewDatabaseMCPMutationApprovalStore(&handler, time.Hour)
+	if err != nil {
+		t.Fatalf("new durable approval store: %v", err)
+	}
+	approver := MCPMutationPrincipal{UserID: 9, Username: "admin-1", Issuer: "test-issuer"}
+	if _, _, err := approvalStore.Issue(context.Background(), MCPMutationApprovalRequest{
+		ProposalID: proposal.ProposalID, ProposalSHA256: proposal.ProposalSHA256,
+		Approver: approver, MaxExecutions: 1,
+	}); !errors.Is(err, ErrMCPMutationProposalCorrupt) {
+		t.Fatalf("approval of corrupt proposal error = %v", err)
+	}
+	var approvals int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM MCPMutationApprovals WHERE proposal_id=?`, proposal.ProposalID).Scan(&approvals); err != nil || approvals != 0 {
+		t.Fatalf("approvals after corrupt refusal = %d err=%v", approvals, err)
+	}
+}
+
+func TestDatabaseMCPMutationStoreAcceptsNormalizedPolicySnapshot(t *testing.T) {
+	handler := newMCPMutationStoreTestHandler(t)
+	db := handler.(*mcpMutationSQLiteHandler).db
+	proposal := mcpMutationDurableTestProposal(t, handler, "normalized-policy")
+	var decoded any
+	if err := json.Unmarshal(proposal.PolicySnapshot, &decoded); err != nil {
+		t.Fatalf("decode policy snapshot: %v", err)
+	}
+	normalized, err := json.Marshal(decoded)
+	if err != nil {
+		t.Fatalf("normalize policy snapshot: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE MCPMutationProposals SET policy_snapshot=? WHERE proposal_id=?`,
+		normalized, proposal.ProposalID); err != nil {
+		t.Fatalf("write normalized policy snapshot: %v", err)
+	}
+	store, err := NewDatabaseMCPMutationProposalStore(&handler)
+	if err != nil {
+		t.Fatalf("new durable store: %v", err)
+	}
+	loaded, found, err := store.Get(context.Background(), proposal.ProposalID)
+	if err != nil || !found || loaded.Arguments == nil {
+		t.Fatalf("normalized policy proposal = %+v found=%v err=%v", loaded, found, err)
+	}
+}
+
+func TestMCPMutationProposalToolUsesDurableStoreWithoutExecution(t *testing.T) {
+	ctx := context.Background()
+	handler := newMCPMutationStoreTestHandler(t)
+	_, tool, _, identity, counterPath, alias := newMCPMutationHarness(t)
+	store, err := NewDatabaseMCPMutationProposalStore(&handler)
+	if err != nil {
+		t.Fatalf("new durable proposal store: %v", err)
+	}
+	durableTool, err := NewMCPMutationProposalTool(tool.descriptor.manager, mcpMutationTestPolicy(alias), store)
+	if err != nil {
+		t.Fatalf("new durable proposal tool: %v", err)
+	}
+	args := map[string]any{"resource": "fixture-resource"}
+	result, err := durableTool.Execute(mcpMutationRuntime(identity, alias, "durable-producer-run", "durable-producer-call"), args)
+	if err != nil {
+		t.Fatalf("durable proposal tool: %v", err)
+	}
+	proposalID, _ := result["proposal_id"].(string)
+	if proposalID == "" {
+		t.Fatalf("durable proposal reference missing: %+v", result)
+	}
+	stored, found, err := cdb.GetMCPMutationProposal(ctx, &handler, proposalID)
+	if err != nil || !found || stored.State != cdb.MCPMutationStateApprovalRequired {
+		t.Fatalf("durable proposal = %+v found=%v err=%v", stored, found, err)
+	}
+	replay, err := durableTool.Execute(mcpMutationRuntime(identity, alias, "durable-producer-run", "durable-producer-call"), args)
+	if err != nil || replay["proposal_id"] != proposalID {
+		t.Fatalf("durable replay = %+v err=%v", replay, err)
+	}
+	if data, err := os.ReadFile(counterPath); err == nil && strings.TrimSpace(string(data)) != "" {
+		t.Fatalf("durable proposal path executed the mutation fixture: %s", data)
+	}
+	var attempts int
+	if err := handler.QueryRowContext(ctx, `SELECT COUNT(*) FROM MCPMutationDispatchAttempts`).Scan(&attempts); err != nil || attempts != 0 {
+		t.Fatalf("dispatch attempts after durable proposal = %d err=%v", attempts, err)
 	}
 }
