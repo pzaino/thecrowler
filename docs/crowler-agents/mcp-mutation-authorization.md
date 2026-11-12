@@ -573,11 +573,21 @@ in this phase.
 
 ### Operational note
 
-Apply the v1.17 migration explicitly to an existing 1.16 database after
-maintainer approval, or use the clean-install setup for a fresh database. The
-script is idempotent and does not alter crawl proposals, crawl approvals,
-sources, events or ownership history. Do not apply it to a shared or production
-database without the normal deployment review.
+Base schema upgrade and the MCP capability are separate actions:
+
+- A database at schema 1.16 needs the base
+  `postgresql-migration-v1.17.pgsql` / `sqlite-migration-v1.17` upgrade first.
+- A database already advertising schema 1.17 but lacking this optional
+  capability needs the additive
+  `postgresql-mcp-mutation-v1.17.pgsql` /
+  `sqlite-mcp-mutation-v1.17.sqlite3` script. It does not change the schema
+  version or writer generation.
+- A fresh installation receives the capability through the setup scripts.
+
+The additive script is idempotent and does not alter crawl proposals, crawl
+approvals, sources, events or ownership history. Apply either path only after
+maintainer approval; do not apply to a shared or production database without
+the normal deployment review.
 
 ## 22. WP-04C2-C stabilization
 
@@ -652,3 +662,28 @@ SQLite behavior.
 
 No dispatcher, dispatch claim, remote mutation, retry or reconciliation worker
 was added. The dispatch-attempt table remains unused.
+
+## 23. WP-04C2D preflight and approval gates
+
+WP-04C2D completed the safe preflight repairs:
+
+- The VDI legacy AudioBuffer negative control is deterministic: the probe
+  resets the live Float32Array store to a small baseline before applying the
+  legacy noise, so float32 rounding cannot hide the defect. The assertion was
+  not skipped or weakened.
+- The PostgreSQL integration test creates its sentinel inside the uniquely
+  created disposable database and no longer creates or drops objects in the
+  maintenance database.
+- The proposed operator policy example now uses the exact derived alias
+  `mcp_approved_server_approved_tool`.
+- SQLite foreign-key behavior is proven, not assumed: pooled runtime
+  connections default to `PRAGMA foreign_keys = 0`; enabling it on one
+  connection does not enable it on another. No runtime DSN change was made.
+
+The production inert proposal producer remains **disabled**. The public
+`mcp.mutation_policy` contract and trusted principal propagation are not
+approved. No public configuration key, JSON Schema field, config default,
+operator route, dispatcher, execution backend or remote mutation was added.
+The additive schema 1.17 capability is still not deployment-approved. See
+`docs/crowler-agents/reviews/WP-04C2D_*` for the contract, provenance,
+deployment review and decisions.

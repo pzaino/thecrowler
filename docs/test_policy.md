@@ -230,3 +230,23 @@ Operator listing tests must mix tenants before, within and after a page, include
 external-resource proposals, revoke source ownership, verify admin observation,
 and reject malformed/oversized cursors. Quota tests must compare counters with
 live state after denial/expiry and verify restart persistence.
+
+## WP-04C2D preflight and gate tests
+
+The VDI legacy AudioBuffer negative control must use a sample baseline where the
+legacy sub-1e-7 mutation is representable in float32; run the control repeatedly
+(`-count=20`) and keep the assertion intact. The focused regression
+`TestCamouflageLegacyAudioControlIsDeterministic` guards this.
+
+PostgreSQL MCP mutation integration tests must create a uniquely named
+disposable database and place any sentinel rows inside that database. They must
+not create/drop sentinel objects in the maintenance or caller-selected
+database, and cleanup failures must be visible test errors.
+
+SQLite foreign-key tests must distinguish declared constraints from runtime
+enforcement. The current handler's pooled connections default to FK-off; do not
+change the global DSN without the maintainer decision recorded in
+`WP-04C2D_MAINTAINER_DECISIONS.md`.
+
+Production policy/principal activation remains blocked until the B1/B2 and G3
+decisions are recorded.

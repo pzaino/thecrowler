@@ -932,3 +932,25 @@ func TestMCPMutationInMemoryExpirySweepReleasesQuota(t *testing.T) {
 		t.Fatalf("swept in-memory proposal = %+v found=%v err=%v", expired, found, err)
 	}
 }
+
+func TestDocumentedMCPMutationPolicyAliasAndValidation(t *testing.T) {
+	alias := MCPToolAlias("approved_server", "approved_tool")
+	if alias != "mcp_approved_server_approved_tool" {
+		t.Fatalf("documented alias = %q", alias)
+	}
+	policy := MCPMutationPolicy{
+		Enabled: true, PolicyID: "approved-policy", Version: "1",
+		Operations: []MCPMutationOperationPolicy{{
+			ServerID: "approved_server", ToolName: "approved_tool", ToolAlias: alias,
+			AllowedAgents: []string{"agent-id"}, RequiredCapabilities: []string{"tool_execution"},
+			MinTrustLevel: "trusted", AllowedSources: []uint64{42},
+			RequiredArgumentFields: []string{"source_id"}, AllowedArgumentFields: []string{"source_id"},
+			ProposalTTL: 5 * time.Minute, MaxProposalsPerRun: 4, MaxPendingProposals: 8,
+			MaxInputBytes: 65536, MaxOutputBytes: 65536, RequireApproval: true,
+			ExecutionBackend: "none", AllowedTransports: []string{"stdio"}, AuditRequired: true,
+		}},
+	}
+	if err := policy.Validate(); err != nil {
+		t.Fatalf("documented policy example validation: %v", err)
+	}
+}

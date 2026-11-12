@@ -145,7 +145,9 @@ type MCPMutationOperationConfig struct {
 Required validation:
 
 - default `enabled:false`; empty policy cannot authorize anything;
-- `tool_alias` must equal `MCPToolAlias(server_id, tool_name)`;
+- `tool_alias` must equal `MCPToolAlias(server_id, tool_name)`; prefer deriving
+  it from the trusted server/tool identity rather than accepting an operator
+  string. If exposed, reject any mismatch;
 - exactly one of `allowed_sources`/`allowed_resources`, both non-empty when used;
 - `allowed_agents` non-empty; `required_capabilities` contains
   `tool_execution`; minimum trust is trusted-or-higher;

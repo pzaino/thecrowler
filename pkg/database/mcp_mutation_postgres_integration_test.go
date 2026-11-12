@@ -105,7 +105,7 @@ func newMCPPostgresDisposableDB(t *testing.T, target *url.URL) (*sql.DB, *sql.DB
 		dropCtx, dropCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer dropCancel()
 		if _, err := admin.ExecContext(dropCtx, `DROP DATABASE IF EXISTS `+pq.QuoteIdentifier(dbName)+` WITH (FORCE)`); err != nil {
-			t.Logf("drop disposable PostgreSQL database %s: %v", dbName, err)
+			t.Errorf("drop disposable PostgreSQL database %s: %v", dbName, err)
 		}
 		_ = admin.Close()
 	})
@@ -188,30 +188,15 @@ func TestPostgresMCPMutationDurableStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("disposable PostgreSQL target: %v", err)
 	}
-	db, admin, testDSN := newMCPPostgresDisposableDB(t, target)
+	db, _, testDSN := newMCPPostgresDisposableDB(t, target)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	var user string
-	if err := admin.QueryRowContext(ctx, `SELECT current_user`).Scan(&user); err != nil {
+	if err := db.QueryRowContext(ctx, `SELECT current_user`).Scan(&user); err != nil {
 		t.Fatalf("read PostgreSQL current user: %v", err)
 	}
 	applyMCPMutationPostgresMigration(t, db, user)
 	applyMCPMutationPostgresMigration(t, db, user)
-
-	// A sentinel in the maintenance database proves that the test never deletes
-	// unrelated records from the caller-selected database.
-	sentinel := "mcp_test_sentinel_" + mcpPostgresRandomSuffix(t)
-	if _, err := admin.ExecContext(ctx, `CREATE TABLE `+pq.QuoteIdentifier(sentinel)+` (id INTEGER PRIMARY KEY)`); err != nil {
-		t.Fatalf("create sentinel table: %v", err)
-	}
-	t.Cleanup(func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cleanupCancel()
-		_, _ = admin.ExecContext(cleanupCtx, `DROP TABLE IF EXISTS `+pq.QuoteIdentifier(sentinel))
-	})
-	if _, err := admin.ExecContext(ctx, `INSERT INTO `+pq.QuoteIdentifier(sentinel)+` (id) VALUES (1)`); err != nil {
-		t.Fatalf("insert sentinel row: %v", err)
-	}
 
 	var handler Handler = &PostgresHandler{db: db, dbms: DBPostgresStr, connStr: target.String()}
 	if err := CheckMCPMutationCapability(ctx, &handler); err != nil {
@@ -229,6 +214,16 @@ func TestPostgresMCPMutationDurableStore(t *testing.T) {
 	applyMCPMutationPostgresSQL(t, db, setupText[markerIndex:], user)
 	if err := CheckMCPMutationCapability(ctx, &handler); err != nil {
 		t.Fatalf("PostgreSQL clean-install MCP capability: %v", err)
+	}
+	// The sentinel lives only in the disposable database created by this test.
+	// It proves proposal/approval operations do not delete pre-existing rows;
+	// cleanup drops the whole test database, never maintenance data.
+	sentinel := "mcp_test_sentinel_" + mcpPostgresRandomSuffix(t)
+	if _, err := db.ExecContext(ctx, `CREATE TABLE `+pq.QuoteIdentifier(sentinel)+` (id INTEGER PRIMARY KEY)`); err != nil {
+		t.Fatalf("create disposable-database sentinel table: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO `+pq.QuoteIdentifier(sentinel)+` (id) VALUES (1)`); err != nil {
+		t.Fatalf("insert disposable-database sentinel row: %v", err)
 	}
 	now := time.Now().UTC()
 	proposal := mcpMutationTestProposal("postgres", "pg-run", "pg-call", now)
@@ -470,8 +465,8 @@ func TestPostgresMCPMutationDurableStore(t *testing.T) {
 	}
 
 	var sentinelRows int
-	if err := admin.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+pq.QuoteIdentifier(sentinel)).Scan(&sentinelRows); err != nil || sentinelRows != 1 {
-		t.Fatalf("sentinel rows = %d err=%v, unrelated maintenance data was affected", sentinelRows, err)
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+pq.QuoteIdentifier(sentinel)).Scan(&sentinelRows); err != nil || sentinelRows != 1 {
+		t.Fatalf("disposable-database sentinel rows = %d err=%v, pre-existing rows were affected", sentinelRows, err)
 	}
 
 	// A wrong critical column type must not be certified by the marker.

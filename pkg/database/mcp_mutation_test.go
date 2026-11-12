@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	cfg "github.com/pzaino/thecrowler/pkg/config"
+
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -644,5 +646,67 @@ func TestMCPMutationCapabilityFailsOnSchema117WithoutCapability(t *testing.T) {
 	handler := Handler(&SQLiteHandler{db: db, dbms: DBSQLiteStr})
 	if err := CheckMCPMutationCapability(context.Background(), &handler); !errors.Is(err, ErrMCPMutationSchemaUnavailable) {
 		t.Fatalf("1.17 without capability error = %v", err)
+	}
+}
+
+func TestSQLiteMCPMutationForeignKeysAreDeclaredButNotRuntimeEnforced(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "mcp-fk-runtime.db")
+	var handler Handler = &SQLiteHandler{dbms: DBSQLiteStr}
+	if err := handler.Connect(cfg.Config{Database: cfg.Database{DBName: path, TransactionTimeout: 30}}); err != nil {
+		t.Fatalf("connect SQLite handler: %v", err)
+	}
+	t.Cleanup(func() { _ = handler.Close() })
+	sqlite := handler.(*SQLiteHandler)
+	sqlite.db.SetMaxOpenConns(2)
+	conn1, err := sqlite.db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("open SQLite connection 1: %v", err)
+	}
+	defer conn1.Close()
+	conn2, err := sqlite.db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("open SQLite connection 2: %v", err)
+	}
+	defer conn2.Close()
+	var fk1, fk2 int
+	if err := conn1.QueryRowContext(ctx, `PRAGMA foreign_keys`).Scan(&fk1); err != nil {
+		t.Fatalf("read connection 1 foreign_keys: %v", err)
+	}
+	if err := conn2.QueryRowContext(ctx, `PRAGMA foreign_keys`).Scan(&fk2); err != nil {
+		t.Fatalf("read connection 2 foreign_keys: %v", err)
+	}
+	if fk1 != 0 || fk2 != 0 {
+		t.Fatalf("runtime SQLite foreign_keys default = %d/%d, want 0/0", fk1, fk2)
+	}
+	for _, statement := range []string{
+		`CREATE TABLE fk_parent (id INTEGER PRIMARY KEY)`,
+		`CREATE TABLE fk_child (id INTEGER PRIMARY KEY, parent_id INTEGER REFERENCES fk_parent(id))`,
+	} {
+		if _, err := conn1.ExecContext(ctx, statement); err != nil {
+			t.Fatalf("create FK fixture: %v", err)
+		}
+	}
+	if _, err := conn1.ExecContext(ctx, `INSERT INTO fk_child (id, parent_id) VALUES (1, 999)`); err != nil {
+		t.Fatalf("orphan insert with FK off unexpectedly failed: %v", err)
+	}
+	if _, err := conn1.ExecContext(ctx, `PRAGMA foreign_keys=ON`); err != nil {
+		t.Fatalf("enable FK on connection 1: %v", err)
+	}
+	if _, err := conn1.ExecContext(ctx, `INSERT INTO fk_child (id, parent_id) VALUES (2, 999)`); err == nil {
+		t.Fatalf("orphan insert with FK on unexpectedly succeeded")
+	}
+	if _, err := conn2.ExecContext(ctx, `INSERT INTO fk_child (id, parent_id) VALUES (3, 999)`); err != nil {
+		t.Fatalf("connection 2 did not remain per-connection FK-off: %v", err)
+	}
+	_ = conn1.Close()
+	_ = conn2.Close()
+	applyMCPMutationSQLiteMigration(t, sqlite.db)
+	var declaredFKs int
+	if err := sqlite.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_foreign_key_list('MCPMutationApprovals')`).Scan(&declaredFKs); err != nil {
+		t.Fatalf("read MCP approval foreign keys: %v", err)
+	}
+	if declaredFKs == 0 {
+		t.Fatalf("MCP approval table declares no foreign keys")
 	}
 }
