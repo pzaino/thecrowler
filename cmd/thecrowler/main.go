@@ -1416,6 +1416,7 @@ func main() {
 
 	// Define db before we set signal handlers
 	var db cdb.Handler
+	var stopInformationSeeds func()
 
 	// Define sel before we set signal handlers
 	//var vdiInstances chan vdi.SeleniumInstance
@@ -1435,7 +1436,10 @@ func main() {
 				// Handle SIGINT (Ctrl+C)
 				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGINT received, shutting down...")
 				setSysReady(0)
-				closeResources(db, &vdiInstances) // Release resources
+				if stopInformationSeeds != nil {
+					stopInformationSeeds()
+				}
+				closeResources(db, &vdiInstances) // Release resources after worker release
 				time.Sleep(2 * time.Second)       // Give some time for metrics to be pushed before exiting
 				os.Exit(0)
 
@@ -1443,7 +1447,10 @@ func main() {
 				// Handle SIGTERM
 				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGTERM received, shutting down...")
 				setSysReady(0)
-				closeResources(db, &vdiInstances) // Release resources
+				if stopInformationSeeds != nil {
+					stopInformationSeeds()
+				}
+				closeResources(db, &vdiInstances) // Release resources after worker release
 				time.Sleep(2 * time.Second)       // Give some time for metrics to be pushed before exiting
 				os.Exit(0)
 
@@ -1451,7 +1458,10 @@ func main() {
 				// Handle SIGQUIT
 				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGQUIT received, shutting down...")
 				setSysReady(0)
-				closeResources(db, &vdiInstances) // Release resources
+				if stopInformationSeeds != nil {
+					stopInformationSeeds()
+				}
+				closeResources(db, &vdiInstances) // Release resources after worker release
 				time.Sleep(2 * time.Second)       // Give some time for metrics to be pushed before exiting
 				os.Exit(0)
 
@@ -1533,13 +1543,14 @@ func main() {
 	// reclaims stale processing seeds through ClaimInformationSeeds.
 	infoseed.SetMetricsEnabled(config.Prometheus.Enabled)
 	seedBrowserDependencies := infoseed.NewBrowserDependencies(&vdiInstances, &config, &GRulesEngine)
-	seedRunner := infoseed.NewRunner(&db, config.InformationSeed, infoseed.RunnerOptions{Browser: seedBrowserDependencies})
+	trustedSeedOwners := config.API.Auth.Enabled && strings.ToLower(strings.TrimSpace(config.API.Auth.Mode)) != "disabled"
+	seedRunner := infoseed.NewRunner(&db, config.InformationSeed, infoseed.RunnerOptions{Browser: seedBrowserDependencies, TrustedOwners: trustedSeedOwners})
 	if seedPlugins, ok := GRulesEngine.JSPlugins.GetPluginsByEventType("information_seed_candidate"); ok {
 		for _, seedPlugin := range seedPlugins {
 			seedRunner.Processors = append(seedRunner.Processors, infoseed.JSPluginProcessor{Plugin: seedPlugin, DB: &db, Timeout: config.InformationSeed.PluginLimits.Timeout, MaxOutputSizeBytes: config.InformationSeed.PluginLimits.MaxOutputSizeBytes})
 		}
 	}
-	stopInformationSeeds := infoseed.StartScheduler(context.Background(), &db, config.InformationSeed, seedRunner, cmn.GetEngineID(), config.Crawler.SourcePriority)
+	stopInformationSeeds = infoseed.StartScheduler(context.Background(), &db, config.InformationSeed, seedRunner, cmn.GetEngineID(), config.Crawler.SourcePriority)
 	defer stopInformationSeeds()
 
 	// Start the checkSources function in a goroutine

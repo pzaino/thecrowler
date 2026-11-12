@@ -62,6 +62,18 @@ var (
 		Help:    "Information seed run duration in seconds.",
 		Buckets: prometheus.DefBuckets,
 	})
+	informationSeedClaimReleases = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "crowler_information_seed_claim_releases_total",
+		Help: "Owned information seed claims released by reason.",
+	}, []string{"reason"})
+	informationSeedClaimFailures = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "crowler_information_seed_claim_failures_total",
+		Help: "Information seed claim fencing/heartbeat failures by reason.",
+	}, []string{"reason"})
+	informationSeedRetentionDeleted = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "crowler_information_seed_retention_deleted_total",
+		Help: "Terminal information seed rows deleted by retention.",
+	})
 )
 
 func init() {
@@ -78,6 +90,9 @@ func init() {
 		informationSeedBrowserOperations,
 		informationSeedBrowserOperationDuration,
 		informationSeedRunDuration,
+		informationSeedClaimReleases,
+		informationSeedClaimFailures,
+		informationSeedRetentionDeleted,
 	)
 }
 
@@ -200,4 +215,25 @@ func safeBrowserMetricLabel(value, fallback string) string {
 		}
 	}
 	return value
+}
+
+func recordInformationSeedClaimRelease(reason string) {
+	if !informationSeedMetricsEnabled.Load() {
+		return
+	}
+	informationSeedClaimReleases.WithLabelValues(safeInformationSeedMetricLabel(reason, "unknown")).Inc()
+}
+
+func recordInformationSeedClaimFailure(reason string) {
+	if !informationSeedMetricsEnabled.Load() {
+		return
+	}
+	informationSeedClaimFailures.WithLabelValues(safeInformationSeedMetricLabel(reason, "unknown")).Inc()
+}
+
+func recordInformationSeedRetentionDeleted(count int) {
+	if !informationSeedMetricsEnabled.Load() || count <= 0 {
+		return
+	}
+	informationSeedRetentionDeleted.Add(float64(count))
 }

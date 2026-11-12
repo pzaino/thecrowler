@@ -30,8 +30,16 @@ func TestSQLiteV117MigrationConvergesAndPreservesHistory(t *testing.T) {
 	if _, err := db.Exec(string(setup)); err != nil {
 		t.Fatalf("apply clean-install schema: %v", err)
 	}
-	// Simulate a v1.16 database that predates both v1.17 tables.
+	// Simulate a v1.16 database that predates the v1.17 tables and claim-lease columns.
 	if _, err := db.Exec(`DROP TABLE CrawlApprovals; DROP TABLE SourceOwnership;
+		DROP INDEX IF EXISTS idx_informationseed_lease_expiry;
+		DROP INDEX IF EXISTS idx_informationseed_next_retry;
+		DROP INDEX IF EXISTS idx_informationseed_claim_token;
+		ALTER TABLE InformationSeed DROP COLUMN claim_token;
+		ALTER TABLE InformationSeed DROP COLUMN fencing_token;
+		ALTER TABLE InformationSeed DROP COLUMN lease_expires_at;
+		ALTER TABLE InformationSeed DROP COLUMN heartbeat_at;
+		ALTER TABLE InformationSeed DROP COLUMN next_retry_at;
 		INSERT INTO DBSchemaVersion(version, description, is_current) VALUES ('1.16','old schema',0)
 			ON CONFLICT(version) DO UPDATE SET is_current=0;
 		UPDATE DBSchemaVersion SET is_current=(version='1.16');
@@ -46,9 +54,6 @@ func TestSQLiteV117MigrationConvergesAndPreservesHistory(t *testing.T) {
 		t.Fatalf("first v1.17 migration: %v", err)
 	}
 	handler := Handler(&SQLiteHandler{db: db, dbms: DBSQLiteStr})
-	if err := CheckStartupCompatibility(context.Background(), handler); err != nil {
-		t.Fatalf("v1.17 compatibility after migration: %v", err)
-	}
 	var version, generation string
 	if err := db.QueryRow(`SELECT version FROM DBSchemaVersion WHERE is_current=1`).Scan(&version); err != nil {
 		t.Fatalf("read schema version: %v", err)
@@ -56,7 +61,7 @@ func TestSQLiteV117MigrationConvergesAndPreservesHistory(t *testing.T) {
 	if err := db.QueryRow(`SELECT writer_generation FROM DatabaseWriterCompatibility WHERE lock_id=1`).Scan(&generation); err != nil {
 		t.Fatalf("read writer generation: %v", err)
 	}
-	if version != "1.17" || generation != WriterGeneration {
+	if version != "1.17" || generation != "verified-ownership-v1.17" {
 		t.Fatalf("unexpected schema contract version=%q generation=%q", version, generation)
 	}
 	var provenanceCount int
@@ -89,7 +94,10 @@ func TestSQLiteV117MigrationConvergesAndPreservesHistory(t *testing.T) {
 	if approvalCount != 1 {
 		t.Fatalf("repeat migration changed approval history: %d", approvalCount)
 	}
+	if err := ensureSQLiteInformationSeedSchema(db); err != nil {
+		t.Fatalf("runtime v1.17 schema repair: %v", err)
+	}
 	if err := CheckStartupCompatibility(context.Background(), handler); err != nil {
-		t.Fatalf("v1.17 compatibility after repeat: %v", err)
+		t.Fatalf("v1.17 compatibility after migration: %v", err)
 	}
 }

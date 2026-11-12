@@ -44,15 +44,20 @@
   - **`collect_keywords`** *(boolean)*: This is a flag that tells the CROWler to collect the keywords of a website. This is useful for AI datasets creation and knowledge bases.
   - **`collect_metatags`** *(boolean)*: This is a flag that tells the CROWler to collect the metatags of a website. This is useful for AI datasets creation and knowledge bases.
 - **`information_seed`** *(object)*: Bounded information seed discovery configuration. The section is disabled by default and is designed to keep seed expansion constrained by explicit concurrency, query, candidate, timeout, provider allow-list, plugin timeout, and plugin output-size limits. The scheduler treats `infoseed.Runner` as the built-in Information Seed Agent (`system.infoseed.runner`), so every seed-run event includes a system-agent identity and a phase catalog that distinguishes built-in platform phases from user/plugin phases.
-  Per-seed `InformationSeed.config` may also control Source persistence with safe defaults: `create_sources: true`, `link_existing_sources: true`, `update_existing_source_config: true`, `disabled: false`, and `status: "new"`. Put default post-discovery crawler instructions in `InformationSeed.config.source_config`; candidate plugins can replace that complete object for one result through `source_overrides.source_config`. These policy fields are documented in the [Information seed lifecycle](information_seed_lifecycle.md#informationseedconfig-example).
+  Per-seed `InformationSeed.config` may also control Source persistence with safe defaults: `create_sources: true`, `link_existing_sources: true`, `update_existing_source_config: false`, `disabled: false`, and `status: "new"`. Put default post-discovery crawler instructions in `InformationSeed.config.source_config`; candidate plugins can replace that complete object for one result through `source_overrides.source_config`. These policy fields are documented in the [Information seed lifecycle](information_seed_lifecycle.md#informationseedconfig-example).
   - **`enabled`** *(boolean)*: Enables or disables information seed discovery.
   - **`query_timer`** *(integer)*: Seconds between seed discovery cycles. Values are clamped to the safe range `1..86400`; invalid or missing values default to `300`.
   - **`max_concurrent_seeds`** *(integer)*: Maximum seed discovery jobs processed concurrently. Values are clamped to `1..32`; invalid or missing values default to `2`.
   - **`max_queries_per_seed`** *(integer)*: Maximum provider queries generated from each seed. Values are clamped to `1..100`; invalid or missing values default to `5`.
   - **`max_candidates_per_seed`** *(integer)*: Maximum candidate Sources accepted from each seed. Values are clamped to `1..1000`; invalid or missing values default to `50`.
-  - **`retry_interval`** *(integer)*: Seconds to wait before retrying failed seed discovery work. Values are clamped to `1..86400`; invalid or missing values default to `60`.
-  - **`processing_timeout`** *(string)*: Maximum wall-clock time to process one seed. Uses duration strings such as `30 minutes` or `1 hour`; empty values default to `30 minutes`.
-  - **`providers`** *(object)*: Provider settings and credentials keyed by provider name. Each provider may define `provider`, `transport`, `browser`, `host`, `endpoint`, `api_key_label`, `api_key`, `api_id`, `api_secret`, `api_token`, `token`, `secret`, `username`, `password`, `timeout`, `rate_limit`, `max_requests`, `parameters`, `headers`, `page_size`, and `max_pages`. Provider `timeout` is clamped to `1..300`; provider `max_requests` is capped by `max_queries_per_seed`; `page_size` is clamped to `1..100`; and `max_pages` is clamped to `1..10` and cannot exceed `max_requests`. Use placeholders for sensitive values, list free/public provider blocks before paid/API-key integrations, and label commercial providers clearly. The `rss_feed` provider reads RSS/Atom documents, `common_crawl_index` reads Common Crawl CDX index JSON/JSONL responses, and `http_json` can front custom gateways or trusted CROWler federation peers.
+  - **`retry_interval`** *(integer)*: Base exponential backoff in seconds for automatic retries. Values are clamped to `1..86400`; invalid or missing values default to `60`.
+  - **`retry_backoff_max`** *(integer)*: Maximum exponential retry backoff in seconds. Values are clamped to `1..86400` and never below `retry_interval`; default `3600`.
+  - **`max_attempts`** *(integer)*: Maximum automatic claim attempts before a seed is marked `exhausted`. Values are clamped to `1..100`; default `5`. Authorized manual rerun resets the counter.
+  - **`heartbeat_interval`** *(integer)*: Seconds between live claim heartbeats. It must be shorter than `lease_duration`; default `20`.
+  - **`lease_duration`** *(integer)*: Seconds after the last heartbeat before a processing seed may be reclaimed. Values are clamped to `30..3600`; default `120`.
+  - **`processing_timeout`** *(string)*: Maximum wall-clock time to process one seed. Uses duration strings such as `30 minutes` or `1 hour`; empty values default to `30 minutes`. This is separate from the claim lease.
+  - **`retention`** *(object)*: Opt-in terminal seed retention. It is disabled by default. When enabled, `completed_days`, `disabled_days`, and `exhausted_days` control deletion cutoffs, `batch_size` bounds each pass (`1..1000`), and `dry_run` reports candidates without deleting. New, pending, error, actively leased processing, and user-disabled pending seeds are never purged. Candidate decisions and source links cascade with the seed row; event history is retained separately.
+  - **`providers`** *(object)*: Provider settings and credentials keyed by provider name. Each provider may define `provider`, `transport`, `browser`, `host`, `endpoint`, `api_key_label`, `api_key`, `api_id`, `api_secret`, `api_token`, `token`, `secret`, `username`, `password`, `timeout`, `rate_limit`, `max_requests`, `parameters`, `headers`, `page_size`, and `max_pages`. Provider `timeout` is clamped to `1..300`; provider `max_requests` is capped by `max_queries_per_seed`; `page_size` is clamped to `1..100`; and `max_pages` is clamped to `1..10` and cannot exceed `max_requests`. Use placeholders for sensitive values, list free/public provider blocks before paid/API-key integrations, and label commercial providers clearly. The `rss_feed` provider reads RSS/Atom documents, `common_crawl_index` reads Common Crawl CDX index JSON/JSONL responses, `gdelt_doc` reads GDELT DOC 2.0 article-list JSON, and `http_json` can front custom gateways or trusted CROWler federation peers.
     - **`transport`** *(string)*: Provider transport. It defaults to `http`; `webdriver` must be selected explicitly. Any other value fails configuration validation. A non-empty `browser` block is rejected unless `transport: webdriver` is selected.
     - **`browser_search` with `transport: http`**: Performs bounded HTML GET requests without JavaScript execution. CSS selectors come from `parameters`: `result_container_selector`, `url_selector`, `title_selector`, `snippet_selector`, `next_page_selector`, and `consent_page_selector`. The adapter adds the query as `q` when needed, follows links selected by `next_page_selector`, and returns an error rather than attempting to interact when `consent_page_selector` matches. Runtime caps are 10 seconds, 3 requests, 2 pages, and 20 results per page, even if normalized provider values are higher.
     - **`browser_search` with `transport: webdriver`**: Leases an application-owned VDI session, executes referenced rules, and extracts candidates from rendered pages. The `browser` object accepts only the bounded, non-privileged fields below; browser type, driver paths, download directories, proxies, GPU/browser-reinforcement switches, and WebDriver capabilities cannot be overridden by an Information Seed provider.
@@ -114,7 +119,7 @@
       common_crawl_latest:
         provider: common_crawl_index
         host: https://index.commoncrawl.org
-        endpoint: /CC-MAIN-2026-18-index
+        endpoint: /CC-MAIN-2026-43-index
         parameters:
           output: json
           filter: status:200
@@ -281,7 +286,7 @@
       common_crawl_latest:
         provider: common_crawl_index
         host: https://index.commoncrawl.org
-        endpoint: /CC-MAIN-2026-18-index
+        endpoint: /CC-MAIN-2026-43-index
         parameters:
           output: json
           filter: status:200

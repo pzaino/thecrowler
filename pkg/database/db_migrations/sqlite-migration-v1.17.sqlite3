@@ -1,7 +1,7 @@
--- Version 1.17 adds durable crawl-approval persistence and verified source
--- ownership provenance. This is the SQLite parity migration; it advances the
--- writer generation with the schema so old and new writers cannot share the
--- database.
+-- Version 1.17 adds durable crawl-approval persistence, verified source
+-- ownership provenance, and Information Seed claim leases/fencing/retry state.
+-- This is the SQLite parity migration; runtime schema repair installs the
+-- additive Information Seed columns before compatibility checks.
 BEGIN;
 
 
@@ -118,6 +118,13 @@ ON CrawlProposals(principal_user_id, expires_at);
 
 CREATE INDEX IF NOT EXISTS idx_crawlproposals_source
 ON CrawlProposals(source_id, expires_at);
+
+---------------------------------------------------------------------------------
+-- Information Seed claim fields added within the existing 1.17 schema contract
+-- (claim_token, fencing_token, lease_expires_at, heartbeat_at, next_retry_at)
+-- are installed by ensureSQLiteInformationSeedSchema in pkg/database/sqlite_db.go
+-- because supported SQLite versions cannot conditionally add columns in SQL.
+-- The runtime repair runs before startup compatibility checks and is idempotent.
 
 UPDATE DBSchemaVersion SET is_current=0;
 INSERT INTO DBSchemaVersion(version,description,is_current)

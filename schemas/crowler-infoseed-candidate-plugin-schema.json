@@ -29,6 +29,7 @@
         "url": { "type": "string", "format": "uri" },
         "host": { "type": "string" },
         "title": { "type": "string" },
+        "snippet": { "type": "string" },
         "provider": { "type": "string" },
         "query": { "type": "string" },
         "rank": { "type": "integer", "minimum": 0 },

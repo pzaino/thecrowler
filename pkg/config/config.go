@@ -62,6 +62,15 @@ const (
 	informationSeedMaxCandidatesPerSeed            = 1000
 	informationSeedDefaultRetryInterval            = 60
 	informationSeedMaxRetryInterval                = 86400
+	informationSeedDefaultRetryBackoffMax          = 3600
+	informationSeedMaxRetryBackoffMax              = 86400
+	informationSeedDefaultMaxAttempts              = 5
+	informationSeedMaxAttempts                     = 100
+	informationSeedDefaultHeartbeatInterval        = 20
+	informationSeedMaxHeartbeatInterval            = 300
+	informationSeedDefaultLeaseDuration            = 120
+	informationSeedMinLeaseDuration                = 30
+	informationSeedMaxLeaseDuration                = 3600
 	informationSeedDefaultProcessingTimeout        = "30 minutes"
 	informationSeedDefaultPluginTimeout            = 30
 	informationSeedMaxPluginTimeout                = 300
@@ -285,12 +294,24 @@ func NewConfig() *Config {
 			MaxQueriesPerSeed:    informationSeedDefaultMaxQueriesPerSeed,
 			MaxCandidatesPerSeed: informationSeedDefaultMaxCandidatesPerSeed,
 			RetryInterval:        informationSeedDefaultRetryInterval,
+			RetryBackoffMax:      informationSeedDefaultRetryBackoffMax,
+			MaxAttempts:          informationSeedDefaultMaxAttempts,
+			HeartbeatInterval:    informationSeedDefaultHeartbeatInterval,
+			LeaseDuration:        informationSeedDefaultLeaseDuration,
 			ProcessingTimeout:    informationSeedDefaultProcessingTimeout,
 			Providers:            map[string]InformationSeedProviderConfig{},
 			ProviderAllowList:    []string{},
 			PluginLimits: InformationSeedPluginLimitsConfig{
 				Timeout:            informationSeedDefaultPluginTimeout,
 				MaxOutputSizeBytes: informationSeedDefaultPluginOutputSize,
+			},
+			Retention: InformationSeedRetentionConfig{
+				Enabled:       false,
+				CompletedDays: 30,
+				DisabledDays:  30,
+				ExhaustedDays: 90,
+				BatchSize:     100,
+				DryRun:        false,
 			},
 		},
 		TimeSeries: defaultTimeSeriesConfig(),
@@ -1063,6 +1084,41 @@ func (c *Config) validateInformationSeed() error {
 		c.InformationSeed.RetryInterval = informationSeedMaxRetryInterval
 	}
 
+	if c.InformationSeed.RetryBackoffMax < 1 {
+		c.InformationSeed.RetryBackoffMax = informationSeedDefaultRetryBackoffMax
+	} else if c.InformationSeed.RetryBackoffMax > informationSeedMaxRetryBackoffMax {
+		c.InformationSeed.RetryBackoffMax = informationSeedMaxRetryBackoffMax
+	}
+	if c.InformationSeed.RetryBackoffMax < c.InformationSeed.RetryInterval {
+		c.InformationSeed.RetryBackoffMax = c.InformationSeed.RetryInterval
+	}
+
+	if c.InformationSeed.MaxAttempts < 0 {
+		c.InformationSeed.MaxAttempts = informationSeedDefaultMaxAttempts
+	} else if c.InformationSeed.MaxAttempts > informationSeedMaxAttempts {
+		c.InformationSeed.MaxAttempts = informationSeedMaxAttempts
+	}
+	if c.InformationSeed.MaxAttempts == 0 {
+		c.InformationSeed.MaxAttempts = informationSeedDefaultMaxAttempts
+	}
+
+	if c.InformationSeed.HeartbeatInterval < 1 {
+		c.InformationSeed.HeartbeatInterval = informationSeedDefaultHeartbeatInterval
+	} else if c.InformationSeed.HeartbeatInterval > informationSeedMaxHeartbeatInterval {
+		c.InformationSeed.HeartbeatInterval = informationSeedMaxHeartbeatInterval
+	}
+	if c.InformationSeed.LeaseDuration < informationSeedMinLeaseDuration {
+		c.InformationSeed.LeaseDuration = informationSeedDefaultLeaseDuration
+	} else if c.InformationSeed.LeaseDuration > informationSeedMaxLeaseDuration {
+		c.InformationSeed.LeaseDuration = informationSeedMaxLeaseDuration
+	}
+	if c.InformationSeed.HeartbeatInterval >= c.InformationSeed.LeaseDuration {
+		c.InformationSeed.HeartbeatInterval = c.InformationSeed.LeaseDuration / 2
+		if c.InformationSeed.HeartbeatInterval < 1 {
+			c.InformationSeed.HeartbeatInterval = 1
+		}
+	}
+
 	if strings.TrimSpace(c.InformationSeed.ProcessingTimeout) == "" {
 		c.InformationSeed.ProcessingTimeout = informationSeedDefaultProcessingTimeout
 	} else {
@@ -1079,6 +1135,20 @@ func (c *Config) validateInformationSeed() error {
 		c.InformationSeed.PluginLimits.MaxOutputSizeBytes = informationSeedDefaultPluginOutputSize
 	} else if c.InformationSeed.PluginLimits.MaxOutputSizeBytes > informationSeedMaxPluginOutputSize {
 		c.InformationSeed.PluginLimits.MaxOutputSizeBytes = informationSeedMaxPluginOutputSize
+	}
+	if c.InformationSeed.Retention.CompletedDays < 1 {
+		c.InformationSeed.Retention.CompletedDays = 30
+	}
+	if c.InformationSeed.Retention.DisabledDays < 1 {
+		c.InformationSeed.Retention.DisabledDays = 30
+	}
+	if c.InformationSeed.Retention.ExhaustedDays < 1 {
+		c.InformationSeed.Retention.ExhaustedDays = 90
+	}
+	if c.InformationSeed.Retention.BatchSize < 1 {
+		c.InformationSeed.Retention.BatchSize = 100
+	} else if c.InformationSeed.Retention.BatchSize > 1000 {
+		c.InformationSeed.Retention.BatchSize = 1000
 	}
 
 	if c.InformationSeed.Providers == nil {
@@ -1964,17 +2034,30 @@ func (c *ServiceScoutConfig) IsEmpty() bool {
 	return true
 }
 
-// IsEmpty checks if the given ExecutionPlanItem is empty.
+// IsEmpty checks if the given Condition is empty.
+func (c Condition) IsEmpty() bool {
+	return len(c.URLPatterns) == 0 && len(c.URLBlockPatterns) == 0
+}
+
+// IsEmpty checks if the given RuleParameters is empty.
+func (r RuleParameters) IsEmpty() bool {
+	return len(r.Action) == 0 && len(r.Scraping) == 0 && len(r.Detection) == 0 && len(r.Crawling) == 0
+}
+
+// IsEmpty checks if the given ExecutionPlanItem is empty. Any populated field
+// makes the item meaningful so SourceConfig.IsEmpty never treats a partially
+// configured execution plan as absent.
 func (ep *ExecutionPlanItem) IsEmpty() bool {
 	if ep == nil {
 		return true
 	}
 
-	if len(ep.Rulesets) == 0 && len(ep.RuleGroups) == 0 && len(ep.Rules) == 0 {
-		return true
-	}
-
-	return false
+	return strings.TrimSpace(ep.Label) == "" &&
+		ep.Conditions.IsEmpty() &&
+		len(ep.Rulesets) == 0 &&
+		len(ep.RuleGroups) == 0 &&
+		len(ep.Rules) == 0 &&
+		len(ep.AdditionalConditions) == 0
 }
 
 // IsEmpty checks if the given SourceConfig is empty.
@@ -2005,11 +2088,13 @@ func (sc *SourceConfig) IsEmpty() bool {
 		return false
 	}
 
-	// ExecutionPlan must be nil or empty
-	if len(sc.ExecutionPlan) != 0 {
-		if len(sc.ExecutionPlan) == 1 && !sc.ExecutionPlan[0].IsEmpty() {
-			return true
+	for index := range sc.ExecutionPlan {
+		if !sc.ExecutionPlan[index].IsEmpty() {
+			return false
 		}
+	}
+
+	if !sc.RuleParameters.IsEmpty() {
 		return false
 	}
 

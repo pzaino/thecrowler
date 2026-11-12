@@ -235,8 +235,16 @@ information_seed:
   max_queries_per_seed: 5
   # Maximum candidate Sources accepted from each seed (clamped to 1..1000)
   max_candidates_per_seed: 50
-  # Seconds before retrying failed seed discovery work (clamped to 1..86400)
+  # Base seconds before retrying failed seed discovery work (clamped to 1..86400)
   retry_interval: 60
+  # Maximum exponential retry backoff in seconds (clamped to 1..86400)
+  retry_backoff_max: 3600
+  # Maximum automatic claim attempts before a seed becomes exhausted
+  max_attempts: 5
+  # Claim lease heartbeat interval in seconds (must be shorter than lease_duration)
+  heartbeat_interval: 20
+  # Seconds without a heartbeat before a processing claim may be reclaimed
+  lease_duration: 120
   # Maximum time to process one seed; supports duration strings such as "30 minutes" or "1 hour"
   processing_timeout: 30 minutes
   # Providers that are allowed to run. Keep empty to prevent provider execution until explicitly enabled.
@@ -262,6 +270,15 @@ information_seed:
   #     max_requests: 5
   #     page_size: 10
   #     max_pages: 1
+  # Opt-in terminal seed retention. Disabled by default; never removes new,
+  # pending, actively leased processing, or retry-eligible error seeds.
+  retention:
+    enabled: false
+    completed_days: 30
+    disabled_days: 30
+    exhausted_days: 90
+    batch_size: 100
+    dry_run: false
   # Hard limits for plugins used by seed discovery
   plugin_limits:
     # Plugin execution timeout in seconds (clamped to 1..300)

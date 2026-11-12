@@ -87,6 +87,36 @@
                     "minimum": 0,
                     "description": "Source ID associated with this event, or 0 for seed-level events."
                 },
+                "orchestration_model": {
+                    "type": "string",
+                    "const": "built_in_infoseed_runner"
+                },
+                "agent": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "agent_id": { "type": "string" },
+                        "agent_name": { "type": "string" },
+                        "agent_type": { "type": "string" },
+                        "trust_level": { "type": "string" },
+                        "origin": { "type": "string" },
+                        "runtime_path": { "type": "string" }
+                    },
+                    "required": ["agent_id", "agent_name", "agent_type", "trust_level", "origin", "runtime_path"]
+                },
+                "phase_catalog": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "phase": { "type": "string" },
+                            "origin": { "type": "string" },
+                            "runtime": { "type": "string" }
+                        },
+                        "required": ["phase", "origin", "runtime"]
+                    }
+                },
                 "provider_counts": {
                     "$ref": "#/definitions/IntegerMap"
                 },
@@ -162,6 +192,48 @@
                         "additionalProperties": true
                     },
                     "description": "Redacted plugin metadata summaries; secret-like keys must contain REDACTED rather than raw values."
+                },
+                "provider_failures": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "provider": { "type": "string" },
+                            "summary": { "type": "string" },
+                            "class": { "type": "string" },
+                            "retryable": { "type": "boolean" },
+                            "status_code": { "type": "integer", "minimum": 100, "maximum": 599 }
+                        },
+                        "required": ["provider", "summary"]
+                    }
+                },
+                "plugin_failures": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "plugin": { "type": "string" },
+                            "summary": { "type": "string" }
+                        },
+                        "required": ["plugin", "summary"]
+                    }
+                },
+                "browser_diagnostics": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "$ref": "#/definitions/IntegerMap"
+                        }
+                    }
+                },
+                "browser_duration_ms": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/IntegerMap"
+                    }
                 }
             },
             "required": [
@@ -171,6 +243,9 @@
                 "run_id",
                 "run_attempt",
                 "source_id",
+                "orchestration_model",
+                "agent",
+                "phase_catalog",
                 "provider_counts",
                 "provider_metrics",
                 "provider_configs",
@@ -185,7 +260,11 @@
                 "source_ids_created",
                 "source_ids_linked",
                 "error_summaries",
-                "plugin_metadata"
+                "plugin_metadata",
+                "provider_failures",
+                "plugin_failures",
+                "browser_diagnostics",
+                "browser_duration_ms"
             ]
         },
         "InformationSeedCandidateCounts": {

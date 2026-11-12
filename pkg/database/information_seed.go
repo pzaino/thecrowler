@@ -51,6 +51,11 @@ type InformationSeed struct {
 	LastErrorAt     sql.NullTime
 	Disabled        bool
 	Attempts        int
+	ClaimToken      string
+	FencingToken    int64
+	LeaseExpiresAt  sql.NullTime
+	HeartbeatAt     sql.NullTime
+	NextRetryAt     sql.NullTime
 	Config          *json.RawMessage
 }
 
@@ -180,6 +185,89 @@ func informationSeedSelectColumns() string {
 	return `information_seed_id, created_at, last_updated_at, category_id, usr_id,
 		information_seed, status, priority, engine, last_processed_at, last_error,
 		last_error_at, disabled, attempts, config`
+}
+
+func informationSeedClaimColumns(alias string) string {
+	if strings.TrimSpace(alias) != "" && !strings.HasSuffix(alias, ".") {
+		alias += "."
+	}
+	return alias + `information_seed_id, created_at, last_updated_at, category_id, usr_id,
+		information_seed, status, priority, engine, last_processed_at, last_error,
+		last_error_at, disabled, attempts, claim_token, fencing_token,
+		lease_expires_at, heartbeat_at, next_retry_at, config`
+}
+
+func scanInformationSeedClaimRow(row *sql.Row) (*InformationSeed, error) {
+	var seed InformationSeed
+	var config sql.NullString
+	if err := row.Scan(
+		&seed.ID,
+		&seed.CreatedAt,
+		&seed.LastUpdatedAt,
+		&seed.CategoryID,
+		&seed.UsrID,
+		&seed.InformationSeed,
+		&seed.Status,
+		&seed.Priority,
+		&seed.Engine,
+		&seed.LastProcessedAt,
+		&seed.LastError,
+		&seed.LastErrorAt,
+		&seed.Disabled,
+		&seed.Attempts,
+		&seed.ClaimToken,
+		&seed.FencingToken,
+		&seed.LeaseExpiresAt,
+		&seed.HeartbeatAt,
+		&seed.NextRetryAt,
+		&config,
+	); err != nil {
+		return nil, err
+	}
+	if config.Valid {
+		raw := json.RawMessage(config.String)
+		seed.Config = &raw
+	}
+	return &seed, nil
+}
+
+func scanInformationSeedClaimRows(rows *sql.Rows) ([]InformationSeed, error) {
+	defer rows.Close()
+	seeds := []InformationSeed{}
+	for rows.Next() {
+		var seed InformationSeed
+		var config sql.NullString
+		if err := rows.Scan(
+			&seed.ID,
+			&seed.CreatedAt,
+			&seed.LastUpdatedAt,
+			&seed.CategoryID,
+			&seed.UsrID,
+			&seed.InformationSeed,
+			&seed.Status,
+			&seed.Priority,
+			&seed.Engine,
+			&seed.LastProcessedAt,
+			&seed.LastError,
+			&seed.LastErrorAt,
+			&seed.Disabled,
+			&seed.Attempts,
+			&seed.ClaimToken,
+			&seed.FencingToken,
+			&seed.LeaseExpiresAt,
+			&seed.HeartbeatAt,
+			&seed.NextRetryAt,
+			&config,
+		); err != nil {
+			return nil, err
+		}
+		if config.Valid {
+			raw := json.RawMessage(config.String)
+			seed.Config = &raw
+		}
+		seeds = append(seeds, seed)
+	}
+	return seeds, rows.Err()
 }
 
 func informationSeedConfigString(config *json.RawMessage) (interface{}, error) {

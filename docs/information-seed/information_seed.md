@@ -58,11 +58,16 @@ information_seed:
   max_queries_per_seed: 3
   max_candidates_per_seed: 20
   retry_interval: 300
+  retry_backoff_max: 3600
+  max_attempts: 5
+  heartbeat_interval: 20
+  lease_duration: 120
   processing_timeout: 30 minutes
 
   provider_allow_list:
     - rss_public_news
     - common_crawl_latest
+    - gdelt_doc
     - public_json_adapter
 
   providers:
@@ -76,10 +81,24 @@ information_seed:
       page_size: 10
       max_pages: 1
 
+    gdelt_doc:
+      provider: gdelt_doc
+      host: https://api.gdeltproject.org
+      endpoint: /api/v2/doc/doc
+      parameters:
+        mode: artlist
+        format: json
+        sort: datedesc
+      timeout: 20
+      rate_limit: 10s
+      max_requests: 1
+      page_size: 10
+      max_pages: 1
+
     common_crawl_latest:
       provider: common_crawl_index
       host: https://index.commoncrawl.org
-      endpoint: /CC-MAIN-2026-18-index
+      endpoint: /CC-MAIN-2026-43-index
       parameters:
         output: json
         filter: status:200
@@ -117,8 +136,12 @@ A fuller operator-oriented example is available in
 | `max_concurrent_seeds` | Maximum seeds processed concurrently. |
 | `max_queries_per_seed` | Global cap on rendered provider queries per seed. |
 | `max_candidates_per_seed` | Global cap on accepted candidates per seed. A lower seed-level `max_candidates` wins. |
-| `retry_interval` | Seconds before failed work can be retried. |
-| `processing_timeout` | Wall-clock timeout for one seed run, for example `30 minutes`. |
+| `retry_interval` | Base seconds for bounded exponential retry backoff. |
+| `retry_backoff_max` | Maximum automatic retry backoff in seconds. |
+| `max_attempts` | Maximum automatic claim attempts before `exhausted`; manual rerun resets it. |
+| `heartbeat_interval` | Seconds between live claim lease heartbeats. |
+| `lease_duration` | Seconds after a lost heartbeat before another worker may reclaim the seed. |
+| `processing_timeout` | Maximum intended wall-clock time for one seed run, for example `30 minutes`. |
 | `provider_allow_list` | Provider names allowed to run. An empty list prevents provider execution. |
 | `providers` | Provider definitions keyed by name. Seed-level `providers` entries refer to these names. |
 | `plugin_limits.timeout` | JavaScript candidate plugin timeout in seconds. |
@@ -137,6 +160,7 @@ identifiers and aliases include:
 | `browser_search` / `browser` / `html_search` | Browser-backed HTML result page discovery. Enable only after policy, robots, terms, and rate-limit review. |
 | `rss_feed` / `rss` / `atom_feed` | RSS or Atom feed discovery. |
 | `common_crawl_index` / `common_crawl` | Common Crawl index discovery. |
+| `gdelt_doc` / `gdelt` | GDELT DOC 2.0 article-list discovery. Sends `query`, `mode=artlist`, `format=json`, and `maxrecords`; parses the top-level `articles` array. |
 
 Provider credentials belong only in the global configuration. The API rejects
 seed submission or update payloads that attempt to place credential-like fields
@@ -265,7 +289,7 @@ The complete checked-in version is
 | `source_priority` | seed priority or normal Source defaults | Priority for created Sources. |
 | `create_sources` | `true` | Create Sources for accepted candidates when no matching Source exists. |
 | `link_existing_sources` | `true` | Link accepted candidates to existing Sources when the URL already exists. |
-| `update_existing_source_config` | `true` | Update an existing Source's config during upsert. |
+| `update_existing_source_config` | `false` | Allow an explicit valid config to refresh an existing source owned by the seed actor. |
 | `disabled` | `false` | Per-run disable flag. |
 | `status` | `new` | Per-run status hint stored in config. |
 | `restricted` | `0` | Restricted flag copied to created Sources. |
@@ -352,6 +376,8 @@ After a run completes:
    ```
 
 ## Safety and operational guidance
+
+See [provider health and operator checklist](provider-health.md) for the observed provider matrix, safe failure policy, Common Crawl index refresh, and rollout verification steps.
 
 - Keep credentials in global configuration or environment-substituted global
   configuration, never in seed API requests.

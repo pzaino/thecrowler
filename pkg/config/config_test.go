@@ -1767,28 +1767,29 @@ func TestExecutionPlanItemIsEmpty(t *testing.T) {
 
 // Test IsEmpty
 func TestSourceConfigIsEmpty(t *testing.T) {
-	// Create a nil SourceConfig
-	var sc *SourceConfig
-
-	// Call the IsEmpty function with the nil SourceConfig
-	isEmpty := sc.IsEmpty()
-
-	// Check if the IsEmpty function returns true for a nil SourceConfig
-	if !isEmpty {
-		t.Errorf("%s", errExpectedTrue)
+	var nilConfig *SourceConfig
+	tests := []struct {
+		name   string
+		config *SourceConfig
+		want   bool
+	}{
+		{name: "nil", config: nilConfig, want: true},
+		{name: "zero", config: &SourceConfig{}, want: true},
+		{name: "nil execution plan", config: &SourceConfig{ExecutionPlan: nil}, want: true},
+		{name: "all-empty execution plan", config: &SourceConfig{ExecutionPlan: []ExecutionPlanItem{{}, {}}}, want: true},
+		{name: "single rules execution plan", config: &SourceConfig{ExecutionPlan: []ExecutionPlanItem{{Rules: []string{"rule"}}}}, want: false},
+		{name: "single label execution plan", config: &SourceConfig{ExecutionPlan: []ExecutionPlanItem{{Label: "label"}}}, want: false},
+		{name: "single conditions execution plan", config: &SourceConfig{ExecutionPlan: []ExecutionPlanItem{{Conditions: Condition{URLPatterns: []string{".*"}}}}}, want: false},
+		{name: "multiple empty execution plan", config: &SourceConfig{ExecutionPlan: []ExecutionPlanItem{{}, {}}}, want: true},
+		{name: "rule parameters", config: &SourceConfig{RuleParameters: RuleParameters{Action: map[string]interface{}{"key": "value"}}}, want: false},
+		{name: "other fields", config: &SourceConfig{SourceName: "name"}, want: false},
 	}
-
-	// Create a non-nil SourceConfig with a nil ExecutionPlan
-	sc = &SourceConfig{
-		ExecutionPlan: nil,
-	}
-
-	// Call the IsEmpty function with the non-nil SourceConfig
-	isEmpty = sc.IsEmpty()
-
-	// Check if the IsEmpty function returns true for a non-nil SourceConfig with a nil ExecutionPlan
-	if !isEmpty {
-		t.Errorf("%s", errExpectedTrue)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := test.config.IsEmpty(); got != test.want {
+				t.Fatalf("IsEmpty() = %t, want %t", got, test.want)
+			}
+		})
 	}
 }
 
@@ -2900,4 +2901,74 @@ func mustMarshalJSON(t *testing.T, value any) []byte {
 		t.Fatalf("marshal JSON fixture: %v", err)
 	}
 	return encoded
+}
+
+func TestInformationSeedLeaseRetryAndRetentionConfig(t *testing.T) {
+	config, err := ParseConfig([]byte(`
+information_seed:
+  max_attempts: 7
+  retry_interval: 60
+  retry_backoff_max: 30
+  heartbeat_interval: 500
+  lease_duration: 120
+  retention:
+    enabled: true
+    completed_days: 14
+    disabled_days: 15
+    exhausted_days: 16
+    batch_size: 25
+    dry_run: true
+`))
+	if err != nil {
+		t.Fatalf("ParseConfig() error = %v", err)
+	}
+	if config.InformationSeed.MaxAttempts != 7 || config.InformationSeed.RetryBackoffMax != 60 {
+		t.Fatalf("unexpected retry config: %#v", config.InformationSeed)
+	}
+	if config.InformationSeed.HeartbeatInterval != 60 {
+		t.Fatalf("heartbeat interval = %d, want lease/2", config.InformationSeed.HeartbeatInterval)
+	}
+	if !config.InformationSeed.Retention.Enabled || config.InformationSeed.Retention.CompletedDays != 14 || !config.InformationSeed.Retention.DryRun {
+		t.Fatalf("unexpected retention config: %#v", config.InformationSeed.Retention)
+	}
+
+	defaults := NewConfig()
+	if defaults.InformationSeed.Retention.Enabled || defaults.InformationSeed.Retention.CompletedDays != 30 {
+		t.Fatalf("retention must be off by default: %#v", defaults.InformationSeed.Retention)
+	}
+
+	schemaData, err := os.ReadFile("../../schemas/crowler-config-schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(schemaData, &document); err != nil {
+		t.Fatal(err)
+	}
+	informationSeed := document["properties"].(map[string]any)["information_seed"].(map[string]any)
+	properties := informationSeed["properties"].(map[string]any)
+	for _, name := range []string{"max_attempts", "heartbeat_interval", "lease_duration", "retry_backoff_max", "retention"} {
+		if _, ok := properties[name]; !ok {
+			t.Fatalf("information_seed schema missing %q", name)
+		}
+	}
+	retention := properties["retention"].(map[string]any)
+	retentionSchemaData, err := json.Marshal(retention)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := &jsonschema.Schema{}
+	if err := schema.UnmarshalJSON(retentionSchemaData); err != nil {
+		t.Fatal(err)
+	}
+	valid, _ := json.Marshal(map[string]any{"enabled": true, "completed_days": 14, "batch_size": 25, "dry_run": true})
+	issues, err := schema.ValidateBytes(context.Background(), valid)
+	if err != nil || len(issues) != 0 {
+		t.Fatalf("valid retention schema rejected: issues=%v err=%v", issues, err)
+	}
+	invalid := []byte(`{"enabled":true,"completed_days":0,"batch_size":5000}`)
+	issues, err = schema.ValidateBytes(context.Background(), invalid)
+	if err != nil || len(issues) == 0 {
+		t.Fatalf("invalid retention schema accepted: issues=%v err=%v", issues, err)
+	}
 }

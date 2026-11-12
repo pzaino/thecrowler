@@ -34,19 +34,53 @@ func RerunInformationSeedContext(ctx context.Context, db *Handler, id uint64) er
 	}
 
 	switch strings.ToLower(strings.TrimSpace(seed.Status)) {
-	case "completed", "error":
-		if err := UpdateInformationSeedStatusContext(ctx, db, id, "pending", ""); err != nil {
+	case "completed", "error", "exhausted", "new", "pending":
+		if err := requeueInformationSeedContext(ctx, db, id); err != nil {
 			return err
 		}
-	case "new", "pending", "processing":
-		// Leave the existing lifecycle state intact. New/pending rows are already
-		// claimable when enabled; processing rows are governed by stale-claim
-		// recovery. In both cases a wakeup is harmless and avoids a poll delay.
+	case "processing":
+		// Leave the active lifecycle state intact; processing rows are governed by
+		// claim-lease recovery and cannot be stolen by a manual rerun request.
 	default:
 		return fmt.Errorf("information seed %d cannot be rerun from status %q", id, seed.Status)
 	}
 
 	WakeInformationSeedSchedulers()
+	return nil
+}
+
+func requeueInformationSeedContext(ctx context.Context, db *Handler, id uint64) error {
+	if db == nil || *db == nil {
+		return fmt.Errorf("database handler is nil")
+	}
+	dbms := normalizeInformationSeedDBMS((*db).DBMS())
+	if !isSupportedInformationSeedDBMS(dbms) {
+		return fmt.Errorf("unsupported database type for information seed requeue: %s", (*db).DBMS())
+	}
+	p := newInformationSeedPlaceholders(dbms)
+	nowExpr := "CURRENT_TIMESTAMP"
+	if dbms == DBPostgresStr {
+		nowExpr = "NOW()"
+	}
+	query := `UPDATE InformationSeed
+		SET status = 'pending', attempts = 0, last_error = NULL, last_error_at = NULL,
+			next_retry_at = NULL, claim_token = NULL, fencing_token = 0,
+			lease_expires_at = NULL, heartbeat_at = NULL, last_processed_at = ` + nowExpr + `
+		WHERE information_seed_id = ` + p.Next() + ` AND deleted_at IS NULL`
+	if dbms == DBMySQLStr {
+		query = `UPDATE InformationSeed
+			SET status = 'pending', attempts = 0, last_error = NULL, last_error_at = NULL,
+				next_retry_at = NULL, claim_token = NULL, fencing_token = 0,
+				lease_expires_at = NULL, heartbeat_at = NULL, last_processed_at = CURRENT_TIMESTAMP
+			WHERE information_seed_id = ?`
+	}
+	result, err := (*db).ExecContext(ctx, query, id)
+	if err != nil {
+		return fmt.Errorf("failed to requeue information seed %d: %w", id, err)
+	}
+	if rows, rowsErr := result.RowsAffected(); rowsErr == nil && rows == 0 {
+		return fmt.Errorf("no information seed found with ID %d", id)
+	}
 	return nil
 }
 
@@ -68,7 +102,7 @@ func EnableInformationSeedContext(ctx context.Context, db *Handler, id uint64, q
 		return err
 	}
 	if queuePending {
-		if err := UpdateInformationSeedStatusContext(ctx, db, id, "pending", ""); err != nil {
+		if err := requeueInformationSeedContext(ctx, db, id); err != nil {
 			return err
 		}
 	}

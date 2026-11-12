@@ -135,20 +135,31 @@ as `information_seed_id`, `status`, `has_error`, `last_error`,
 applicable. `priority` is a JSON string because database claims match it to the
 engine's configured source-priority string.
 
+When `api.auth.enabled` is true, every information-seed endpoint requires a
+valid bearer token. Mutations and seed-scoped reads additionally require the
+seed owner or an `admin`/`superadmin`. Ordinary users cannot create a seed owned
+by another user, transfer seed ownership, list another tenant's seeds, or use
+path/body/query ID variants to bypass the check. Authentication-disabled
+installations retain the legacy trusted-console behavior. Provider configuration
+inspection under the `/v1/config/information_seed/providers` endpoints is administrator-only
+when authentication is enabled.
+
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
-| POST | `/v1/information_seed/add` | Add an information seed. The request body accepts `information_seed`, `category_id`, `usr_id`/`user_id`, `status`, `priority`, `engine`, `disabled`, and seed-level `config`. Provider credentials belong in global `information_seed.providers`, not in this request. |
+| POST | `/v1/information_seed/add` | Add an information seed. The request body accepts `information_seed`, `category_id`, `usr_id`/`user_id`, `status`, `priority`, `engine`, `disabled`, and seed-level `config`. When authentication is enabled the trusted owner is the authenticated user; ordinary users cannot submit another owner. Provider credentials belong in global `information_seed.providers`, not in this request. |
 | GET | `/v1/information_seed/status` | Return status for one seed. Supply `information_seed_id`, `id`, or `q`. |
-| GET | `/v1/information_seed/list` | List seeds with filters (`status`, `priority`, `disabled`, `category`/`category_id`, `user`/`user_id`/`usr_id`) plus `limit` and `offset`. |
+| GET | `/v1/information_seed/list` | List seeds with filters (`status`, `priority`, `disabled`, `category`/`category_id`, `user`/`user_id`/`usr_id`) plus `limit` and `offset`. Non-administrators are always constrained to their own seeds. |
 | GET | `/v1/information_seed/sources` | List sources linked to one seed. Supply `information_seed_id`; response items include `source_information_seed_index` provenance. |
 | GET | `/v1/information_seed/candidates` | List persisted accepted/rejected candidate decisions for one seed. Supply `information_seed_id`, plus optional pagination. |
-| POST | `/v1/information_seed/retry` | Reset a seed for retry after correcting credentials/configuration. Body: `{"information_seed_id":123}`. |
+| POST | `/v1/information_seed/retry` | Reset a seed for retry after correcting credentials/configuration. Body: `{"information_seed_id":123}`. This resets automatic attempt accounting for an `exhausted` seed. |
 | POST | `/v1/information_seed/disable` | Set the seed's `disabled` flag by request body without changing its status. Body: `{"information_seed_id":123}`. |
 | POST | `/v1/information_seed/{id}/rerun` | Path-ID rerun helper for a seed. |
 | POST | `/v1/information_seed/{id}/disable` | Set the path-ID seed's `disabled` flag without changing its status. |
 | POST | `/v1/information_seed/{id}/enable` | Clear the path-ID seed's `disabled` flag. An optional `{"queue_pending":true}` body also changes status to `pending`; otherwise status is preserved. |
 | GET | `/v1/information_seed/{id}/events` | List information-seed discovery events. |
 | GET | `/v1/information_seed/{id}/diagnostics` | Return the latest redacted run diagnostics payload. |
+| GET | `/v1/config/information_seed/providers` | List configured provider names (administrator when auth is enabled). |
+| GET | `/v1/config/information_seed/providers/{name}` | Return one redacted provider configuration (administrator when auth is enabled). |
 
 Seed-level `config` can include `query_templates`, literal `queries`, selected
 provider names, request-bounding candidate filters, source defaults, and
@@ -199,6 +210,7 @@ information_seed:
   provider_allow_list:
     - rss_public_news
     - common_crawl_latest
+    - gdelt_doc
   providers:
     rss_public_news:
       provider: rss_feed
@@ -209,10 +221,23 @@ information_seed:
       max_requests: 1
       page_size: 10
       max_pages: 1
+    gdelt_doc:
+      provider: gdelt_doc
+      host: https://api.gdeltproject.org
+      endpoint: /api/v2/doc/doc
+      parameters:
+        mode: artlist
+        format: json
+        sort: datedesc
+      timeout: 20
+      rate_limit: 10s
+      max_requests: 1
+      page_size: 10
+      max_pages: 1
     common_crawl_latest:
       provider: common_crawl_index
       host: https://index.commoncrawl.org
-      endpoint: /CC-MAIN-2026-18-index
+      endpoint: /CC-MAIN-2026-43-index
       parameters:
         output: json
         filter: status:200

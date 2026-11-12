@@ -65,6 +65,10 @@ func performAddInformationSeed(query string, qType int, db *cdb.Handler) (Inform
 }
 
 func performAddInformationSeedContext(ctx context.Context, query string, qType int, db *cdb.Handler) (InformationSeedResponse, error) {
+	return performAddInformationSeedForAccessContext(ctx, query, qType, db, sourceMutationAccess{})
+}
+
+func performAddInformationSeedForAccessContext(ctx context.Context, query string, qType int, db *cdb.Handler, access sourceMutationAccess) (InformationSeedResponse, error) {
 	var params informationSeedAddRequest
 	if qType == getQuery {
 		params.InformationSeed = strings.TrimSpace(query)
@@ -91,6 +95,12 @@ func performAddInformationSeedContext(ctx context.Context, query string, qType i
 	}
 	if params.UsrID == 0 && params.UserID != 0 {
 		params.UsrID = params.UserID
+	}
+	if access.Authenticated {
+		if !access.Admin && params.UsrID != 0 && params.UsrID != access.UserID {
+			return InformationSeedResponse{Message: "Information seed owner is not authorized"}, errInformationSeedForbidden
+		}
+		params.UsrID = access.UserID
 	}
 	if params.Status == "" {
 		params.Status = "new"
@@ -429,9 +439,16 @@ func performRetryInformationSeed(query string, db *cdb.Handler) (InformationSeed
 	return performRetryInformationSeedContext(context.Background(), query, db)
 }
 func performRetryInformationSeedContext(ctx context.Context, query string, db *cdb.Handler) (InformationSeedResponse, error) {
+	return performRetryInformationSeedForAccessContext(ctx, query, db, sourceMutationAccess{})
+}
+
+func performRetryInformationSeedForAccessContext(ctx context.Context, query string, db *cdb.Handler, access sourceMutationAccess) (InformationSeedResponse, error) {
 	id, err := parseInformationSeedIDFromJSON(query)
 	if err != nil {
 		return InformationSeedResponse{Message: "Invalid information seed retry request"}, err
+	}
+	if _, err := loadAuthorizedInformationSeedContext(ctx, db, id, access); err != nil {
+		return InformationSeedResponse{Message: "Information seed retry is not authorized"}, err
 	}
 	return performRerunInformationSeedByIDContext(ctx, id, db)
 }
@@ -454,9 +471,16 @@ func performDisableInformationSeed(query string, db *cdb.Handler) (InformationSe
 	return performDisableInformationSeedContext(context.Background(), query, db)
 }
 func performDisableInformationSeedContext(ctx context.Context, query string, db *cdb.Handler) (InformationSeedResponse, error) {
+	return performDisableInformationSeedForAccessContext(ctx, query, db, sourceMutationAccess{})
+}
+
+func performDisableInformationSeedForAccessContext(ctx context.Context, query string, db *cdb.Handler, access sourceMutationAccess) (InformationSeedResponse, error) {
 	id, err := parseInformationSeedIDFromJSON(query)
 	if err != nil {
 		return InformationSeedResponse{Message: "Invalid information seed disable request"}, err
+	}
+	if _, err := loadAuthorizedInformationSeedContext(ctx, db, id, access); err != nil {
+		return InformationSeedResponse{Message: "Information seed disable is not authorized"}, err
 	}
 	return performDisableInformationSeedByIDContext(ctx, id, db)
 }
@@ -1791,6 +1815,10 @@ func performUpdateInformationSeed(query string, _ int, db *cdb.Handler) (Informa
 	return performUpdateInformationSeedContext(context.Background(), query, 0, db)
 }
 func performUpdateInformationSeedContext(ctx context.Context, query string, _ int, db *cdb.Handler) (InformationSeedResponse, error) {
+	return performUpdateInformationSeedForAccessContext(ctx, query, db, sourceMutationAccess{})
+}
+
+func performUpdateInformationSeedForAccessContext(ctx context.Context, query string, db *cdb.Handler, access sourceMutationAccess) (InformationSeedResponse, error) {
 	if err := rejectInformationSeedRequestCredentials([]byte(query)); err != nil {
 		return InformationSeedResponse{Message: "Provider credentials are not accepted in information seed requests"}, err
 	}
@@ -1801,9 +1829,22 @@ func performUpdateInformationSeedContext(ctx context.Context, query string, _ in
 	if req.InformationSeedID == 0 {
 		return InformationSeedResponse{Message: "Information seed ID is required"}, fmt.Errorf("information_seed_id is required")
 	}
-	existing, err := cdb.GetInformationSeedByIDContext(ctx, db, req.InformationSeedID)
+	seeds, err := cdb.ListInformationSeedsWithStatsContext(ctx, db, cdb.InformationSeedFilter{ID: req.InformationSeedID, Limit: 1})
 	if err != nil {
 		return InformationSeedResponse{Message: "Failed to load information seed"}, err
+	}
+	if len(seeds) == 0 {
+		return InformationSeedResponse{Message: "Information seed not found"}, errInformationSeedNotFound
+	}
+	existing := &seeds[0].InformationSeed
+	if err := authorizeInformationSeedAccess(*existing, access); err != nil {
+		return InformationSeedResponse{Message: "Information seed update is not authorized"}, err
+	}
+	if access.Authenticated && !access.Admin {
+		if (req.UsrID != nil && *req.UsrID != access.UserID) ||
+			(req.UserID != nil && *req.UserID != access.UserID) {
+			return InformationSeedResponse{Message: "Information seed ownership cannot be changed"}, errInformationSeedForbidden
+		}
 	}
 	if req.CategoryID != nil {
 		existing.CategoryID = *req.CategoryID
@@ -1857,9 +1898,16 @@ func performRemoveInformationSeed(query string, _ int, db *cdb.Handler) (Console
 	return performRemoveInformationSeedContext(context.Background(), query, 0, db)
 }
 func performRemoveInformationSeedContext(ctx context.Context, query string, _ int, db *cdb.Handler) (ConsoleResponse, error) {
+	return performRemoveInformationSeedForAccessContext(ctx, query, db, sourceMutationAccess{})
+}
+
+func performRemoveInformationSeedForAccessContext(ctx context.Context, query string, db *cdb.Handler, access sourceMutationAccess) (ConsoleResponse, error) {
 	id, err := parseInformationSeedIDFromJSON(query)
 	if err != nil {
 		return ConsoleResponse{Message: "Invalid information seed remove request"}, err
+	}
+	if _, err := loadAuthorizedInformationSeedContext(ctx, db, id, access); err != nil {
+		return ConsoleResponse{Message: "Information seed removal is not authorized"}, err
 	}
 	if err := cdb.RemoveInformationSeedContext(ctx, db, id); err != nil {
 		return ConsoleResponse{Message: "Failed to remove information seed"}, err

@@ -116,7 +116,12 @@ CREATE TABLE IF NOT EXISTS InformationSeed (
     last_error TEXT,
     last_error_at TIMESTAMP,
     disabled INTEGER DEFAULT 0,
-    attempts INTEGER DEFAULT 0 NOT NULL
+    attempts INTEGER DEFAULT 0 NOT NULL,
+    claim_token VARCHAR(64),
+    fencing_token INTEGER DEFAULT 0 NOT NULL,
+    lease_expires_at TIMESTAMP,
+    heartbeat_at TIMESTAMP,
+    next_retry_at TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS InformationSeedCandidate (
@@ -848,6 +853,12 @@ CREATE INDEX IF NOT EXISTS idx_informationseed_claim_queue
     ON InformationSeed(disabled, status, priority, created_at, information_seed_id);
 CREATE INDEX IF NOT EXISTS idx_informationseed_engine_status
     ON InformationSeed(engine, status, last_processed_at);
+CREATE INDEX IF NOT EXISTS idx_informationseed_lease_expiry
+    ON InformationSeed(status, disabled, lease_expires_at);
+CREATE INDEX IF NOT EXISTS idx_informationseed_next_retry
+    ON InformationSeed(status, disabled, next_retry_at);
+CREATE INDEX IF NOT EXISTS idx_informationseed_claim_token
+    ON InformationSeed(claim_token);
 CREATE INDEX IF NOT EXISTS idx_sources_url ON Sources(url);
 CREATE INDEX IF NOT EXISTS idx_sources_source_uid ON Sources(source_uid);
 CREATE INDEX IF NOT EXISTS idx_sources_category_id ON Sources(category_id);

@@ -363,6 +363,11 @@ ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS last_error TEXT;
 ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS last_error_at TIMESTAMPTZ;
 ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS disabled BOOLEAN DEFAULT FALSE;
 ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS attempts INTEGER DEFAULT 0 NOT NULL;
+ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS claim_token VARCHAR(64);
+ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS fencing_token BIGINT DEFAULT 0 NOT NULL;
+ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ;
+ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ;
+ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMPTZ;
 
 -- InformationSeedCandidate stores durable audit evidence for every accepted or
 -- rejected candidate decision. Rejected rows are intentionally persisted here
@@ -1375,6 +1380,12 @@ CREATE INDEX IF NOT EXISTS idx_informationseed_claim_queue
     ON InformationSeed(disabled, status, priority, created_at, information_seed_id);
 CREATE INDEX IF NOT EXISTS idx_informationseed_engine_status
     ON InformationSeed(engine, status, last_processed_at);
+CREATE INDEX IF NOT EXISTS idx_informationseed_lease_expiry
+    ON InformationSeed(status, disabled, lease_expires_at);
+CREATE INDEX IF NOT EXISTS idx_informationseed_next_retry
+    ON InformationSeed(status, disabled, next_retry_at);
+CREATE INDEX IF NOT EXISTS idx_informationseed_claim_token
+    ON InformationSeed(claim_token);
 
 
 -- Indexes for the Sources table -----------------------------------------------
@@ -2920,13 +2931,19 @@ ALTER TABLE httpinfoindex ADD CONSTRAINT httpinfoindex_index_id_fkey FOREIGN KEY
 
 -- Atomically claims InformationSeed work for one crowler-engine replica. The
 -- row locks and lifecycle update happen in the same statement so concurrent
--- engines cannot receive the same seed.
+-- engines cannot receive the same seed. Remove the legacy five-argument
+-- signature so old writers cannot claim without token/lease/fencing semantics.
+DROP FUNCTION IF EXISTS update_informationseed(integer, varchar, varchar, varchar, varchar);
+
 CREATE OR REPLACE FUNCTION update_informationseed(
     limit_val INTEGER,
     p_priority VARCHAR,
     p_engineID VARCHAR,
     p_processing_timeout VARCHAR,
-    p_retry_after VARCHAR
+    p_retry_after VARCHAR,
+    p_lease_duration VARCHAR,
+    p_max_attempts INTEGER,
+    p_claim_token VARCHAR
 )
 RETURNS TABLE(
     information_seed_id BIGINT,
@@ -2943,6 +2960,11 @@ RETURNS TABLE(
     last_error_at TIMESTAMPTZ,
     disabled BOOLEAN,
     attempts INTEGER,
+    claim_token VARCHAR,
+    fencing_token BIGINT,
+    lease_expires_at TIMESTAMPTZ,
+    heartbeat_at TIMESTAMPTZ,
+    next_retry_at TIMESTAMPTZ,
     config JSONB
 ) AS
 $$
@@ -2955,15 +2977,23 @@ BEGIN
     p_engineID := COALESCE(TRIM(p_engineID), '');
     p_processing_timeout := COALESCE(TRIM(p_processing_timeout), '');
     p_retry_after := COALESCE(TRIM(p_retry_after), '');
+    p_lease_duration := COALESCE(TRIM(p_lease_duration), '');
+    p_claim_token := COALESCE(TRIM(p_claim_token), '');
 
     IF p_engineID = '' THEN
         RAISE EXCEPTION 'engine ID is required to claim information seeds';
+    END IF;
+    IF p_claim_token = '' THEN
+        RAISE EXCEPTION 'claim token is required to claim information seeds';
     END IF;
     IF p_processing_timeout = '' THEN
         p_processing_timeout := '30 minutes';
     END IF;
     IF p_retry_after = '' THEN
         p_retry_after := '1 minute';
+    END IF;
+    IF p_lease_duration = '' THEN
+        p_lease_duration := p_processing_timeout;
     END IF;
 
     IF p_priority <> '' THEN
@@ -2980,6 +3010,7 @@ BEGIN
         SELECT seed.information_seed_id
         FROM InformationSeed AS seed
         WHERE COALESCE(seed.disabled, FALSE) = FALSE
+          AND (COALESCE(p_max_attempts, 0) = 0 OR COALESCE(seed.attempts, 0) < p_max_attempts)
           AND (
                 NOT use_priority_filter
                 OR LOWER(TRIM(seed.priority)) = ANY(priority_list)
@@ -2989,19 +3020,41 @@ BEGIN
                 OR (
                     LOWER(TRIM(seed.status)) = 'processing'
                     AND (
-                        seed.last_processed_at IS NULL
-                        OR seed.last_processed_at < NOW() - p_processing_timeout::INTERVAL
+                        (seed.lease_expires_at IS NOT NULL AND seed.lease_expires_at < NOW())
+                        OR (
+                            seed.lease_expires_at IS NULL
+                            AND (
+                                seed.last_processed_at IS NULL
+                                OR seed.last_processed_at < NOW() - p_processing_timeout::INTERVAL
+                            )
+                        )
                     )
                 )
                 OR (
                     LOWER(TRIM(seed.status)) = 'error'
                     AND (
-                        seed.last_error_at IS NULL
-                        OR seed.last_error_at < NOW() - p_retry_after::INTERVAL
+                        (seed.next_retry_at IS NOT NULL AND seed.next_retry_at <= NOW())
+                        OR (
+                            seed.next_retry_at IS NULL
+                            AND (
+                                seed.last_error_at IS NULL
+                                OR seed.last_error_at < NOW() - p_retry_after::INTERVAL
+                            )
+                        )
                     )
                 )
               )
-        ORDER BY seed.created_at ASC, seed.information_seed_id ASC
+        ORDER BY CASE
+                WHEN LOWER(TRIM(seed.status)) IN ('new', 'pending') THEN 0
+                WHEN LOWER(TRIM(seed.status)) = 'processing' THEN 1
+                ELSE 2
+            END ASC,
+            CASE
+                WHEN LOWER(TRIM(seed.status)) = 'error' THEN seed.next_retry_at
+                ELSE seed.created_at
+            END ASC,
+            seed.created_at ASC,
+            seed.information_seed_id ASC
         FOR UPDATE SKIP LOCKED
         LIMIT limit_val
     )
@@ -3009,7 +3062,12 @@ BEGIN
     SET status = 'processing',
         engine = p_engineID,
         last_processed_at = NOW(),
-        attempts = COALESCE(claimed_seed.attempts, 0) + 1
+        attempts = COALESCE(claimed_seed.attempts, 0) + 1,
+        claim_token = p_claim_token,
+        fencing_token = COALESCE(claimed_seed.fencing_token, 0) + 1,
+        lease_expires_at = NOW() + p_lease_duration::INTERVAL,
+        heartbeat_at = NOW(),
+        next_retry_at = NULL
     FROM selected_seeds
     WHERE claimed_seed.information_seed_id = selected_seeds.information_seed_id
     RETURNING claimed_seed.information_seed_id,
@@ -3026,6 +3084,11 @@ BEGIN
               claimed_seed.last_error_at,
               claimed_seed.disabled,
               claimed_seed.attempts,
+              claimed_seed.claim_token,
+              claimed_seed.fencing_token,
+              claimed_seed.lease_expires_at,
+              claimed_seed.heartbeat_at,
+              claimed_seed.next_retry_at,
               claimed_seed.config;
 END;
 $$

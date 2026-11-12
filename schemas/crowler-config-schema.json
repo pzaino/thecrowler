@@ -976,12 +976,52 @@
         },
         "retry_interval": {
           "title": "Information Seed Retry Interval",
-          "description": "Seconds to wait before retrying failed seed discovery work.",
+          "description": "Base delay in seconds before retrying failed seed discovery work. Automatic retries use exponential backoff from this value unless the worker classifies the failure as permanent.",
           "type": "integer",
           "minimum": 1,
           "maximum": 86400,
           "examples": [
             60
+          ]
+        },
+        "retry_backoff_max": {
+          "title": "Information Seed Maximum Retry Backoff",
+          "description": "Upper bound in seconds for exponential automatic retry backoff.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400,
+          "examples": [
+            3600
+          ]
+        },
+        "max_attempts": {
+          "title": "Information Seed Maximum Attempts",
+          "description": "Maximum automatic claim attempts before a seed is marked exhausted. Manual authorized rerun resets the accounting. Values default to 5.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "examples": [
+            5
+          ]
+        },
+        "heartbeat_interval": {
+          "title": "Information Seed Claim Heartbeat Interval",
+          "description": "Seconds between live claim lease heartbeats. Must be shorter than lease_duration.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 300,
+          "examples": [
+            20
+          ]
+        },
+        "lease_duration": {
+          "title": "Information Seed Claim Lease Duration",
+          "description": "Seconds after the last heartbeat before a processing seed becomes reclaimable by another worker.",
+          "type": "integer",
+          "minimum": 30,
+          "maximum": 3600,
+          "examples": [
+            120
           ]
         },
         "processing_timeout": {
@@ -1002,7 +1042,34 @@
             "properties": {
               "provider": {
                 "type": "string",
-                "description": "Provider identifier."
+                "description": "Provider identifier. Use gdelt_doc for the GDELT DOC 2.0 article-list adapter."
+              },
+              "transport": {
+                "type": "string",
+                "enum": ["http", "webdriver"],
+                "description": "Provider transport. Defaults to http; webdriver must be selected explicitly."
+              },
+              "browser": {
+                "type": "object",
+                "description": "Bounded non-privileged browser settings used only by the webdriver transport.",
+                "properties": {
+                  "vdi_allow_list": { "type": "array", "items": { "type": "string" } },
+                  "navigation_timeout": { "type": "integer", "minimum": 1, "maximum": 300 },
+                  "page_readiness_timeout": { "type": "integer", "minimum": 1, "maximum": 60 },
+                  "hbs_enabled": { "type": "boolean" },
+                  "selenium_fallback": { "type": "boolean" },
+                  "initial_actions": { "type": "array", "items": { "type": "string" } },
+                  "consent_actions": { "type": "array", "items": { "type": "string" } },
+                  "query_actions": { "type": "array", "items": { "type": "string" } },
+                  "pagination_actions": { "type": "array", "items": { "type": "string" } },
+                  "scraping_rules": { "type": "array", "items": { "type": "string" } },
+                  "allowed_navigation_hosts": { "type": "array", "items": { "type": "string" } },
+                  "max_pages": { "type": "integer", "minimum": 1, "maximum": 10 },
+                  "max_requests": { "type": "integer", "minimum": 1, "maximum": 100 },
+                  "max_candidates": { "type": "integer", "minimum": 1, "maximum": 1000 },
+                  "screenshot_on_error": { "type": "boolean" }
+                },
+                "additionalProperties": false
               },
               "host": {
                 "type": "string",
@@ -1101,6 +1168,20 @@
           "items": {
             "type": "string"
           }
+        },
+        "retention": {
+          "title": "Information Seed Retention",
+          "description": "Opt-in terminal seed retention. Deletion is disabled by default and never removes new, pending, actively leased processing, or retry-eligible error seeds.",
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean", "default": false },
+            "completed_days": { "type": "integer", "minimum": 1, "maximum": 3650, "default": 30 },
+            "disabled_days": { "type": "integer", "minimum": 1, "maximum": 3650, "default": 30 },
+            "exhausted_days": { "type": "integer", "minimum": 1, "maximum": 3650, "default": 90 },
+            "batch_size": { "type": "integer", "minimum": 1, "maximum": 1000, "default": 100 },
+            "dry_run": { "type": "boolean", "default": false }
+          },
+          "additionalProperties": false
         },
         "plugin_limits": {
           "title": "Information Seed Plugin Limits",

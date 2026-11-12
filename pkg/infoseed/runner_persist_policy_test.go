@@ -1,10 +1,13 @@
 package infoseed
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
@@ -12,7 +15,6 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-/*
 func TestPersistCandidatesExistingURLLinksByDefaultWithoutOverwritingFields(t *testing.T) {
 	handler := newPersistPolicyTestDB(t)
 	existingID := insertPersistPolicySource(t, handler, "https://example.test/", "existing", "high", `{"version":"old"}`)
@@ -28,9 +30,7 @@ func TestPersistCandidatesExistingURLLinksByDefaultWithoutOverwritingFields(t *t
 	assertPersistPolicySource(t, handler, existingID, "existing", "high", `{"version":"old"}`)
 	assertPersistPolicyLinks(t, handler, existingID, 1)
 }
-*/
 
-/*
 func TestPersistCandidatesCreateSourcesFalseOnlyLinksExistingSources(t *testing.T) {
 	handler := newPersistPolicyTestDB(t)
 	existingID := insertPersistPolicySource(t, handler, "https://existing.test/", "existing", "medium", `{}`)
@@ -50,9 +50,7 @@ func TestPersistCandidatesCreateSourcesFalseOnlyLinksExistingSources(t *testing.
 	assertPersistPolicySourceCount(t, handler, 1)
 	assertPersistPolicyLinks(t, handler, existingID, 1)
 }
-*/
 
-/*
 func TestPersistCandidatesLinkExistingSourcesFalseSkipsExistingLinks(t *testing.T) {
 	handler := newPersistPolicyTestDB(t)
 	existingID := insertPersistPolicySource(t, handler, "https://existing.test/", "existing", "medium", `{}`)
@@ -72,13 +70,12 @@ func TestPersistCandidatesLinkExistingSourcesFalseSkipsExistingLinks(t *testing.
 	assertPersistPolicyLinks(t, handler, existingID, 0)
 	assertPersistPolicySourceCount(t, handler, 2)
 }
-*/
 
-/*
 func TestPersistCandidatesExistingConfigOverrideAndNoOverwritePolicy(t *testing.T) {
 	handler := newPersistPolicyTestDB(t)
 	existingID := insertPersistPolicySource(t, handler, "https://example.test/", "existing", "high", `{"version":"old"}`)
 	runCfg := defaultSeedRunConfig()
+	runCfg.UpdateExistingSourceConfig = true
 	runCfg.SourcePriority = "low"
 	runCfg.SourceConfig = rawSourceConfig(t, "seed-config", "https://example.test/")
 
@@ -94,9 +91,7 @@ func TestPersistCandidatesExistingConfigOverrideAndNoOverwritePolicy(t *testing.
 	}
 	assertPersistPolicySource(t, handler, existingID, "existing", "high", rawSourceConfigString(t, "seed-config", "https://example.test/"))
 }
-*/
 
-/*
 func TestPersistCandidatesLinkIdempotency(t *testing.T) {
 	handler := newPersistPolicyTestDB(t)
 	existingID := insertPersistPolicySource(t, handler, "https://example.test/", "existing", "medium", `{}`)
@@ -110,14 +105,13 @@ func TestPersistCandidatesLinkIdempotency(t *testing.T) {
 	}
 	assertPersistPolicyLinks(t, handler, existingID, 1)
 }
-*/
 
 func TestParseSeedRunConfigPolicyDefaults(t *testing.T) {
 	runCfg, err := parseSeedRunConfig(cdb.InformationSeed{})
 	if err != nil {
 		t.Fatalf("parse empty config: %v", err)
 	}
-	if !runCfg.CreateSources || !runCfg.LinkExistingSources || !runCfg.UpdateExistingSourceConfig || runCfg.Disabled || runCfg.Status != "new" {
+	if !runCfg.CreateSources || !runCfg.LinkExistingSources || runCfg.UpdateExistingSourceConfig || runCfg.Disabled || runCfg.Status != "new" {
 		t.Fatalf("unexpected policy defaults: %#v", runCfg)
 	}
 
@@ -142,11 +136,53 @@ func newPersistPolicyTestDB(t *testing.T) *cdb.Handler {
 	if err := handlerValue.Connect(dbConfig); err != nil {
 		t.Fatalf("connect sqlite handler: %v", err)
 	}
-	if err := handlerValue.Connect(dbConfig); err != nil {
-		t.Fatalf("init sqlite schema: %v", err)
-	}
 	t.Cleanup(func() { _ = handlerValue.Close() })
 	handler := cdb.Handler(handlerValue)
+	if _, err := handler.Exec(`
+		CREATE TABLE Sources (
+			source_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			source_uid VARCHAR(64) NOT NULL,
+			url TEXT NOT NULL UNIQUE,
+			name VARCHAR(255),
+			priority VARCHAR(64) DEFAULT '' NOT NULL,
+			sub_priority INTEGER DEFAULT 0 NOT NULL,
+			category_id INTEGER DEFAULT 0 NOT NULL,
+			usr_id INTEGER DEFAULT 0 NOT NULL,
+			restricted INTEGER DEFAULT 2 NOT NULL,
+			flags INTEGER DEFAULT 0 NOT NULL,
+			config TEXT,
+			disabled BOOLEAN DEFAULT FALSE,
+			status VARCHAR(50) DEFAULT 'new' NOT NULL,
+			last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			deleted_at TIMESTAMP
+		);
+		CREATE TABLE SourceOwnership (
+			source_id INTEGER PRIMARY KEY,
+			user_id INTEGER NOT NULL,
+			verified_at TIMESTAMP NOT NULL,
+			verified_by_user_id INTEGER NOT NULL,
+			verified_by TEXT NOT NULL,
+			verification_method TEXT NOT NULL,
+			verification_reason TEXT,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
+		);
+		CREATE TABLE SourceInformationSeedIndex (
+			source_information_seed_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			source_id INTEGER NOT NULL,
+			information_seed_id INTEGER NOT NULL,
+			discovery_provider VARCHAR(255),
+			discovery_query TEXT,
+			discovery_rank INTEGER,
+			candidate_score REAL,
+			candidate_reason TEXT,
+			discovery_metadata TEXT,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE (source_id, information_seed_id)
+		);`); err != nil {
+		t.Fatalf("create policy test schema: %v", err)
+	}
 	return &handler
 }
 
@@ -157,14 +193,18 @@ func persistPolicySeed() cdb.InformationSeed {
 func insertPersistPolicySource(t *testing.T, handler *cdb.Handler, sourceURL, name, priority, config string) uint64 {
 	t.Helper()
 	result, err := (*handler).Exec(`
-		INSERT INTO Sources (url, name, priority, category_id, usr_id, restricted, flags, config, disabled, status)
-		VALUES (?, ?, ?, 99, 98, 5, 6, ?, FALSE, 'new')`, sourceURL, name, priority, config)
+		INSERT INTO Sources (source_uid, url, name, priority, category_id, usr_id, restricted, flags, config, disabled, status)
+		VALUES (?, ?, ?, ?, 99, 11, 5, 6, ?, FALSE, 'new')`, cdb.CalculateSourceUID(name, sourceURL), sourceURL, name, priority, config)
 	if err != nil {
 		t.Fatalf("insert source %s: %v", sourceURL, err)
 	}
 	id, err := result.LastInsertId()
 	if err != nil {
 		t.Fatalf("source insert id: %v", err)
+	}
+	if _, err := (*handler).Exec(`INSERT INTO SourceOwnership (source_id, user_id, verified_at, verified_by_user_id, verified_by, verification_method)
+		VALUES (?, 11, CURRENT_TIMESTAMP, 11, 'test', 'admin_verification')`, id); err != nil {
+		t.Fatalf("insert source ownership: %v", err)
 	}
 	return uint64(id)
 }
@@ -250,4 +290,37 @@ func assertJSONEqual(t *testing.T, got, want string) {
 
 func jsonValuesEqual(a, b interface{}) bool {
 	return reflect.DeepEqual(a, b)
+}
+
+func TestInformationSeedRetryDelayIsBoundedExponential(t *testing.T) {
+	base := time.Minute
+	max := 10 * time.Minute
+	for _, test := range []struct {
+		attempts int
+		want     time.Duration
+	}{
+		{attempts: 1, want: time.Minute},
+		{attempts: 2, want: 2 * time.Minute},
+		{attempts: 3, want: 4 * time.Minute},
+		{attempts: 4, want: 8 * time.Minute},
+		{attempts: 5, want: max},
+		{attempts: 20, want: max},
+	} {
+		if got := informationSeedRetryDelay(test.attempts, base, max); got != test.want {
+			t.Fatalf("retry delay attempts=%d = %v, want %v", test.attempts, got, test.want)
+		}
+	}
+}
+
+func TestPersistCandidatesRejectsCrossOwnerSourceLink(t *testing.T) {
+	handler := newPersistPolicyTestDB(t)
+	existingID := insertPersistPolicySource(t, handler, "https://other-owner.test/", "other", "high", `{}`)
+	if _, err := (*handler).Exec(`UPDATE Sources SET usr_id = 8 WHERE source_id = ?`, existingID); err != nil {
+		t.Fatalf("change source owner: %v", err)
+	}
+	_, err := (&Runner{DB: handler}).persistCandidates(context.Background(), persistPolicySeed(), defaultSeedRunConfig(), []Candidate{{URL: "https://other-owner.test/", Host: "other-owner.test", Title: "other"}}, nil)
+	if !errors.Is(err, cdb.ErrSourceMutationForbidden) {
+		t.Fatalf("cross-owner persistence error = %v, want forbidden", err)
+	}
+	assertPersistPolicyLinks(t, handler, existingID, 0)
 }

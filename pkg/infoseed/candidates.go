@@ -5,6 +5,7 @@ package infoseed
 
 import (
 	"encoding/json"
+	"math"
 	"net"
 	"net/url"
 	"sort"
@@ -16,6 +17,7 @@ type Candidate struct {
 	URL             string                 `json:"url"`
 	Host            string                 `json:"host"`
 	Title           string                 `json:"title"`
+	Snippet         string                 `json:"snippet,omitempty"`
 	Provider        string                 `json:"provider"`
 	Query           string                 `json:"query"`
 	Rank            int                    `json:"rank"`
@@ -85,6 +87,45 @@ type CandidateFilters struct {
 type CandidateFilterResult struct {
 	Candidates []Candidate
 	Rejected   map[string]int
+}
+
+// sortCandidatesDeterministically applies one stable total order before
+// de-duplication and order-dependent caps. Provider goroutine completion order
+// must never decide which candidates survive.
+func sortCandidatesDeterministically(candidates []Candidate) {
+	scoreKey := func(value float64) float64 {
+		if math.IsNaN(value) {
+			return math.Inf(-1)
+		}
+		return value
+	}
+	rankKey := func(rank int) int {
+		if rank > 0 {
+			return rank
+		}
+		return int(^uint(0) >> 1)
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		left, right := candidates[i], candidates[j]
+		if scoreKey(left.Score) != scoreKey(right.Score) {
+			return scoreKey(left.Score) > scoreKey(right.Score)
+		}
+		if rankKey(left.Rank) != rankKey(right.Rank) {
+			return rankKey(left.Rank) < rankKey(right.Rank)
+		}
+		if left.Provider != right.Provider {
+			return left.Provider < right.Provider
+		}
+		if left.Query != right.Query {
+			return left.Query < right.Query
+		}
+		leftURL := strings.TrimSpace(left.URL)
+		rightURL := strings.TrimSpace(right.URL)
+		if leftURL != rightURL {
+			return leftURL < rightURL
+		}
+		return left.Title < right.Title
+	})
 }
 
 // NormalizeURL canonicalizes a URL for source creation and de-duplication.

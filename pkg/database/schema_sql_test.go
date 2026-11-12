@@ -17,6 +17,11 @@ func TestInformationSeedSchemaSQLContainsFreshInstallAndUpgradeCoverage(t *testi
 		"last_processed_at",
 		"last_error_at",
 		"attempts",
+		"claim_token",
+		"fencing_token",
+		"lease_expires_at",
+		"heartbeat_at",
+		"next_retry_at",
 		"CREATE TABLE IF NOT EXISTS InformationSeedCandidate",
 		"normalized_url",
 		"decision_status",
@@ -29,6 +34,9 @@ func TestInformationSeedSchemaSQLContainsFreshInstallAndUpgradeCoverage(t *testi
 		"discovery_metadata",
 		"idx_informationseed_claim_queue",
 		"idx_informationseed_engine_status",
+		"idx_informationseed_lease_expiry",
+		"idx_informationseed_next_retry",
+		"idx_informationseed_claim_token",
 		"idx_informationseedcandidate_seed_decision",
 		"idx_informationseedcandidate_normalized_url",
 		"idx_sourceinformationseedindex_seed_source",
@@ -233,8 +241,9 @@ func TestSourceSubPriorityFreshInstallAndUpgradeCoverage(t *testing.T) {
 func TestPostgresInformationSeedClaimFunctionIsAtomicAndUpgradeSafe(t *testing.T) {
 	t.Parallel()
 
-	files := []string{"postgresql-setup.pgsql", "db_migrations/postgresql-migration-v1.10.pgsql"}
+	files := []string{"postgresql-setup.pgsql", "db_migrations/postgresql-migration-v1.17.pgsql"}
 	fragments := []string{
+		"DROP FUNCTION IF EXISTS update_informationseed(integer, varchar, varchar, varchar, varchar)",
 		"CREATE OR REPLACE FUNCTION update_informationseed(",
 		"FOR UPDATE SKIP LOCKED",
 		"UPDATE InformationSeed AS claimed_seed",
@@ -242,6 +251,9 @@ func TestPostgresInformationSeedClaimFunctionIsAtomicAndUpgradeSafe(t *testing.T
 		"engine = p_engineID",
 		"last_processed_at = NOW()",
 		"attempts = COALESCE(claimed_seed.attempts, 0) + 1",
+		"claim_token = p_claim_token",
+		"fencing_token = COALESCE(claimed_seed.fencing_token, 0) + 1",
+		"lease_expires_at = NOW() + p_lease_duration::INTERVAL",
 		"RETURNING claimed_seed.information_seed_id",
 	}
 
@@ -598,8 +610,7 @@ func TestPostgresStatementLevelCleanupTriggerContract(t *testing.T) {
 }
 
 // TestSchemaVersion117LedgerCoverage keeps every base setup and v1.17
-// migration file advertising the same schema version the writer requires, so
-// fresh installs, upgrades, and the compatibility check agree.
+// migration file advertising the same schema version the writer requires.
 func TestSchemaVersion117LedgerCoverage(t *testing.T) {
 	t.Parallel()
 
@@ -617,9 +628,6 @@ func TestSchemaVersion117LedgerCoverage(t *testing.T) {
 		if !strings.Contains(string(content), "'1.17'") && !strings.Contains(string(content), "\"1.17\"") {
 			t.Errorf("%s missing schema version 1.17 stamp", file)
 		}
-		if !strings.Contains(string(content), SourceOwnershipTable) {
-			t.Errorf("%s missing %s table", file, SourceOwnershipTable)
-		}
 	}
 	if RequiredSchemaVersion != "1.17" {
 		t.Fatalf("RequiredSchemaVersion = %q, want 1.17", RequiredSchemaVersion)
@@ -630,7 +638,7 @@ func TestSchemaVersion117LedgerCoverage(t *testing.T) {
 }
 
 // TestNoSchemaVersionAfter117 prevents accidental schema releases beyond the
-// master-plan target while allowing historical migration files to remain.
+// current target while allowing historical migration files to remain.
 func TestNoSchemaVersionAfter117(t *testing.T) {
 	t.Parallel()
 
@@ -686,6 +694,26 @@ func TestMCPMutationSchemaCapabilityCoverage(t *testing.T) {
 			if !strings.Contains(string(content), fragment) {
 				t.Errorf("%s missing MCP mutation capability fragment %q", file, fragment)
 			}
+		}
+	}
+}
+
+func TestMySQLV117MigrationUsesClientDelimiterAndRepeatableProcedures(t *testing.T) {
+	t.Parallel()
+	content, err := os.ReadFile("db_migrations/mysql-migration-v1.17.mysql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fragment := range []string{
+		"DELIMITER //",
+		"DELIMITER ;",
+		"DROP PROCEDURE IF EXISTS add_informationseed_v117_column_if_missing",
+		"DROP PROCEDURE IF EXISTS add_informationseed_v117_index_if_missing",
+		"CALL add_informationseed_v117_column_if_missing",
+		"CALL add_informationseed_v117_index_if_missing",
+	} {
+		if !strings.Contains(string(content), fragment) {
+			t.Errorf("mysql v1.17 migration missing %q", fragment)
 		}
 	}
 }

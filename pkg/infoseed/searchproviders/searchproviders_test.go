@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -127,6 +128,8 @@ func TestNewProviderSelectsNativeAdaptersAndPreservesGenericJSON(t *testing.T) {
 		{name: "rss_feed", wantProvider: "*searchproviders.RSSFeedProvider"},
 		{name: "custom_atom", provider: "atom", wantProvider: "*searchproviders.RSSFeedProvider"},
 		{name: "common_crawl_index", wantProvider: "*searchproviders.CommonCrawlIndexProvider"},
+		{name: "gdelt_doc", wantProvider: "*searchproviders.GDELTDOCProvider"},
+		{name: "custom_gdelt", provider: "gdelt", wantProvider: "*searchproviders.GDELTDOCProvider"},
 		{name: "custom_json", provider: "http_json", wantProvider: "*searchproviders.JSONProvider"},
 		{name: "legacy_adapter", provider: "unknown", wantProvider: "*searchproviders.JSONProvider"},
 	}
@@ -930,5 +933,116 @@ func TestJSONProviderFakeInformationSeedCandidatesFixture(t *testing.T) {
 		if results[idx].Rank != idx+1 {
 			t.Fatalf("result %d rank = %d, want %d", idx, results[idx].Rank, idx+1)
 		}
+	}
+}
+
+func TestGDELTDOCProviderUsesDOCContractAndParsesArticles(t *testing.T) {
+	var requestQuery url.Values
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(mustReadFixture(t, "gdelt_doc_success.json"))
+	}))
+	t.Cleanup(server.Close)
+
+	provider := NewProvider("gdelt_doc", "gdelt_doc")
+	results, err := provider.Search(context.Background(), "renewable energy", Options{
+		Host: server.URL, Endpoint: "/api/v2/doc/doc", Timeout: time.Second, MaxRequests: 1, PageSize: 2, MaxPages: 1,
+		Parameters: map[string]string{"sort": "datedesc"},
+	})
+	if err != nil {
+		t.Fatalf("GDELT search: %v", err)
+	}
+	if len(results) != 2 || results[0].URL != "https://example.test/article-one" || results[0].Title != "Example GDELT article one" || results[1].Rank != 2 {
+		t.Fatalf("unexpected GDELT results: %#v", results)
+	}
+	if requestQuery.Get("query") != "renewable energy" || requestQuery.Get("mode") != "artlist" || requestQuery.Get("format") != "json" || requestQuery.Get("maxrecords") != "2" || requestQuery.Get("sort") != "datedesc" {
+		t.Fatalf("unexpected GDELT query: %v", requestQuery)
+	}
+	for _, forbidden := range []string{"q", "page", "page_size"} {
+		if requestQuery.Has(forbidden) {
+			t.Fatalf("GDELT request used unsupported generic parameter %q", forbidden)
+		}
+	}
+	if results[0].Metadata["provider"] != ProviderGDELTDOC || results[0].Metadata["domain"] != "example.test" {
+		t.Fatalf("unexpected GDELT metadata: %#v", results[0].Metadata)
+	}
+}
+
+func TestGDELTDOCProviderRejectsMalformedAndMissingArticles(t *testing.T) {
+	for _, fixture := range []string{"gdelt_doc_malformed.json", "gdelt_doc_missing_articles.json"} {
+		t.Run(fixture, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write(mustReadFixture(t, fixture))
+			}))
+			t.Cleanup(server.Close)
+			provider := &GDELTDOCProvider{ProviderName: ProviderGDELTDOC, Client: server.Client()}
+			_, err := provider.Search(context.Background(), "query", Options{Host: server.URL, Endpoint: "/api/v2/doc/doc", Timeout: time.Second, MaxRequests: 1, PageSize: 1, MaxPages: 1})
+			if err == nil || !strings.Contains(err.Error(), "gdelt_doc") {
+				t.Fatalf("expected GDELT parse error, got %v", err)
+			}
+		})
+	}
+}
+
+func TestProviderRateLimitWaitDoesNotConsumeHTTPTimeout(t *testing.T) {
+	rateLimitersMu.Lock()
+	delete(rateLimiters, ProviderRSSFeed+"\x00"+"200ms")
+	rateLimitersMu.Unlock()
+	t.Cleanup(func() {
+		rateLimitersMu.Lock()
+		delete(rateLimiters, ProviderRSSFeed+"\x00"+"200ms")
+		rateLimitersMu.Unlock()
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/rss+xml")
+		_, _ = w.Write(mustReadFixture(t, "rss_empty.xml"))
+	}))
+	t.Cleanup(server.Close)
+
+	provider := &RSSFeedProvider{ProviderName: ProviderRSSFeed}
+	_, err := provider.Search(context.Background(), "anything", Options{
+		Parameters:  map[string]string{"feed_urls": server.URL + "/one.xml," + server.URL + "/two.xml"},
+		Timeout:     50 * time.Millisecond,
+		RateLimit:   "200ms",
+		MaxRequests: 2,
+	})
+	if err != nil {
+		t.Fatalf("rate-limited request consumed HTTP timeout: %v", err)
+	}
+}
+
+func TestGenericJSONFallbackRecognizesArticles(t *testing.T) {
+	results, err := parseResults(mustReadFixture(t, "gdelt_doc_success.json"))
+	if err != nil {
+		t.Fatalf("parse generic articles: %v", err)
+	}
+	if len(results) != 2 || results[0].URL != "https://example.test/article-one" {
+		t.Fatalf("unexpected generic articles results: %#v", results)
+	}
+}
+
+func TestProviderStatusErrorClassification(t *testing.T) {
+	tests := []struct {
+		status    int
+		class     string
+		retryable bool
+	}{
+		{status: http.StatusUnauthorized, class: "authentication"},
+		{status: http.StatusForbidden, class: "forbidden"},
+		{status: http.StatusNotFound, class: "not_found"},
+		{status: http.StatusTooManyRequests, class: "rate_limited", retryable: true},
+		{status: http.StatusBadGateway, class: "server_error", retryable: true},
+		{status: http.StatusGatewayTimeout, class: "server_error", retryable: true},
+	}
+	for _, test := range tests {
+		class, status, retryable := ClassifyProviderError(providerStatusError("p", test.status, nil))
+		if class != test.class || status != test.status || retryable != test.retryable {
+			t.Fatalf("status %d classified as class=%q status=%d retryable=%t", test.status, class, status, retryable)
+		}
+	}
+	class, _, retryable := ClassifyProviderError(context.DeadlineExceeded)
+	if class != "timeout" || !retryable {
+		t.Fatalf("deadline classified as %q retryable=%t", class, retryable)
 	}
 }

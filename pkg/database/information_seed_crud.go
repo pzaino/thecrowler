@@ -170,7 +170,12 @@ func SetInformationSeedDisabledContext(ctx context.Context, db *Handler, id uint
 		return fmt.Errorf("no information seed found with ID %d: %w", id, err)
 	}
 	p = newInformationSeedPlaceholders(dbms)
-	if _, err = tx.ExecContext(ctx, `UPDATE InformationSeed SET disabled = `+p.Next()+` WHERE information_seed_id = `+p.Next(), disabled, id); err != nil {
+	updateQuery := `UPDATE InformationSeed SET disabled = ` + p.Next()
+	if disabled {
+		updateQuery += `, claim_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL`
+	}
+	updateQuery += ` WHERE information_seed_id = ` + p.Next()
+	if _, err = tx.ExecContext(ctx, updateQuery, disabled, id); err != nil {
 		return fmt.Errorf("failed to update information seed %d disabled flag: %w", id, err)
 	}
 	seed, err := getInformationSeedByIDTxContext(ctx, tx, dbms, id)
@@ -272,7 +277,9 @@ func UpdateInformationSeedContext(ctx context.Context, db *Handler, seed *Inform
 	if dbms == DBPostgresStr {
 		query += `::jsonb`
 	}
-	query += `, last_updated_at = CURRENT_TIMESTAMP WHERE information_seed_id = ` + p.Next()
+	// A generic metadata/status update revokes any live worker claim. Worker
+	// transitions must use the fenced status API instead.
+	query += `, claim_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL, fencing_token = COALESCE(fencing_token, 0) + 1, last_updated_at = CURRENT_TIMESTAMP WHERE information_seed_id = ` + p.Next()
 	result, err := tx.ExecContext(ctx, query, seed.CategoryID, seed.UsrID, seedText, status, priority, engine, seed.Disabled, config, seed.ID)
 	if err != nil {
 		return fmt.Errorf("failed to update information seed %d: %w", seed.ID, err)
@@ -317,7 +324,7 @@ func RemoveInformationSeedContext(ctx context.Context, db *Handler, id uint64) e
 	query := `DELETE FROM InformationSeed WHERE information_seed_id = ` + p.Next()
 	if hasDeletedAt {
 		p = newInformationSeedPlaceholders(dbms)
-		query = `UPDATE InformationSeed SET deleted_at = CURRENT_TIMESTAMP, disabled = ` + p.Next() + ` WHERE information_seed_id = ` + p.Next()
+		query = `UPDATE InformationSeed SET deleted_at = CURRENT_TIMESTAMP, disabled = ` + p.Next() + `, claim_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL, fencing_token = COALESCE(fencing_token, 0) + 1 WHERE information_seed_id = ` + p.Next()
 	}
 	var result sql.Result
 	if hasDeletedAt {

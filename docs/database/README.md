@@ -52,4 +52,5 @@ or query mechanics should remain behind the abstractions exposed by `pkg/databas
   bounded transactions (`transaction_timeout`), `ObjectAttributes` autovacuum
   tuning, and statement-level artifact cleanup triggers.
 - `docs/database/database_architecture.md` — current schema v1.17, durable crawl
-  approvals and verified source-ownership provenance.
+  approvals, verified source-ownership provenance, and Information Seed claim
+  leases/fencing/retry metadata.

@@ -186,9 +186,9 @@ support); MySQL/MariaDB previously had no cleanup triggers and are unchanged.
 
 ## Schema version 1.16 and upgrade procedure
 
-> Schema 1.17 is the current runtime contract for the agentic plan. This
-> section documents the historical 1.16 hardening; use the v1.17 migration and
-> runtime constants for current deployments.
+> Schema 1.17 is the current runtime contract. This section documents the
+> historical 1.16 hardening; use migrations through v1.17 and the current
+> runtime constants for deployments.
 
 - At the time of this hardening, `RequiredSchemaVersion` was `1.16`; writers
   continue to refuse any incompatible current version at startup
@@ -216,8 +216,9 @@ statement-level `pg_trigger` shape, version stamp) and
 `TestPostgresCurrentVersionUniquenessAndCardinalityPermissions`.
 Static contracts live in `schema_sql_test.go`. Current CI applies the v1.17
 migration twice (fresh + repeat), verifies the runtime compatibility contract,
-and then runs the integration suite. The v1.16 migration remains the historical
-record of the autovacuum and cleanup-trigger hardening.
+and then runs the integration suite. The v1.16/v1.17 migrations remain the
+historical record of autovacuum, cleanup-trigger, ownership and approval
+hardening.
 
 Timeout classification and phase diagnostics are covered by unit tests that do
 not require a database: `TestNormalizeTransactionError`,

@@ -262,6 +262,7 @@ jobs:
             --dbname crowler_v117 \
             --file pkg/database/db_migrations/postgresql-migration-v1.17.pgsql
 
+
           # Exercise the real runtime compatibility check and API handlers
           # against the migrated database, not only SQL queries.
           THECROWLER_POSTGRES_INTEGRATION=1 DOCKER_POSTGRES_DB_NAME=crowler_v117 \

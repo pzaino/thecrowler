@@ -18,7 +18,6 @@ package database
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
@@ -80,17 +79,11 @@ func CreateSourceContext(ctx context.Context, db *Handler, source *Source, confi
 		return 0, fmt.Errorf("source is nil")
 	}
 
-	// Validate source config
-	if !config.IsEmpty() {
-		if err := validateSourceConfig(config); err != nil {
-			return 0, fmt.Errorf("invalid source configuration: %v", err)
-		}
-	}
-
-	// Marshal config JSON
-	details, err := json.Marshal(config)
+	// A zero-value SourceConfig marshals to a non-empty object because several
+	// fields are intentionally not omitempty. Treat it as absent instead.
+	details, _, err := sourceConfigJSON(config)
 	if err != nil {
-		return 0, fmt.Errorf("failed to marshal source configuration: %v", err)
+		return 0, err
 	}
 
 	prepared := preparedSourceInsert{

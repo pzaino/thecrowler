@@ -17,7 +17,8 @@ path for direct SQL inserts.
 | `pending` | A seed is intentionally queued for discovery or re-discovery, but has not yet been claimed. Use this when a caller wants to request a rerun without implying the row has never been processed. |
 | `processing` | A worker has claimed the seed and is currently collecting candidates, validating them, and linking accepted sources. |
 | `completed` | Processing finished without a lifecycle-blocking error. This includes successful discovery, no-op reruns, and exhausted searches that produce no accepted links. |
-| `error` | Processing ended with a lifecycle-blocking provider or plugin/runtime error and should be retried only after the configured retry delay. |
+| `error` | Processing ended with a retryable provider/plugin/runtime error. The row becomes eligible again at `next_retry_at` or after the configured retry delay. |
+| `exhausted` | Automatic retries stopped because `max_attempts` was reached or provider failures were classified permanent (for example 403/404). Automatic claims stop until an authorized manual retry/rerun resets the accounting. |
 | `disabled` | A legacy/manual status value excluded from claims. Current disable/enable API operations use the separate `disabled` boolean and do not normally write this status. |
 
 The boolean `disabled` flag is independent of `status` and is the authoritative
@@ -37,22 +38,28 @@ stateDiagram-v2
     new --> processing: polled claim
     pending --> processing: polled claim
     processing --> completed: run finishes
-    processing --> error: lifecycle-blocking error
-    processing --> processing: stale processing row reclaimed
-    error --> processing: retry delay elapsed and row reclaimed
+    processing --> error: retryable failure
+    processing --> pending: shutdown cancellation release
+    processing --> processing: expired lease reclaimed
+    error --> processing: backoff elapsed and row reclaimed
+    error --> exhausted: attempt ceiling or permanent failure
     completed --> pending: explicit rerun request
     error --> pending: explicit retry/rerun request
+    exhausted --> pending: explicit retry/rerun request
 ```
 
 Additional rules:
 
 - `new` and `pending` are always eligible to be claimed when `disabled = false`.
-- `processing` is eligible only when it is stale: `last_processed_at` is `NULL` or
-  older than the configured `processingTimeout`.
-- `error` is eligible only when `last_error_at` is `NULL` or older than the
-  configured retry delay.
-- `completed` is terminal for automatic polling. The rerun API moves it to
-  `pending`.
+- `processing` is eligible only when its lease has expired (`lease_expires_at`
+  is older than now). Pre-migration rows without a lease fall back to the
+  `processingTimeout`/`last_processed_at` rule.
+- `error` is eligible only when `next_retry_at` has elapsed (or, for legacy rows,
+  `last_error_at` is `NULL` or older than the retry delay).
+- `completed` and `exhausted` are terminal for automatic polling. The rerun API
+  moves them to `pending` and resets automatic attempt accounting.
+- New and pending rows are ordered ahead of stale-processing reclaims and error
+  retries so old failures cannot monopolize every claim slot.
 - `disabled = true` excludes every status from claims. Re-enabling without
   `queue_pending` preserves the existing status; re-enabling with
   `queue_pending: true` writes `pending` and wakes the scheduler.
@@ -63,9 +70,12 @@ Additional rules:
 
 | Column | Set when | Meaning |
 | --- | --- | --- |
-| `last_processed_at` | On every successful claim into `processing`; optionally updated again when the worker writes the final status. | The most recent time a worker began processing this seed. It is the stale-processing clock used to reclaim abandoned `processing` rows. It should not be used as proof that discovery completed successfully. |
-| `last_error_at` | When a status update includes non-empty error text. | The retry-backoff clock for `error` seeds. A successful `completed` update and an explicit rerun to `pending` clear it together with `last_error`. |
-| `last_updated_at` | On any update to the seed row, either by DB-managed update timestamp behavior or by the application update statement. | The general audit timestamp for row mutation. It is not the claim, retry, or stale-processing clock. |
+| `last_processed_at` | On every successful claim into `processing`; optionally updated again when the worker writes the final status. | The most recent time a worker began processing this seed. It is the legacy stale-processing clock; new claims use `lease_expires_at`. |
+| `claim_token` / `fencing_token` | Atomically on claim. | Per-claim ownership token and monotonically increasing generation. Heartbeats, terminal writes and release operations must match both; a reclaimed claim increments the generation so stale workers cannot finalize. |
+| `heartbeat_at` / `lease_expires_at` | On claim and every successful heartbeat. | A live worker extends the lease; a crashed worker becomes reclaimable after `lease_duration`, independently of `processing_timeout`. |
+| `last_error_at` | When a status update includes non-empty error text. | The legacy retry-backoff clock and audit time for the latest error. |
+| `next_retry_at` | When a worker records a retryable error. | Earliest automatic retry time after bounded exponential backoff. Manual rerun clears it. |
+| `last_updated_at` | On any update to the seed row, either by DB-managed update timestamp behavior or by the application update statement. | The general audit timestamp and retention cutoff. It is not the claim or retry clock. |
 
 `UpdateInformationSeedStatus` writes `last_processed_at` on every status update.
 It sets both error fields when given non-empty error text and clears both when
@@ -76,8 +86,9 @@ reset prior error state.
 
 - `attempts` counts claim attempts, not only failed attempts. It is incremented
   when a row is claimed as `processing`, including initial runs, retries of
-  `error` rows, and stale `processing` reclaims. It provides operational history
-  and can be used by workers or operators to apply maximum-attempt policies.
+  `error` rows, and stale lease reclaims. A seed that reaches `max_attempts`, or
+  whose provider failures are all classified permanent, is marked `exhausted`;
+  authorized manual rerun resets the counter to zero.
 - `engine` stores the identifier of the worker that most recently claimed the
   row. This is used for observability and to select rows claimed in a DBMS branch
   that cannot return changed rows directly. It should be overwritten on each new
@@ -86,11 +97,13 @@ reset prior error state.
   lifecycle-blocking error. It should include enough context to distinguish
   provider failure, plugin rejection/timeout, validation error, or persistence
   failure, but should avoid unbounded logs or secrets.
-- `priority` is a caller-defined scheduling hint. Claims remain FIFO by
-  `created_at` and `information_seed_id` within the selected priority set. The
-  root `crowler-engine` forwards `crawler.source_priority` to its Information
-  Seed scheduler, so a priority-specialized replica claims only matching seeds;
-  an empty priority continues to claim every eligible seed.
+- `priority` is a caller-defined scheduling hint. Claims prioritize `new` and
+  `pending` rows, then expired processing leases, then retry-eligible errors;
+  ties are broken deterministically by retry time/creation time and
+  `information_seed_id` within the selected priority set. The root
+  `crowler-engine` forwards `crawler.source_priority` to its Information Seed
+  scheduler, so a priority-specialized replica claims only matching seeds; an
+  empty priority continues to claim every eligible seed.
 
 ## End-to-end discovery contract
 
@@ -243,7 +256,7 @@ the complete production contract for the current runner:
   "source_priority": "normal",
   "create_sources": true,
   "link_existing_sources": true,
-  "update_existing_source_config": true,
+  "update_existing_source_config": false,
   "disabled": false,
   "status": "new",
   "restricted": 1,
@@ -298,12 +311,17 @@ Configuration behavior:
   accepted candidate may create a missing source but must not attach an already
   existing source to the seed. Source/seed linking remains idempotent under both
   settings.
-- `update_existing_source_config` defaults to `true` to preserve the previous
-  behavior for non-empty `source_config` updates on existing, non-processing
-  sources. Set it to `false` to prevent seed-level or plugin-provided
-  `source_config` from changing an existing source. Existing source identity,
-  ownership, priority, restriction, flags, disabled state, and status are not
-  overwritten by information-seed discovery.
+- `update_existing_source_config` defaults to `false`. Set it to `true` only
+  when seed-level or plugin-provided `source_config` should refresh an existing,
+  non-processing source owned by the seed actor with verified provenance. A
+  missing, null, or semantically empty config never overwrites an existing
+  source. Existing source identity, ownership, priority, restriction, flags,
+  disabled state, and status are not overwritten by information-seed discovery.
+- Sources created by discovery carry the seed's `usr_id` but receive verified
+  `SourceOwnership` provenance only when the seed owner came from an
+  authenticated principal. Auth-disabled/legacy seeds create legacy sources that
+  require explicit administrative ownership verification before ordinary source
+  mutations.
 - Seed-level and plugin-provided `source_config` values are validated against the
   same source configuration requirements before they are persisted. Invalid
   configs fail the persistence phase rather than creating or updating a source.
@@ -367,7 +385,7 @@ information_seed:
     common_crawl_latest:
       provider: common_crawl_index
       host: https://index.commoncrawl.org
-      endpoint: /CC-MAIN-2026-18-index
+      endpoint: /CC-MAIN-2026-43-index
       parameters:
         output: json
         filter: status:200
@@ -676,7 +694,8 @@ whether any accepted source links remain after validation.
 | Providers return zero results. | `completed` | This is a successful no-result run; the final update clears both error fields. |
 | Providers return candidates, but all candidates are rejected without a runtime error. | `completed` | This is a successful filtered run; clear both error fields and persist per-candidate rejection evidence in `InformationSeedCandidate`. |
 | Every provider fails before producing usable candidates. | `error` | Set `last_error` to the provider failure summary and set `last_error_at` to the finalization time. |
-| A provider error prevents the worker from completing the discovery lifecycle, even if the provider set is not exhausted. | `error` | Set `last_error` and `last_error_at`. Retry is controlled by the `error` retry delay. |
+| A retryable provider error prevents the worker from completing the discovery lifecycle, even if the provider set is not exhausted. | `error` | Set `last_error` and `last_error_at`. Retry is controlled by `next_retry_at`/exponential backoff. |
+| All provider failures are permanent (for example 403/404) or the attempt ceiling is reached. | `exhausted` | Set the redacted error summary; automatic claims stop until an authorized manual rerun resets accounting. |
 | Plugin validation or plugin timeout rejects only some candidates and at least one accepted candidate is linked. | `completed` | Treat as a partial validation failure. The final update clears lifecycle error fields; diagnostics/events retain bounded validation details. |
 | Plugin validation or plugin timeout prevents all validation from completing, or policy requires plugin runtime errors to fail the whole run. | `error` | Set `last_error` with the plugin name/reason and set `last_error_at`. |
 | Linking or source persistence fails for otherwise accepted candidates. | `error` | Set `last_error` and `last_error_at` because accepted work could not be made durable. |
@@ -839,6 +858,32 @@ query parameters, plugin metadata keys containing words such as `secret`,
 `token`, `password`, or `credential`, and matching error fragments are replaced
 with `REDACTED`. Provider, plugin, or database errors should remain concise
 summaries rather than unbounded logs in `Events.details`.
+
+## Claim leases and shutdown
+
+A claim records `claim_token`, `fencing_token`, `heartbeat_at`, and
+`lease_expires_at`. While discovery runs, the worker renews the lease every
+`heartbeat_interval`. A lost heartbeat or a newer claim increments the fencing
+generation, so the stale worker cannot heartbeat, release, complete, or mark the
+seed failed.
+
+On SIGTERM/SIGINT/SIGQUIT the engine stops claiming, cancels active work, and
+uses a short fresh cleanup context to release still-owned seeds back to
+`pending`. A seed disabled by an operator is never reset to claimable pending.
+SIGKILL and hard crashes cannot run cleanup; those rows are reclaimed after the
+separate `lease_duration` instead of waiting for `processing_timeout`.
+
+## Retention
+
+Terminal seed retention is opt-in and disabled by default. When enabled through
+`information_seed.retention`, only old `completed`, legacy `disabled`, and
+`exhausted` rows with no active lease are eligible. New, pending, retryable
+error, actively processing, and user-disabled pending rows are retained. Each
+maintenance pass is bounded by `batch_size`; `dry_run: true` reports candidates
+without deleting them. Candidate decision and source-link rows cascade with the
+seed, while event history remains available for audit. See the
+[configuration reference](../configuration/config_reference.md) for the exact
+fields and safe rollout guidance.
 
 ## Idempotency and reruns
 

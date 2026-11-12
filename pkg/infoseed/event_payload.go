@@ -97,10 +97,18 @@ func informationSeedProviderFailuresPayload(failures []providerFailure) []map[st
 		if provider == "" {
 			provider = "unknown"
 		}
-		items = append(items, map[string]interface{}{
+		item := map[string]interface{}{
 			"provider": provider,
 			"summary":  trimEventString(redactInformationSeedError(failure.Summary), 512),
-		})
+		}
+		if failure.Class != "" {
+			item["class"] = failure.Class
+			item["retryable"] = failure.Retryable
+		}
+		if failure.StatusCode != 0 {
+			item["status_code"] = failure.StatusCode
+		}
+		items = append(items, item)
 	}
 	return items
 }

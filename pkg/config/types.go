@@ -687,17 +687,31 @@ type InformationSeedPluginLimitsConfig struct {
 }
 
 // InformationSeedConfig represents bounded configuration for information seed discovery.
+type InformationSeedRetentionConfig struct {
+	Enabled       bool `json:"enabled" yaml:"enabled"`               // Opt-in deletion of terminal seed rows
+	CompletedDays int  `json:"completed_days" yaml:"completed_days"` // Retain completed seeds for this many days
+	DisabledDays  int  `json:"disabled_days" yaml:"disabled_days"`   // Retain legacy disabled-status seeds for this many days
+	ExhaustedDays int  `json:"exhausted_days" yaml:"exhausted_days"` // Retain retry-exhausted seeds for this many days
+	BatchSize     int  `json:"batch_size" yaml:"batch_size"`         // Maximum rows removed per maintenance pass
+	DryRun        bool `json:"dry_run" yaml:"dry_run"`               // Report candidates without deleting
+}
+
 type InformationSeedConfig struct {
 	Enabled              bool                                     `json:"enabled" yaml:"enabled"`                                 // Whether information seed discovery is enabled
 	QueryTimer           int                                      `json:"query_timer" yaml:"query_timer"`                         // Time to wait between seed discovery cycles (in seconds)
 	MaxConcurrentSeeds   int                                      `json:"max_concurrent_seeds" yaml:"max_concurrent_seeds"`       // Maximum seed discovery jobs to run concurrently
 	MaxQueriesPerSeed    int                                      `json:"max_queries_per_seed" yaml:"max_queries_per_seed"`       // Maximum provider queries generated per seed
 	MaxCandidatesPerSeed int                                      `json:"max_candidates_per_seed" yaml:"max_candidates_per_seed"` // Maximum candidate sources accepted per seed
-	RetryInterval        int                                      `json:"retry_interval" yaml:"retry_interval"`                   // Time to wait before retrying failed seed discovery (in seconds)
+	RetryInterval        int                                      `json:"retry_interval" yaml:"retry_interval"`                   // Base delay before retrying failed seed discovery (in seconds)
+	RetryBackoffMax      int                                      `json:"retry_backoff_max" yaml:"retry_backoff_max"`             // Maximum exponential retry delay (in seconds)
+	MaxAttempts          int                                      `json:"max_attempts" yaml:"max_attempts"`                       // Maximum automatic claim attempts; zero defaults to 5
+	HeartbeatInterval    int                                      `json:"heartbeat_interval" yaml:"heartbeat_interval"`           // Claim lease heartbeat interval (in seconds)
+	LeaseDuration        int                                      `json:"lease_duration" yaml:"lease_duration"`                   // Claim lease expiry after a lost heartbeat (in seconds)
 	ProcessingTimeout    string                                   `json:"processing_timeout" yaml:"processing_timeout"`           // Maximum time to process one seed
 	Providers            map[string]InformationSeedProviderConfig `json:"providers" yaml:"providers"`                             // Provider settings and credentials
 	ProviderAllowList    []string                                 `json:"provider_allow_list" yaml:"provider_allow_list"`         // Providers allowed to run; empty disables provider execution
 	PluginLimits         InformationSeedPluginLimitsConfig        `json:"plugin_limits" yaml:"plugin_limits"`                     // Plugin timeout and output-size limits
+	Retention            InformationSeedRetentionConfig           `json:"retention" yaml:"retention"`                             // Opt-in terminal seed retention; disabled by default
 }
 
 /////////////////////////////////////////////////

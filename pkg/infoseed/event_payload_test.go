@@ -411,3 +411,69 @@ func TestInformationSeedBrowserDiagnosticsAreCountOnlyAndSecretSafe(t *testing.T
 		t.Fatalf("event missing bounded browser diagnostics: %s", encoded)
 	}
 }
+
+func TestInformationSeedEventPayloadMatchesFullEventSchema(t *testing.T) {
+	stats := newSeedDiscoveryStats()
+	stats.addProviderFailure("provider-a", "provider returned status 404")
+	stats.CandidatesFound = 1
+	stats.CandidatesRejected = 1
+	payload := informationSeedEventPayloadWithOptions(cdb.InformationSeed{ID: 9, InformationSeed: "schema seed", Attempts: 2}, stats, informationSeedEventPayloadOptions{SourceID: 0})
+	data, err := os.ReadFile("../../schemas/crowler-event-schema.json")
+	if err != nil {
+		t.Fatalf("read event schema: %v", err)
+	}
+	var document map[string]interface{}
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatalf("parse event schema: %v", err)
+	}
+	definitions, _ := document["definitions"].(map[string]interface{})
+	detailsSchema := resolveLocalSchemaRefs(definitions["InformationSeedRunDiagnosticsDetails"], definitions)
+	compiled := &jsonschema.Schema{}
+	raw, err := json.Marshal(detailsSchema)
+	if err != nil {
+		t.Fatalf("serialize details schema: %v", err)
+	}
+	if err := compiled.UnmarshalJSON(raw); err != nil {
+		t.Fatalf("compile details schema: %v", err)
+	}
+	issues, err := compiled.ValidateBytes(context.Background(), []byte(mustJSON(t, payload)))
+	if err != nil {
+		t.Fatalf("validate details: %v", err)
+	}
+	if len(issues) != 0 {
+		t.Fatalf("information seed details do not match schema: %v", issues)
+	}
+}
+
+func resolveLocalSchemaRefs(value interface{}, definitions map[string]interface{}) interface{} {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		if reference, ok := typed["$ref"].(string); ok && strings.HasPrefix(reference, "#/definitions/") {
+			name := strings.TrimPrefix(reference, "#/definitions/")
+			return resolveLocalSchemaRefs(definitions[name], definitions)
+		}
+		resolved := make(map[string]interface{}, len(typed))
+		for key, child := range typed {
+			resolved[key] = resolveLocalSchemaRefs(child, definitions)
+		}
+		return resolved
+	case []interface{}:
+		resolved := make([]interface{}, len(typed))
+		for index, child := range typed {
+			resolved[index] = resolveLocalSchemaRefs(child, definitions)
+		}
+		return resolved
+	default:
+		return value
+	}
+}
+
+func TestProviderFailureClassificationSurvivesEventPayload(t *testing.T) {
+	stats := newSeedDiscoveryStats()
+	stats.addError(providerQueryError{SeedID: 1, Failures: []providerFailure{{Provider: "p", Class: "not_found", StatusCode: 404, Retryable: false, Summary: "provider p returned status 404"}}})
+	payload := informationSeedEventPayloadWithOptions(cdb.InformationSeed{ID: 1, InformationSeed: "schema"}, stats, informationSeedEventPayloadOptions{})
+	failures := payload["provider_failures"].([]map[string]interface{})
+	if len(failures) != 1 || failures[0]["class"] != "not_found" || failures[0]["status_code"] != 404 || failures[0]["retryable"] != false {
+		t.Fatalf("failure classification was lost: %#v", failures)
+	}
+}

@@ -1,5 +1,6 @@
--- Version 1.17 adds durable crawl-approval persistence and verified source
--- ownership provenance for the trusted operator/agent authorization paths.
+-- Version 1.17 adds durable crawl-approval persistence, verified source
+-- ownership provenance, and Information Seed claim lease/fencing/retry state
+-- for the trusted operator/agent authorization paths.
 -- This migration is additive, atomic and idempotent. It also advances the
 -- writer generation so old writers must stop before the new writer starts.
 --
@@ -178,6 +179,186 @@ $$;
 
 ALTER TABLE CrawlProposals OWNER TO :CROWLER_DB_USER;
 GRANT SELECT, INSERT, UPDATE, DELETE ON CrawlProposals TO :CROWLER_DB_USER;
+
+
+----------------------------------------------------------------
+-- Information Seed claim leases, fencing, heartbeat and retry metadata.
+-- These are additive fields on the existing 1.17 schema contract.
+ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS claim_token VARCHAR(64);
+ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS fencing_token BIGINT DEFAULT 0 NOT NULL;
+ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ;
+ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ;
+ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMPTZ;
+
+CREATE INDEX IF NOT EXISTS idx_informationseed_lease_expiry
+    ON InformationSeed(status, disabled, lease_expires_at);
+CREATE INDEX IF NOT EXISTS idx_informationseed_next_retry
+    ON InformationSeed(status, disabled, next_retry_at);
+CREATE INDEX IF NOT EXISTS idx_informationseed_claim_token
+    ON InformationSeed(claim_token);
+
+-- Remove the legacy five-argument claim function so old writers cannot keep
+-- claiming without the token/lease/fencing semantics.
+DROP FUNCTION IF EXISTS update_informationseed(integer, varchar, varchar, varchar, varchar);
+
+CREATE OR REPLACE FUNCTION update_informationseed(
+    limit_val INTEGER,
+    p_priority VARCHAR,
+    p_engineID VARCHAR,
+    p_processing_timeout VARCHAR,
+    p_retry_after VARCHAR,
+    p_lease_duration VARCHAR,
+    p_max_attempts INTEGER,
+    p_claim_token VARCHAR
+)
+RETURNS TABLE(
+    information_seed_id BIGINT,
+    created_at TIMESTAMPTZ,
+    last_updated_at TIMESTAMPTZ,
+    category_id BIGINT,
+    usr_id BIGINT,
+    information_seed VARCHAR,
+    status VARCHAR,
+    priority VARCHAR,
+    engine VARCHAR,
+    last_processed_at TIMESTAMPTZ,
+    last_error TEXT,
+    last_error_at TIMESTAMPTZ,
+    disabled BOOLEAN,
+    attempts INTEGER,
+    claim_token VARCHAR,
+    fencing_token BIGINT,
+    lease_expires_at TIMESTAMPTZ,
+    heartbeat_at TIMESTAMPTZ,
+    next_retry_at TIMESTAMPTZ,
+    config JSONB
+) AS
+$$
+DECLARE
+    priority_list TEXT[];
+    use_priority_filter BOOLEAN := FALSE;
+BEGIN
+    limit_val := GREATEST(COALESCE(limit_val, 0), 0);
+    p_priority := COALESCE(TRIM(p_priority), '');
+    p_engineID := COALESCE(TRIM(p_engineID), '');
+    p_processing_timeout := COALESCE(TRIM(p_processing_timeout), '');
+    p_retry_after := COALESCE(TRIM(p_retry_after), '');
+    p_lease_duration := COALESCE(TRIM(p_lease_duration), '');
+    p_claim_token := COALESCE(TRIM(p_claim_token), '');
+
+    IF p_engineID = '' THEN
+        RAISE EXCEPTION 'engine ID is required to claim information seeds';
+    END IF;
+    IF p_claim_token = '' THEN
+        RAISE EXCEPTION 'claim token is required to claim information seeds';
+    END IF;
+    IF p_processing_timeout = '' THEN
+        p_processing_timeout := '30 minutes';
+    END IF;
+    IF p_retry_after = '' THEN
+        p_retry_after := '1 minute';
+    END IF;
+    IF p_lease_duration = '' THEN
+        p_lease_duration := p_processing_timeout;
+    END IF;
+
+    IF p_priority <> '' THEN
+        priority_list := ARRAY(
+            SELECT TRIM(LOWER(value))
+            FROM unnest(string_to_array(p_priority, ',')) AS value
+            WHERE TRIM(value) <> ''
+        );
+        use_priority_filter := COALESCE(array_length(priority_list, 1), 0) > 0;
+    END IF;
+
+    RETURN QUERY
+    WITH selected_seeds AS (
+        SELECT seed.information_seed_id
+        FROM InformationSeed AS seed
+        WHERE COALESCE(seed.disabled, FALSE) = FALSE
+          AND (COALESCE(p_max_attempts, 0) = 0 OR COALESCE(seed.attempts, 0) < p_max_attempts)
+          AND (
+                NOT use_priority_filter
+                OR LOWER(TRIM(seed.priority)) = ANY(priority_list)
+              )
+          AND (
+                LOWER(TRIM(seed.status)) IN ('new', 'pending')
+                OR (
+                    LOWER(TRIM(seed.status)) = 'processing'
+                    AND (
+                        (seed.lease_expires_at IS NOT NULL AND seed.lease_expires_at < NOW())
+                        OR (
+                            seed.lease_expires_at IS NULL
+                            AND (
+                                seed.last_processed_at IS NULL
+                                OR seed.last_processed_at < NOW() - p_processing_timeout::INTERVAL
+                            )
+                        )
+                    )
+                )
+                OR (
+                    LOWER(TRIM(seed.status)) = 'error'
+                    AND (
+                        (seed.next_retry_at IS NOT NULL AND seed.next_retry_at <= NOW())
+                        OR (
+                            seed.next_retry_at IS NULL
+                            AND (
+                                seed.last_error_at IS NULL
+                                OR seed.last_error_at < NOW() - p_retry_after::INTERVAL
+                            )
+                        )
+                    )
+                )
+              )
+        ORDER BY CASE
+                WHEN LOWER(TRIM(seed.status)) IN ('new', 'pending') THEN 0
+                WHEN LOWER(TRIM(seed.status)) = 'processing' THEN 1
+                ELSE 2
+            END ASC,
+            CASE
+                WHEN LOWER(TRIM(seed.status)) = 'error' THEN seed.next_retry_at
+                ELSE seed.created_at
+            END ASC,
+            seed.created_at ASC,
+            seed.information_seed_id ASC
+        FOR UPDATE SKIP LOCKED
+        LIMIT limit_val
+    )
+    UPDATE InformationSeed AS claimed_seed
+    SET status = 'processing',
+        engine = p_engineID,
+        last_processed_at = NOW(),
+        attempts = COALESCE(claimed_seed.attempts, 0) + 1,
+        claim_token = p_claim_token,
+        fencing_token = COALESCE(claimed_seed.fencing_token, 0) + 1,
+        lease_expires_at = NOW() + p_lease_duration::INTERVAL,
+        heartbeat_at = NOW(),
+        next_retry_at = NULL
+    FROM selected_seeds
+    WHERE claimed_seed.information_seed_id = selected_seeds.information_seed_id
+    RETURNING claimed_seed.information_seed_id,
+              claimed_seed.created_at,
+              claimed_seed.last_updated_at,
+              claimed_seed.category_id,
+              claimed_seed.usr_id,
+              claimed_seed.information_seed,
+              claimed_seed.status,
+              claimed_seed.priority,
+              claimed_seed.engine,
+              claimed_seed.last_processed_at,
+              claimed_seed.last_error,
+              claimed_seed.last_error_at,
+              claimed_seed.disabled,
+              claimed_seed.attempts,
+              claimed_seed.claim_token,
+              claimed_seed.fencing_token,
+              claimed_seed.lease_expires_at,
+              claimed_seed.heartbeat_at,
+              claimed_seed.next_retry_at,
+              claimed_seed.config;
+END;
+$$
+LANGUAGE plpgsql;
 
 
 UPDATE DBSchemaVersion SET is_current=FALSE;

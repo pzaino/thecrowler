@@ -272,7 +272,7 @@ func assertSourceRow(t *testing.T, db *sql.DB, id uint64, expectedName, expected
 	if name != expectedName || priority != expectedPriority || categoryID != expectedCategoryID || usrID != expectedUsrID || restricted != expectedRestricted || flags != expectedFlags || disabled != expectedDisabled || status != expectedStatus {
 		t.Fatalf("unexpected source row: name=%q priority=%q category_id=%d usr_id=%d restricted=%d flags=%d disabled=%t status=%q", name, priority, categoryID, usrID, restricted, flags, disabled, status)
 	}
-	if !config.Valid || !json.Valid([]byte(config.String)) {
+	if config.Valid && !json.Valid([]byte(config.String)) {
 		t.Fatalf("expected valid JSON config, got %q", config.String)
 	}
 }

@@ -94,7 +94,15 @@ func handleRequestWithDB(w http.ResponseWriter, r *http.Request, successCode int
 	}
 
 	results, err := action(query, getQTypeFromName(r.Method), &dbHandler)
-	handleErrorAndRespond(w, err, results, "Error performing action: %v", http.StatusInternalServerError, successCode)
+	status := http.StatusInternalServerError
+	if err != nil {
+		if code := informationSeedAccessErrorCode(err); code != http.StatusInternalServerError {
+			status = code
+		} else if code := sourceMutationErrorCode(err); code != http.StatusInternalServerError {
+			status = code
+		}
+	}
+	handleErrorAndRespond(w, err, results, "Error performing action: %v", status, successCode)
 
 }
 

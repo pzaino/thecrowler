@@ -22,17 +22,17 @@ import (
 )
 
 func doPublicDocumentRequest(ctx context.Context, providerName string, client HTTPClient, endpoint, accept string, timeout time.Duration, rateLimit string, budget *requestBudget, maxBodyBytes int64, headers map[string]string) ([]byte, error) {
-	if timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
-	}
 	if client == nil {
-		client = &http.Client{Timeout: timeout}
+		client = &http.Client{}
 	}
 	limiter := limiterFor(providerName, rateLimit)
 	if err := limiter.wait(ctx); err != nil {
 		return nil, safeProviderError(providerName, err)
+	}
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
 	}
 	budget.consume()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)

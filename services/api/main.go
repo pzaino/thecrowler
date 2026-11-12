@@ -718,21 +718,21 @@ func initAPIv1() {
 		singleURLstatusHandlerWithMiddlewares := withPublicMiddlewares(singleURLstatusHandler)
 		allURLstatusHandlerWithMiddlewares := withPublicMiddlewares(allURLstatusHandler)
 		filteredURLstatusHandlerWithMiddlewares := withPublicMiddlewares(filteredURLstatusHandler)
-		informationSeedAddHandlerWithMiddlewares := withPublicMiddlewares(informationSeedAddHandler)
-		informationSeedStatusHandlerWithMiddlewares := withPublicMiddlewares(informationSeedStatusHandler)
-		informationSeedListHandlerWithMiddlewares := withPublicMiddlewares(informationSeedListHandler)
-		informationSeedSourcesHandlerWithMiddlewares := withPublicMiddlewares(informationSeedSourcesHandler)
-		informationSeedCandidatesHandlerWithMiddlewares := withPublicMiddlewares(informationSeedCandidateDecisionsHandler)
-		informationSeedRetryHandlerWithMiddlewares := withPublicMiddlewares(informationSeedRetryHandler)
-		informationSeedUpdateHandlerWithMiddlewares := withPublicMiddlewares(informationSeedUpdateHandler)
-		informationSeedRemoveHandlerWithMiddlewares := withPublicMiddlewares(informationSeedRemoveHandler)
-		informationSeedRerunHandlerWithMiddlewares := withPublicMiddlewares(informationSeedRerunHandler)
-		informationSeedDisableHandlerWithMiddlewares := withPublicMiddlewares(informationSeedDisableHandler)
-		informationSeedPathDisableHandlerWithMiddlewares := withPublicMiddlewares(informationSeedPathDisableHandler)
-		informationSeedEnableHandlerWithMiddlewares := withPublicMiddlewares(informationSeedEnableHandler)
-		informationSeedEventsHandlerWithMiddlewares := withPublicMiddlewares(informationSeedEventsHandler)
-		informationSeedConfigProvidersHandlerWithMiddlewares := withPublicMiddlewares(informationSeedConfigProvidersHandler)
-		informationSeedConfigProviderHandlerWithMiddlewares := withPublicMiddlewares(informationSeedConfigProviderHandler)
+		informationSeedAddHandlerWithMiddlewares := withAuthenticatedPublicMiddlewares(informationSeedAddHandler)
+		informationSeedStatusHandlerWithMiddlewares := withAuthenticatedPublicMiddlewares(informationSeedStatusHandler)
+		informationSeedListHandlerWithMiddlewares := withAuthenticatedPublicMiddlewares(informationSeedListHandler)
+		informationSeedSourcesHandlerWithMiddlewares := withAuthenticatedPublicMiddlewares(informationSeedSourcesHandler)
+		informationSeedCandidatesHandlerWithMiddlewares := withAuthenticatedPublicMiddlewares(informationSeedCandidateDecisionsHandler)
+		informationSeedRetryHandlerWithMiddlewares := withAuthenticatedPublicMiddlewares(informationSeedRetryHandler)
+		informationSeedUpdateHandlerWithMiddlewares := withAuthenticatedPublicMiddlewares(informationSeedUpdateHandler)
+		informationSeedRemoveHandlerWithMiddlewares := withAuthenticatedPublicMiddlewares(informationSeedRemoveHandler)
+		informationSeedRerunHandlerWithMiddlewares := withAuthenticatedPublicMiddlewares(informationSeedRerunHandler)
+		informationSeedDisableHandlerWithMiddlewares := withAuthenticatedPublicMiddlewares(informationSeedDisableHandler)
+		informationSeedPathDisableHandlerWithMiddlewares := withAuthenticatedPublicMiddlewares(informationSeedPathDisableHandler)
+		informationSeedEnableHandlerWithMiddlewares := withAuthenticatedPublicMiddlewares(informationSeedEnableHandler)
+		informationSeedEventsHandlerWithMiddlewares := withAuthenticatedPublicMiddlewares(informationSeedEventsHandler)
+		informationSeedConfigProvidersHandlerWithMiddlewares := withAuthenticatedPublicMiddlewares(informationSeedConfigProvidersHandler)
+		informationSeedConfigProviderHandlerWithMiddlewares := withAuthenticatedPublicMiddlewares(informationSeedConfigProviderHandler)
 		vdiConfigListHandlerWithMiddlewares := withPublicMiddlewares(vdiConfigListHandler)
 		vdiConfigHandlerWithMiddlewares := withPublicMiddlewares(vdiConfigHandler)
 
@@ -880,7 +880,7 @@ func initAPIv1() {
 		http.Handle("GET /v1/information_seed/{id}/events", informationSeedEventsHandlerWithMiddlewares)
 		cmn.RegisterAPIRoute("/v1/information_seed/{id}/events", []string{"GET"}, "List information seed discovery events endpoint (console)", tagsNone, true, false, 200, nil, informationSeedIDGetRequest{}, InformationSeedEventListResponse{})
 
-		http.Handle("GET /v1/information_seed/{id}/diagnostics", withPublicMiddlewares(http.HandlerFunc(informationSeedDiagnosticsHandler)))
+		http.Handle("GET /v1/information_seed/{id}/diagnostics", withAuthenticatedPublicMiddlewares(http.HandlerFunc(informationSeedDiagnosticsHandler)))
 		cmn.RegisterAPIRoute("/v1/information_seed/{id}/diagnostics", []string{"GET"}, "Get redacted information seed run diagnostics endpoint (console)", tagsNone, true, false, 200, nil, informationSeedIDGetRequest{}, InformationSeedDiagnosticsResponse{})
 
 		// Owner endpoints
@@ -1881,6 +1881,10 @@ func informationSeedAddHandler(w http.ResponseWriter, r *http.Request) {
 		handleErrorAndRespond(w, fmt.Errorf("method not allowed"), nil, "Method not allowed", http.StatusMethodNotAllowed, http.StatusCreated)
 		return
 	}
+	access, ok := informationSeedAccessOrRespond(w, r)
+	if !ok {
+		return
+	}
 	if !acquireDBAdmission(w, true) {
 		return
 	}
@@ -1894,10 +1898,14 @@ func informationSeedAddHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results, err := performAddInformationSeedContext(r.Context(), query, postQuery, &dbHandler)
+	results, err := performAddInformationSeedForAccessContext(r.Context(), query, postQuery, &dbHandler, access)
 	if err != nil {
 		totalErrors.Add(1)
-		handleErrorAndRespond(w, err, results, "Error adding information seed: %v", informationSeedAddErrorStatus(err), http.StatusCreated)
+		status := informationSeedAddErrorStatus(err)
+		if code := informationSeedAccessErrorCode(err); code != http.StatusInternalServerError {
+			status = code
+		}
+		handleErrorAndRespond(w, err, results, "Error adding information seed: %v", status, http.StatusCreated)
 		return
 	}
 	totalSuccess.Add(1)
@@ -1921,9 +1929,17 @@ func informationSeedStatusHandler(w http.ResponseWriter, r *http.Request) {
 		handleErrorAndRespond(w, fmt.Errorf("method not allowed"), nil, "Method not allowed", http.StatusMethodNotAllowed, http.StatusOK)
 		return
 	}
+	access, ok := informationSeedAccessOrRespond(w, r)
+	if !ok {
+		return
+	}
 	id, err := parseInformationSeedIDFromRequest(r)
 	if err != nil {
 		handleErrorAndRespond(w, err, nil, "Invalid information seed status request", http.StatusBadRequest, http.StatusOK)
+		return
+	}
+	if _, err := loadAuthorizedInformationSeedContext(r.Context(), &dbHandler, id, access); err != nil {
+		handleErrorAndRespond(w, informationSeedAccessError(err), nil, "Information seed status is not authorized", informationSeedAccessErrorCode(err), http.StatusOK)
 		return
 	}
 	if !acquireDBAdmission(w, true) {
@@ -1951,6 +1967,10 @@ func informationSeedListHandler(w http.ResponseWriter, r *http.Request) {
 		handleErrorAndRespond(w, fmt.Errorf("method not allowed"), nil, "Method not allowed", http.StatusMethodNotAllowed, http.StatusOK)
 		return
 	}
+	access, ok := informationSeedAccessOrRespond(w, r)
+	if !ok {
+		return
+	}
 	if !acquireDBAdmission(w, true) {
 		return
 	}
@@ -1958,7 +1978,7 @@ func informationSeedListHandler(w http.ResponseWriter, r *http.Request) {
 
 	successCode := http.StatusOK
 
-	results, err := performListInformationSeedsContext(r.Context(), r.URL.Query(), &dbHandler)
+	results, err := performListInformationSeedsContext(r.Context(), informationSeedRequestValuesWithOwner(r.URL.Query(), access), &dbHandler)
 	if err != nil {
 		totalErrors.Add(1)
 		status := http.StatusInternalServerError
@@ -1978,9 +1998,17 @@ func informationSeedSourcesHandler(w http.ResponseWriter, r *http.Request) {
 		handleErrorAndRespond(w, fmt.Errorf("method not allowed"), nil, "Method not allowed", http.StatusMethodNotAllowed, http.StatusOK)
 		return
 	}
+	access, ok := informationSeedAccessOrRespond(w, r)
+	if !ok {
+		return
+	}
 	id, err := parseInformationSeedIDFromRequest(r)
 	if err != nil {
 		handleErrorAndRespond(w, err, nil, "Invalid information seed sources request", http.StatusBadRequest, http.StatusOK)
+		return
+	}
+	if _, err := loadAuthorizedInformationSeedContext(r.Context(), &dbHandler, id, access); err != nil {
+		handleErrorAndRespond(w, informationSeedAccessError(err), nil, "Information seed sources are not authorized", informationSeedAccessErrorCode(err), http.StatusOK)
 		return
 	}
 	if !acquireDBAdmission(w, true) {
@@ -2009,9 +2037,17 @@ func informationSeedCandidateDecisionsHandler(w http.ResponseWriter, r *http.Req
 		handleErrorAndRespond(w, fmt.Errorf("method not allowed"), nil, "Method not allowed", http.StatusMethodNotAllowed, http.StatusOK)
 		return
 	}
+	access, ok := informationSeedAccessOrRespond(w, r)
+	if !ok {
+		return
+	}
 	id, err := parseInformationSeedIDFromRequest(r)
 	if err != nil {
 		handleErrorAndRespond(w, err, nil, "Invalid information seed candidate request", http.StatusBadRequest, http.StatusOK)
+		return
+	}
+	if _, err := loadAuthorizedInformationSeedContext(r.Context(), &dbHandler, id, access); err != nil {
+		handleErrorAndRespond(w, informationSeedAccessError(err), nil, "Information seed candidates are not authorized", informationSeedAccessErrorCode(err), http.StatusOK)
 		return
 	}
 	if !acquireDBAdmission(w, true) {
@@ -2048,8 +2084,12 @@ func informationSeedRetryHandler(w http.ResponseWriter, r *http.Request) {
 		handleErrorAndRespond(w, fmt.Errorf("method not allowed"), nil, "Method not allowed", http.StatusMethodNotAllowed, http.StatusOK)
 		return
 	}
+	access, ok := informationSeedAccessOrRespond(w, r)
+	if !ok {
+		return
+	}
 	handleRequestWithDB(w, r, http.StatusOK, func(query string, _ int, db *cdb.Handler) (interface{}, error) {
-		return performRetryInformationSeedContext(r.Context(), query, db)
+		return performRetryInformationSeedForAccessContext(r.Context(), query, db, access)
 	})
 }
 
@@ -2059,8 +2099,12 @@ func informationSeedDisableHandler(w http.ResponseWriter, r *http.Request) {
 		handleErrorAndRespond(w, fmt.Errorf("method not allowed"), nil, "Method not allowed", http.StatusMethodNotAllowed, http.StatusOK)
 		return
 	}
+	access, ok := informationSeedAccessOrRespond(w, r)
+	if !ok {
+		return
+	}
 	handleRequestWithDB(w, r, http.StatusOK, func(query string, _ int, db *cdb.Handler) (interface{}, error) {
-		return performDisableInformationSeedContext(r.Context(), query, db)
+		return performDisableInformationSeedForAccessContext(r.Context(), query, db, access)
 	})
 }
 
@@ -2070,8 +2114,12 @@ func informationSeedUpdateHandler(w http.ResponseWriter, r *http.Request) {
 		handleErrorAndRespond(w, fmt.Errorf("method not allowed"), nil, "Method not allowed", http.StatusMethodNotAllowed, http.StatusOK)
 		return
 	}
-	handleRequestWithDB(w, r, http.StatusOK, func(query string, qType int, db *cdb.Handler) (interface{}, error) {
-		return performUpdateInformationSeedContext(r.Context(), query, qType, db)
+	access, ok := informationSeedAccessOrRespond(w, r)
+	if !ok {
+		return
+	}
+	handleRequestWithDB(w, r, http.StatusOK, func(query string, _ int, db *cdb.Handler) (interface{}, error) {
+		return performUpdateInformationSeedForAccessContext(r.Context(), query, db, access)
 	})
 }
 
@@ -2081,8 +2129,12 @@ func informationSeedRemoveHandler(w http.ResponseWriter, r *http.Request) {
 		handleErrorAndRespond(w, fmt.Errorf("method not allowed"), nil, "Method not allowed", http.StatusMethodNotAllowed, http.StatusOK)
 		return
 	}
-	handleRequestWithDB(w, r, http.StatusOK, func(query string, qType int, db *cdb.Handler) (interface{}, error) {
-		return performRemoveInformationSeedContext(r.Context(), query, qType, db)
+	access, ok := informationSeedAccessOrRespond(w, r)
+	if !ok {
+		return
+	}
+	handleRequestWithDB(w, r, http.StatusOK, func(query string, _ int, db *cdb.Handler) (interface{}, error) {
+		return performRemoveInformationSeedForAccessContext(r.Context(), query, db, access)
 	})
 }
 
@@ -2092,9 +2144,17 @@ func informationSeedRerunHandler(w http.ResponseWriter, r *http.Request) {
 		handleErrorAndRespond(w, fmt.Errorf("method not allowed"), nil, "Method not allowed", http.StatusMethodNotAllowed, http.StatusOK)
 		return
 	}
+	access, ok := informationSeedAccessOrRespond(w, r)
+	if !ok {
+		return
+	}
 	id, err := parseInformationSeedIDFromRequest(r)
 	if err != nil {
 		handleErrorAndRespond(w, err, nil, "Invalid information seed rerun request", http.StatusBadRequest, http.StatusOK)
+		return
+	}
+	if _, err := loadAuthorizedInformationSeedContext(r.Context(), &dbHandler, id, access); err != nil {
+		handleErrorAndRespond(w, informationSeedAccessError(err), nil, "Information seed rerun is not authorized", informationSeedAccessErrorCode(err), http.StatusOK)
 		return
 	}
 	handleInformationSeedPathAction(w, r, func(_ string, db *cdb.Handler) (interface{}, error) {
@@ -2108,9 +2168,17 @@ func informationSeedPathDisableHandler(w http.ResponseWriter, r *http.Request) {
 		handleErrorAndRespond(w, fmt.Errorf("method not allowed"), nil, "Method not allowed", http.StatusMethodNotAllowed, http.StatusOK)
 		return
 	}
+	access, ok := informationSeedAccessOrRespond(w, r)
+	if !ok {
+		return
+	}
 	id, err := parseInformationSeedIDFromRequest(r)
 	if err != nil {
 		handleErrorAndRespond(w, err, nil, "Invalid information seed disable request", http.StatusBadRequest, http.StatusOK)
+		return
+	}
+	if _, err := loadAuthorizedInformationSeedContext(r.Context(), &dbHandler, id, access); err != nil {
+		handleErrorAndRespond(w, informationSeedAccessError(err), nil, "Information seed disable is not authorized", informationSeedAccessErrorCode(err), http.StatusOK)
 		return
 	}
 	handleInformationSeedPathAction(w, r, func(_ string, db *cdb.Handler) (interface{}, error) {
@@ -2124,9 +2192,17 @@ func informationSeedEnableHandler(w http.ResponseWriter, r *http.Request) {
 		handleErrorAndRespond(w, fmt.Errorf("method not allowed"), nil, "Method not allowed", http.StatusMethodNotAllowed, http.StatusOK)
 		return
 	}
+	access, ok := informationSeedAccessOrRespond(w, r)
+	if !ok {
+		return
+	}
 	id, err := parseInformationSeedIDFromRequest(r)
 	if err != nil {
 		handleErrorAndRespond(w, err, nil, "Invalid information seed enable request", http.StatusBadRequest, http.StatusOK)
+		return
+	}
+	if _, err := loadAuthorizedInformationSeedContext(r.Context(), &dbHandler, id, access); err != nil {
+		handleErrorAndRespond(w, informationSeedAccessError(err), nil, "Information seed enable is not authorized", informationSeedAccessErrorCode(err), http.StatusOK)
 		return
 	}
 	handleInformationSeedPathAction(w, r, func(query string, db *cdb.Handler) (interface{}, error) {
@@ -2140,9 +2216,17 @@ func informationSeedEventsHandler(w http.ResponseWriter, r *http.Request) {
 		handleErrorAndRespond(w, fmt.Errorf("method not allowed"), nil, "Method not allowed", http.StatusMethodNotAllowed, http.StatusOK)
 		return
 	}
+	access, ok := informationSeedAccessOrRespond(w, r)
+	if !ok {
+		return
+	}
 	id, err := parseInformationSeedIDFromRequest(r)
 	if err != nil {
 		handleErrorAndRespond(w, err, nil, "Invalid information seed events request", http.StatusBadRequest, http.StatusOK)
+		return
+	}
+	if _, err := loadAuthorizedInformationSeedContext(r.Context(), &dbHandler, id, access); err != nil {
+		handleErrorAndRespond(w, informationSeedAccessError(err), nil, "Information seed events are not authorized", informationSeedAccessErrorCode(err), http.StatusOK)
 		return
 	}
 	if !acquireDBAdmission(w, true) {
@@ -2171,9 +2255,17 @@ func informationSeedDiagnosticsHandler(w http.ResponseWriter, r *http.Request) {
 		handleErrorAndRespond(w, fmt.Errorf("method not allowed"), nil, "Method not allowed", http.StatusMethodNotAllowed, http.StatusOK)
 		return
 	}
+	access, ok := informationSeedAccessOrRespond(w, r)
+	if !ok {
+		return
+	}
 	id, err := parseInformationSeedIDFromRequest(r)
 	if err != nil {
 		handleErrorAndRespond(w, err, nil, "Invalid information seed diagnostics request", http.StatusBadRequest, http.StatusOK)
+		return
+	}
+	if _, err := loadAuthorizedInformationSeedContext(r.Context(), &dbHandler, id, access); err != nil {
+		handleErrorAndRespond(w, informationSeedAccessError(err), nil, "Information seed diagnostics are not authorized", informationSeedAccessErrorCode(err), http.StatusOK)
 		return
 	}
 	if !acquireDBAdmission(w, true) {
@@ -2271,6 +2363,14 @@ func informationSeedConfigProvidersHandler(w http.ResponseWriter, r *http.Reques
 		handleErrorAndRespond(w, fmt.Errorf("method not allowed"), nil, "Method not allowed", http.StatusMethodNotAllowed, http.StatusOK)
 		return
 	}
+	access, ok := informationSeedAccessOrRespond(w, r)
+	if !ok {
+		return
+	}
+	if err := requireInformationSeedAdmin(access); err != nil {
+		handleErrorAndRespond(w, err, nil, "Information seed provider configuration is not authorized", informationSeedAccessErrorCode(err), http.StatusOK)
+		return
+	}
 	totalSuccess.Add(1)
 	handleErrorAndRespond(w, nil, performListInformationSeedConfigProviders(), "", http.StatusInternalServerError, http.StatusOK)
 }
@@ -2279,6 +2379,14 @@ func informationSeedConfigProviderHandler(w http.ResponseWriter, r *http.Request
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", http.MethodGet)
 		handleErrorAndRespond(w, fmt.Errorf("method not allowed"), nil, "Method not allowed", http.StatusMethodNotAllowed, http.StatusOK)
+		return
+	}
+	access, ok := informationSeedAccessOrRespond(w, r)
+	if !ok {
+		return
+	}
+	if err := requireInformationSeedAdmin(access); err != nil {
+		handleErrorAndRespond(w, err, nil, "Information seed provider configuration is not authorized", informationSeedAccessErrorCode(err), http.StatusOK)
 		return
 	}
 	name := configNameFromRequest(r)

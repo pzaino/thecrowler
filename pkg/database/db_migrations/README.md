@@ -12,11 +12,13 @@ If you encounter any issues during the migration process, consult the migration 
 
 BEFORE you run a migration script open it and read it, sometimes I have to leave special instructions or notes that are crucial for the migration to succeed.
 
-Current schema target: **1.17**. The v1.17 migration adds durable crawl
-approvals (PostgreSQL/SQLite) and verified source-ownership provenance (all
-supported backends), and advances the writer-generation marker. Stop every old
-writer before applying it, then start only v1.17-compatible services. The
-PostgreSQL migration is transactional and safe to re-run; SQLite is transactional
-and re-runnable as well. Neither migration bulk-verifies historical `usr_id`
-values. MySQL keeps the ownership table but does not support durable approvals or
-authenticated atomic source mutation in this release.
+Current schema target: **1.17**. The v1.17 migration adds verified source
+ownership, durable approvals, and Information Seed claim fencing, lease
+heartbeats, explicit retry metadata and a bounded terminal exhausted state. It is
+additive and keeps the existing writer-generation marker. Stop every old writer
+before applying it, then start only v1.17-compatible services. The PostgreSQL
+migration is transactional and safe to re-run. SQLite uses runtime guarded
+column repair because its supported versions cannot conditionally add columns in
+SQL; the SQL ledger is safe to re-run. MySQL uses guarded column/index procedures
+and is safe to re-run. The migration does not bulk-verify historical `usr_id`
+values.

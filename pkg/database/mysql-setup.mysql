@@ -36,6 +36,11 @@ CREATE TABLE IF NOT EXISTS InformationSeed (
     last_error_at TIMESTAMP NULL,               -- The date/time of the last processing error.
     disabled BOOLEAN DEFAULT FALSE,             -- If automatic seed processing is disabled.
     attempts INT DEFAULT 0 NOT NULL,            -- Number of processing attempts.
+    claim_token VARCHAR(64),                    -- Per-claim ownership token for lease fencing.
+    fencing_token BIGINT DEFAULT 0 NOT NULL,    -- Monotonic claim generation.
+    lease_expires_at TIMESTAMP NULL,            -- Claim lease expiry for crash recovery.
+    heartbeat_at TIMESTAMP NULL,                -- Last successful claim heartbeat.
+    next_retry_at TIMESTAMP NULL,               -- Earliest eligible retry after backoff.
     config JSON                                 -- Stores JSON document with all details about
                                                 -- the information seed configuration for the crawler
 );
@@ -67,6 +72,11 @@ CALL add_informationseed_column_if_missing('last_error', 'last_error TEXT');
 CALL add_informationseed_column_if_missing('last_error_at', 'last_error_at TIMESTAMP NULL');
 CALL add_informationseed_column_if_missing('disabled', 'disabled BOOLEAN DEFAULT FALSE');
 CALL add_informationseed_column_if_missing('attempts', 'attempts INT DEFAULT 0 NOT NULL');
+CALL add_informationseed_column_if_missing('claim_token', 'claim_token VARCHAR(64)');
+CALL add_informationseed_column_if_missing('fencing_token', 'fencing_token BIGINT DEFAULT 0 NOT NULL');
+CALL add_informationseed_column_if_missing('lease_expires_at', 'lease_expires_at TIMESTAMP NULL');
+CALL add_informationseed_column_if_missing('heartbeat_at', 'heartbeat_at TIMESTAMP NULL');
+CALL add_informationseed_column_if_missing('next_retry_at', 'next_retry_at TIMESTAMP NULL');
 
 DROP PROCEDURE add_informationseed_column_if_missing;
 
@@ -543,6 +553,9 @@ CALL add_informationseed_index_if_missing('idx_informationseed_last_processed_at
 CALL add_informationseed_index_if_missing('idx_informationseed_last_error_at', 'CREATE INDEX idx_informationseed_last_error_at ON InformationSeed(last_error_at)');
 CALL add_informationseed_index_if_missing('idx_informationseed_processing_stale', 'CREATE INDEX idx_informationseed_processing_stale ON InformationSeed(status, disabled, last_processed_at)');
 CALL add_informationseed_index_if_missing('idx_informationseed_claim_queue', 'CREATE INDEX idx_informationseed_claim_queue ON InformationSeed(disabled, status, priority, created_at, information_seed_id)');
+CALL add_informationseed_index_if_missing('idx_informationseed_lease_expiry', 'CREATE INDEX idx_informationseed_lease_expiry ON InformationSeed(status, disabled, lease_expires_at)');
+CALL add_informationseed_index_if_missing('idx_informationseed_next_retry', 'CREATE INDEX idx_informationseed_next_retry ON InformationSeed(status, disabled, next_retry_at)');
+CALL add_informationseed_index_if_missing('idx_informationseed_claim_token', 'CREATE INDEX idx_informationseed_claim_token ON InformationSeed(claim_token)');
 CALL add_informationseed_index_if_missing('idx_informationseed_engine_status', 'CREATE INDEX idx_informationseed_engine_status ON InformationSeed(engine, status, last_processed_at)');
 
 DROP PROCEDURE add_informationseed_index_if_missing;

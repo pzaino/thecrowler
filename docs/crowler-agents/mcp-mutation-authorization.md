@@ -174,7 +174,7 @@ for deterministic tests. WP-04C2-B adds an additive schema 1.17 capability with:
 
 `CrawlProposals` and `CrawlApprovals` are crawl-specific and are not reused.
 The dispatch-attempt table exists but is never written by this phase: no
-dispatcher, worker or remote mutation is enabled. No schema 1.18 is introduced.
+dispatcher, worker or remote mutation is enabled. No schema release beyond 1.17 is introduced by this work.
 
 ## 8. State and uncertainty model
 
@@ -284,7 +284,7 @@ described in section 21 and
 `artifacts/agentic/WP-04C2A_SCHEMA_1_17_DESIGN.md`. It is present in new
 additive migration scripts and the clean-install setup, but has not been
 applied to a shared or production database in this worktree. It extends schema
-1.17 and does not create schema 1.18. `CrawlProposals` and `CrawlApprovals`
+1.17. `CrawlProposals` and `CrawlApprovals`
 remain crawl-specific.
 
 Proposed additive tables:
@@ -511,7 +511,7 @@ The additive scripts are:
 
 The same DDL is present in the clean-install PostgreSQL and SQLite setup
 scripts. `RequiredSchemaVersion` remains `1.17` and the writer generation
-remains `verified-ownership-v1.17`.
+is `verified-ownership-v1.17`.
 
 A database that advertises 1.17 but lacks the capability fails closed when a
 durable MCP mutation store or route is used. The global startup compatibility
@@ -569,7 +569,7 @@ in this phase.
 
 ### Operational note
 
-Apply the additive script explicitly to an existing 1.17 database after
+Apply the v1.17 migration explicitly to an existing 1.16 database after
 maintainer approval, or use the clean-install setup for a fresh database. The
 script is idempotent and does not alter crawl proposals, crawl approvals,
 sources, events or ownership history. Do not apply it to a shared or production

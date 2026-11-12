@@ -36,6 +36,9 @@ func CheckStartupCompatibility(ctx context.Context, db Handler) error {
 	}
 
 	required := cloneColumns(reservationColumns)
+	required["InformationSeed"] = []string{
+		"claim_token", "fencing_token", "lease_expires_at", "heartbeat_at", "next_retry_at",
+	}
 	// Authenticated source mutations and agent scheduling require verified
 	// ownership provenance, not only a numeric Sources.usr_id. Every supported
 	// backend must therefore expose the v1.17 provenance table.

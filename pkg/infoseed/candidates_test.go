@@ -2,7 +2,10 @@ package infoseed
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 )
@@ -265,3 +268,53 @@ func (p errorProcessor) ProcessCandidate(_ context.Context, input CandidatePlugi
 type errString string
 
 func (e errString) Error() string { return string(e) }
+
+func TestSortCandidatesDeterministicallyBeforeCaps(t *testing.T) {
+	candidates := []Candidate{
+		{URL: "https://b.test/2", Provider: "z-provider", Query: "q", Rank: 2, Score: 0.5},
+		{URL: "https://a.test/1", Provider: "a-provider", Query: "q", Rank: 1, Score: 0.9},
+		{URL: "https://c.test/3", Provider: "a-provider", Query: "q", Rank: 3, Score: 0.9},
+		{URL: "https://d.test/4", Provider: "a-provider", Query: "q", Rank: 1, Score: 0.9},
+	}
+	first := append([]Candidate(nil), candidates...)
+	second := []Candidate{candidates[2], candidates[0], candidates[3], candidates[1]}
+	sortCandidatesDeterministically(first)
+	sortCandidatesDeterministically(second)
+	if len(first) != len(second) {
+		t.Fatalf("sort changed length: %d != %d", len(first), len(second))
+	}
+	for index := range first {
+		if first[index].URL != second[index].URL {
+			t.Fatalf("nondeterministic order at %d: %q != %q", index, first[index].URL, second[index].URL)
+		}
+	}
+	if first[0].URL != "https://a.test/1" || first[1].URL != "https://d.test/4" || first[2].URL != "https://c.test/3" {
+		t.Fatalf("unexpected stable ordering: %#v", first)
+	}
+	filtered, _ := applyBuiltInCandidateFiltersWithDecisionEvidence(first, CandidateFilters{MaxCandidates: 2})
+	if len(filtered) != 2 || filtered[0].URL != "https://a.test/1" || filtered[1].URL != "https://d.test/4" {
+		t.Fatalf("cap did not use deterministic order: %#v", filtered)
+	}
+}
+
+func TestCandidateMetadataPreservesBoundedSnippet(t *testing.T) {
+	raw := candidateMetadata(Candidate{Metadata: map[string]interface{}{"provider": "rss"}, Snippet: "  feed supplied snippet  "})
+	if raw == nil {
+		t.Fatal("expected candidate metadata")
+	}
+	var metadata map[string]interface{}
+	if err := json.Unmarshal(*raw, &metadata); err != nil {
+		t.Fatalf("decode metadata: %v", err)
+	}
+	if metadata["snippet"] != "feed supplied snippet" || metadata["provider"] != "rss" {
+		t.Fatalf("unexpected metadata: %#v", metadata)
+	}
+	long := candidateMetadata(Candidate{Snippet: strings.Repeat("é", 2000)})
+	var bounded map[string]interface{}
+	if err := json.Unmarshal(*long, &bounded); err != nil {
+		t.Fatalf("decode bounded metadata: %v", err)
+	}
+	if got := bounded["snippet"].(string); len(got) > 2048 || !utf8.ValidString(got) {
+		t.Fatalf("bounded snippet length/UTF-8 invalid: len=%d valid=%t", len(got), utf8.ValidString(got))
+	}
+}

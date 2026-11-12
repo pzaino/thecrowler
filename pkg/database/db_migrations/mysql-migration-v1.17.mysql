@@ -1,6 +1,7 @@
--- Version 1.17 adds verified source ownership provenance. Durable crawl
--- approvals are PostgreSQL/SQLite-only in this release; MySQL keeps the
--- ownership provenance contract but reports the approval store as unsupported.
+-- Version 1.17 adds verified source ownership provenance and Information Seed
+-- claim leases, fencing, heartbeat and retry metadata. Durable crawl approvals
+-- are PostgreSQL/SQLite-only in this release; MySQL keeps the ownership
+-- provenance contract but reports the approval store as unsupported.
 -- The migration is additive and safe to re-run.
 CREATE TABLE IF NOT EXISTS SourceOwnership (
     source_id BIGINT PRIMARY KEY,
@@ -16,6 +17,54 @@ CREATE TABLE IF NOT EXISTS SourceOwnership (
     CHECK (verified_by_user_id > 0),
     INDEX idx_sourceownership_user (user_id)
 ) ENGINE=InnoDB;
+
+-- Information Seed claim leases, fencing, heartbeat and retry metadata are part
+-- of the existing 1.17 schema contract. Guarded procedures keep this migration
+-- additive and safe to re-run.
+DROP PROCEDURE IF EXISTS add_informationseed_v117_column_if_missing;
+DROP PROCEDURE IF EXISTS add_informationseed_v117_index_if_missing;
+
+DELIMITER //
+CREATE PROCEDURE add_informationseed_v117_column_if_missing(IN p_column_name VARCHAR(64), IN p_column_ddl TEXT)
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'InformationSeed' AND COLUMN_NAME = p_column_name
+    ) THEN
+        SET @add_informationseed_v117_column_sql = CONCAT('ALTER TABLE InformationSeed ADD COLUMN ', p_column_ddl);
+        PREPARE add_informationseed_v117_column_stmt FROM @add_informationseed_v117_column_sql;
+        EXECUTE add_informationseed_v117_column_stmt;
+        DEALLOCATE PREPARE add_informationseed_v117_column_stmt;
+    END IF;
+END//
+
+CREATE PROCEDURE add_informationseed_v117_index_if_missing(IN p_index_name VARCHAR(64), IN p_index_ddl TEXT)
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM INFORMATION_SCHEMA.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'InformationSeed' AND INDEX_NAME = p_index_name
+    ) THEN
+        SET @add_informationseed_v117_index_sql = p_index_ddl;
+        PREPARE add_informationseed_v117_index_stmt FROM @add_informationseed_v117_index_sql;
+        EXECUTE add_informationseed_v117_index_stmt;
+        DEALLOCATE PREPARE add_informationseed_v117_index_stmt;
+    END IF;
+END//
+DELIMITER ;
+
+CALL add_informationseed_v117_column_if_missing('claim_token', 'claim_token VARCHAR(64)');
+CALL add_informationseed_v117_column_if_missing('fencing_token', 'fencing_token BIGINT DEFAULT 0 NOT NULL');
+CALL add_informationseed_v117_column_if_missing('lease_expires_at', 'lease_expires_at TIMESTAMP NULL');
+CALL add_informationseed_v117_column_if_missing('heartbeat_at', 'heartbeat_at TIMESTAMP NULL');
+CALL add_informationseed_v117_column_if_missing('next_retry_at', 'next_retry_at TIMESTAMP NULL');
+
+CALL add_informationseed_v117_index_if_missing('idx_informationseed_lease_expiry', 'CREATE INDEX idx_informationseed_lease_expiry ON InformationSeed(status, disabled, lease_expires_at)');
+CALL add_informationseed_v117_index_if_missing('idx_informationseed_next_retry', 'CREATE INDEX idx_informationseed_next_retry ON InformationSeed(status, disabled, next_retry_at)');
+CALL add_informationseed_v117_index_if_missing('idx_informationseed_claim_token', 'CREATE INDEX idx_informationseed_claim_token ON InformationSeed(claim_token)');
+
+DROP PROCEDURE IF EXISTS add_informationseed_v117_column_if_missing;
+DROP PROCEDURE IF EXISTS add_informationseed_v117_index_if_missing;
+
 
 UPDATE DBSchemaVersion SET is_current=FALSE;
 INSERT INTO DBSchemaVersion(version,description,is_current)

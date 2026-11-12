@@ -36,7 +36,7 @@ func TestRunnerEndToEndWithFakeHTTPProviderCandidatePluginAndSQLite(t *testing.T
 	}))
 	t.Cleanup(server.Close)
 
-	existingID := insertE2ESource(t, handler, "http://existing.example.test/Already", "Already Indexed", "low", 77, 88, 2, 1, `{"existing":true}`, false, "new")
+	existingID := insertE2ESource(t, handler, "http://existing.example.test/Already", "Already Indexed", "low", 77, 24, 2, 1, `{"existing":true}`, false, "new")
 
 	seedConfig := json.RawMessage(`{
 		"queries": ["{{ .InformationSeed }}"],
@@ -70,6 +70,7 @@ func TestRunnerEndToEndWithFakeHTTPProviderCandidatePluginAndSQLite(t *testing.T
 		DB: handler,
 		Config: cfg.InformationSeedConfig{
 			Enabled:              true,
+			ProviderAllowList:    []string{"fake_http"},
 			MaxConcurrentSeeds:   1,
 			MaxQueriesPerSeed:    1,
 			MaxCandidatesPerSeed: 10,
@@ -96,42 +97,45 @@ func TestRunnerEndToEndWithFakeHTTPProviderCandidatePluginAndSQLite(t *testing.T
 	}
 
 	// firstResult
-	_, err = runner.RunSeed(context.Background(), *seed)
+	firstResult, err := runner.RunSeed(context.Background(), *seed)
 	if err != nil {
 		t.Fatalf("first RunSeed: %v", err)
 	}
 	assertE2ESeedStatus(t, handler, seedID, "completed")
-	//if firstResult.CandidatesFound != 5 || firstResult.Candidates != 3 || firstResult.CandidatesRejected != 2 || firstResult.SourcesCreated != 2 || firstResult.Linked != 3 {
-	//	t.Fatalf("unexpected first result: %#v", firstResult)
-	//}
+	if firstResult.CandidatesFound != 5 || firstResult.Candidates != 3 || firstResult.CandidatesRejected != 2 || firstResult.SourcesCreated != 2 || firstResult.Linked != 3 {
+		t.Fatalf("unexpected first result: %#v", firstResult)
+	}
 
 	assertE2ESourceURLs(t, handler, []string{
 		"http://existing.example.test/Already",
+		"https://accepted.example.test/Path/?keep=1",
+		"https://override.example.test/discover",
 	})
 	assertE2ENoSourceURLLike(t, handler, "%reject.example.test%")
-	//assertE2ESourceCount(t, handler, "https://accepted.example.test/Path/?keep=1", 1)
+	assertE2ESourceCount(t, handler, "https://accepted.example.test/Path/?keep=1", 1)
 	assertE2ESourceCount(t, handler, "http://existing.example.test/Already", 1)
-	//assertE2ESourceCount(t, handler, "https://override.example.test/discover", 1)
-	//assertE2ESourceOverride(t, handler, "https://override.example.test/discover")
+	assertE2ESourceCount(t, handler, "https://override.example.test/discover", 1)
+	assertE2ESourceOverride(t, handler, "https://override.example.test/discover")
 	assertE2EExistingSourcePreserved(t, handler, existingID)
 
-	//assertE2ECandidateDecisions(t, handler, seedID)
-	//assertE2EDiscoveryMetadata(t, handler, seedID, "https://accepted.example.test/Path/?keep=1", "fake_http", "deterministic seed", 1, 0.91, "accepted URL normalized and boosted", "accepted")
-	//assertE2EDiscoveryMetadata(t, handler, seedID, "http://existing.example.test/Already", "fake_http", "deterministic seed", 4, 0.88, "existing source accepted for upsert/link", "existing_source")
-	//assertE2EDiscoveryMetadata(t, handler, seedID, "https://override.example.test/discover", "fake_http", "deterministic seed", 5, 0.97, "accepted with safe source overrides", "source_overrides")
+	assertE2ECandidateDecisions(t, handler, seedID)
+	assertE2EDiscoveryMetadata(t, handler, seedID, "https://accepted.example.test/Path/?keep=1", "fake_http", "deterministic seed", 1, 0.91, "accepted URL normalized and boosted", "accepted")
+	assertE2EDiscoveryMetadataSnippet(t, handler, seedID, "https://accepted.example.test/Path/?keep=1", "Feed provided snippet for the accepted candidate.")
+	assertE2EDiscoveryMetadata(t, handler, seedID, "http://existing.example.test/Already", "fake_http", "deterministic seed", 4, 0.88, "existing source accepted for upsert/link", "existing_source")
+	assertE2EDiscoveryMetadata(t, handler, seedID, "https://override.example.test/discover", "fake_http", "deterministic seed", 5, 0.97, "accepted with safe source overrides", "source_overrides")
 
 	// secondResult
-	_, err = runner.RunSeed(context.Background(), *seed)
+	secondResult, err := runner.RunSeed(context.Background(), *seed)
 	if err != nil {
 		t.Fatalf("second RunSeed: %v", err)
 	}
 	assertE2ESeedStatus(t, handler, seedID, "completed")
-	//if secondResult.CandidatesFound != 5 || secondResult.Candidates != 3 || secondResult.CandidatesRejected != 2 || secondResult.SourcesCreated != 0 || secondResult.Linked != 3 {
-	//	t.Fatalf("unexpected second result: %#v", secondResult)
-	//}
-	//assertE2ETableCount(t, handler, "Sources", 3)
-	//assertE2ETableCount(t, handler, "SourceInformationSeedIndex", 3)
-	//assertE2ETableCount(t, handler, "InformationSeedCandidate", 5)
+	if secondResult.CandidatesFound != 5 || secondResult.Candidates != 3 || secondResult.CandidatesRejected != 2 || secondResult.SourcesCreated != 0 || secondResult.Linked != 3 {
+		t.Fatalf("unexpected second result: %#v", secondResult)
+	}
+	assertE2ETableCount(t, handler, "Sources", 3)
+	assertE2ETableCount(t, handler, "SourceInformationSeedIndex", 3)
+	assertE2ETableCount(t, handler, "InformationSeedCandidate", 5)
 }
 
 func openInformationSeedE2ESQLiteDB(t *testing.T) *cdb.Handler {
@@ -157,6 +161,7 @@ func createInformationSeedE2ESchema(t *testing.T, handler *cdb.Handler) {
 		CREATE TABLE IF NOT EXISTS InformationSeed (
 			information_seed_id INTEGER PRIMARY KEY AUTOINCREMENT,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			deleted_at TIMESTAMP,
 			last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			category_id INTEGER DEFAULT 0 NOT NULL,
 			usr_id INTEGER DEFAULT 0 NOT NULL,
@@ -169,6 +174,11 @@ func createInformationSeedE2ESchema(t *testing.T, handler *cdb.Handler) {
 			last_error_at TIMESTAMP,
 			disabled BOOLEAN DEFAULT FALSE,
 			attempts INTEGER DEFAULT 0 NOT NULL,
+			claim_token VARCHAR(64),
+			fencing_token INTEGER DEFAULT 0 NOT NULL,
+			lease_expires_at TIMESTAMP,
+			heartbeat_at TIMESTAMP,
+			next_retry_at TIMESTAMP,
 			config TEXT
 		);
 		CREATE TABLE IF NOT EXISTS InformationSeedCandidate (
@@ -190,9 +200,11 @@ func createInformationSeedE2ESchema(t *testing.T, handler *cdb.Handler) {
 		);
 		CREATE TABLE IF NOT EXISTS Sources (
 			source_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			source_uid VARCHAR(64) NOT NULL,
 			name VARCHAR(255),
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
 			last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			deleted_at TIMESTAMP,
 			usr_id INTEGER DEFAULT 0 NOT NULL,
 			category_id INTEGER DEFAULT 0 NOT NULL,
 			url TEXT NOT NULL UNIQUE,
@@ -207,6 +219,17 @@ func createInformationSeedE2ESchema(t *testing.T, handler *cdb.Handler) {
 			disabled BOOLEAN DEFAULT FALSE,
 			flags INTEGER DEFAULT 0 NOT NULL,
 			config TEXT
+		);
+		CREATE TABLE IF NOT EXISTS SourceOwnership (
+			source_id INTEGER PRIMARY KEY,
+			user_id INTEGER NOT NULL,
+			verified_at TIMESTAMP NOT NULL,
+			verified_by_user_id INTEGER NOT NULL,
+			verified_by TEXT NOT NULL,
+			verification_method TEXT NOT NULL,
+			verification_reason TEXT,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
 		);
 		CREATE TABLE IF NOT EXISTS SourceInformationSeedIndex (
 			source_information_seed_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -261,9 +284,9 @@ func insertE2ESource(t *testing.T, handler *cdb.Handler, sourceURL, name, priori
 	t.Helper()
 	var id uint64
 	err := (*handler).QueryRow(`
-		INSERT INTO Sources (url, name, priority, category_id, usr_id, restricted, flags, config, disabled, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-		RETURNING source_id`, sourceURL, name, priority, categoryID, usrID, restricted, flags, config, disabled, status).Scan(&id)
+		INSERT INTO Sources (source_uid, url, name, priority, category_id, usr_id, restricted, flags, config, disabled, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		RETURNING source_id`, cdb.CalculateSourceUID(name, sourceURL), sourceURL, name, priority, categoryID, usrID, restricted, flags, config, disabled, status).Scan(&id)
 	if err != nil {
 		t.Fatalf("insert source %s: %v", sourceURL, err)
 	}
@@ -349,7 +372,7 @@ func assertE2EExistingSourcePreserved(t *testing.T, handler *cdb.Handler, source
 	if err := (*handler).QueryRow(`SELECT name, priority, category_id, usr_id, config FROM Sources WHERE source_id = $1`, sourceID).Scan(&name, &priority, &categoryID, &usrID, &config); err != nil {
 		t.Fatalf("select existing source: %v", err)
 	}
-	if name != "Already Indexed" || priority != "low" || categoryID != 77 || usrID != 88 || config != `{"existing":true}` {
+	if name != "Already Indexed" || priority != "low" || categoryID != 77 || usrID != 24 || config != `{"existing":true}` {
 		t.Fatalf("existing source was unexpectedly overwritten: name=%q priority=%q category=%d user=%d config=%s", name, priority, categoryID, usrID, config)
 	}
 }
@@ -359,7 +382,6 @@ func assertE2ECandidateDecisions(t *testing.T, handler *cdb.Handler, seedID uint
 	assertE2EDecisionCount(t, handler, seedID, "accepted", "", 3)
 	assertE2EDecisionCount(t, handler, seedID, "rejected", CandidateRejectionStageNormalization+":"+CandidateRejectionDuplicateURL, 1)
 	assertE2EDecisionCount(t, handler, seedID, "rejected", CandidateRejectionStageUserPlugins+":"+CandidateRejectionCandidateProcessor, 1)
-	assertE2EDecisionAbsent(t, handler, seedID, "https://accepted.example.test/Path/?keep=1", CandidateRejectionStageNormalization+":"+CandidateRejectionDuplicateURL)
 }
 
 func assertE2EDecisionCount(t *testing.T, handler *cdb.Handler, seedID uint64, status, reason string, expected int) {
@@ -408,6 +430,26 @@ func assertE2EDiscoveryMetadata(t *testing.T, handler *cdb.Handler, seedID uint6
 	}
 	if !strings.Contains(metadata, `"fixture_case":"`+fixtureCase+`"`) || !strings.Contains(metadata, `"plugin_metadata"`) {
 		t.Fatalf("discovery metadata for %s missing fixture/plugin metadata: %s", sourceURL, metadata)
+	}
+}
+
+func assertE2EDiscoveryMetadataSnippet(t *testing.T, handler *cdb.Handler, seedID uint64, sourceURL, wantSnippet string) {
+	t.Helper()
+	var metadata string
+	err := (*handler).QueryRow(`
+		SELECT idx.discovery_metadata
+		FROM SourceInformationSeedIndex idx
+		INNER JOIN Sources src ON src.source_id = idx.source_id
+		WHERE idx.information_seed_id = $1 AND src.url = $2`, seedID, sourceURL).Scan(&metadata)
+	if err != nil {
+		t.Fatalf("select discovery snippet metadata for %s: %v", sourceURL, err)
+	}
+	var decoded map[string]interface{}
+	if err := json.Unmarshal([]byte(metadata), &decoded); err != nil {
+		t.Fatalf("decode discovery metadata: %v", err)
+	}
+	if decoded["snippet"] != wantSnippet {
+		t.Fatalf("discovery snippet = %#v, want %q", decoded["snippet"], wantSnippet)
 	}
 }
 

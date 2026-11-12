@@ -1,0 +1,20 @@
+{
+  "articles": [
+    {
+      "url": "https://example.test/article-one",
+      "title": "Example GDELT article one",
+      "seendate": "20260605T120000Z",
+      "domain": "example.test",
+      "language": "English",
+      "sourcecountry": "United States"
+    },
+    {
+      "url": "https://example.test/article-two",
+      "title": "Example GDELT article two",
+      "seendate": "20260605T130000Z",
+      "domain": "example.test",
+      "language": "English",
+      "sourcecountry": "United Kingdom"
+    }
+  ]
+}

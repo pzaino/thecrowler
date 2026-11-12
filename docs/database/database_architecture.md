@@ -11,20 +11,21 @@ DBMS backends.
 Information Seed schema changes are represented in both fresh-install setup SQL
 and upgrade migration SQL for every supported DBMS:
 
-- PostgreSQL: `pkg/database/db_migrations/postgresql-setup.pgsql` and
-  `pkg/database/db_migrations/postgresql-migration-v1.8.pgsql`.
-- MySQL/MariaDB: `pkg/database/db_migrations/mysql-setup-v1.4.mysql` and
-  `pkg/database/db_migrations/mysql-migration-v1.8.mysql`.
-- SQLite: `pkg/database/db_migrations/sqlite-setup-v1.4.sqlite3`,
-  `pkg/database/db_migrations/sqlite-migration-v1.8.sqlite3`, and the guarded runtime
-  migrations in `pkg/database/sqlite_db.go` for SQLite versions that cannot run
-  `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`.
+- PostgreSQL: `pkg/database/postgresql-setup.pgsql` and
+  `pkg/database/db_migrations/postgresql-migration-v1.17.pgsql`.
+- MySQL/MariaDB: `pkg/database/mysql-setup.mysql` and
+  `pkg/database/db_migrations/mysql-migration-v1.17.mysql`.
+- SQLite: `pkg/database/sqlite-setup.sqlite3`,
+  `pkg/database/db_migrations/sqlite-migration-v1.17.sqlite3`, and the guarded
+  runtime migrations in `pkg/database/sqlite_db.go` for SQLite versions that
+  cannot run `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`.
 
-The v1.8 Information Seed inventory includes lifecycle fields on
+The v1.17 Information Seed inventory includes lifecycle fields on
 `InformationSeed` (`status`, `priority`, `engine`, `last_processed_at`,
-`last_error`, `last_error_at`, `disabled`, and `attempts`), durable candidate
-decision audit rows in `InformationSeedCandidate`, and per-source/seed discovery
-provenance columns on `SourceInformationSeedIndex`.
+`last_error`, `last_error_at`, `disabled`, `attempts`, `claim_token`,
+`fencing_token`, `lease_expires_at`, `heartbeat_at`, and `next_retry_at`),
+durable candidate decision audit rows in `InformationSeedCandidate`, and
+per-source/seed discovery provenance columns on `SourceInformationSeedIndex`.
 
 Read-path indexes are maintained for common seed claiming/listing filters,
 candidate audit lookups, and source/seed-link inspection. In particular,
@@ -41,12 +42,15 @@ inspection by seed and provider rank.
 
 For the full status lifecycle, finalization rules, and rerun idempotency contract, see [Information seed lifecycle](information_seed_lifecycle.md).
 
-`ClaimInformationSeeds` is implemented in the database package with explicit
-DBMS-specific branches selected by `Handler.DBMS()`. All branches skip rows where
-`disabled = true`, claim seeds in `new` or `pending`, reclaim stale `processing`
-seeds only when `last_processed_at` is older than the configured
-`processingTimeout`, and retry `error` seeds only when `last_error_at` is older
-than the configured `retryAfter`.
+`ClaimInformationSeedsContext` is implemented in the database package with
+explicit DBMS-specific branches selected by `Handler.DBMS()`. All branches skip
+rows where `disabled = true`, claim seeds in `new` or `pending` ahead of retries,
+reclaim `processing` seeds only after their lease expires (legacy rows fall back
+to `processingTimeout`/`last_processed_at`), and retry `error` seeds only when
+`next_retry_at` (or the legacy `last_error_at` delay) has elapsed. Every claim
+writes a fresh claim token, increments the fencing generation, and sets a bounded
+lease. A seed at `max_attempts` is not automatically reclaimed and terminal
+failures are marked `exhausted`.
 
 DBMS-specific behavior and limitations:
 
@@ -55,15 +59,21 @@ DBMS-specific behavior and limitations:
   locked eligible rows and receive only the rows they atomically changed.
 - **MySQL** uses the project-supported MySQL 8 style `SELECT ... FOR UPDATE SKIP
   LOCKED` inside a transaction, followed by a guarded `UPDATE` of the locked
-  primary keys and a select of rows assigned to the claiming `engine`. This
-  requires InnoDB row locks and MySQL versions that support `SKIP LOCKED`; older
-  MySQL versions may block on locked rows or require a different guarded-update
-  fallback.
+  primary keys and a select by the new claim token. This requires InnoDB row
+  locks and MySQL versions that support `SKIP LOCKED`; older MySQL versions may
+  block on locked rows or require a different guarded-update fallback.
 - **SQLite** uses a transaction-safe bounded `UPDATE InformationSeed ... WHERE
-  information_seed_id IN (SELECT ... LIMIT ...)` pattern, then selects rows
-  assigned to the same `engine` and exact claim timestamp. SQLite does not
-  provide row-level `SKIP LOCKED`, so concurrent writers are serialized by
-  SQLite's database/page-level write locking rather than skipping locked rows.
+  information_seed_id IN (SELECT ... LIMIT ...)` pattern, then selects rows by
+  the unique claim token. SQLite does not provide row-level `SKIP LOCKED`, so
+  concurrent writers are serialized by SQLite's database/page-level write
+  locking rather than skipping locked rows.
+
+Heartbeats, terminal status updates, and shutdown release use the
+`(claim_token, fencing_token)` pair. A newer claim increments the fencing
+generation, so a stale worker cannot overwrite the current owner. See
+[Information Seed claim indexes](information_seed_claim_indexes.md) for the
+index/plan verification recipe and [Information seed lifecycle](information_seed_lifecycle.md)
+for the operator-facing state machine.
 
 
 ## Durable crawl approvals
@@ -95,21 +105,18 @@ then advance both `DBSchemaVersion` and `DatabaseWriterCompatibility`.
 
 `RequiredSchemaVersion` is `1.17` and `WriterGeneration` is
 `verified-ownership-v1.17`. The upgrade procedure is: stop every old writer,
-apply the v1.17 migration, verify the current version and writer generation,
-then start only v1.17-compatible services. Re-running the v1.17 migration is
-safe and preserves existing approval and ownership history. The migration does
-not bulk-verify historical `usr_id` values.
+apply migrations through v1.17, verify the current version and writer generation,
+then start only v1.17-compatible services. The v1.17 migration is additive: it
+creates verified ownership/approval tables, adds Information Seed
+claim/lease/retry columns and indexes, and installs the fenced claim function.
+It does not bulk-verify historical `usr_id` values.
 
-Rollback is additive and destructive only to approval/ownership history:
+Rollback is additive-only in practice: restore the previous writer and schema
+version after draining workers, or leave the new nullable columns and indexes in
+place for a later retry. Do not drop the claim columns while any worker may
+still be running.
 
-```sql
-DROP TABLE IF EXISTS CrawlApprovals;
-DROP TABLE IF EXISTS SourceOwnership;
-UPDATE DBSchemaVersion SET is_current = (version = '1.16');
-UPDATE DatabaseWriterCompatibility SET writer_generation = 'reservation-v1.15' WHERE lock_id = 1;
-```
-
-Do not apply the v1.17 migration to an existing persistent deployment database
+Do not apply schema migrations to an existing persistent deployment database
 without maintainer authorization.
 
 ## Verified source ownership
@@ -204,6 +211,11 @@ erDiagram
         TIMESTAMP last_error_at
         BOOLEAN disabled
         INTEGER attempts
+        VARCHAR claim_token
+        BIGINT fencing_token
+        TIMESTAMP lease_expires_at
+        TIMESTAMP heartbeat_at
+        TIMESTAMP next_retry_at
         JSONB config
     }
 

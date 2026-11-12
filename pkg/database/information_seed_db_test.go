@@ -1,8 +1,10 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -281,6 +283,7 @@ func createInformationSeedTestSchema(t *testing.T, db *sql.DB) {
 		CREATE TABLE InformationSeed (
 			information_seed_id INTEGER PRIMARY KEY AUTOINCREMENT,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			deleted_at TIMESTAMP,
 			last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			category_id INTEGER DEFAULT 0 NOT NULL,
 			usr_id INTEGER DEFAULT 0 NOT NULL,
@@ -293,6 +296,11 @@ func createInformationSeedTestSchema(t *testing.T, db *sql.DB) {
 			last_error_at TIMESTAMP,
 			disabled BOOLEAN DEFAULT FALSE,
 			attempts INTEGER DEFAULT 0 NOT NULL,
+			claim_token VARCHAR(64),
+			fencing_token INTEGER DEFAULT 0 NOT NULL,
+			lease_expires_at TIMESTAMP,
+			heartbeat_at TIMESTAMP,
+			next_retry_at TIMESTAMP,
 			config TEXT
 		);
 		CREATE TABLE InformationSeedCandidate (
@@ -792,5 +800,273 @@ func TestTimeSeriesInformationSeedLifecycleObservationsSQLite(t *testing.T) {
 		InformationSeedID: &seedID, SourceID: &sourceID, Dimensions: map[string]interface{}{"provider": "search", "query": "safe query"}})
 	if err != nil || len(discoveryResult.Observations) != 1 {
 		t.Fatalf("source discovery scope/dashboard filter: %#v, %v", discoveryResult, err)
+	}
+}
+
+func TestClaimInformationSeedsSQLiteLeaseFencingAndHeartbeat(t *testing.T) {
+	db := openSQLiteMemoryDB(t)
+	defer db.Close()
+	createInformationSeedTestSchema(t, db)
+	handler := Handler(&SQLiteHandler{db: db, dbms: DBSQLiteStr})
+	seedID := createClaimInformationSeedTestSeed(t, &handler, db, "lease seed", "high", time.Now().UTC())
+
+	claimed, err := ClaimInformationSeedsContext(context.Background(), &handler, 1, "", "engine-a", "claim-one", time.Hour, time.Hour, 2*time.Second, 0)
+	if err != nil {
+		t.Fatalf("claim with lease: %v", err)
+	}
+	if len(claimed) != 1 || claimed[0].ID != seedID || claimed[0].ClaimToken != "claim-one" || claimed[0].FencingToken != 1 {
+		t.Fatalf("unexpected first claim: %#v", claimed)
+	}
+	if !claimed[0].LeaseExpiresAt.Valid || !claimed[0].HeartbeatAt.Valid {
+		t.Fatalf("claimed seed missing lease timestamps: %#v", claimed[0])
+	}
+	if err := HeartbeatInformationSeedClaimContext(context.Background(), &handler, seedID, "wrong-token", 1, time.Minute); !errors.Is(err, ErrInformationSeedClaimLost) {
+		t.Fatalf("wrong-token heartbeat error = %v, want claim lost", err)
+	}
+	if err := HeartbeatInformationSeedClaimContext(context.Background(), &handler, seedID, "claim-one", 1, time.Minute); err != nil {
+		t.Fatalf("valid heartbeat: %v", err)
+	}
+	if immediate, err := ClaimInformationSeedsContext(context.Background(), &handler, 1, "", "engine-b", "claim-two", time.Hour, time.Hour, 2*time.Second, 0); err != nil || len(immediate) != 0 {
+		t.Fatalf("active lease was stolen: seeds=%#v err=%v", immediate, err)
+	}
+
+	if _, err := db.Exec(`UPDATE InformationSeed SET lease_expires_at = ? WHERE information_seed_id = ?`, time.Now().UTC().Add(-time.Second), seedID); err != nil {
+		t.Fatalf("expire lease: %v", err)
+	}
+	reclaimed, err := ClaimInformationSeedsContext(context.Background(), &handler, 1, "", "engine-b", "claim-two", time.Hour, time.Hour, time.Minute, 0)
+	if err != nil {
+		t.Fatalf("reclaim expired lease: %v", err)
+	}
+	if len(reclaimed) != 1 || reclaimed[0].FencingToken != 2 || reclaimed[0].ClaimToken != "claim-two" {
+		t.Fatalf("unexpected reclaim: %#v", reclaimed)
+	}
+	if err := UpdateInformationSeedStatusFencedContext(context.Background(), &handler, seedID, "claim-one", 1, "completed", "", nil); !errors.Is(err, ErrInformationSeedClaimLost) {
+		t.Fatalf("stale worker finalize error = %v, want claim lost", err)
+	}
+	if err := UpdateInformationSeedStatusFencedContext(context.Background(), &handler, seedID, "claim-two", 2, "completed", "", nil); err != nil {
+		t.Fatalf("current worker finalize: %v", err)
+	}
+}
+
+func TestClaimInformationSeedsSQLitePrioritizesNewWorkAndEnforcesCapsAndBackoff(t *testing.T) {
+	db := openSQLiteMemoryDB(t)
+	defer db.Close()
+	createInformationSeedTestSchema(t, db)
+	handler := Handler(&SQLiteHandler{db: db, dbms: DBSQLiteStr})
+	now := time.Now().UTC()
+	old := now.Add(-6 * time.Hour)
+	errorID := createLifecycleInformationSeedTestSeed(t, &handler, db, "old error", "error", false, sql.NullTime{}, sql.NullTime{Time: old, Valid: true}, 1)
+	newID := createClaimInformationSeedTestSeed(t, &handler, db, "new work", "", now)
+
+	claimed, err := ClaimInformationSeedsContext(context.Background(), &handler, 1, "", "fair-engine", "fair-token", time.Hour, time.Hour, time.Minute, 5)
+	if err != nil {
+		t.Fatalf("fair claim: %v", err)
+	}
+	if len(claimed) != 1 || claimed[0].ID != newID {
+		t.Fatalf("new work was starved by retry: %#v", claimed)
+	}
+	if _, err := db.Exec(`UPDATE InformationSeed SET lease_expires_at = ? WHERE information_seed_id = ?`, now.Add(-time.Minute), newID); err != nil {
+		t.Fatalf("expire new lease: %v", err)
+	}
+	if capped, err := ClaimInformationSeedsContext(context.Background(), &handler, 10, "", "capped-engine", "capped-token", time.Hour, time.Hour, time.Minute, 1); err != nil || len(capped) != 0 {
+		t.Fatalf("attempt cap not enforced: seeds=%#v err=%v", capped, err)
+	}
+	if _, err := db.Exec(`UPDATE InformationSeed SET status = 'completed', claim_token = NULL, lease_expires_at = NULL WHERE information_seed_id = ?`, newID); err != nil {
+		t.Fatalf("retire new seed: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE InformationSeed SET next_retry_at = ? WHERE information_seed_id = ?`, now.Add(time.Hour), errorID); err != nil {
+		t.Fatalf("set future retry: %v", err)
+	}
+	if backedOff, err := ClaimInformationSeedsContext(context.Background(), &handler, 10, "", "backoff-engine", "backoff-token", time.Hour, time.Hour, time.Minute, 5); err != nil || len(backedOff) != 0 {
+		t.Fatalf("future retry was claimed: seeds=%#v err=%v", backedOff, err)
+	}
+	if _, err := db.Exec(`UPDATE InformationSeed SET next_retry_at = ? WHERE information_seed_id = ?`, now.Add(-time.Second), errorID); err != nil {
+		t.Fatalf("set past retry: %v", err)
+	}
+	if retried, err := ClaimInformationSeedsContext(context.Background(), &handler, 10, "", "backoff-engine", "backoff-token-2", time.Hour, time.Hour, time.Minute, 5); err != nil || len(retried) != 1 || retried[0].ID != errorID {
+		t.Fatalf("eligible retry not claimed: seeds=%#v err=%v", retried, err)
+	}
+}
+
+func TestInformationSeedRetentionIsOptInBoundedAndSafe(t *testing.T) {
+	db := openSQLiteMemoryDB(t)
+	defer db.Close()
+	createInformationSeedTestSchema(t, db)
+	handler := Handler(&SQLiteHandler{db: db, dbms: DBSQLiteStr})
+	now := time.Now().UTC()
+	old := now.Add(-60 * 24 * time.Hour)
+	recent := now.Add(-time.Hour)
+	create := func(text, status string, updated time.Time, disabled bool) uint64 {
+		id, err := CreateInformationSeed(&handler, &InformationSeed{InformationSeed: text, Status: status, Disabled: disabled})
+		if err != nil {
+			t.Fatalf("create %s: %v", text, err)
+		}
+		if _, err := db.Exec(`UPDATE InformationSeed SET last_updated_at = ?, claim_token = NULL, lease_expires_at = NULL WHERE information_seed_id = ?`, updated, id); err != nil {
+			t.Fatalf("stamp %s: %v", text, err)
+		}
+		return id
+	}
+	completedOld := create("completed old", "completed", old, false)
+	completedRecent := create("completed recent", "completed", recent, false)
+	pendingOld := create("pending old", "pending", old, false)
+	errorOld := create("error old", "error", old, false)
+	processingOld := create("processing old", "processing", old, false)
+	disabledOld := create("disabled old", "disabled", old, true)
+	exhaustedOld := create("exhausted old", "exhausted", old, false)
+
+	policy := cfg.InformationSeedRetentionConfig{Enabled: false, CompletedDays: 30, DisabledDays: 30, ExhaustedDays: 30, BatchSize: 10}
+	result, err := PurgeInformationSeedRetentionContext(context.Background(), &handler, policy)
+	if err != nil || result.Considered != 0 || result.Deleted != 0 {
+		t.Fatalf("disabled retention changed rows: %#v err=%v", result, err)
+	}
+
+	policy.Enabled = true
+	policy.DryRun = true
+	result, err = PurgeInformationSeedRetentionContext(context.Background(), &handler, policy)
+	if err != nil || result.Considered != 3 || result.Deleted != 0 || !result.DryRun {
+		t.Fatalf("dry-run retention = %#v err=%v", result, err)
+	}
+
+	policy.DryRun = false
+	result, err = PurgeInformationSeedRetentionContext(context.Background(), &handler, policy)
+	if err != nil || result.Deleted != 3 {
+		t.Fatalf("retention delete = %#v err=%v", result, err)
+	}
+	for _, id := range []uint64{completedRecent, pendingOld, errorOld, processingOld} {
+		if _, err := GetInformationSeedByID(&handler, id); err != nil {
+			t.Fatalf("safe seed %d was removed: %v", id, err)
+		}
+	}
+	for _, id := range []uint64{completedOld, disabledOld, exhaustedOld} {
+		if _, err := GetInformationSeedByID(&handler, id); err == nil {
+			t.Fatalf("terminal seed %d was retained", id)
+		}
+	}
+}
+
+func TestClaimInformationSeedsSQLitePriorityListMatchesPostgresSemantics(t *testing.T) {
+	db := openSQLiteMemoryDB(t)
+	defer db.Close()
+	createInformationSeedTestSchema(t, db)
+	handler := Handler(&SQLiteHandler{db: db, dbms: DBSQLiteStr})
+	lowID := createClaimInformationSeedTestSeed(t, &handler, db, "low", "low", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	highID := createClaimInformationSeedTestSeed(t, &handler, db, "high", "high", time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC))
+	mediumID := createClaimInformationSeedTestSeed(t, &handler, db, "medium", "medium", time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC))
+	claimed, err := ClaimInformationSeeds(&handler, 10, " HIGH, medium ", "priority-list-engine", time.Hour, time.Hour)
+	if err != nil {
+		t.Fatalf("claim priority list: %v", err)
+	}
+	assertInformationSeedIDs(t, claimed, []uint64{highID, mediumID})
+	if lowID == 0 {
+		t.Fatal("unexpected zero low id")
+	}
+}
+
+func TestRerunExhaustedInformationSeedResetsAutomaticAttempts(t *testing.T) {
+	db := openSQLiteMemoryDB(t)
+	defer db.Close()
+	createInformationSeedTestSchema(t, db)
+	handler := Handler(&SQLiteHandler{db: db, dbms: DBSQLiteStr})
+	id := createLifecycleInformationSeedTestSeed(t, &handler, db, "exhausted seed", "exhausted", false, sql.NullTime{}, sql.NullTime{Time: time.Now().UTC(), Valid: true}, 5)
+	if _, err := db.Exec(`UPDATE InformationSeed SET next_retry_at = ?, claim_token = 'stale', fencing_token = 3 WHERE information_seed_id = ?`, time.Now().UTC().Add(time.Hour), id); err != nil {
+		t.Fatalf("prepare exhausted seed: %v", err)
+	}
+	if err := RerunInformationSeed(&handler, id); err != nil {
+		t.Fatalf("rerun exhausted seed: %v", err)
+	}
+	seed, err := GetInformationSeedByID(&handler, id)
+	if err != nil {
+		t.Fatalf("load rerun seed: %v", err)
+	}
+	if seed.Status != "pending" || seed.Attempts != 0 || seed.ClaimToken != "" || seed.FencingToken != 0 || seed.NextRetryAt.Valid || seed.LastError.Valid {
+		t.Fatalf("rerun did not reset exhausted accounting: %#v", seed)
+	}
+}
+
+func TestGenericUpdateAndRemoveRevokeActiveClaims(t *testing.T) {
+	db := openSQLiteMemoryDB(t)
+	defer db.Close()
+	createInformationSeedTestSchema(t, db)
+	handler := Handler(&SQLiteHandler{db: db, dbms: DBSQLiteStr})
+	seedID := createClaimInformationSeedTestSeed(t, &handler, db, "revoke claim", "high", time.Now().UTC())
+	claimed, err := ClaimInformationSeedsContext(context.Background(), &handler, 1, "", "revoke-engine", "revoke-token", time.Hour, time.Hour, time.Minute, 5)
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claim seed: %#v err=%v", claimed, err)
+	}
+	seed, err := GetInformationSeedByID(&handler, seedID)
+	if err != nil {
+		t.Fatalf("load seed: %v", err)
+	}
+	seed.Disabled = true
+	if err := UpdateInformationSeedContext(context.Background(), &handler, seed); err != nil {
+		t.Fatalf("update seed: %v", err)
+	}
+	if err := HeartbeatInformationSeedClaimContext(context.Background(), &handler, seedID, "revoke-token", claimed[0].FencingToken, time.Minute); !errors.Is(err, ErrInformationSeedClaimLost) {
+		t.Fatalf("heartbeat after update = %v, want claim lost", err)
+	}
+	if err := UpdateInformationSeedStatusFencedContext(context.Background(), &handler, seedID, "revoke-token", claimed[0].FencingToken, "completed", "", nil); !errors.Is(err, ErrInformationSeedClaimLost) {
+		t.Fatalf("fenced finalize after update = %v, want claim lost", err)
+	}
+
+	seed, err = GetInformationSeedByID(&handler, seedID)
+	if err != nil {
+		t.Fatalf("reload seed: %v", err)
+	}
+	seed.Disabled = false
+	seed.Status = "pending"
+	if err := UpdateInformationSeedContext(context.Background(), &handler, seed); err != nil {
+		t.Fatalf("enable seed: %v", err)
+	}
+	reclaimed, err := ClaimInformationSeedsContext(context.Background(), &handler, 1, "", "remove-engine", "remove-token", time.Hour, time.Hour, time.Minute, 5)
+	if err != nil || len(reclaimed) != 1 {
+		t.Fatalf("reclaim seed: %#v err=%v", reclaimed, err)
+	}
+	if err := RemoveInformationSeedContext(context.Background(), &handler, seedID); err != nil {
+		t.Fatalf("remove seed: %v", err)
+	}
+	if err := HeartbeatInformationSeedClaimContext(context.Background(), &handler, seedID, "remove-token", reclaimed[0].FencingToken, time.Minute); !errors.Is(err, ErrInformationSeedClaimLost) {
+		t.Fatalf("heartbeat after remove = %v, want claim lost", err)
+	}
+}
+
+func TestClaimReleaseRestoresAttemptAndExpiredFinalClaimExhausts(t *testing.T) {
+	db := openSQLiteMemoryDB(t)
+	defer db.Close()
+	createInformationSeedTestSchema(t, db)
+	handler := Handler(&SQLiteHandler{db: db, dbms: DBSQLiteStr})
+	seedID := createClaimInformationSeedTestSeed(t, &handler, db, "release attempt", "high", time.Now().UTC())
+	claimed, err := ClaimInformationSeedsContext(context.Background(), &handler, 1, "", "release-engine", "release-token", time.Hour, time.Hour, time.Minute, 5)
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claim: %#v err=%v", claimed, err)
+	}
+	if err := ReleaseInformationSeedClaimContext(context.Background(), &handler, seedID, "release-token", claimed[0].FencingToken, "pending", "", nil); err != nil {
+		t.Fatalf("release claim: %v", err)
+	}
+	seed, err := GetInformationSeedByID(&handler, seedID)
+	if err != nil {
+		t.Fatalf("load released seed: %v", err)
+	}
+	if seed.Status != "pending" || seed.Attempts != 0 || seed.ClaimToken != "" {
+		t.Fatalf("release consumed automatic attempt: %#v", seed)
+	}
+	reclaimed, err := ClaimInformationSeedsContext(context.Background(), &handler, 1, "", "final-engine", "final-token", time.Hour, time.Hour, time.Minute, 1)
+	if err != nil || len(reclaimed) != 1 {
+		t.Fatalf("final claim: %#v err=%v", reclaimed, err)
+	}
+	if _, err := db.Exec(`UPDATE InformationSeed SET lease_expires_at = ? WHERE information_seed_id = ?`, time.Now().UTC().Add(-time.Minute), seedID); err != nil {
+		t.Fatalf("expire final lease: %v", err)
+	}
+	if err := ExhaustExpiredInformationSeedClaimsContext(context.Background(), &handler, 1); err != nil {
+		t.Fatalf("exhaust expired claim: %v", err)
+	}
+	seed, err = GetInformationSeedByID(&handler, seedID)
+	if err != nil {
+		t.Fatalf("load exhausted seed: %v", err)
+	}
+	if seed.Status != "exhausted" || seed.ClaimToken != "" || seed.LeaseExpiresAt.Valid {
+		t.Fatalf("expired final claim not exhausted: %#v", seed)
+	}
+	if again, err := ClaimInformationSeedsContext(context.Background(), &handler, 1, "", "after-engine", "after-token", time.Hour, time.Hour, time.Minute, 1); err != nil || len(again) != 0 {
+		t.Fatalf("exhausted seed reclaimed: %#v err=%v", again, err)
 	}
 }
