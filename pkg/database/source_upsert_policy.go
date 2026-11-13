@@ -298,7 +298,7 @@ func updateExistingSourceConfigForPolicyContext(ctx context.Context, db *Handler
 			WHERE source_id = $2
 			  AND status <> 'processing'
 			  AND deleted_at IS NULL
-			  AND $1 IS NOT NULL
+			  AND $1::jsonb IS NOT NULL
 			  AND $1::jsonb <> '{}'::jsonb
 			  AND COALESCE(md5($1::jsonb::text), '') <> COALESCE(md5(config::text), '')`, string(details), sourceID)
 		if err != nil {

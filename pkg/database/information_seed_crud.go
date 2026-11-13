@@ -170,10 +170,11 @@ func SetInformationSeedDisabledContext(ctx context.Context, db *Handler, id uint
 		return fmt.Errorf("no information seed found with ID %d: %w", id, err)
 	}
 	p = newInformationSeedPlaceholders(dbms)
+	// Disabling is a claim-exclusion flag, not a claim mutation. Preserve an
+	// active claim so the still-running owner can finish and finalize its own
+	// fenced transition; clearing the token here would strand the row in
+	// "processing" after the worker's fenced update is rejected.
 	updateQuery := `UPDATE InformationSeed SET disabled = ` + p.Next()
-	if disabled {
-		updateQuery += `, claim_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL`
-	}
 	updateQuery += ` WHERE information_seed_id = ` + p.Next()
 	if _, err = tx.ExecContext(ctx, updateQuery, disabled, id); err != nil {
 		return fmt.Errorf("failed to update information seed %d disabled flag: %w", id, err)

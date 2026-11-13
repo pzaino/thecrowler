@@ -112,7 +112,9 @@ func updateInformationSeedStatusContext(ctx context.Context, db *Handler, id uin
 	} else if status == "exhausted" || status == "completed" || status == "pending" || status == "new" {
 		query += `, next_retry_at = NULL`
 	}
-	query += ` WHERE information_seed_id = ` + p.Next() + ` AND COALESCE(disabled, FALSE) = FALSE`
+	// The token/fencing pair is authoritative. An operator may disable a row
+	// while it is still owned; the owner must be able to write its final state.
+	query += ` WHERE information_seed_id = ` + p.Next()
 	if dbms != DBMySQLStr {
 		query += ` AND deleted_at IS NULL`
 	}
@@ -173,8 +175,10 @@ func HeartbeatInformationSeedClaimContext(ctx context.Context, db *Handler, id u
 	now := time.Now().UTC()
 	leaseExpires := now.Add(leaseDuration)
 	p := newInformationSeedPlaceholders(dbms)
+	// Disabled rows are not claimable, but an already-owned row must still be
+	// able to extend its lease while it finishes the in-flight run.
 	query := `UPDATE InformationSeed SET heartbeat_at = ` + p.Next() + `, lease_expires_at = ` + p.Next() + `
-		WHERE information_seed_id = ` + p.Next() + ` AND claim_token = ` + p.Next() + ` AND fencing_token = ` + p.Next() + ` AND status = 'processing' AND COALESCE(disabled, FALSE) = FALSE`
+		WHERE information_seed_id = ` + p.Next() + ` AND claim_token = ` + p.Next() + ` AND fencing_token = ` + p.Next() + ` AND status = 'processing'`
 	if dbms != DBMySQLStr {
 		query += ` AND deleted_at IS NULL`
 	}
@@ -216,7 +220,7 @@ func ReleaseInformationSeedClaimContext(ctx context.Context, db *Handler, id uin
 			last_error = NULL, last_error_at = NULL, next_retry_at = NULL,
 			claim_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL,
 			last_processed_at = ` + nowExpr + `
-		WHERE information_seed_id = ` + p.Next() + ` AND claim_token = ` + p.Next() + ` AND fencing_token = ` + p.Next() + ` AND status = 'processing' AND COALESCE(disabled, FALSE) = FALSE`
+		WHERE information_seed_id = ` + p.Next() + ` AND claim_token = ` + p.Next() + ` AND fencing_token = ` + p.Next() + ` AND status = 'processing'`
 	if dbms != DBMySQLStr {
 		query += ` AND deleted_at IS NULL`
 	}
@@ -257,7 +261,6 @@ func ExhaustExpiredInformationSeedClaimsContext(ctx context.Context, db *Handler
 		SET status = 'exhausted', claim_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL,
 			last_processed_at = ` + nowExpr + `
 		WHERE COALESCE(attempts, 0) >= ` + p.Next() + `
-		  AND COALESCE(disabled, FALSE) = FALSE
 		  AND (
 			(LOWER(TRIM(status)) = 'processing' AND (lease_expires_at IS NULL OR lease_expires_at < ` + p.Next() + `))
 			OR (LOWER(TRIM(status)) IN ('new','pending') AND claim_token IS NULL)
