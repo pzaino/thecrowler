@@ -600,8 +600,10 @@ persistence/API implementation. The additive schema and operator routes remain
 The PostgreSQL integration test no longer truncates caller-selected tables. It
 requires `CROWLER_MCP_POSTGRES_TEST_DISPOSABLE=1`, creates a uniquely named
 throwaway database, applies the additive migration there, runs the tests, and
-drops only that database. A maintenance-database sentinel proves unrelated rows
-are not affected. Missing opt-in or DSN fails/skips closed.
+drops only that database. The sentinel row lives inside that disposable test
+database, so proposal/approval operations are proven not to delete pre-existing
+rows without creating or dropping objects in the maintenance database. Missing
+opt-in or DSN fails/skips closed.
 
 ### Approval expiry and proposal reopening
 
@@ -675,7 +677,7 @@ WP-04C2D completed the safe preflight repairs:
   created disposable database and no longer creates or drops objects in the
   maintenance database.
 - The proposed operator policy example now uses the exact derived alias
-  `mcp_approved_server_approved_tool`.
+  `mcp_approved-server_approved_tool`.
 - SQLite foreign-key behavior is proven, not assumed: pooled runtime
   connections default to `PRAGMA foreign_keys = 0`; enabling it on one
   connection does not enable it on another. No runtime DSN change was made.
@@ -687,3 +689,38 @@ operator route, dispatcher, execution backend or remote mutation was added.
 The additive schema 1.17 capability is still not deployment-approved. See
 `docs/crowler-agents/reviews/WP-04C2D_*` for the contract, provenance,
 deployment review and decisions.
+
+## 24. WP-04C2E preflight and gate status
+
+WP-04C2E completed the safe preflight work and stopped before production
+activation:
+
+- The documented operator inventory now uses the valid server ID
+  `approved-server`, not `approved_server`. The derived alias is
+  `mcp_approved-server_approved_tool`. A regression test runs the real
+  `normalizeMCPOperatorConfig` path and then validates the matching internal
+  mutation policy; it also proves `approved_server` is rejected.
+- The internal `MCPMutationPolicy` validator now reuses the production server
+  ID and tool-name grammar, so an operation the operator inventory cannot name
+  cannot be accepted by policy validation alone.
+- Actual config-parser behavior is documented and tested: the legacy local,
+  remote, YAML and JSON loaders silently ignore unknown nested keys, typos and
+  duplicate mapping keys. Strict `mcp.mutation_policy` subtree validation is a
+  design proposal only and is gated by B1. No public policy field was added.
+- The PostgreSQL workflow now has a dedicated, verbose
+  `TestPostgresMCPMutationDurableStore` step that proves `RUN`/`PASS` and fails
+  on `SKIP`. It uses only the workflow's disposable PostgreSQL service. A local
+  `postgres:17` simulation passed; GitHub has not rerun the workflow because
+  this work was not pushed.
+- Legacy test-policy wording that implied sentinel objects in the maintenance
+  database was corrected. Sentinel rows belong only in the test-created
+  disposable database.
+
+Production proposal registration, trusted principal propagation, the public
+operator policy contract, current-policy revalidation at approval,
+denied-admission audit and the separate MCP alias authority remain disabled or
+undecided. No dispatcher, dispatch claim, dispatch-attempt insert, retry,
+reconciliation worker, execution backend or external mutation was added. The
+schema stays at 1.17 with writer generation `verified-ownership-v1.17`; the
+additive MCP capability is still not deployment-approved. See
+`docs/crowler-agents/reviews/WP-04C2E_*` for the evidence and decision sheet.

@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
@@ -256,5 +257,46 @@ func TestMCPMutationEffectClassification(t *testing.T) {
 			}
 			_ = SetMCPOperatorConfig(cfg.MCPConfig{})
 		})
+	}
+}
+
+func TestDocumentedMutationInventoryUsesNormalizedServerIdentity(t *testing.T) {
+	server := cfg.MCPServerConfig{
+		ID: "approved-server", Enabled: true, Transport: "stdio", Command: "/bin/echo",
+		ApprovedTools: []cfg.MCPApprovedTool{{
+			Name: "approved_tool", Effect: "mutation", AllowMutationProposal: true,
+			RequiredCapabilities: []string{"tool_execution"}, AllowedSources: []uint64{42},
+		}},
+	}
+	normalized, err := normalizeMCPOperatorConfig(cfg.MCPConfig{Servers: []cfg.MCPServerConfig{server}})
+	if err != nil {
+		t.Fatalf("documented mutation inventory rejected: %v", err)
+	}
+	if normalized.Servers[0].ID != "approved-server" || normalized.Servers[0].ApprovedTools[0].Name != "approved_tool" {
+		t.Fatalf("unexpected normalized inventory: %+v", normalized.Servers[0])
+	}
+	alias := MCPToolAlias("approved-server", "approved_tool")
+	if alias != "mcp_approved-server_approved_tool" {
+		t.Fatalf("documented alias = %q", alias)
+	}
+	policy := MCPMutationPolicy{
+		Enabled: true, PolicyID: "approved-policy", Version: "1",
+		Operations: []MCPMutationOperationPolicy{{
+			ServerID: "approved-server", ToolName: "approved_tool", ToolAlias: alias,
+			AllowedAgents: []string{"agent-id"}, RequiredCapabilities: []string{"tool_execution"},
+			MinTrustLevel: "trusted", AllowedSources: []uint64{42},
+			RequiredArgumentFields: []string{"source_id"}, AllowedArgumentFields: []string{"source_id"},
+			ProposalTTL: 5 * time.Minute, MaxProposalsPerRun: 4, MaxPendingProposals: 8,
+			MaxInputBytes: 65536, MaxOutputBytes: 65536, RequireApproval: true,
+			ExecutionBackend: "none", AllowedTransports: []string{"stdio"}, AuditRequired: true,
+		}},
+	}
+	if err := policy.Validate(); err != nil {
+		t.Fatalf("documented mutation policy rejected: %v", err)
+	}
+	invalid := server
+	invalid.ID = "approved_server"
+	if _, err := normalizeMCPServerConfig(invalid); err == nil {
+		t.Fatalf("underscore server ID was accepted by production normalization")
 	}
 }

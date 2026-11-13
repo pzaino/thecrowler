@@ -281,6 +281,22 @@ jobs:
             --dbname "$POSTGRES_DB" \
             --command "DROP DATABASE crowler_v117 WITH (FORCE)"
 
+      - name: Run MCP mutation PostgreSQL integration
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          export CROWLER_MCP_POSTGRES_TEST_DISPOSABLE=1
+          export CROWLER_MCP_POSTGRES_DSN="postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:5432/${POSTGRES_DB}?sslmode=disable"
+          log="$(mktemp)"
+          trap 'rm -f "$log"' EXIT
+          go test -tags=integration ./pkg/database -run '^TestPostgresMCPMutationDurableStore$' -count=1 -v 2>&1 | tee "$log"
+          grep -F -- '=== RUN   TestPostgresMCPMutationDurableStore' "$log"
+          grep -F -- '--- PASS: TestPostgresMCPMutationDurableStore' "$log"
+          if grep -Fq -- '--- SKIP' "$log"; then
+            echo "MCP mutation PostgreSQL integration was skipped" >&2
+            exit 1
+          fi
+
       - name: Run PostgreSQL integration suite
         env:
           THECROWLER_POSTGRES_INTEGRATION: "1"

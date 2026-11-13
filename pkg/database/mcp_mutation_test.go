@@ -710,3 +710,49 @@ func TestSQLiteMCPMutationForeignKeysAreDeclaredButNotRuntimeEnforced(t *testing
 		t.Fatalf("MCP approval table declares no foreign keys")
 	}
 }
+
+// TestMCPMutationLifecycleNeverCreatesDispatchAttempts proves that the inert
+// proposal and approval lifecycle does not create a dispatch record. No
+// executor, claim, retry or reconciliation path is wired to these tables.
+func TestMCPMutationLifecycleNeverCreatesDispatchAttempts(t *testing.T) {
+	db, handler := newMCPMutationSQLiteTestDB(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	proposal := mcpMutationTestProposal("dispatch-inert", "run-dispatch-inert", "call-dispatch-inert", now)
+	if _, _, err := AdmitMCPMutationProposal(ctx, &handler, proposal, 2, 2); err != nil {
+		t.Fatalf("admit inert proposal: %v", err)
+	}
+	approval := MCPMutationApprovalRow{
+		ApprovalID:       mcpMutationTestHash("approval:dispatch-inert"),
+		ProposalID:       proposal.ProposalID,
+		ProposalSHA256:   proposal.ProposalSHA256,
+		ApprovedByUserID: 9,
+		ApprovedBy:       "admin-1",
+		ApprovedByIssuer: "test-issuer",
+		ApprovedAt:       now.Add(time.Minute),
+		ExpiresAt:        now.Add(30 * time.Minute),
+		MaxExecutions:    1,
+		LastUpdatedAt:    now.Add(time.Minute),
+	}
+	issued, inserted, err := IssueMCPMutationApproval(ctx, &handler, approval, proposal.ProposalSHA256, now.Add(time.Minute))
+	if err != nil || !inserted {
+		t.Fatalf("issue inert approval = %+v inserted=%v err=%v", issued, inserted, err)
+	}
+	if _, _, err := DenyMCPMutationProposal(ctx, &handler, proposal.ProposalID, 9, "admin-1", "inert denial", now.Add(2*time.Minute)); err != nil {
+		t.Fatalf("deny inert proposal: %v", err)
+	}
+	var attempts int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM MCPMutationDispatchAttempts`).Scan(&attempts); err != nil {
+		t.Fatalf("count dispatch attempts: %v", err)
+	}
+	if attempts != 0 {
+		t.Fatalf("dispatch attempts = %d, want 0", attempts)
+	}
+	var dispatching int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM MCPMutationProposals WHERE state IN ('dispatching','uncertain','reconciliation_required')`).Scan(&dispatching); err != nil {
+		t.Fatalf("count active dispatch states: %v", err)
+	}
+	if dispatching != 0 {
+		t.Fatalf("proposals entered a dispatch state: %d", dispatching)
+	}
+}

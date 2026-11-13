@@ -147,6 +147,15 @@ func validateMCPMutationOperation(operation MCPMutationOperationPolicy) error {
 		strings.TrimSpace(operation.ToolAlias) == "" {
 		return fmt.Errorf("server_id, tool_name and tool_alias are required")
 	}
+	// Reuse the production server/tool grammar rather than maintaining a
+	// second, weaker mutation-policy grammar. An operation that the operator
+	// inventory cannot name can never be authorized.
+	if !mcpServerIDPattern.MatchString(operation.ServerID) {
+		return fmt.Errorf("server_id must match %s", mcpServerIDPattern.String())
+	}
+	if len(operation.ToolName) > mcpMaxRawToolLen || containsMCPControl(operation.ToolName) {
+		return fmt.Errorf("tool_name is invalid")
+	}
 	if MCPToolAlias(operation.ServerID, operation.ToolName) != operation.ToolAlias {
 		return fmt.Errorf("tool_alias does not match the exact server/tool identity")
 	}

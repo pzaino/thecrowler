@@ -88,7 +88,7 @@ A non-empty operation would use:
 operations:
   - server_id: "approved-server"
     tool_name: "approved_tool"
-    tool_alias: "approved-server__approved_tool" # must be derived exactly
+    tool_alias: "mcp_approved-server_approved_tool" # MCPToolAlias(server_id, tool_name)
     allowed_agents: ["agent-id"]
     required_capabilities: ["tool_execution"]
     min_trust_level: "trusted"

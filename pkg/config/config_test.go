@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
 	"runtime"
 	"strings"
@@ -2970,5 +2971,63 @@ information_seed:
 	issues, err = schema.ValidateBytes(context.Background(), invalid)
 	if err != nil || len(issues) == 0 {
 		t.Fatalf("invalid retention schema accepted: issues=%v err=%v", issues, err)
+	}
+}
+
+// TestMutationPolicyUnknownKeysAreCurrentlyIgnored documents the actual
+// legacy-loader behavior before the gated public policy contract exists. The
+// strict mutation-policy subtree validation must be added at the approved
+// loader boundary; the global parser is intentionally permissive.
+func TestMutationPolicyUnknownKeysAreCurrentlyIgnored(t *testing.T) {
+	payload := []byte("crawler:\n  workers: 1\nmcp:\n  mutation_policy:\n    enabled: true\n    require_aproval: false\n    require_aproval: true\n    allowed_resouces: [fixture]\n    proposal_ttl: not-a-duration\n")
+	cfg, err := ParseConfig(payload)
+	if err != nil {
+		t.Fatalf("ParseConfig rejected unknown mutation policy keys: %v", err)
+	}
+	if len(cfg.MCP.Servers) != 0 {
+		t.Fatalf("unknown mutation policy populated MCP servers: %+v", cfg.MCP)
+	}
+
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, payload, 0o600); err != nil {
+		t.Fatalf("write config file: %v", err)
+	}
+	fileCfg, err := getConfigFile(path)
+	if err != nil {
+		t.Fatalf("getConfigFile rejected unknown mutation policy keys: %v", err)
+	}
+	if len(fileCfg.MCP.Servers) != 0 {
+		t.Fatalf("unknown mutation policy populated file MCP servers: %+v", fileCfg.MCP)
+	}
+
+	fetcher := &MockFetcher{Body: string(payload)}
+	remoteCfg, err := LoadRemoteConfig(Config{Remote: Remote{
+		Host: testURL, Path: "config.yaml", Timeout: 10, SSLMode: cmn.DisableStr,
+	}}, fetcher)
+	if err != nil {
+		t.Fatalf("LoadRemoteConfig rejected unknown mutation policy keys: %v", err)
+	}
+	if len(remoteCfg.MCP.Servers) != 0 {
+		t.Fatalf("unknown mutation policy populated remote MCP servers: %+v", remoteCfg.MCP)
+	}
+
+	jsonCfg, err := ParseConfig([]byte(`{"crawler":{"workers":1},"mcp":{"mutation_policy":{"enabled":true,"require_aproval":false,"proposal_ttl":"not-a-duration"}}}`))
+	if err != nil {
+		t.Fatalf("ParseConfig rejected JSON unknown mutation policy keys: %v", err)
+	}
+	if len(jsonCfg.MCP.Servers) != 0 {
+		t.Fatalf("JSON unknown mutation policy populated MCP servers: %+v", jsonCfg.MCP)
+	}
+
+	duplicate, err := ParseConfig([]byte("crawler:\n  workers: 1\n  workers: 2\n"))
+	if err != nil {
+		t.Fatalf("legacy parser rejected duplicate mapping key: %v", err)
+	}
+	if duplicate.Crawler.Workers != 2 {
+		t.Fatalf("duplicate-key last value = %d, want 2", duplicate.Crawler.Workers)
+	}
+
+	if _, err := ParseConfig([]byte("mcp:\n  servers: not-a-list\n")); err == nil {
+		t.Fatalf("wrong scalar type for mcp.servers was accepted")
 	}
 }

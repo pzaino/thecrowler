@@ -325,6 +325,25 @@ func TestMCPMutationPolicyFailsClosed(t *testing.T) {
 	if err := bad.Validate(); err == nil {
 		t.Fatalf("mutation policy without approval accepted")
 	}
+	// The alias is recomputed so only the production server-ID grammar can
+	// reject this operation; alias agreement alone must not be sufficient.
+	bad = clonePolicy()
+	bad.Operations[0].ServerID = "approved_server"
+	bad.Operations[0].ToolAlias = MCPToolAlias(bad.Operations[0].ServerID, bad.Operations[0].ToolName)
+	if err := bad.Validate(); err == nil {
+		t.Fatalf("mutation policy accepted a server ID production normalization rejects")
+	}
+	bad = clonePolicy()
+	bad.Operations[0].ToolName = "bad\x00tool"
+	bad.Operations[0].ToolAlias = MCPToolAlias(bad.Operations[0].ServerID, bad.Operations[0].ToolName)
+	if err := bad.Validate(); err == nil {
+		t.Fatalf("mutation policy accepted a tool name with a control character")
+	}
+	bad = clonePolicy()
+	bad.Operations = append(bad.Operations, bad.Operations[0])
+	if err := bad.Validate(); err == nil {
+		t.Fatalf("duplicate mutation operation accepted")
+	}
 }
 
 func TestMCPMutationSourceScopeIsEnforced(t *testing.T) {
@@ -934,14 +953,14 @@ func TestMCPMutationInMemoryExpirySweepReleasesQuota(t *testing.T) {
 }
 
 func TestDocumentedMCPMutationPolicyAliasAndValidation(t *testing.T) {
-	alias := MCPToolAlias("approved_server", "approved_tool")
-	if alias != "mcp_approved_server_approved_tool" {
+	alias := MCPToolAlias("approved-server", "approved_tool")
+	if alias != "mcp_approved-server_approved_tool" {
 		t.Fatalf("documented alias = %q", alias)
 	}
 	policy := MCPMutationPolicy{
 		Enabled: true, PolicyID: "approved-policy", Version: "1",
 		Operations: []MCPMutationOperationPolicy{{
-			ServerID: "approved_server", ToolName: "approved_tool", ToolAlias: alias,
+			ServerID: "approved-server", ToolName: "approved_tool", ToolAlias: alias,
 			AllowedAgents: []string{"agent-id"}, RequiredCapabilities: []string{"tool_execution"},
 			MinTrustLevel: "trusted", AllowedSources: []uint64{42},
 			RequiredArgumentFields: []string{"source_id"}, AllowedArgumentFields: []string{"source_id"},

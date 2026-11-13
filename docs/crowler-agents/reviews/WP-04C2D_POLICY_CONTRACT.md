@@ -22,8 +22,12 @@ is the proposed contract for that decision; it is not approval.
   manifest, model arguments, event payload or inherited step property.
 - Default: `enabled: false`, empty policy, no operations. Existing read-only MCP
   configurations remain valid and unchanged.
-- Unknown fields: rejected by the strict config decoder, consistent with the
-  repository's existing operator config behavior.
+- Unknown fields: must be rejected by a dedicated strict
+  `mcp.mutation_policy` subtree decoder. The global legacy YAML/JSON parser is
+  permissive and silently ignores unknown nested keys, typos and duplicate
+  mappings, as proven in `WP-04C2E_CONFIG_STRICTNESS.md`. Strictness for this
+  authorization subtree is **not implemented** and is gated by B1; it must not
+  be assumed from the existing loader.
 
 ### Minimal default
 
@@ -46,10 +50,10 @@ mcp:
     policy_id: "approved-mutations"
     version: "1"
     operations:
-      - server_id: "approved_server"
+      - server_id: "approved-server"
         tool_name: "approved_tool"
         # tool_alias is derived as MCPToolAlias(server_id, tool_name):
-        # mcp_approved_server_approved_tool
+        # mcp_approved-server_approved_tool
         allowed_agents: ["agent-id"]
         required_capabilities: ["tool_execution"]
         min_trust_level: "trusted"
@@ -69,8 +73,8 @@ mcp:
         audit_required: true
 ```
 
-`MCPToolAlias("approved_server", "approved_tool")` returns
-`mcp_approved_server_approved_tool` (the `mcp_` prefix, server ID, `_`, and the
+`MCPToolAlias("approved-server", "approved_tool")` returns
+`mcp_approved-server_approved_tool` (the `mcp_` prefix, server ID, `_`, and the
 sanitized raw tool name). The alias must be derived from trusted
 `server_id`/`tool_name`; if an operator-visible alias is retained, exact
 equality must be validated. The existing policy validation test covers this

@@ -53,7 +53,10 @@ The integration test now:
 - applies the additive migration twice and applies the clean-install MCP block;
 - runs admission, external-scope, approval, revocation, list, capability
   negative, type negative and cross-connection concurrency tests;
-- verifies a sentinel row in the maintenance database remains intact;
+- originally verified a sentinel row in the maintenance database remained
+  intact (superseded by WP-04C2D/WP-04C2E: the sentinel now lives inside the
+  disposable test database, and the maintenance database receives no sentinel
+  DDL/DML);
 - drops only the database it created.
 
 It never runs `TRUNCATE` or deletes rows from the caller-selected database.

@@ -213,8 +213,9 @@ mutation.
 
 PostgreSQL integration tests must require an explicit disposable opt-in and must
 create a unique throwaway database; `TRUNCATE ... CASCADE` must not be used
-against a caller-selected database. Preserve a sentinel row in the maintenance
-database and verify it survives.
+against a caller-selected database. Preserve any sentinel/pre-existing rows
+inside that disposable test database and verify they survive; never create or
+drop sentinel objects in the maintenance or caller-selected database.
 
 Approval tests must use a controllable clock and cover: expired approval before
 proposal, reapproval/expiry transition, new approval after expiry, revocation
@@ -250,3 +251,24 @@ change the global DSN without the maintainer decision recorded in
 
 Production policy/principal activation remains blocked until the B1/B2 and G3
 decisions are recorded.
+
+## WP-04C2E alias, parser and CI tests
+
+Documented mutation inventory examples must pass the real
+`normalizeMCPOperatorConfig` path, not only `MCPMutationPolicy.Validate`. Server
+IDs use `^[a-z][a-z0-9-]{0,31}$`; the documented example is `approved-server`
+with alias `mcp_approved-server_approved_tool`. `approved_server` must be
+rejected at the production normalization boundary and by internal policy
+validation.
+
+Config parser tests must record actual legacy behavior: unknown nested
+`mcp.mutation_policy` keys, typos, invalid durations and duplicate mapping keys
+are currently ignored (last value wins), while a wrong scalar type for a typed
+field is rejected. When B1 is approved, add a dedicated strict subtree decoder
+for all local, remote, YAML and JSON load paths; do not assume the global parser
+is strict and do not make unrelated legacy sections strict.
+
+The PostgreSQL integration workflow must include a dedicated verbose step for
+`TestPostgresMCPMutationDurableStore` that asserts `=== RUN` and `--- PASS` and
+fails on `--- SKIP`. It must use only the workflow's disposable PostgreSQL
+service and the explicit test opt-in. A local pass is not GitHub evidence.
