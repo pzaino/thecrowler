@@ -746,7 +746,8 @@ func (je *JobEngine) executeJobsResult(j *JobConfig, iCfg map[string]any) (any, 
 			return je.executeAgentDefinitionResult(def, iCfg)
 		}
 	}
-	return je.executeJobsWithContextResult(j, iCfg, AgentExecutionContext{}, cfg.AgentRuntimeConfig{})
+	execCtx := AgentExecutionContext{MCPMutationPrincipal: mcpMutationPrincipalFromInput(iCfg)}
+	return je.executeJobsWithContextResult(j, iCfg, execCtx, cfg.AgentRuntimeConfig{})
 }
 
 func deepCopyJob(j Job) Job {
@@ -826,7 +827,8 @@ func (je *JobEngine) ExecuteJobs(j *JobConfig, iCfg map[string]any) error {
 			return je.executeAgentDefinition(def, iCfg)
 		}
 	}
-	return je.executeJobsWithContext(j, iCfg, AgentExecutionContext{}, cfg.AgentRuntimeConfig{})
+	execCtx := AgentExecutionContext{MCPMutationPrincipal: mcpMutationPrincipalFromInput(iCfg)}
+	return je.executeJobsWithContext(j, iCfg, execCtx, cfg.AgentRuntimeConfig{})
 }
 
 func (je *JobEngine) executeAgentDefinition(def *AgentDefinition, iCfg map[string]any) error {
@@ -835,6 +837,7 @@ func (je *JobEngine) executeAgentDefinition(def *AgentDefinition, iCfg map[strin
 	}
 	flags := runtimeFlagsFromConfig(iCfg)
 	ctx := newAgentExecutionContext(def.Identity, def.Source.Location)
+	ctx.MCPMutationPrincipal = mcpMutationPrincipalFromInput(iCfg)
 	if flags.IdentityEnforcement || flags.ContractEnforcement {
 		je.startGovernanceRun()
 	}
@@ -847,6 +850,7 @@ func (je *JobEngine) executeAgentDefinitionResult(def *AgentDefinition, iCfg map
 	}
 	flags := runtimeFlagsFromConfig(iCfg)
 	ctx := newAgentExecutionContext(def.Identity, def.Source.Location)
+	ctx.MCPMutationPrincipal = mcpMutationPrincipalFromInput(iCfg)
 	if flags.IdentityEnforcement || flags.ContractEnforcement {
 		je.startGovernanceRun()
 	}
@@ -1396,3 +1400,38 @@ jobs:
 
 
 */
+
+// ExecuteManualAgentResult executes only the manual-trigger jobs of a
+// registered agent. It is the trusted execution seam for the authenticated
+// manual-run entrypoint; the caller must supply a validated principal.
+func (je *JobEngine) ExecuteManualAgentResult(agentRef string, inputCtx map[string]any) (any, error) {
+	lookup := strings.TrimSpace(agentRef)
+	if lookup == "" {
+		return nil, fmt.Errorf("missing agent reference")
+	}
+	if AgentsRegistry == nil {
+		return nil, fmt.Errorf("agent registry unavailable")
+	}
+	AgentsRegistry.ensureRegistry()
+	def, ok := AgentsRegistry.registry.GetByID(lookup)
+	if !ok {
+		def, ok = AgentsRegistry.registry.GetByName(lookup)
+	}
+	if !ok {
+		return nil, fmt.Errorf("agent %q not found", lookup)
+	}
+	manual, ok := def.ManualJobConfig()
+	if !ok {
+		return nil, fmt.Errorf("agent %q has no manual trigger", lookup)
+	}
+	if manual.AgentIdentity == nil {
+		return nil, fmt.Errorf("agent %q has no trusted identity", lookup)
+	}
+	flags := runtimeFlagsFromConfig(inputCtx)
+	execCtx := newAgentExecutionContext(*manual.AgentIdentity, "manual")
+	execCtx.MCPMutationPrincipal = mcpMutationPrincipalFromInput(inputCtx)
+	if flags.IdentityEnforcement || flags.ContractEnforcement {
+		je.startGovernanceRun()
+	}
+	return je.executeJobsWithContextResult(manual, inputCtx, execCtx, flags)
+}

@@ -91,3 +91,20 @@ func TestSourceEventMetaDataIsShapeSafe(t *testing.T) {
 		}
 	}
 }
+
+// TestAgentInputConfigHasNoMCPMutationPrincipal pins the B2 fail-closed rule:
+// event/background runs never receive a user principal, and event metadata
+// cannot inject one.
+func TestAgentInputConfigHasNoMCPMutationPrincipal(t *testing.T) {
+	iCfg := agentInputConfig(cdb.Event{Type: "test_event"}, map[string]interface{}{
+		"mcp_mutation_principal": map[string]interface{}{
+			"user_id": 99, "username": "forged", "issuer": "forged",
+		},
+	})
+	if _, ok := iCfg["mcp_mutation_principal"]; ok {
+		t.Fatalf("event input unexpectedly contained a principal: %#v", iCfg)
+	}
+	if _, ok := iCfg["event"].(cdb.Event); !ok {
+		t.Fatalf("event input missing event")
+	}
+}

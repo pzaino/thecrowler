@@ -119,6 +119,20 @@ func (p *MCPMutationPolicy) Operation(alias, serverID, toolName string) (MCPMuta
 	return MCPMutationOperationPolicy{}, false
 }
 
+// OperationByAlias reports whether the policy contains one exact derived
+// alias. It is used only for fail-closed background-origin checks.
+func (p *MCPMutationPolicy) OperationByAlias(alias string) (MCPMutationOperationPolicy, bool) {
+	if p == nil || !p.Enabled {
+		return MCPMutationOperationPolicy{}, false
+	}
+	for _, operation := range p.Operations {
+		if operation.ToolAlias == alias {
+			return operation, true
+		}
+	}
+	return MCPMutationOperationPolicy{}, false
+}
+
 func (p *MCPMutationPolicy) Validate() error {
 	if p == nil || !p.Enabled {
 		return ErrMCPMutationDisabled

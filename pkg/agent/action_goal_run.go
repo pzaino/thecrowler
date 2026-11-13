@@ -75,6 +75,12 @@ func (a *AgentGoalRunAction) Execute(params map[string]interface{}) (map[string]
 		rval[StrMessage] = err.Error()
 		return rval, err
 	}
+	principal := mcpMutationPrincipalFromRuntimeConfig(config)
+	if err := denyMCPMutationAliasesWithoutPrincipal(spec.Allowlist, principal); err != nil {
+		rval[StrStatus] = StatusError
+		rval[StrMessage] = "goal run denied: " + err.Error()
+		return rval, err
+	}
 
 	dbHandler, _ := config["db_handler"].(cdb.Handler)
 	registry, err := DefaultToolRegistry()
@@ -197,7 +203,8 @@ func (a *AgentGoalRunAction) Execute(params map[string]interface{}) (map[string]
 	}
 	runConfig := goalRunConfig{
 		Spec: runtimeSpec, Identity: identity, DB: dbHandler,
-		Registry: registry, EvidenceRegistry: evidenceRegistry,
+		Principal: principal,
+		Registry:  registry, EvidenceRegistry: evidenceRegistry,
 		AllowedOperations: spec.MutationPolicy.OperationsSet(),
 		MutationAllowed:   crawlRuntime != nil,
 		CrawlRuntime:      crawlRuntime,

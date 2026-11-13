@@ -75,9 +75,6 @@ var (
 	// PluginRegister is the plugin register
 	PluginRegister *plg.JSPluginRegister
 
-	// AgentsEngine is the agent engine
-	AgentsEngine *agt.JobEngine
-
 	clientLimiters = make(map[string]*rate.Limiter)
 	limitersMutex  sync.Mutex
 	jobQueue       = make(chan cdb.Event, 160_000) // buffered notification queue
@@ -652,6 +649,11 @@ func initAPIv1() {
 
 	http.Handle(baseAPI+"list", listEventsWithMiddlewares)
 	cmn.RegisterAPIRoute(baseAPI+"list", []string{"GET"}, "List all events", tagsNone, false, false, 200, nil, nil, []cdb.Event{})
+
+	// Authenticated user-triggered manual agent execution. Only agents with a
+	// manual trigger and the events operator scope are eligible.
+	http.Handle("/v1/agent/run", withAll(http.HandlerFunc(agentRunHandler)))
+	cmn.RegisterAPIRoute("/v1/agent/run", []string{"POST"}, "Run a registered manual agent as the authenticated operator", tagsNone, true, false, 200, agentRunRequest{}, nil, agentRunResponse{})
 
 	// Handle uploads
 

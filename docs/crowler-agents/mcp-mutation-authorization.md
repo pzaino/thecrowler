@@ -751,3 +751,37 @@ This is a configuration and trusted-snapshot implementation only. No production
 proposal tool is registered, no authenticated principal is propagated, no MCP
 operation authority is derived from native crawl policy, and no external
 mutation or dispatch attempt exists. B2/B3/B4/B5/G3 remain pending.
+
+## 26. WP-04C2G B2 trusted principal provenance
+
+B2 was approved and implemented. The agent runtime now has a trusted user
+principal path for user-triggered manual runs; production MCP proposal
+registration remains disabled under B3.
+
+- The Events service exposes `POST /v1/agent/run` for registered agents that
+  declare a `manual` trigger. It requires the `events:*` (or future
+  `events:agent:run`) scope, resolves `auth.Identity` with
+  `auth.ResolveActiveIdentity`, and derives `MCPMutationPrincipal` only from
+  the current numeric subject, username and issuer.
+- The request accepts `agent_id` or `agent_name`, an optional `input` object
+  and optional `parameters`. Unknown top-level fields, including forged
+  principal/owner/user fields, are rejected.
+- Only the agent's manual-trigger jobs are executed. Event-triggered jobs are
+  not run out of band.
+- The typed principal travels through `AgentExecutionContext`,
+  `applyExecutionContext`, `ToolLoopConfig.Principal`,
+  `goalRunConfig.Principal` and `ToolRuntime.Principal`. Event payloads,
+  manifests, model output, tool arguments and inherited step values cannot
+  supply it.
+- Event/background agent runs remain principal-less. If a future registration
+  path exposes an MCP mutation alias without a trusted principal, the tool
+  loop and goal action deny it explicitly.
+- No schema change was required; the existing 1.17 auth/user tables are used.
+  See `docs/crowler-agents/manual-agent-runs.md` for the endpoint contract and
+  live-testing notes.
+- No dispatcher, dispatch claim, remote mutation, proposal registration or
+  automatic approval execution was added.
+
+The `events:*` scope is intentionally coarse for this first trusted run path.
+A later B3/B5 decision may introduce a narrower `events:agent:run` scope with
+denied-admission audit.

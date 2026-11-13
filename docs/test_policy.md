@@ -295,3 +295,26 @@ slices cannot mutate the global policy, concurrent getters are race-free, and
 The strict policy must not register a production proposal tool. Existing
 read-only MCP, native crawl, goal evidence and Information Seed tests must
 remain green.
+
+
+## WP-04C2G B2 trusted principal tests
+
+Manual agent runs must require authentication, a current active account and the
+`events:*`/`events:agent:run` operator scope. Tests must prove that disabled or
+deleted accounts, missing authentication, forged top-level principal fields and
+non-manual agents fail closed.
+
+The typed `MCPMutationPrincipal` must be derived only from
+`auth.ResolveActiveIdentity`, carried through `AgentExecutionContext`,
+`applyExecutionContext`, tool-loop and goal configurations, and visible to a
+tool through `ToolRuntime.Principal`. Manifest, event, model and params values
+must not create or replace it.
+
+Event/background runs must not receive a principal. A requested MCP mutation
+alias without a trusted principal must be denied by the tool loop and goal
+action even before B3 registers a production proposal adapter.
+
+Only an agent's manual-trigger jobs may execute through `/v1/agent/run`;
+event-triggered jobs must not be invoked out of band. Live Compose testing must
+exercise the endpoint against a controlled manual agent and verify the returned
+principal fields, agent scope, logs and readiness.

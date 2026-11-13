@@ -111,6 +111,7 @@ func normalizeToolLoopConfig(params, config map[string]interface{}, ictx InputCo
 		Identity:    identity,
 		Enforcement: true,
 		Limits:      DefaultToolLoopLimits(),
+		Principal:   mcpMutationPrincipalFromRuntimeConfig(config),
 	}
 	if runID, ok := toolLoopRunField(params, "run_id"); ok {
 		loop.RunID = runID
@@ -198,6 +199,9 @@ func normalizeToolLoopConfig(params, config map[string]interface{}, ictx InputCo
 		return loop, err
 	}
 	loop.Allowlist = allowlist
+	if err := denyMCPMutationAliasesWithoutPrincipal(loop.Allowlist, loop.Principal); err != nil {
+		return loop, err
+	}
 
 	// Optional source scope: static integers only.
 	sources, err := normalizeLoopSources(params, config)

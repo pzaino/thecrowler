@@ -35,12 +35,13 @@ const (
 
 // AgentExecutionContext captures per-run identity metadata and correlation fields.
 type AgentExecutionContext struct {
-	RunID            string        `json:"run_id"`
-	TraceID          string        `json:"trace_id"`
-	Source           string        `json:"source,omitempty"`
-	Owner            string        `json:"owner,omitempty"`
-	IdentitySnapshot AgentIdentity `json:"identity_snapshot"`
-	StartedAt        time.Time     `json:"started_at"`
+	RunID                string               `json:"run_id"`
+	TraceID              string               `json:"trace_id"`
+	Source               string               `json:"source,omitempty"`
+	Owner                string               `json:"owner,omitempty"`
+	IdentitySnapshot     AgentIdentity        `json:"identity_snapshot"`
+	MCPMutationPrincipal MCPMutationPrincipal `json:"-"`
+	StartedAt            time.Time            `json:"started_at"`
 }
 
 // constraintBudgetManager owns one job group's step counter, elapsed-time
@@ -539,5 +540,11 @@ func applyExecutionContext(params map[string]interface{}, ctx AgentExecutionCont
 	runtimeMap["source"] = ctx.Source
 	runtimeMap["owner"] = ctx.Owner
 	runtimeMap["identity_snapshot"] = ctx.IdentitySnapshot
+	// The principal is a typed trusted value. Delete any caller/manifest value
+	// first so a forged map or string can never be mistaken for authority.
+	delete(runtimeMap, cfgKeyMCPMutationPrincipal)
+	if ctx.MCPMutationPrincipal.Validate() == nil {
+		runtimeMap[cfgKeyMCPMutationPrincipal] = ctx.MCPMutationPrincipal
+	}
 	configMap[cfgKeyAgentRuntime] = runtimeMap
 }
