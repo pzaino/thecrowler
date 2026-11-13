@@ -533,3 +533,83 @@ events:
 ```
 
 Local users, roles, scopes, role-scope grants, user-scope grants, and token revocations are stored in PostgreSQL (`Users`, `AuthRoles`, `AuthScopes`, `UserRoles`, `UserScopes`, `RoleScopes`, and `AuthRevokedTokens`). Local passwords use Argon2id hashes. Clients obtain a local access token with `POST /v1/auth/login` and then send `Authorization: Bearer <token>` for REST requests. WebSocket clients authenticate with the same header or an `access_token` query parameter.
+
+## MCP operator mutation policy
+
+The `mcp` section is operator-owned. It is never populated from an agent
+manifest, event payload, model output or tool argument. Read-only MCP
+configurations do not need a mutation policy and remain unchanged.
+
+The policy is disabled by default:
+
+```yaml
+mcp:
+  servers: []
+  mutation_policy:
+    enabled: false
+    policy_id: ""
+    version: ""
+    operations: []
+```
+
+An enabled policy must bind exactly to an enabled server and an approved
+`effect: mutation` tool with `allow_mutation_proposal: true`. The alias is
+derived, not configured. The following example is illustrative and does not
+start a server or enable production proposal registration:
+
+```yaml
+mcp:
+  servers:
+    - id: approved-server
+      enabled: true
+      transport: stdio
+      command: /opt/crowler/bin/approved-mcp-server
+      allowed_agents: [agent-id]
+      allowed_sources: [42]
+      approved_tools:
+        - name: approved_tool
+          effect: mutation
+          allow_mutation_proposal: true
+          allowed_sources: [42]
+          required_capabilities: [tool_execution]
+  mutation_policy:
+    enabled: true
+    policy_id: operator-approved-mutations
+    version: "1"
+    operations:
+      - server_id: approved-server
+        tool_name: approved_tool
+        allowed_agents: [agent-id]
+        required_capabilities: [tool_execution]
+        min_trust_level: trusted
+        allowed_sources: [42]
+        allowed_resources: []
+        required_argument_fields: [source_id]
+        allowed_argument_fields: [source_id]
+        destructive: false
+        proposal_ttl: 5m
+        max_proposals_per_run: 4
+        max_pending_proposals: 8
+        max_input_bytes: 65536
+        max_output_bytes: 65536
+        require_approval: true
+        execution_backend: none
+        allowed_transports: [stdio]
+        audit_required: true
+```
+
+`MCPToolAlias("approved-server", "approved_tool")` derives
+`mcp_approved-server_approved_tool`. `approved_server` is invalid.
+
+The `mcp.mutation_policy` subtree is strict: unknown keys, duplicate keys
+(including duplicate outer `mcp` or `mutation_policy` keys), YAML
+anchors/merges, nulls, wrong scalar types, invalid durations, unknown enums,
+unsafe transports and non-`none` execution backends fail configuration load.
+Unrelated legacy configuration sections keep their existing permissive
+behavior.
+
+The policy is frozen at process start. There is no silent hot reload; a change
+requires a restart. Disabled, removed or malformed policy grants no new
+admission authority. Historical durable proposals retain their stored snapshot.
+Approval-time current-policy revalidation and production proposal registration
+remain separate future decisions.

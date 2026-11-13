@@ -12,6 +12,14 @@
   - **`timeout`** *(integer)*: This is the timeout for the CROWler to fetch its configuration.
   - **`type`** *(string)*: This is the type of the distribution server that the CROWler will use to fetch its configuration. For example, s3 or http.
   - **`sslmode`** *(string)*: This is the sslmode that the CROWler will use to connect to the distribution server to fetch its configuration.
+- **`mcp`** *(object)*: Operator-owned external MCP configuration. It is separate from agent manifests and is never populated from model, event or tool input.
+  - **`servers`** *(array)*: Approved MCP server inventory. Existing read-only and mutation-tool classification fields remain operator-owned. A mutation tool is only a discovery classification; it is not proposal authority.
+  - **`mutation_policy`** *(object)*: Optional operator policy for inert MCP mutation proposals. It is disabled by default and grants no production proposal or execution authority. A present invalid policy fails configuration loading.
+    - **`enabled`** *(boolean)*: Default `false`. When `true`, `policy_id`, `version` and 1..32 operations are required.
+    - **`policy_id`** *(string)*: Operator policy identity, required when enabled.
+    - **`version`** *(string)*: Operator policy version, required when enabled.
+    - **`operations`** *(array)*: Exact server/tool bindings. Each operation requires `server_id`, `tool_name`, a non-empty `allowed_agents` list, `required_capabilities` including `tool_execution`, a trusted-or-higher `min_trust_level`, exactly one of `allowed_sources` or `allowed_resources`, `proposal_ttl` within 1s..1h, bounded quotas and byte limits, `require_approval: true`, `audit_required: true`, `execution_backend: "none"`, and 1..2 transports from `stdio`/`streamable_http`. The model-facing alias is derived with `MCPToolAlias(server_id, tool_name)`; it is not an operator field. For `approved-server` and `approved_tool` it is `mcp_approved-server_approved_tool`.
+    - The policy is immutable for the process lifetime. Changes require an explicit restart; there is no silent hot reload. Historical proposals retain their stored policy snapshot. Approval-time revalidation is a separate decision and is not enabled by this policy.
 - **`database`** *(object)*: This is the configuration for the database that the CROWler will use to store data.
   - **`type`** *(string)*
   - **`host`** *(string)*

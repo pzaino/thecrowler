@@ -3633,6 +3633,26 @@
           "default": []
         }
       }
+    },
+    "mcp": {
+      "title": "CROWler MCP Operator Configuration",
+      "description": "Operator-owned MCP server inventory and optional mutation proposal policy. The mutation policy is disabled by default and grants no production proposal authority until separately approved.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "servers": {
+          "type": "array",
+          "description": "Approved MCP server inventory. Existing read-only and mutation-tool classification fields remain operator-owned.",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "default": []
+        },
+        "mutation_policy": {
+          "$ref": "#/definitions/mcpMutationPolicy"
+        }
+      }
     }
   },
   "definitions": {
@@ -4072,6 +4092,224 @@
                   }
                 }
               }
+            }
+          }
+        }
+      ]
+    },
+    "mcpMutationPolicy": {
+      "title": "CROWler MCP Mutation Proposal Policy",
+      "description": "Default-disabled operator policy for inert MCP mutation proposals. It binds exact server/tool operations and never authorizes remote execution.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "policy_id": {
+          "type": "string",
+          "description": "Required when enabled."
+        },
+        "version": {
+          "type": "string",
+          "description": "Required when enabled."
+        },
+        "operations": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/definitions/mcpMutationPolicyOperation"
+          },
+          "default": []
+        }
+      }
+    },
+    "mcpMutationPolicyOperation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "server_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,31}$"
+        },
+        "tool_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "allowed_agents": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "required_capabilities": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "min_trust_level": {
+          "type": "string",
+          "enum": [
+            "trusted",
+            "medium",
+            "privileged",
+            "high",
+            "internal",
+            "system"
+          ]
+        },
+        "allowed_sources": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "allowed_resources": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "required_argument_fields": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "allowed_argument_fields": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "destructive": {
+          "type": "boolean"
+        },
+        "proposal_ttl": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Go duration string within 1s..1h."
+        },
+        "max_proposals_per_run": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16
+        },
+        "max_pending_proposals": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "max_input_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65536
+        },
+        "max_output_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65536
+        },
+        "require_approval": {
+          "type": "boolean",
+          "enum": [
+            true
+          ]
+        },
+        "execution_backend": {
+          "type": "string",
+          "enum": [
+            "none"
+          ]
+        },
+        "allowed_transports": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "stdio",
+              "streamable_http"
+            ]
+          }
+        },
+        "audit_required": {
+          "type": "boolean",
+          "enum": [
+            true
+          ]
+        }
+      },
+      "required": [
+        "server_id",
+        "tool_name",
+        "allowed_agents",
+        "required_capabilities",
+        "min_trust_level",
+        "proposal_ttl",
+        "max_proposals_per_run",
+        "max_pending_proposals",
+        "max_input_bytes",
+        "max_output_bytes",
+        "require_approval",
+        "execution_backend",
+        "allowed_transports",
+        "audit_required"
+      ],
+      "oneOf": [
+        {
+          "required": [
+            "allowed_sources"
+          ],
+          "properties": {
+            "allowed_sources": {
+              "minItems": 1
+            },
+            "allowed_resources": {
+              "maxItems": 0
+            }
+          }
+        },
+        {
+          "required": [
+            "allowed_resources"
+          ],
+          "properties": {
+            "allowed_resources": {
+              "minItems": 1
+            },
+            "allowed_sources": {
+              "maxItems": 0
             }
           }
         }

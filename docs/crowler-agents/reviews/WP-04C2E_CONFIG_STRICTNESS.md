@@ -2,8 +2,10 @@
 
 ## Status
 
-Observed behavior is documented and tested. No public mutation-policy field or
-loader was added. Gate B1 remains pending.
+**Superseded for B1 by WP-04C2F.** B1 was approved and the strict subtree
+decoder is now implemented in `pkg/config/mcp_mutation_policy_strict.go`. The
+pre-B1 observations below are retained as historical evidence; they no longer
+describe the mutation-policy load path.
 
 ## Actual loader behavior
 

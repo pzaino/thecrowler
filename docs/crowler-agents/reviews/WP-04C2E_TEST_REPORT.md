@@ -1,5 +1,9 @@
 # WP-04C2E Test Report
 
+> Historical note: this report records pre-B1 parser behavior. WP-04C2F
+> subsequently approved and implemented strict `mcp.mutation_policy` loading;
+> see `WP-04C2F_TEST_REPORT.md`.
+
 ## Environment
 
 - Repository: `pzaino/thecrowler`

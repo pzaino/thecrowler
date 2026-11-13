@@ -1,8 +1,6 @@
 package agent
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"net"
 	"net/netip"
@@ -15,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
@@ -27,10 +26,10 @@ const (
 	mcpTransportStdio          = "stdio"
 	mcpTransportStreamableHTTP = "streamable_http"
 	mcpModernProtocolVersion   = "2026-07-28"
-	mcpToolPrefix              = "mcp_"
+	mcpToolPrefix              = cfg.MCPToolAliasPrefix
 	mcpMaxToolCount            = 64
-	mcpMaxServerIDLen          = 32
-	mcpMaxRawToolLen           = 128
+	mcpMaxServerIDLen          = cfg.MCPMaxServerIDBytes
+	mcpMaxRawToolLen           = cfg.MCPMaxToolNameBytes
 	// mcpMaxContentBlocks bounds the number of text blocks retained from one
 	// result. The SDK already bounds a decoded frame; this keeps our own
 	// result-shaping allocation bounded as well.
@@ -38,7 +37,6 @@ const (
 )
 
 var (
-	mcpServerIDPattern   = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 	mcpEnvNamePattern    = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
 	mcpSecretEnvPrefixes = []string{
 		"CROWLER_", "DB_", "POSTGRES_", "MYSQL_", "AWS_", "AZURE_",
@@ -51,8 +49,9 @@ var (
 )
 
 var (
-	mcpConfigMu    sync.RWMutex
-	mcpConfigValue cfg.MCPConfig
+	mcpConfigMu          sync.RWMutex
+	mcpConfigValue       cfg.MCPConfig
+	mcpMutationPolicyVal MCPMutationPolicy
 )
 
 // SetMCPOperatorConfig validates and freezes the operator-controlled MCP
@@ -63,8 +62,13 @@ func SetMCPOperatorConfig(config cfg.MCPConfig) error {
 	if err != nil {
 		return err
 	}
+	policy, err := buildMCPMutationPolicy(normalized)
+	if err != nil {
+		return err
+	}
 	mcpConfigMu.Lock()
 	mcpConfigValue = normalized
+	mcpMutationPolicyVal = policy
 	mcpConfigMu.Unlock()
 	return nil
 }
@@ -74,6 +78,26 @@ func CurrentMCPOperatorConfig() cfg.MCPConfig {
 	mcpConfigMu.RLock()
 	defer mcpConfigMu.RUnlock()
 	return cloneMCPConfig(mcpConfigValue)
+}
+
+// CurrentMCPMutationPolicy returns a defensive copy of the normalized runtime
+// policy snapshot. It is empty when the operator policy is absent or disabled.
+// B2/B3 production registration remains disabled; this accessor exists for
+// validation and future approved wiring.
+func CurrentMCPMutationPolicy() MCPMutationPolicy {
+	mcpConfigMu.RLock()
+	defer mcpConfigMu.RUnlock()
+	return cloneMCPMutationPolicy(mcpMutationPolicyVal)
+}
+
+// MCPMutationPolicyFromConfig validates and converts one operator MCP config
+// into an immutable runtime policy without installing it globally.
+func MCPMutationPolicyFromConfig(config cfg.MCPConfig) (MCPMutationPolicy, error) {
+	normalized, err := normalizeMCPOperatorConfig(config)
+	if err != nil {
+		return MCPMutationPolicy{}, err
+	}
+	return buildMCPMutationPolicy(normalized)
 }
 
 // MCPApprovedToolLookup returns the approved read-only tool metadata for a
@@ -126,45 +150,17 @@ func mcpToolIsReadOnly(tool cfg.MCPApprovedTool) bool {
 // pair. Server IDs cannot contain underscores, so the first underscore after
 // the prefix is an unambiguous server delimiter. If the readable name would
 // exceed the registry limit, a deterministic hash suffix disambiguates it.
+// MCPToolAlias derives the model-facing tool name. The derivation lives in
+// pkg/config so operator validation and runtime binding use one implementation.
 func MCPToolAlias(serverID, rawTool string) string {
-	serverID = strings.TrimSpace(serverID)
-	sanitized := sanitizeMCPToolName(rawTool)
-	base := mcpToolPrefix + serverID + "_" + sanitized
-	if len(base) <= maxToolNameLen {
-		return base
-	}
-	sum := sha256.Sum256([]byte(serverID + "\x00" + rawTool))
-	suffix := hex.EncodeToString(sum[:])[:10]
-	limit := maxToolNameLen - len(suffix) - 1
-	if limit < len(mcpToolPrefix)+len(serverID)+1 {
-		limit = len(mcpToolPrefix) + len(serverID) + 1
-	}
-	if limit > len(base) {
-		limit = len(base)
-	}
-	return strings.TrimRight(base[:limit], "_-") + "_" + suffix
-}
-
-func sanitizeMCPToolName(raw string) string {
-	raw = strings.TrimSpace(raw)
-	var b strings.Builder
-	for _, r := range raw {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-':
-			b.WriteRune(r)
-		default:
-			b.WriteByte('_')
-		}
-	}
-	out := strings.Trim(b.String(), "_-")
-	if out == "" {
-		out = "tool"
-	}
-	return out
+	return cfg.MCPToolAlias(serverID, rawTool)
 }
 
 func normalizeMCPOperatorConfig(config cfg.MCPConfig) (cfg.MCPConfig, error) {
-	out := cfg.MCPConfig{Servers: make([]cfg.MCPServerConfig, 0, len(config.Servers))}
+	out := cfg.MCPConfig{
+		Servers:        make([]cfg.MCPServerConfig, 0, len(config.Servers)),
+		MutationPolicy: config.MutationPolicy.Clone(),
+	}
 	seenServers := map[string]bool{}
 	seenAliases := map[string]string{}
 	for index, server := range config.Servers {
@@ -183,15 +179,25 @@ func normalizeMCPOperatorConfig(config cfg.MCPConfig) (cfg.MCPConfig, error) {
 			}
 			seenAliases[alias] = normalized.ID + "/" + tool.Name
 		}
-		out.Servers = append(out.Servers, normalized)
+		out.Servers = append(out.Servers, cloneMCPServerConfig(normalized))
+	}
+	if err := out.MutationPolicy.Validate(); err != nil {
+		return cfg.MCPConfig{}, fmt.Errorf("mcp.mutation_policy: %w", err)
+	}
+	if err := out.MutationPolicy.ValidateInventory(out.Servers); err != nil {
+		return cfg.MCPConfig{}, fmt.Errorf("mcp.mutation_policy: %w", err)
 	}
 	return out, nil
 }
 
 func normalizeMCPServerConfig(server cfg.MCPServerConfig) (cfg.MCPServerConfig, error) {
+	// Never mutate caller-owned slices or maps while normalizing. A startup
+	// caller may still hold the source configuration, and concurrent validation
+	// must not observe writes to shared backing arrays.
+	server = cloneMCPServerConfig(server)
 	server.ID = strings.TrimSpace(server.ID)
-	if !mcpServerIDPattern.MatchString(server.ID) {
-		return cfg.MCPServerConfig{}, fmt.Errorf("id must match %s", mcpServerIDPattern.String())
+	if !cfg.ValidMCPServerID(server.ID) {
+		return cfg.MCPServerConfig{}, fmt.Errorf("id must match %s", cfg.MCPServerIDGrammar)
 	}
 	if !server.Enabled {
 		return server, nil
@@ -221,11 +227,8 @@ func normalizeMCPServerConfig(server cfg.MCPServerConfig) (cfg.MCPServerConfig, 
 	toolNames := map[string]bool{}
 	for index, tool := range server.ApprovedTools {
 		tool.Name = strings.TrimSpace(tool.Name)
-		if tool.Name == "" || len(tool.Name) > mcpMaxRawToolLen {
+		if !cfg.ValidMCPToolName(tool.Name) {
 			return cfg.MCPServerConfig{}, fmt.Errorf("approved_tools[%d].name is invalid", index)
-		}
-		if containsMCPControl(tool.Name) {
-			return cfg.MCPServerConfig{}, fmt.Errorf("approved_tools[%d].name contains a control character", index)
 		}
 		if toolNames[tool.Name] {
 			return cfg.MCPServerConfig{}, fmt.Errorf("duplicate approved tool %q", tool.Name)
@@ -618,19 +621,27 @@ func validateMCPLimits(server cfg.MCPServerConfig) error {
 }
 
 func cloneMCPConfig(config cfg.MCPConfig) cfg.MCPConfig {
-	out := cfg.MCPConfig{Servers: make([]cfg.MCPServerConfig, len(config.Servers))}
+	out := cfg.MCPConfig{
+		Servers:        make([]cfg.MCPServerConfig, len(config.Servers)),
+		MutationPolicy: config.MutationPolicy.Clone(),
+	}
 	for i, server := range config.Servers {
-		out.Servers[i] = server
-		out.Servers[i].Args = append([]string(nil), server.Args...)
-		out.Servers[i].EnvironmentAllowlist = append([]string(nil), server.EnvironmentAllowlist...)
-		out.Servers[i].AllowedAgents = append([]string(nil), server.AllowedAgents...)
-		out.Servers[i].AllowedSources = append([]uint64(nil), server.AllowedSources...)
-		out.Servers[i].Network.AllowedPrivateCIDRs = append([]string(nil), server.Network.AllowedPrivateCIDRs...)
-		out.Servers[i].Environment = cloneStringMap(server.Environment)
-		out.Servers[i].ApprovedTools = make([]cfg.MCPApprovedTool, len(server.ApprovedTools))
-		for j, tool := range server.ApprovedTools {
-			out.Servers[i].ApprovedTools[j] = cloneMCPApprovedTool(tool)
-		}
+		out.Servers[i] = cloneMCPServerConfig(server)
+	}
+	return out
+}
+
+func cloneMCPServerConfig(server cfg.MCPServerConfig) cfg.MCPServerConfig {
+	out := server
+	out.Args = append([]string(nil), server.Args...)
+	out.EnvironmentAllowlist = append([]string(nil), server.EnvironmentAllowlist...)
+	out.AllowedAgents = append([]string(nil), server.AllowedAgents...)
+	out.AllowedSources = append([]uint64(nil), server.AllowedSources...)
+	out.Network.AllowedPrivateCIDRs = append([]string(nil), server.Network.AllowedPrivateCIDRs...)
+	out.Environment = cloneStringMap(server.Environment)
+	out.ApprovedTools = make([]cfg.MCPApprovedTool, len(server.ApprovedTools))
+	for index, tool := range server.ApprovedTools {
+		out.ApprovedTools[index] = cloneMCPApprovedTool(tool)
 	}
 	return out
 }
@@ -661,6 +672,75 @@ func sortedMCPEnv(env map[string]string) []string {
 	out := make([]string, 0, len(keys))
 	for _, key := range keys {
 		out = append(out, key+"="+env[key])
+	}
+	return out
+}
+
+// buildMCPMutationPolicy converts a normalized operator config into the
+// runtime policy snapshot. It is intentionally not connected to production
+// proposal registration; B2/B3 remain separate approvals.
+func buildMCPMutationPolicy(config cfg.MCPConfig) (MCPMutationPolicy, error) {
+	if !config.MutationPolicy.Enabled {
+		return MCPMutationPolicy{}, nil
+	}
+	if err := config.MutationPolicy.Validate(); err != nil {
+		return MCPMutationPolicy{}, fmt.Errorf("mcp.mutation_policy: %w", err)
+	}
+	if err := config.MutationPolicy.ValidateInventory(config.Servers); err != nil {
+		return MCPMutationPolicy{}, fmt.Errorf("mcp.mutation_policy: %w", err)
+	}
+	policy := MCPMutationPolicy{
+		Enabled:  true,
+		PolicyID: config.MutationPolicy.PolicyID,
+		Version:  config.MutationPolicy.Version,
+	}
+	policy.Operations = make([]MCPMutationOperationPolicy, 0, len(config.MutationPolicy.Operations))
+	for _, operation := range config.MutationPolicy.Operations {
+		ttl, err := time.ParseDuration(operation.ProposalTTL)
+		if err != nil {
+			return MCPMutationPolicy{}, fmt.Errorf("mcp.mutation_policy: operation %s/%s: %w", operation.ServerID, operation.ToolName, err)
+		}
+		policy.Operations = append(policy.Operations, MCPMutationOperationPolicy{
+			ServerID:               operation.ServerID,
+			ToolName:               operation.ToolName,
+			ToolAlias:              MCPToolAlias(operation.ServerID, operation.ToolName),
+			AllowedAgents:          append([]string(nil), operation.AllowedAgents...),
+			RequiredCapabilities:   append([]string(nil), operation.RequiredCapabilities...),
+			MinTrustLevel:          operation.MinTrustLevel,
+			AllowedSources:         append([]uint64(nil), operation.AllowedSources...),
+			AllowedResources:       append([]string(nil), operation.AllowedResources...),
+			RequiredArgumentFields: append([]string(nil), operation.RequiredArgumentFields...),
+			AllowedArgumentFields:  append([]string(nil), operation.AllowedArgumentFields...),
+			Destructive:            operation.Destructive,
+			ProposalTTL:            ttl,
+			MaxProposalsPerRun:     operation.MaxProposalsPerRun,
+			MaxPendingProposals:    operation.MaxPendingProposals,
+			MaxInputBytes:          operation.MaxInputBytes,
+			MaxOutputBytes:         operation.MaxOutputBytes,
+			RequireApproval:        operation.RequireApproval,
+			ExecutionBackend:       operation.ExecutionBackend,
+			AllowedTransports:      append([]string(nil), operation.AllowedTransports...),
+			AuditRequired:          operation.AuditRequired,
+		})
+	}
+	if err := policy.Validate(); err != nil {
+		return MCPMutationPolicy{}, fmt.Errorf("mcp.mutation_policy: %w", err)
+	}
+	return policy, nil
+}
+
+func cloneMCPMutationPolicy(policy MCPMutationPolicy) MCPMutationPolicy {
+	out := policy
+	out.Operations = make([]MCPMutationOperationPolicy, len(policy.Operations))
+	for index, operation := range policy.Operations {
+		out.Operations[index] = operation
+		out.Operations[index].AllowedAgents = append([]string(nil), operation.AllowedAgents...)
+		out.Operations[index].RequiredCapabilities = append([]string(nil), operation.RequiredCapabilities...)
+		out.Operations[index].AllowedSources = append([]uint64(nil), operation.AllowedSources...)
+		out.Operations[index].AllowedResources = append([]string(nil), operation.AllowedResources...)
+		out.Operations[index].RequiredArgumentFields = append([]string(nil), operation.RequiredArgumentFields...)
+		out.Operations[index].AllowedArgumentFields = append([]string(nil), operation.AllowedArgumentFields...)
+		out.Operations[index].AllowedTransports = append([]string(nil), operation.AllowedTransports...)
 	}
 	return out
 }

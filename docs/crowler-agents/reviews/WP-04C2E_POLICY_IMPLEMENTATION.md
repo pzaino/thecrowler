@@ -1,9 +1,14 @@
 # WP-04C2E Operator Policy Implementation Status
 
-## Gate B1: pending
+## Status: superseded by WP-04C2F
 
-No maintainer approval exists for a public `mcp.mutation_policy` contract. This
-work package did **not** add:
+**B1 was approved and implemented in WP-04C2F.** See
+`WP-04C2F_B1_DECISION.md` and `WP-04C2F_POLICY_IMPLEMENTATION.md`. The text
+below records the pre-approval WP-04C2E position and is retained as historical
+context.
+
+At the time of WP-04C2E no maintainer approval existed for a public
+`mcp.mutation_policy` contract, and the work package did **not** add:
 
 - `MCPMutationPolicyConfig` or operation config types to `pkg/config`;
 - a `mutation_policy` field to `MCPConfig`;

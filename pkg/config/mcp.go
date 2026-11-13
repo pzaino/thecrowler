@@ -10,7 +10,8 @@ import (
 // approved namespaced tool, but it cannot define an executable, argument list,
 // environment, scope or budget for an MCP server.
 type MCPConfig struct {
-	Servers []MCPServerConfig `yaml:"servers" json:"servers"`
+	Servers        []MCPServerConfig       `yaml:"servers" json:"servers"`
+	MutationPolicy MCPMutationPolicyConfig `yaml:"mutation_policy" json:"mutation_policy"`
 }
 
 // MCPServerConfig describes one approved MCP server. Disabled is the default.
@@ -102,7 +103,8 @@ func (c MCPConfig) String() string {
 		servers = append(servers, fmt.Sprintf("{ID:%q Enabled:%t Transport:%q ApprovedTools:%d}",
 			server.ID, server.Enabled, server.Transport, len(server.ApprovedTools)))
 	}
-	return "MCPConfig{Servers:[" + strings.Join(servers, ",") + "]}"
+	return fmt.Sprintf("MCPConfig{Servers:[%s] MutationPolicy:{Enabled:%t Operations:%d}}",
+		strings.Join(servers, ","), c.MutationPolicy.Enabled, len(c.MutationPolicy.Operations))
 }
 
 // GoString implements fmt.GoStringer so %#v configuration logging also

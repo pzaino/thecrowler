@@ -126,8 +126,8 @@ func (p *MCPMutationPolicy) Validate() error {
 	if strings.TrimSpace(p.PolicyID) == "" || strings.TrimSpace(p.Version) == "" {
 		return fmt.Errorf("%w: policy_id and version are required", ErrMCPMutationPolicyInvalid)
 	}
-	if len(p.Operations) == 0 || len(p.Operations) > 32 {
-		return fmt.Errorf("%w: operations must contain 1..32 entries", ErrMCPMutationPolicyInvalid)
+	if len(p.Operations) == 0 || len(p.Operations) > cfg.MCPMutationMaxOperations {
+		return fmt.Errorf("%w: operations must contain 1..%d entries", ErrMCPMutationPolicyInvalid, cfg.MCPMutationMaxOperations)
 	}
 	seen := map[string]bool{}
 	for index, operation := range p.Operations {
@@ -150,20 +150,21 @@ func validateMCPMutationOperation(operation MCPMutationOperationPolicy) error {
 	// Reuse the production server/tool grammar rather than maintaining a
 	// second, weaker mutation-policy grammar. An operation that the operator
 	// inventory cannot name can never be authorized.
-	if !mcpServerIDPattern.MatchString(operation.ServerID) {
-		return fmt.Errorf("server_id must match %s", mcpServerIDPattern.String())
+	if !cfg.ValidMCPServerID(operation.ServerID) {
+		return fmt.Errorf("server_id must match %s", cfg.MCPServerIDGrammar)
 	}
-	if len(operation.ToolName) > mcpMaxRawToolLen || containsMCPControl(operation.ToolName) {
+	if !cfg.ValidMCPToolName(operation.ToolName) {
 		return fmt.Errorf("tool_name is invalid")
 	}
 	if MCPToolAlias(operation.ServerID, operation.ToolName) != operation.ToolAlias {
 		return fmt.Errorf("tool_alias does not match the exact server/tool identity")
 	}
-	if len(operation.AllowedAgents) == 0 {
-		return fmt.Errorf("allowed_agents must not be empty")
+	if len(operation.AllowedAgents) == 0 || len(operation.AllowedAgents) > cfg.MCPMutationMaxAgents {
+		return fmt.Errorf("allowed_agents must contain 1..%d entries", cfg.MCPMutationMaxAgents)
 	}
-	if len(operation.RequiredCapabilities) == 0 || !containsString(operation.RequiredCapabilities, "tool_execution") {
-		return fmt.Errorf("required_capabilities must include tool_execution")
+	if len(operation.RequiredCapabilities) == 0 || len(operation.RequiredCapabilities) > cfg.MCPMutationMaxCapabilities ||
+		!containsString(operation.RequiredCapabilities, "tool_execution") {
+		return fmt.Errorf("required_capabilities must contain 1..%d entries including tool_execution", cfg.MCPMutationMaxCapabilities)
 	}
 	switch operation.MinTrustLevel {
 	case "trusted", "medium", "privileged", "high", "internal", "system":
@@ -176,33 +177,46 @@ func validateMCPMutationOperation(operation MCPMutationOperationPolicy) error {
 	if len(operation.AllowedSources) > 0 && len(operation.AllowedResources) > 0 {
 		return fmt.Errorf("allowed_sources and allowed_resources are mutually exclusive")
 	}
+	if len(operation.AllowedSources) > cfg.MCPMutationMaxSources {
+		return fmt.Errorf("allowed_sources must contain at most %d entries", cfg.MCPMutationMaxSources)
+	}
+	if len(operation.AllowedResources) > cfg.MCPMutationMaxResources {
+		return fmt.Errorf("allowed_resources must contain at most %d entries", cfg.MCPMutationMaxResources)
+	}
 	for _, sourceID := range operation.AllowedSources {
 		if sourceID == 0 {
 			return fmt.Errorf("allowed_sources contains zero")
 		}
 	}
 	for _, resource := range operation.AllowedResources {
-		if strings.TrimSpace(resource) == "" || len(resource) > 256 || containsMCPControl(resource) {
+		if strings.TrimSpace(resource) == "" || len(resource) > cfg.MCPMaxResourceBytes || containsMCPControl(resource) {
 			return fmt.Errorf("allowed_resources contains an invalid value")
 		}
+	}
+	if len(operation.RequiredArgumentFields) > cfg.MCPMutationMaxArgumentFields ||
+		len(operation.AllowedArgumentFields) > cfg.MCPMutationMaxArgumentFields {
+		return fmt.Errorf("argument field lists must contain at most %d entries", cfg.MCPMutationMaxArgumentFields)
 	}
 	if operation.ProposalTTL <= 0 || operation.ProposalTTL > time.Hour {
 		return fmt.Errorf("proposal_ttl must be within 1s..1h")
 	}
-	if operation.MaxProposalsPerRun <= 0 || operation.MaxProposalsPerRun > 16 {
-		return fmt.Errorf("max_proposals_per_run must be 1..16")
+	if operation.MaxProposalsPerRun <= 0 || operation.MaxProposalsPerRun > cfg.MCPMutationMaxProposalsPerRun {
+		return fmt.Errorf("max_proposals_per_run must be 1..%d", cfg.MCPMutationMaxProposalsPerRun)
 	}
-	if operation.MaxPendingProposals <= 0 || operation.MaxPendingProposals > 100 {
-		return fmt.Errorf("max_pending_proposals must be 1..100")
+	if operation.MaxPendingProposals <= 0 || operation.MaxPendingProposals > cfg.MCPMutationMaxPendingProposals {
+		return fmt.Errorf("max_pending_proposals must be 1..%d", cfg.MCPMutationMaxPendingProposals)
 	}
-	if operation.MaxInputBytes <= 0 || operation.MaxInputBytes > 64<<10 {
-		return fmt.Errorf("max_input_bytes must be 1..65536")
+	if operation.MaxInputBytes <= 0 || operation.MaxInputBytes > cfg.MCPMutationMaxInputBytes {
+		return fmt.Errorf("max_input_bytes must be 1..%d", cfg.MCPMutationMaxInputBytes)
 	}
-	if operation.MaxOutputBytes <= 0 || operation.MaxOutputBytes > 64<<10 {
-		return fmt.Errorf("max_output_bytes must be 1..65536")
+	if operation.MaxOutputBytes <= 0 || operation.MaxOutputBytes > cfg.MCPMutationMaxOutputBytes {
+		return fmt.Errorf("max_output_bytes must be 1..%d", cfg.MCPMutationMaxOutputBytes)
 	}
 	if !operation.RequireApproval {
 		return fmt.Errorf("require_approval must be true in WP-04C1")
+	}
+	if !operation.AuditRequired {
+		return fmt.Errorf("audit_required must be true in WP-04C1")
 	}
 	if operation.ExecutionBackend != "" && operation.ExecutionBackend != "none" {
 		return fmt.Errorf("execution_backend is not available in WP-04C1")

@@ -1,7 +1,10 @@
 # WP-04C2D Operator Mutation Policy Contract
 
-**STATUS: PROPOSED — NOT APPROVED. No public configuration field was added in
-this work package. Production proposal registration remains disabled.**
+**STATUS: APPROVED IN WP-04C2F AND IMPLEMENTED.** The approval is recorded in
+`WP-04C2F_B1_DECISION.md`; implementation evidence is in
+`WP-04C2F_POLICY_IMPLEMENTATION.md`. Production proposal registration remains
+disabled. The text below is the approved contract as originally proposed; the
+strict-loading and schema details were implemented in WP-04C2F.
 
 ## 1. Current contract
 

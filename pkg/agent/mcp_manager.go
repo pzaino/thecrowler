@@ -575,26 +575,7 @@ func validateMCPToolSourceNode(node map[string]any, root bool) error {
 }
 
 func effectiveMCPSources(server cfg.MCPServerConfig, tool cfg.MCPApprovedTool) map[uint64]bool {
-	out := map[uint64]bool{}
-	switch {
-	case len(server.AllowedSources) > 0 && len(tool.AllowedSources) > 0:
-		// A tool-level scope may narrow the server scope, never widen it.
-		serverSet := sliceToSourceSet(server.AllowedSources)
-		for _, id := range tool.AllowedSources {
-			if serverSet[id] {
-				out[id] = true
-			}
-		}
-	case len(tool.AllowedSources) > 0:
-		for _, id := range tool.AllowedSources {
-			out[id] = true
-		}
-	case len(server.AllowedSources) > 0:
-		for _, id := range server.AllowedSources {
-			out[id] = true
-		}
-	}
-	return out
+	return cfg.EffectiveMCPToolSources(server, tool)
 }
 
 func (t *mcpMutationTool) Name() string { return t.alias }

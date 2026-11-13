@@ -753,6 +753,14 @@ rulesets:
 # `allow_mutation_proposal: true`; WP-04C1 has no production execution path.
 mcp:
   servers: []
+  # Operator-owned MCP mutation proposal policy. It is disabled by default and
+  # grants no production proposal or execution authority. When enabled, every
+  # operation must bind exactly to an enabled server and approved mutation tool.
+  mutation_policy:
+    enabled: false
+    policy_id: ""
+    version: ""
+    operations: []
 
 agents:
   # local | http | s3 – where agent files are located

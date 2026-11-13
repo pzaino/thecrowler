@@ -10,7 +10,7 @@ decision here or in an equivalent tracked decision.
 | Gate | Decision | Approver | Scope |
 | --- | --- | --- | --- |
 | A: safe repairs | complete | — | alias/inventory test, parser evidence, CI step, docs reconciliation |
-| B1: public policy contract | **pending** | none recorded | public config/schema/default/loader/examples |
+| B1: public policy contract | **approved in WP-04C2F** | repository maintainer (user) | public config/schema/default/loader/examples |
 | B2: trusted user principal | **pending** | none recorded | authenticated principal provenance |
 | B3: independent MCP authority | **pending** | none recorded | separate MCP alias allowlist |
 | B4: current-policy revalidation | **pending** | none recorded | approval-time policy identity |
@@ -20,9 +20,11 @@ decision here or in an equivalent tracked decision.
 
 ## B1: public `mcp.mutation_policy` contract
 
-**Pending.** The maintainer must approve or reject the exact contract in
-`WP-04C2D_POLICY_CONTRACT.md`, corrected by
-`WP-04C2E_CONFIG_STRICTNESS.md`, version WP-04C2E.
+**Approved in WP-04C2F.** The approval is recorded in
+`WP-04C2F_B1_DECISION.md`; the exact scope is the WP-04C2F B1 contract. The
+pre-approval text below is retained as historical context. It concerns the
+contract in `WP-04C2D_POLICY_CONTRACT.md`, corrected by
+`WP-04C2E_CONFIG_STRICTNESS.md`.
 
 The decision covers:
 
@@ -35,8 +37,9 @@ The decision covers:
 - policy fingerprint/snapshot, reload and stale-policy behavior;
 - JSON Schema, `config.default`, reference docs and fixtures.
 
-No public config field, schema entry, default, loader or public example was
-added. Read-only MCP behavior is unchanged.
+At the time of WP-04C2E no public config field, schema entry, default, loader
+or public example was added. WP-04C2F subsequently implemented B1; read-only MCP
+behavior remains unchanged.
 
 ## B2: trusted user principal provenance
 

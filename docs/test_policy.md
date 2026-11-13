@@ -249,8 +249,10 @@ enforcement. The current handler's pooled connections default to FK-off; do not
 change the global DSN without the maintainer decision recorded in
 `WP-04C2D_MAINTAINER_DECISIONS.md`.
 
-Production policy/principal activation remains blocked until the B1/B2 and G3
-decisions are recorded.
+B1 operator-policy loading is implemented. Production proposal registration,
+principal provenance (B2), independent MCP authority (B3), approval-time
+revalidation (B4), denied-admission audit (B5) and schema/SQLite deployment
+(G3) remain blocked until their decisions are recorded.
 
 ## WP-04C2E alias, parser and CI tests
 
@@ -261,14 +263,35 @@ with alias `mcp_approved-server_approved_tool`. `approved_server` must be
 rejected at the production normalization boundary and by internal policy
 validation.
 
-Config parser tests must record actual legacy behavior: unknown nested
-`mcp.mutation_policy` keys, typos, invalid durations and duplicate mapping keys
-are currently ignored (last value wins), while a wrong scalar type for a typed
-field is rejected. When B1 is approved, add a dedicated strict subtree decoder
-for all local, remote, YAML and JSON load paths; do not assume the global parser
-is strict and do not make unrelated legacy sections strict.
+Config parser tests must record actual behavior. WP-04C2E proved that the
+pre-B1 legacy parser ignored unknown nested `mcp.mutation_policy` keys, typos,
+invalid durations and duplicate mapping keys (last value wins). WP-04C2F now
+implements a dedicated strict subtree decoder for local file, include-expanded,
+remote, YAML and JSON load paths. Unrelated legacy sections stay permissive; do
+not silently make the global parser strict.
 
 The PostgreSQL integration workflow must include a dedicated verbose step for
 `TestPostgresMCPMutationDurableStore` that asserts `=== RUN` and `--- PASS` and
 fails on `--- SKIP`. It must use only the workflow's disposable PostgreSQL
 service and the explicit test opt-in. A local pass is not GitHub evidence.
+
+
+## WP-04C2F operator mutation-policy tests
+
+The B1 policy is disabled by default and must remain disconnected from
+production proposal registration. Tests must cover absent and disabled policy,
+a valid enabled example through `ParseConfig`, `getConfigFile`,
+`LoadRemoteConfig`, include expansion and JSON, plus unknown keys, duplicate
+outer/nested keys, duplicate JSON keys, invalid durations, nulls, wrong scalar
+types, unknown transports, non-`none` backends, false `require_approval` or
+`audit_required`, mixed source/resource scope, invalid server IDs, missing or
+disabled inventory entries, wrong effects, missing mutation-proposal opt-in,
+agent/capability/scope mismatches, duplicate operations, aliases and
+truncation.
+
+Snapshot tests must prove `SetMCPOperatorConfig` is atomic, caller and getter
+slices cannot mutate the global policy, concurrent getters are race-free, and
+`MCPMutationPolicyFromConfig` produces the same normalized SHA-256 identity.
+The strict policy must not register a production proposal tool. Existing
+read-only MCP, native crawl, goal evidence and Information Seed tests must
+remain green.

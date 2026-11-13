@@ -703,10 +703,10 @@ activation:
 - The internal `MCPMutationPolicy` validator now reuses the production server
   ID and tool-name grammar, so an operation the operator inventory cannot name
   cannot be accepted by policy validation alone.
-- Actual config-parser behavior is documented and tested: the legacy local,
-  remote, YAML and JSON loaders silently ignore unknown nested keys, typos and
-  duplicate mapping keys. Strict `mcp.mutation_policy` subtree validation is a
-  design proposal only and is gated by B1. No public policy field was added.
+- At the time of WP-04C2E, the legacy local, remote, YAML and JSON loaders
+  silently ignored unknown nested keys, typos and duplicate mapping keys.
+  Strict `mcp.mutation_policy` subtree validation was then a design proposal
+  gated by B1. WP-04C2F subsequently implemented it; see section 25.
 - The PostgreSQL workflow now has a dedicated, verbose
   `TestPostgresMCPMutationDurableStore` step that proves `RUN`/`PASS` and fails
   on `SKIP`. It uses only the workflow's disposable PostgreSQL service. A local
@@ -716,11 +716,38 @@ activation:
   database was corrected. Sentinel rows belong only in the test-created
   disposable database.
 
-Production proposal registration, trusted principal propagation, the public
-operator policy contract, current-policy revalidation at approval,
-denied-admission audit and the separate MCP alias authority remain disabled or
-undecided. No dispatcher, dispatch claim, dispatch-attempt insert, retry,
+Production proposal registration, trusted principal propagation,
+current-policy revalidation at approval, denied-admission audit and the
+separate MCP alias authority remain disabled or undecided. The public operator
+policy contract was approved and implemented later in WP-04C2F; see section
+25. No dispatcher, dispatch claim, dispatch-attempt insert, retry,
 reconciliation worker, execution backend or external mutation was added. The
 schema stays at 1.17 with writer generation `verified-ownership-v1.17`; the
 additive MCP capability is still not deployment-approved. See
 `docs/crowler-agents/reviews/WP-04C2E_*` for the evidence and decision sheet.
+
+
+## 25. WP-04C2F B1 operator-policy implementation
+
+B1 was explicitly approved and implemented. `mcp.mutation_policy` is now an
+operator-only, default-disabled field in `pkg/config.MCPConfig`:
+
+- local file, include-expanded, remote, YAML and JSON load paths use one strict
+  subtree decoder;
+- unknown keys, duplicate outer/nested keys, anchors/merges, nulls, wrong
+  scalar types, invalid durations and unsafe enums fail configuration load;
+- enabled operations bind exactly to an enabled operator server and approved
+  `effect: mutation` tool with `allow_mutation_proposal: true`;
+- aliases are derived with `MCPToolAlias`; `approved-server` /
+  `approved_tool` becomes `mcp_approved-server_approved_tool`;
+- `SetMCPOperatorConfig` validates and installs the policy atomically, deep
+  copies server and policy slices, and `CurrentMCPOperatorConfig` /
+  `CurrentMCPMutationPolicy` return defensive snapshots;
+- the policy is frozen for the process lifetime; changes require restart;
+- JSON Schema, disabled `config.default`, operator documentation and negative
+  tests are included.
+
+This is a configuration and trusted-snapshot implementation only. No production
+proposal tool is registered, no authenticated principal is propagated, no MCP
+operation authority is derived from native crawl policy, and no external
+mutation or dispatch attempt exists. B2/B3/B4/B5/G3 remain pending.

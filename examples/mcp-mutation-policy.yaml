@@ -1,0 +1,41 @@
+# Illustrative operator-owned MCP mutation proposal policy.
+# This example does not deploy a server and does not authorize remote execution.
+# The placeholder command must be replaced with an installed, approved server.
+mcp:
+  servers:
+    - id: approved-server
+      enabled: true
+      transport: stdio
+      command: /opt/crowler/bin/approved-mcp-server
+      allowed_agents: [agent-id]
+      allowed_sources: [42]
+      approved_tools:
+        - name: approved_tool
+          effect: mutation
+          allow_mutation_proposal: true
+          required_capabilities: [tool_execution]
+          allowed_sources: [42]
+  mutation_policy:
+    enabled: true
+    policy_id: operator-approved-mutations
+    version: "1"
+    operations:
+      - server_id: approved-server
+        tool_name: approved_tool
+        allowed_agents: [agent-id]
+        required_capabilities: [tool_execution]
+        min_trust_level: trusted
+        allowed_sources: [42]
+        allowed_resources: []
+        required_argument_fields: [source_id]
+        allowed_argument_fields: [source_id]
+        destructive: false
+        proposal_ttl: 5m
+        max_proposals_per_run: 4
+        max_pending_proposals: 8
+        max_input_bytes: 65536
+        max_output_bytes: 65536
+        require_approval: true
+        execution_backend: none
+        allowed_transports: [stdio]
+        audit_required: true

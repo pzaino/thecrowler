@@ -182,9 +182,15 @@ func getConfigFile(confName string) (Config, error) {
 	// If the configuration file has been found and is not empty, unmarshal it
 	if (finalData != "") && (finalData != "\n") && (finalData != "\r\n") {
 		err = yaml.Unmarshal([]byte(finalData), &config)
+		if err == nil {
+			err = applyMCPMutationPolicyStrict(&config, []byte(finalData))
+		}
+		if err != nil {
+			return Config{}, err
+		}
 	}
 
-	return config, err
+	return config, nil
 }
 
 // NewConfig returns a new Config struct with default values.
@@ -622,6 +628,9 @@ func LoadRemoteConfig(cfg Config, fetcher RemoteFetcher) (Config, error) {
 		if err != nil {
 			return config, err
 		}
+		if err := applyMCPMutationPolicyStrict(&config, []byte(interpolatedData)); err != nil {
+			return config, err
+		}
 	}
 
 	// Check if the configuration is correct:
@@ -643,6 +652,9 @@ func ParseConfig(data []byte) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := applyMCPMutationPolicyStrict(&cfg, data); err != nil {
+		return nil, err
+	}
 	err = cfg.Validate()
 	if err != nil {
 		return nil, err
@@ -653,6 +665,12 @@ func ParseConfig(data []byte) (*Config, error) {
 // Validate checks if the configuration file contains valid values.
 // Where possible, if a provided value is wrong, it's replaced with a default value.
 func (c *Config) Validate() error {
+	if err := c.MCP.MutationPolicy.Validate(); err != nil {
+		return fmt.Errorf("mcp.mutation_policy: %w", err)
+	}
+	if err := c.MCP.MutationPolicy.ValidateInventory(c.MCP.Servers); err != nil {
+		return fmt.Errorf("mcp.mutation_policy: %w", err)
+	}
 	// Check if the Crawling configuration file contains valid values
 	c.validateCrawler()
 	if errs := c.AttributesIndexing.Validate(); len(errs) > 0 {
