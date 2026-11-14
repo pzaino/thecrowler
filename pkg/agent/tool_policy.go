@@ -76,14 +76,22 @@ const maxToolArgsDepth = 16
 // built by the loop from run configuration and identity, never from model
 // output.
 type ToolAuthContext struct {
-	Identity          AgentIdentity
-	Enforcement       bool
-	Allowlist         map[string]bool
-	AllowedSources    map[uint64]bool
-	AllowedOperations map[string]bool
-	MutationAllowed   bool
-	RunID             string
-	TraceID           string
+	Identity             AgentIdentity
+	Enforcement          bool
+	Allowlist            map[string]bool
+	AllowedSources       map[uint64]bool
+	AllowedOperations    map[string]bool
+	MutationAllowed      bool
+	MCPMutationAllowed   bool
+	MCPAllowedOperations map[string]bool
+	RunID                string
+	TraceID              string
+}
+
+// MCPMutationProposalMarker identifies the inert proposal adapter. It uses a
+// separate authority path from native crawl mutations.
+type MCPMutationProposalMarker interface {
+	IsMCPMutationProposal() bool
 }
 
 // ToolAuthError is a policy denial with a stable machine-readable code.
@@ -139,6 +147,15 @@ func AuthorizeToolCall(auth ToolAuthContext, tool AgentTool, args map[string]any
 	switch effect {
 	case ToolEffectReadOnly:
 	case ToolEffectMutation:
+		if marker, ok := tool.(MCPMutationProposalMarker); ok && marker.IsMCPMutationProposal() {
+			if !auth.MCPMutationAllowed {
+				return denyTool(ToolDenyMutationDisabled, "MCP mutation proposals are disabled")
+			}
+			if auth.MCPAllowedOperations == nil || !auth.MCPAllowedOperations[name] {
+				return denyTool(ToolDenyOperation, "MCP proposal %q is not in the explicit MCP operation allowlist", name)
+			}
+			break
+		}
 		if !auth.MutationAllowed {
 			return denyTool(ToolDenyMutationDisabled, "model-driven mutation is disabled")
 		}

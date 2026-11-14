@@ -217,6 +217,15 @@ func (f *frozenTool) Execute(ctx context.Context, args map[string]any) (map[stri
 // Effect returns the admission-time effect classification.
 func (f *frozenTool) Effect() ToolEffect { return f.effect }
 
+// IsMCPMutationProposal preserves the inner adapter marker through the frozen
+// registry wrapper. Native mutation tools return false.
+func (f *frozenTool) IsMCPMutationProposal() bool {
+	if marker, ok := f.inner.(MCPMutationProposalMarker); ok {
+		return marker.IsMCPMutationProposal()
+	}
+	return false
+}
+
 // Effect returns the registered effect classification for a tool name.
 func (r *AgentToolRegistry) Effect(name string) (ToolEffect, bool) {
 	tool, ok := r.Get(name)

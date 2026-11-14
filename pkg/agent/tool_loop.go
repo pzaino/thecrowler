@@ -99,31 +99,33 @@ func ValidateLimits(limits ToolLoopLimits) error {
 // (registry, allowlist, identity, enforcement, scopes, provider endpoint)
 // comes from trusted operator configuration, never from model output.
 type ToolLoopConfig struct {
-	Provider          LLMProvider
-	ProviderName      string
-	Model             string
-	URL               string
-	Auth              string
-	Prompt            string
-	Messages          []any
-	Registry          *AgentToolRegistry
-	Allowlist         []string
-	Identity          AgentIdentity
-	Enforcement       bool
-	AllowedSources    []uint64
-	AllowedOperations map[string]bool
-	MutationAllowed   bool
-	CrawlRuntime      *CrawlRequestToolRuntime
-	MCPManager        *MCPToolManager
-	Principal         MCPMutationPrincipal
-	DB                cdb.Handler
-	Limits            ToolLoopLimits
-	StopOnToolError   bool
-	RunID             string
-	TraceID           string
-	GroupDeadline     time.Time
-	Ctx               context.Context
-	cancel            context.CancelFunc
+	Provider             LLMProvider
+	ProviderName         string
+	Model                string
+	URL                  string
+	Auth                 string
+	Prompt               string
+	Messages             []any
+	Registry             *AgentToolRegistry
+	Allowlist            []string
+	Identity             AgentIdentity
+	Enforcement          bool
+	AllowedSources       []uint64
+	AllowedOperations    map[string]bool
+	MutationAllowed      bool
+	MCPMutationAllowed   bool
+	MCPAllowedOperations map[string]bool
+	CrawlRuntime         *CrawlRequestToolRuntime
+	MCPManager           *MCPToolManager
+	Principal            MCPMutationPrincipal
+	DB                   cdb.Handler
+	Limits               ToolLoopLimits
+	StopOnToolError      bool
+	RunID                string
+	TraceID              string
+	GroupDeadline        time.Time
+	Ctx                  context.Context
+	cancel               context.CancelFunc
 }
 
 // ToolCallSummary is the sanitized per-call record: names, IDs, and reason
@@ -281,14 +283,16 @@ func RunToolLoop(config ToolLoopConfig) (ToolLoopResult, error) {
 	}
 
 	auth := ToolAuthContext{
-		Identity:          config.Identity,
-		Enforcement:       config.Enforcement,
-		Allowlist:         allowlist,
-		AllowedSources:    sliceToSourceSet(config.AllowedSources),
-		AllowedOperations: config.AllowedOperations,
-		MutationAllowed:   config.MutationAllowed,
-		RunID:             result.RunID,
-		TraceID:           result.TraceID,
+		Identity:             config.Identity,
+		Enforcement:          config.Enforcement,
+		Allowlist:            allowlist,
+		AllowedSources:       sliceToSourceSet(config.AllowedSources),
+		AllowedOperations:    config.AllowedOperations,
+		MutationAllowed:      config.MutationAllowed,
+		MCPMutationAllowed:   config.MCPMutationAllowed,
+		MCPAllowedOperations: config.MCPAllowedOperations,
+		RunID:                result.RunID,
+		TraceID:              result.TraceID,
 	}
 	agentID, agentName, owner := config.Identity.AgentID, config.Identity.Name, config.Identity.Owner
 	emitToolAudit(result.RunID, result.TraceID, agentID, agentName, owner, "", auditOutcomeAllowed, "tool_loop_started")

@@ -139,6 +139,13 @@ func (a *AgentGoalRunAction) Execute(params map[string]interface{}) (map[string]
 			}
 		}
 	}
+	mcpAllowed, err := registerMCPMutationProposalTools(
+		runCtx, mcpManager, registry, CurrentMCPMutationPolicy(),
+		identity, principal, spec.Allowlist, spec.AllowedSources, dbHandler,
+	)
+	if err != nil {
+		return failInitialization(err)
+	}
 	var crawlRuntime *CrawlRequestToolRuntime
 	if spec.MutationPolicy.EnabledOperations(crawlRequestToolName) {
 		if !containsString(spec.Allowlist, crawlRequestToolName) {
@@ -205,17 +212,19 @@ func (a *AgentGoalRunAction) Execute(params map[string]interface{}) (map[string]
 		Spec: runtimeSpec, Identity: identity, DB: dbHandler,
 		Principal: principal,
 		Registry:  registry, EvidenceRegistry: evidenceRegistry,
-		AllowedOperations: spec.MutationPolicy.OperationsSet(),
-		MutationAllowed:   crawlRuntime != nil,
-		CrawlRuntime:      crawlRuntime,
-		MCPManager:        mcpManager,
-		Provider:          provider,
-		RunID:             runID,
-		TraceID:           traceID,
-		CorrelationID:     toolLoopRunFieldValue(params, "run_id"),
-		GroupDeadline:     inheritedDeadline,
-		ExecutionDeadline: runDeadline,
-		Ctx:               runCtx,
+		AllowedOperations:    spec.MutationPolicy.OperationsSet(),
+		MutationAllowed:      crawlRuntime != nil,
+		MCPMutationAllowed:   len(mcpAllowed) > 0,
+		MCPAllowedOperations: mcpAllowed,
+		CrawlRuntime:         crawlRuntime,
+		MCPManager:           mcpManager,
+		Provider:             provider,
+		RunID:                runID,
+		TraceID:              traceID,
+		CorrelationID:        toolLoopRunFieldValue(params, "run_id"),
+		GroupDeadline:        inheritedDeadline,
+		ExecutionDeadline:    runDeadline,
+		Ctx:                  runCtx,
 	}
 	result, err := RunGoal(runConfig)
 	rval[StrResponse] = goalRunResultMap(result)
@@ -323,23 +332,25 @@ func goalIdentityFromRuntime(params map[string]interface{}) AgentIdentity {
 
 // goalRunConfig carries only trusted inputs.
 type goalRunConfig struct {
-	Spec              *AgentGoalSpec
-	Identity          AgentIdentity
-	DB                cdb.Handler
-	Registry          *AgentToolRegistry
-	EvidenceRegistry  *GoalEvidenceRegistry
-	AllowedOperations map[string]bool
-	MutationAllowed   bool
-	CrawlRuntime      *CrawlRequestToolRuntime
-	MCPManager        *MCPToolManager
-	Principal         MCPMutationPrincipal
-	Provider          LLMProvider
-	RunID             string
-	TraceID           string
-	CorrelationID     string
-	GroupDeadline     time.Time
-	ExecutionDeadline time.Time
-	Ctx               context.Context
+	Spec                 *AgentGoalSpec
+	Identity             AgentIdentity
+	DB                   cdb.Handler
+	Registry             *AgentToolRegistry
+	EvidenceRegistry     *GoalEvidenceRegistry
+	AllowedOperations    map[string]bool
+	MutationAllowed      bool
+	MCPMutationAllowed   bool
+	MCPAllowedOperations map[string]bool
+	CrawlRuntime         *CrawlRequestToolRuntime
+	MCPManager           *MCPToolManager
+	Principal            MCPMutationPrincipal
+	Provider             LLMProvider
+	RunID                string
+	TraceID              string
+	CorrelationID        string
+	GroupDeadline        time.Time
+	ExecutionDeadline    time.Time
+	Ctx                  context.Context
 }
 
 type goalRunState struct {
@@ -433,11 +444,13 @@ func RunGoal(config goalRunConfig) (GoalRunResult, error) {
 	}
 	auth := ToolAuthContext{
 		Identity: config.Identity, Enforcement: true,
-		Allowlist:         stringSet(config.Spec.Allowlist),
-		AllowedSources:    sliceToSourceSet(config.Spec.AllowedSources),
-		AllowedOperations: config.AllowedOperations,
-		MutationAllowed:   config.MutationAllowed,
-		RunID:             run.result.RunID, TraceID: run.result.TraceID,
+		Allowlist:            stringSet(config.Spec.Allowlist),
+		AllowedSources:       sliceToSourceSet(config.Spec.AllowedSources),
+		AllowedOperations:    config.AllowedOperations,
+		MutationAllowed:      config.MutationAllowed,
+		MCPMutationAllowed:   config.MCPMutationAllowed,
+		MCPAllowedOperations: config.MCPAllowedOperations,
+		RunID:                run.result.RunID, TraceID: run.result.TraceID,
 	}
 	run.auth = auth
 	emitGoalAudit(run.result.RunID, run.result.TraceID, config.Identity.AgentID, config.Identity.Name, config.Identity.Owner, config.Spec.GoalID, "", auditOutcomeAllowed, "goal_run_started", "goal run started", nil)

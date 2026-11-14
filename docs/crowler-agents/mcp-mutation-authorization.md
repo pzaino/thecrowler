@@ -785,3 +785,28 @@ registration remains disabled under B3.
 The `events:*` scope is intentionally coarse for this first trusted run path.
 A later B3/B5 decision may introduce a narrower `events:agent:run` scope with
 denied-admission audit.
+
+## 27. WP-04C2H B3 proposal-only registration
+
+B3 was approved and implemented. Eligible authenticated manual/tool-loop and
+goal runs can now register production inert proposal adapters. External
+execution and dispatch remain disabled.
+
+- MCP proposal authority is separate from native crawl `MutationAllowed` and
+  native crawl operation allowlists. The runtime has distinct
+  `MCPMutationAllowed` and `MCPAllowedOperations` fields and a proposal-tool
+  marker.
+- Registration requires the exact policy alias in the run allowlist, an
+  authenticated principal, a non-empty agent owner audit label,
+  agent/capability/trust/contract approval, exact frozen server/tool/transport
+  identity, source/resource scope, a durable schema-1.17 store capability and
+  the operator policy.
+- One exact proposal adapter is registered per approved alias. The old
+  first-match constructor now rejects ambiguous multi-operation selection.
+- Proposal creation remains inert: `approval_required` plus proposal/fingerprint
+  references only. No mutating MCP `tools/call`, dispatcher, dispatch claim,
+  retry, reconciliation worker or automatic approval execution exists.
+- Approval, denial and revocation remain record-only operator actions.
+  `MCPMutationDispatchAttempts` stays empty.
+- B4 current-policy revalidation at approval, B5 denied-admission audit and G3
+  schema deployment/SQLite FK decisions remain pending.

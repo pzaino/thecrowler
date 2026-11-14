@@ -29,6 +29,8 @@ func TestMCPLiveOllamaMutationProposalOptional(t *testing.T) {
 	loop.Enforcement = true
 	loop.MutationAllowed = true
 	loop.AllowedOperations = map[string]bool{alias: true}
+	loop.MCPMutationAllowed = true
+	loop.MCPAllowedOperations = map[string]bool{alias: true}
 	loop.Principal = MCPMutationPrincipal{UserID: 7, Username: identity.Owner, Issuer: "live-test-issuer"}
 	loop.MCPManager = manager
 	loop.RunID = "mcp-mutation-live-run"

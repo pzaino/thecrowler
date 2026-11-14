@@ -318,3 +318,29 @@ Only an agent's manual-trigger jobs may execute through `/v1/agent/run`;
 event-triggered jobs must not be invoked out of band. Live Compose testing must
 exercise the endpoint against a controlled manual agent and verify the returned
 principal fields, agent scope, logs and readiness.
+
+## WP-04C2H B3 proposal-only registration tests
+
+B3 tests must prove that native crawl `MutationAllowed`/`AllowedOperations`
+cannot authorize an MCP proposal tool and that MCP authority cannot authorize a
+native crawl mutation. The proposal adapter marker must survive the frozen tool
+registry wrapper.
+
+Registration tests must cover:
+
+- exact multi-operation aliases, no first-match selection and ambiguous
+  constructor rejection;
+- missing principal, missing owner audit label, wrong agent, missing
+  capability, insufficient trust, forbidden contract and wrong transport;
+- inventory and run source-scope mismatch, resource/source conflict and
+  unrelated allowlists;
+- missing durable schema-1.17 capability with no in-memory fallback;
+- tool-loop and goal registration using the database store;
+- proposal responses containing only IDs/fingerprints/expiry and list/detail
+  responses exposing argument keys but not raw values.
+
+Live Docker acceptance must use a controlled MCP fixture with a mutation counter,
+a fake deterministic model and a disposable PostgreSQL 1.17 database. Assert
+one `approval_required` proposal, an inert approval/revocation, zero
+`MCPMutationDispatchAttempts`, an absent mutation counter and no remote mutation
+tool call.

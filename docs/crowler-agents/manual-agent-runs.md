@@ -49,9 +49,13 @@ Response:
 }
 ```
 
-The principal fields are informational evidence of the authenticated runtime
-provenance; they do not grant MCP proposal authority by themselves. Production
-MCP proposal registration remains disabled until the separate B3 decision.
+The principal fields are evidence of the authenticated runtime provenance; they
+do not grant MCP proposal authority by themselves. After the separate B3
+decision, eligible agent tool-loop/goal runs can register inert proposal
+adapters when the exact operator policy alias is in the run allowlist, the agent
+has a non-empty owner audit label, the authenticated principal is valid, and the
+durable schema-1.17 capability is present. External execution and dispatch
+remain disabled.
 
 ## Background/event runs
 

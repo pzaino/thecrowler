@@ -430,7 +430,8 @@ func validateMCPMutationProposalForAdmission(proposal MCPMutationProposal) error
 	}
 	if proposal.ProposalID == "" || proposal.ProposalSHA256 == "" ||
 		proposal.RunID == "" || proposal.EffectiveCallID == "" ||
-		proposal.AgentID == "" || proposal.ServerID == "" || proposal.ToolAlias == "" {
+		proposal.AgentID == "" || proposal.Owner == "" ||
+		proposal.ServerID == "" || proposal.ToolAlias == "" {
 		return ErrMCPMutationProposalConflict
 	}
 	if proposal.ProposalSHA256 != proposalFingerprint(proposal) {
@@ -558,15 +559,46 @@ func NewMCPMutationProposalTool(manager *MCPToolManager, policy MCPMutationPolic
 	if err := policy.Validate(); err != nil {
 		return nil, err
 	}
-	var descriptor *mcpMutationTool
+	var matches []*mcpMutationTool
 	for _, candidate := range manager.mutations {
 		if _, ok := policy.Operation(candidate.alias, candidate.server.config.ID, candidate.approved.Name); ok {
-			descriptor = candidate
-			break
+			matches = append(matches, candidate)
 		}
 	}
-	if descriptor == nil {
+	if len(matches) == 0 {
 		return nil, fmt.Errorf("%w: no policy operation matches a frozen mutation descriptor", ErrMCPMutationNotApproved)
+	}
+	if len(matches) > 1 {
+		return nil, fmt.Errorf("%w: multiple policy operations match frozen descriptors; use the exact alias constructor", ErrMCPMutationPolicyInvalid)
+	}
+	return NewMCPMutationProposalToolForOperation(manager, policy, store, matches[0].alias)
+}
+
+// NewMCPMutationProposalToolForOperation binds one exact policy alias to one
+// frozen mutation descriptor. It never selects the first matching operation.
+func NewMCPMutationProposalToolForOperation(manager *MCPToolManager, policy MCPMutationPolicy, store MCPMutationProposalStore, alias string) (*MCPMutationProposalTool, error) {
+	if manager == nil || store == nil {
+		return nil, ErrMCPMutationStoreUnavailable
+	}
+	if err := policy.Validate(); err != nil {
+		return nil, err
+	}
+	if alias == "" || alias != strings.TrimSpace(alias) {
+		return nil, fmt.Errorf("%w: exact MCP tool alias is required", ErrMCPMutationPolicyInvalid)
+	}
+	descriptor, ok := manager.MutationTool(alias)
+	if !ok || descriptor == nil {
+		return nil, fmt.Errorf("%w: frozen mutation descriptor %q is unavailable", ErrMCPMutationNotApproved, alias)
+	}
+	operation, ok := policy.Operation(alias, descriptor.server.config.ID, descriptor.approved.Name)
+	if !ok {
+		return nil, fmt.Errorf("%w: policy operation %q does not match the frozen descriptor", ErrMCPMutationNotApproved, alias)
+	}
+	if !containsString(operation.AllowedTransports, descriptor.server.config.Transport) {
+		return nil, fmt.Errorf("%w: MCP transport is not approved for %q", ErrMCPMutationNotApproved, alias)
+	}
+	if operation.ExecutionBackend != "" && operation.ExecutionBackend != "none" {
+		return nil, fmt.Errorf("%w: MCP execution backend is unavailable", ErrMCPMutationDisabled)
 	}
 	return &MCPMutationProposalTool{
 		descriptor: descriptor,
@@ -583,6 +615,10 @@ func (t *MCPMutationProposalTool) RequiredCapabilities() []string {
 	return t.descriptor.RequiredCapabilities()
 }
 func (t *MCPMutationProposalTool) Effect() ToolEffect { return ToolEffectMutation }
+
+// IsMCPMutationProposal marks the adapter for the independent MCP authority
+// branch in AuthorizeToolCall. It does not grant native crawl mutation rights.
+func (t *MCPMutationProposalTool) IsMCPMutationProposal() bool { return true }
 
 func (t *MCPMutationProposalTool) Execute(ctx context.Context, args map[string]any) (map[string]any, error) {
 	if t == nil || t.descriptor == nil || t.proposer == nil {

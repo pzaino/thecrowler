@@ -53,9 +53,12 @@ func mcpMutationRuntime(identity AgentIdentity, alias, runID, callID string) con
 	return ContextWithToolRuntime(context.Background(), ToolRuntime{
 		Auth: ToolAuthContext{
 			Identity: identity, Enforcement: true,
-			Allowlist:         map[string]bool{alias: true},
-			AllowedOperations: map[string]bool{alias: true},
-			MutationAllowed:   true, RunID: runID, TraceID: "mutation-trace",
+			Allowlist:            map[string]bool{alias: true},
+			AllowedOperations:    map[string]bool{alias: true},
+			MutationAllowed:      true,
+			MCPMutationAllowed:   true,
+			MCPAllowedOperations: map[string]bool{alias: true},
+			RunID:                runID, TraceID: "mutation-trace",
 		},
 		CallID:    callID,
 		Principal: MCPMutationPrincipal{UserID: 7, Username: identity.Owner, Issuer: "test-issuer"},
@@ -162,7 +165,7 @@ func TestMCPMutationProposalAuthorizationDenials(t *testing.T) {
 	cases := map[string]context.Context{
 		"missing operation allowlist": ContextWithToolRuntime(context.Background(), ToolRuntime{
 			Auth: ToolAuthContext{Identity: identity, Enforcement: true, Allowlist: map[string]bool{alias: true},
-				MutationAllowed: true, RunID: "run"}, CallID: "call",
+				MutationAllowed: true, MCPMutationAllowed: true, RunID: "run"}, CallID: "call",
 			Principal: MCPMutationPrincipal{UserID: 7, Username: identity.Owner, Issuer: "test-issuer"},
 		}),
 		"missing capability": func() context.Context {
@@ -177,7 +180,8 @@ func TestMCPMutationProposalAuthorizationDenials(t *testing.T) {
 		}(),
 		"missing effective call ID": ContextWithToolRuntime(context.Background(), ToolRuntime{
 			Auth: ToolAuthContext{Identity: identity, Enforcement: true, Allowlist: map[string]bool{alias: true},
-				AllowedOperations: map[string]bool{alias: true}, MutationAllowed: true, RunID: "run"},
+				AllowedOperations: map[string]bool{alias: true}, MutationAllowed: true,
+				MCPMutationAllowed: true, MCPAllowedOperations: map[string]bool{alias: true}, RunID: "run"},
 			Principal: MCPMutationPrincipal{UserID: 7, Username: identity.Owner, Issuer: "test-issuer"},
 		}),
 	}
@@ -377,7 +381,8 @@ func TestMCPMutationSourceScopeIsEnforced(t *testing.T) {
 	ctx := ContextWithToolRuntime(context.Background(), ToolRuntime{
 		Auth: ToolAuthContext{Identity: identity, Enforcement: true,
 			Allowlist: map[string]bool{alias: true}, AllowedOperations: map[string]bool{alias: true},
-			AllowedSources: map[uint64]bool{42: true}, MutationAllowed: true, RunID: "source-run"},
+			AllowedSources: map[uint64]bool{42: true}, MutationAllowed: true,
+			MCPMutationAllowed: true, MCPAllowedOperations: map[string]bool{alias: true}, RunID: "source-run"},
 		CallID: "source-call", Principal: MCPMutationPrincipal{UserID: 7, Username: identity.Owner, Issuer: "test-issuer"},
 	})
 	if _, err := proposalTool.Execute(ctx, map[string]any{"source_id": float64(42)}); err != nil {
@@ -410,6 +415,8 @@ func TestMCPMutationProposalThroughToolLoopAndGoalStaysInert(t *testing.T) {
 		loop.Enforcement = true
 		loop.MutationAllowed = true
 		loop.AllowedOperations = map[string]bool{alias: true}
+		loop.MCPMutationAllowed = true
+		loop.MCPAllowedOperations = map[string]bool{alias: true}
 		loop.Principal = principal
 		loop.MCPManager = manager
 		loop.RunID = "mutation-loop-run"
@@ -437,6 +444,7 @@ func TestMCPMutationProposalThroughToolLoopAndGoalStaysInert(t *testing.T) {
 			EvidenceRegistry: NewGoalEvidenceRegistry(), Provider: provider,
 			RunID: "mutation-goal-run", TraceID: "mutation-goal-trace", Principal: principal,
 			MutationAllowed: true, AllowedOperations: map[string]bool{alias: true},
+			MCPMutationAllowed: true, MCPAllowedOperations: map[string]bool{alias: true},
 		})
 		if err != nil {
 			t.Fatalf("mutation goal: %v", err)
@@ -519,7 +527,8 @@ func TestMCPMutationProposalAdditionalDenialsAndAudit(t *testing.T) {
 		ctx := ContextWithToolRuntime(context.Background(), ToolRuntime{
 			Auth: ToolAuthContext{Identity: identity, Enforcement: true,
 				Allowlist: map[string]bool{alias: true}, AllowedOperations: map[string]bool{alias: true},
-				MutationAllowed: true, RunID: "run"},
+				MutationAllowed: true, MCPMutationAllowed: true,
+				MCPAllowedOperations: map[string]bool{alias: true}, RunID: "run"},
 			CallID: "call",
 		})
 		if _, err := tool.Execute(ctx, map[string]any{"resource": "fixture-resource"}); err == nil {
@@ -565,7 +574,8 @@ func TestMCPMutationFingerprintBindsPrincipal(t *testing.T) {
 	changed := ContextWithToolRuntime(context.Background(), ToolRuntime{
 		Auth: ToolAuthContext{Identity: identity, Enforcement: true,
 			Allowlist: map[string]bool{alias: true}, AllowedOperations: map[string]bool{alias: true},
-			MutationAllowed: true, RunID: "principal-run", TraceID: "trace"},
+			MutationAllowed: true, MCPMutationAllowed: true,
+			MCPAllowedOperations: map[string]bool{alias: true}, RunID: "principal-run", TraceID: "trace"},
 		CallID: "principal-call-2", Principal: MCPMutationPrincipal{UserID: 8, Username: identity.Owner, Issuer: "test-issuer"},
 	})
 	second, err := tool.Execute(changed, map[string]any{"resource": "fixture-resource"})
@@ -765,7 +775,8 @@ func TestMCPMutationSameLogicalCallChangedPrincipalConflicts(t *testing.T) {
 	second := ContextWithToolRuntime(context.Background(), ToolRuntime{
 		Auth: ToolAuthContext{Identity: identity, Enforcement: true,
 			Allowlist: map[string]bool{alias: true}, AllowedOperations: map[string]bool{alias: true},
-			MutationAllowed: true, RunID: "principal-conflict-run", TraceID: "trace"},
+			MutationAllowed: true, MCPMutationAllowed: true,
+			MCPAllowedOperations: map[string]bool{alias: true}, RunID: "principal-conflict-run", TraceID: "trace"},
 		CallID:    "principal-conflict-call",
 		Principal: MCPMutationPrincipal{UserID: 8, Username: identity.Owner, Issuer: "test-issuer"},
 	})
