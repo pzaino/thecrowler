@@ -143,7 +143,8 @@ func TestRegisterMCPMutationProposalToolsExactAndMultiOperation(t *testing.T) {
 	registry := NewAgentToolRegistry()
 	handler := newMCPMutationStoreTestHandler(t)
 	allowed, err := registerMCPMutationProposalTools(context.Background(), manager, registry, policy, identity,
-		MCPMutationPrincipal{UserID: 7, Username: identity.Owner, Issuer: "test-issuer"}, aliases, []uint64{42}, handler)
+		MCPMutationPrincipal{UserID: 7, Username: identity.Owner, Issuer: "test-issuer"}, aliases, []uint64{42}, handler,
+		"authority-run", "authority-trace")
 	if err != nil {
 		t.Fatalf("register proposal tools: %v", err)
 	}
@@ -192,21 +193,25 @@ func TestRegisterMCPMutationProposalToolsFailsClosed(t *testing.T) {
 	registry := NewAgentToolRegistry()
 
 	if _, err := registerMCPMutationProposalTools(context.Background(), manager, registry, policy, identity,
-		MCPMutationPrincipal{}, aliases, []uint64{42}, newMCPMutationStoreTestHandler(t)); !errors.Is(err, ErrMCPMutationPrincipal) {
+		MCPMutationPrincipal{}, aliases, []uint64{42}, newMCPMutationStoreTestHandler(t),
+		"authority-run", "authority-trace"); !errors.Is(err, ErrMCPMutationPrincipal) {
 		t.Fatalf("missing principal error = %v", err)
 	}
 	if _, err := registerMCPMutationProposalTools(context.Background(), manager, registry, policy, identity,
-		MCPMutationPrincipal{UserID: 7, Username: identity.Owner, Issuer: "test-issuer"}, aliases, []uint64{43}, newMCPMutationStoreTestHandler(t)); err == nil {
+		MCPMutationPrincipal{UserID: 7, Username: identity.Owner, Issuer: "test-issuer"}, aliases, []uint64{43}, newMCPMutationStoreTestHandler(t),
+		"authority-run", "authority-trace"); err == nil {
 		t.Fatalf("out-of-run source scope was accepted")
 	}
 	noOwner := identity
 	noOwner.Owner = ""
 	if _, err := registerMCPMutationProposalTools(context.Background(), manager, registry, policy, noOwner,
-		MCPMutationPrincipal{UserID: 7, Username: identity.Owner, Issuer: "test-issuer"}, aliases, []uint64{42}, newMCPMutationStoreTestHandler(t)); err == nil {
+		MCPMutationPrincipal{UserID: 7, Username: identity.Owner, Issuer: "test-issuer"}, aliases, []uint64{42}, newMCPMutationStoreTestHandler(t),
+		"authority-run", "authority-trace"); err == nil {
 		t.Fatalf("missing owner audit label was accepted")
 	}
 	if _, err := registerMCPMutationProposalTools(context.Background(), manager, registry, policy, identity,
-		MCPMutationPrincipal{UserID: 7, Username: identity.Owner, Issuer: "test-issuer"}, []string{"all"}, []uint64{42}, newMCPMutationStoreTestHandler(t)); err != nil {
+		MCPMutationPrincipal{UserID: 7, Username: identity.Owner, Issuer: "test-issuer"}, []string{"all"}, []uint64{42}, newMCPMutationStoreTestHandler(t),
+		"authority-run", "authority-trace"); err != nil {
 		t.Fatalf("unrelated allowlist error = %v", err)
 	}
 	noSchemaDB, err := sql.Open("sqlite3", ":memory:")
@@ -216,7 +221,8 @@ func TestRegisterMCPMutationProposalToolsFailsClosed(t *testing.T) {
 	defer noSchemaDB.Close()
 	noSchema := cdb.Handler(&mcpMutationSQLiteHandler{db: noSchemaDB})
 	if _, err := registerMCPMutationProposalTools(context.Background(), manager, NewAgentToolRegistry(), policy, identity,
-		MCPMutationPrincipal{UserID: 7, Username: identity.Owner, Issuer: "test-issuer"}, aliases, []uint64{42}, noSchema); !errors.Is(err, ErrMCPMutationStoreUnavailable) {
+		MCPMutationPrincipal{UserID: 7, Username: identity.Owner, Issuer: "test-issuer"}, aliases, []uint64{42}, noSchema,
+		"authority-run", "authority-trace"); !errors.Is(err, ErrMCPMutationStoreUnavailable) {
 		t.Fatalf("missing durable capability error = %v", err)
 	}
 }

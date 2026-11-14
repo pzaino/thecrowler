@@ -142,6 +142,7 @@ func (a *AgentGoalRunAction) Execute(params map[string]interface{}) (map[string]
 	mcpAllowed, err := registerMCPMutationProposalTools(
 		runCtx, mcpManager, registry, CurrentMCPMutationPolicy(),
 		identity, principal, spec.Allowlist, spec.AllowedSources, dbHandler,
+		runID, traceID,
 	)
 	if err != nil {
 		return failInitialization(err)
@@ -566,7 +567,8 @@ func (r *goalRunner) processToolCall(ctx context.Context, call LLMToolCall, call
 	if err != nil {
 		var authErr *ToolAuthError
 		if errors.As(err, &authErr) {
-			return r.denyCall(call, callID, authErr.Code)
+			// Propose already recorded a durable audit for its own denial.
+			return r.denyCallWithAudit(call, callID, authErr.Code, false)
 		}
 	}
 	status := "executed"
@@ -620,8 +622,42 @@ func (r *goalRunner) processToolCall(ctx context.Context, call LLMToolCall, call
 }
 
 func (r *goalRunner) denyCall(call LLMToolCall, callID, code string) (GoalRunResult, bool) {
+	return r.denyCallWithAudit(call, callID, code, true)
+}
+
+func (r *goalRunner) denyCallWithAudit(call LLMToolCall, callID, code string, audit bool) (GoalRunResult, bool) {
 	r.state.consecutiveDenials++
 	emitGoalAudit(r.result.RunID, r.result.TraceID, r.config.Identity.AgentID, r.config.Identity.Name, r.config.Identity.Owner, r.config.Spec.GoalID, call.Name, auditOutcomeDenied, code, "tool proposal denied", nil)
+	if audit {
+		record := func(serverID, alias, policyID string) {
+			recordMCPAdmissionDeniedDB(r.ctx, r.config.DB, MCPAdmissionDeniedEvent{
+				EventType:  MCPAuditEventAdmissionDenied,
+				Stage:      MCPAuditStageGoal,
+				RunID:      r.result.RunID,
+				TraceID:    r.result.TraceID,
+				CallID:     callID,
+				Identity:   r.config.Identity,
+				Principal:  r.config.Principal,
+				ServerID:   serverID,
+				ToolAlias:  alias,
+				PolicyID:   policyID,
+				ReasonCode: code,
+			})
+		}
+		if tool, ok := r.config.Registry.Get(call.Name); ok {
+			if info, isMCPProposal := mcpMutationProposalAuditIdentity(tool); isMCPProposal {
+				record(info.ServerID, info.ToolAlias, info.PolicyID)
+			}
+		} else {
+			// A model can name an operator-policy alias that was never
+			// registered. Keep the unknown-tool denial, but record the known
+			// policy identity when one exists.
+			policy := CurrentMCPMutationPolicy()
+			if operation, found := policy.OperationByAlias(call.Name); found {
+				record(operation.ServerID, operation.ToolAlias, policy.PolicyID)
+			}
+		}
+	}
 	r.state.summaries = append(r.state.summaries, ToolCallSummary{
 		Name: call.Name, ID: callID, Index: call.Index, Status: "denied", ReasonCode: code,
 	})

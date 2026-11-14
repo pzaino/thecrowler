@@ -393,15 +393,43 @@ func cloudRunAddr(cfg cfg.Config) string {
 
 func startEventJanitor(db *cdb.Handler, interval time.Duration, config cfg.Config) {
 	ticker := time.NewTicker(interval)
+	auditTicker := time.NewTicker(mcpMutationAuditCleanupInterval)
 	go func() {
-		for range ticker.C {
-			cleanupExpiredEvents(db)
-			if strings.TrimSpace(config.Events.SysDBWebObjectsRetention) != "" {
-				threshold := parseDuration(config.Events.SysDBWebObjectsRetention)
-				cleanupTooOldWebObjects(db, threshold)
+		defer ticker.Stop()
+		defer auditTicker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				cleanupExpiredEvents(db)
+				if strings.TrimSpace(config.Events.SysDBWebObjectsRetention) != "" {
+					threshold := parseDuration(config.Events.SysDBWebObjectsRetention)
+					cleanupTooOldWebObjects(db, threshold)
+				}
+			case <-auditTicker.C:
+				cleanupMCPMutationAudit(db, config)
 			}
 		}
 	}()
+}
+
+// cleanupMCPMutationAudit removes at most one bounded batch of expired durable
+// MCP mutation audit rows. Unknown event types are retained deliberately.
+func cleanupMCPMutationAudit(db *cdb.Handler, config cfg.Config) {
+	if db == nil || *db == nil {
+		return
+	}
+	retention := mcpMutationAuditRetention(config.Events.MCPAuditRetention)
+	cutoff := time.Now().UTC().Add(-retention)
+	ctx, cancel := context.WithTimeout(context.Background(), mcpMutationAuditCleanupTimeout)
+	defer cancel()
+	removed, err := cdb.CleanupMCPMutationAudit(ctx, db, cutoff, cdb.MCPMutationAuditCleanupMaxBatch)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "MCP mutation audit cleanup failed: %v", err)
+		return
+	}
+	if removed > 0 {
+		cmn.DebugMsg(cmn.DbgLvlDebug, "MCP mutation audit cleanup removed %d expired rows", removed)
+	}
 }
 
 func cleanupExpiredEvents(db *cdb.Handler) {

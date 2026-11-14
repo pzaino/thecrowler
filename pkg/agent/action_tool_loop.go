@@ -313,6 +313,7 @@ func normalizeToolLoopConfig(params, config map[string]interface{}, ictx InputCo
 		mcpAllowed, err := registerMCPMutationProposalTools(
 			runCtx, mcpManager, registry, CurrentMCPMutationPolicy(),
 			identity, loop.Principal, loop.Allowlist, loop.AllowedSources, dbHandler,
+			loop.RunID, loop.TraceID,
 		)
 		if err != nil {
 			_ = mcpManager.Close()

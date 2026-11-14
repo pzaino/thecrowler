@@ -344,3 +344,39 @@ a fake deterministic model and a disposable PostgreSQL 1.17 database. Assert
 one `approval_required` proposal, an inert approval/revocation, zero
 `MCPMutationDispatchAttempts`, an absent mutation counter and no remote mutation
 tool call.
+
+## WP-04C2I B5 denied-admission audit tests
+
+B5 tests must prove that denied MCP proposal admissions and denied production
+proposal-tool registrations write durable `MCPMutationAudit` rows without
+creating a proposal, approval or dispatch attempt.
+
+- Proposal, tool-loop and goal denials must produce
+  `mcp_mutation_admission_denied`; registration denials must produce
+  `mcp_mutation_registration_denied`.
+- Rows must carry the agent actor, validated principal user/issuer, run, trace,
+  agent, server, tool alias, a stable bounded reason code and a flat
+  `redacted_detail` object.
+- Reason-code tests must cover existing tool-denial codes, B5 admission codes,
+  context errors and unknown errors. Unknown values must normalize to
+  `admission_denied`; raw error text must never become a reason.
+- Redaction tests must prove that raw arguments, URLs, tokens and secrets are
+  absent from every audit field. Unsafe call IDs must be hashed.
+- Database-layer tests must reject unsafe event types, actor types, missing
+  actors, raw-error reasons, malformed hashes, array/nested/uppercase/oversized
+  detail and oversized fields.
+- Audit-write failure and a closed database must preserve the original denial,
+  must not attempt admission, and must not turn the denial into success.
+- Registration database outage must return the existing store-unavailable
+  denial with no in-memory fallback.
+- An unregistered but operator-known MCP alias must keep the `unknown_tool`
+  denial and still produce a bounded tool-loop or goal audit row.
+- Retention tests must cover the 90-day default, the 24-hour floor, bounded
+  batches, known event types only, unknown event retention, recent-row
+  retention and the missing-cutoff error.
+- A PostgreSQL integration test must exercise the standalone audit insert and
+  bounded cleanup against a disposable database.
+- Live Docker acceptance must use a controlled MCP fixture and fake model to
+  produce one proposal denial and one registration denial, then assert the two
+  durable audit rows, zero proposals/approvals/dispatch attempts, an absent
+  mutation counter and no secret in the audit table or Events logs.

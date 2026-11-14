@@ -57,6 +57,12 @@ has a non-empty owner audit label, the authenticated principal is valid, and the
 durable schema-1.17 capability is present. External execution and dispatch
 remain disabled.
 
+Denied MCP proposal admissions and denied proposal-tool registrations now write
+bounded durable `MCPMutationAudit` rows (B5). The audit is best-effort: a
+database outage or audit-write failure is logged, but the run still returns the
+original denial and no proposal is admitted. Retention and redaction rules are
+documented in `mcp-mutation-authorization.md` section 28.
+
 ## Background/event runs
 
 Event-triggered agent runs remain principal-less. Event payloads, metadata,

@@ -542,6 +542,10 @@ type EventsConfig struct {
 	CORS                     CORSConfig      `json:"cors" yaml:"cors"`                                               // CORS configuration for the Events Manager API
 	WebSocket                WebSocketConfig `json:"websocket" yaml:"websocket"`                                     // WebSocket live updates configuration
 	Auth                     AuthConfig      `json:"auth" yaml:"auth"`                                               // Authentication and authorization configuration
+
+	// MCPAuditRetention controls durable MCP mutation audit retention.
+	// Empty uses 90 days; values below 24 hours are raised to 24 hours.
+	MCPAuditRetention string `json:"mcp_mutation_audit_retention" yaml:"mcp_mutation_audit_retention"`
 }
 
 /////////////////////////////////////////////////

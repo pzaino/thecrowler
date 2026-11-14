@@ -2152,6 +2152,16 @@
             "1 months"
           ]
         },
+        "mcp_mutation_audit_retention": {
+          "title": "CROWler Events Manager MCP Mutation Audit Retention",
+          "description": "Retention period for durable MCP mutation admission, registration, proposal and approval audit rows. If empty or not specified, the default is 90 days. Values below 24 hours are raised to 24 hours. Cleanup is bounded and targets the known MCP mutation audit event types; unknown event families are retained.",
+          "type": "string",
+          "examples": [
+            "2160h",
+            "90 days",
+            "30 days"
+          ]
+        },
         "websocket": {
           "title": "WebSocket live updates",
           "description": "Controls optional WebSocket live update streams.",

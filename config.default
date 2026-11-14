@@ -617,6 +617,10 @@ events:
   sys_db_maintenance_schedule: ""
   # Retention policy for sys_db web objects
   sys_db_webobjects_retention: ""
+  # Retention for durable MCP mutation audit rows. Empty uses 90 days;
+  # values below 24h are raised to 24h. Cleanup targets known audit event
+  # types only and leaves unknown event families untouched.
+  mcp_mutation_audit_retention: ""
   # Throttle (string allowed) 1200 requests per second with a burst of 1200 requests
   rate_limit: "1200,1200"
   # Seconds to read headers

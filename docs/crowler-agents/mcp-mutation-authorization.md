@@ -808,5 +808,43 @@ execution and dispatch remain disabled.
   retry, reconciliation worker or automatic approval execution exists.
 - Approval, denial and revocation remain record-only operator actions.
   `MCPMutationDispatchAttempts` stays empty.
-- B4 current-policy revalidation at approval, B5 denied-admission audit and G3
-  schema deployment/SQLite FK decisions remain pending.
+- B4 current-policy revalidation at approval and G3 schema deployment/SQLite
+  FK decisions remain pending. B5 denied-admission audit is described in
+  section 28.
+
+## 28. WP-04C2I B5 denied-admission audit and retention
+
+B5 was approved and implemented. Denied MCP mutation admissions and denied
+production proposal-tool registrations now leave a durable, bounded audit
+record without creating a proposal or a dispatch path.
+
+- The durable event types are `mcp_mutation_admission_denied` (proposal,
+  tool-loop and goal admission denials) and `mcp_mutation_registration_denied`
+  (production proposal-tool registration denials).
+- Each row records the agent actor, validated principal user/issuer, run,
+  trace, agent, server, tool alias, a stable reason code and a small flat
+  `redacted_detail` object. Raw arguments, URLs, tokens, credentials and
+  arbitrary error text are never stored.
+- Stable reason codes reuse the existing tool-denial codes and add bounded
+  admission codes such as `missing_principal`, `capability_missing`,
+  `agent_not_approved`, `transport_not_approved`, `source_scope_denied`,
+  `store_unavailable`, `quota_exceeded` and `admission_denied`. Unknown values
+  normalize to `admission_denied`.
+- Call IDs are stored only when they are safe tokens of at most 64 characters;
+  otherwise a short SHA-256 prefix is stored.
+- A database outage or audit-write failure does not change the denial. The
+  original denial is returned, no admission is attempted, and the audit failure
+  is logged with bounded fields. There is no in-memory fallback for production
+  proposal registration.
+- Retention is controlled by `events.mcp_mutation_audit_retention`: empty uses
+  90 days, values below 24 hours are raised to 24 hours. The Events janitor
+  runs a bounded hourly cleanup of at most 1000 rows from the known event-type
+  family; unknown event types are retained. Each pass has a 30-second timeout.
+- The durable `MCPMutationAudit` table is the compliance record. The existing
+  `AgentsEngine.appendAudit` trace remains a separate in-memory run record.
+- No schema version, migration, writer generation, dispatch, retry,
+  reconciliation or external mutation was added. Approval-time current-policy
+  revalidation (B4) is not part of this checkout and is not reimplemented here.
+
+See `docs/crowler-agents/reviews/WP-04C2I_DENIED_ADMISSION_AUDIT.md` for the
+event/reason contract and `WP-04C2I_TEST_REPORT.md` for live evidence.

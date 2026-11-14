@@ -226,6 +226,15 @@ func (f *frozenTool) IsMCPMutationProposal() bool {
 	return false
 }
 
+// MCPMutationAuditIdentity preserves the descriptor audit identity through the
+// frozen registry wrapper without exposing the inner adapter.
+func (f *frozenTool) MCPMutationAuditIdentity() MCPMutationAuditIdentity {
+	if info, ok := f.inner.(MCPMutationProposalAuditInfo); ok {
+		return info.MCPMutationAuditIdentity()
+	}
+	return MCPMutationAuditIdentity{}
+}
+
 // Effect returns the registered effect classification for a tool name.
 func (r *AgentToolRegistry) Effect(name string) (ToolEffect, bool) {
 	tool, ok := r.Get(name)

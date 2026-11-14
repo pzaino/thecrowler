@@ -742,40 +742,7 @@ func mcpStateConsumesPending(state string) bool {
 }
 
 func insertMCPMutationAuditTx(ctx context.Context, tx *sql.Tx, db Handler, event MCPMutationAuditEvent) error {
-	p := func(n int) string { return mcpMutationPlaceholder(db, n) }
-	if event.OccurredAt.IsZero() {
-		event.OccurredAt = time.Now().UTC()
-	}
-	if len(event.RedactedDetail) == 0 {
-		event.RedactedDetail = []byte(`{}`)
-	}
-	detail := string(event.RedactedDetail)
-	nullable := func(value string) any {
-		if strings.TrimSpace(value) == "" {
-			return nil
-		}
-		return value
-	}
-	var principal any
-	if event.PrincipalUserID != 0 {
-		principal = event.PrincipalUserID
-	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO MCPMutationAudit
-		(occurred_at, event_type, actor_type, actor_id, actor_issuer,
-		 proposal_id, proposal_sha256, approval_id, attempt_id, run_id,
-		 trace_id, agent_id, principal_user_id, server_id, tool_alias,
-		 reason_code, redacted_detail)
-		VALUES (`+p(1)+`, `+p(2)+`, `+p(3)+`, `+p(4)+`, `+p(5)+`,
-		 `+p(6)+`, `+p(7)+`, `+p(8)+`, `+p(9)+`, `+p(10)+`,
-		 `+p(11)+`, `+p(12)+`, `+p(13)+`, `+p(14)+`, `+p(15)+`,
-		 `+p(16)+`, `+p(17)+`)`,
-		event.OccurredAt.UTC(), event.EventType, event.ActorType, event.ActorID,
-		nullable(event.ActorIssuer), nullable(event.ProposalID),
-		nullable(event.ProposalSHA256), nullable(event.ApprovalID),
-		nullable(event.AttemptID), nullable(event.RunID), nullable(event.TraceID),
-		nullable(event.AgentID), principal, nullable(event.ServerID),
-		nullable(event.ToolAlias), nullable(event.ReasonCode), detail)
-	return mcpMutationStoreError(err)
+	return insertMCPMutationAuditExec(ctx, tx, db, event)
 }
 
 func expireMCPMutationProposalTx(ctx context.Context, tx *sql.Tx, db Handler, row MCPMutationProposalRow, now time.Time) error {

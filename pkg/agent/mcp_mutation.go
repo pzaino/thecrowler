@@ -620,6 +620,23 @@ func (t *MCPMutationProposalTool) Effect() ToolEffect { return ToolEffectMutatio
 // branch in AuthorizeToolCall. It does not grant native crawl mutation rights.
 func (t *MCPMutationProposalTool) IsMCPMutationProposal() bool { return true }
 
+// MCPMutationAuditIdentity exposes only the frozen descriptor identity needed
+// for a denied-admission audit. It never exposes arguments or transport data.
+func (t *MCPMutationProposalTool) MCPMutationAuditIdentity() MCPMutationAuditIdentity {
+	if t == nil || t.descriptor == nil || t.descriptor.server == nil {
+		return MCPMutationAuditIdentity{}
+	}
+	policyID := ""
+	if t.proposer != nil {
+		policyID = t.proposer.Policy.PolicyID
+	}
+	return MCPMutationAuditIdentity{
+		ServerID:  t.descriptor.server.config.ID,
+		ToolAlias: t.descriptor.alias,
+		PolicyID:  policyID,
+	}
+}
+
 func (t *MCPMutationProposalTool) Execute(ctx context.Context, args map[string]any) (map[string]any, error) {
 	if t == nil || t.descriptor == nil || t.proposer == nil {
 		return nil, ErrMCPMutationDisabled
@@ -650,7 +667,30 @@ type MCPMutationProposer struct {
 	Now     func() time.Time
 }
 
-func (p *MCPMutationProposer) Propose(ctx context.Context, tool AgentTool, descriptor *mcpMutationTool, args map[string]any) (MCPMutationProposal, error) {
+func (p *MCPMutationProposer) Propose(ctx context.Context, tool AgentTool, descriptor *mcpMutationTool, args map[string]any) (proposal MCPMutationProposal, err error) {
+	var runtime ToolRuntime
+	haveRuntime := false
+	defer func() {
+		if err == nil || descriptor == nil {
+			return
+		}
+		event := MCPAdmissionDeniedEvent{
+			EventType:  MCPAuditEventAdmissionDenied,
+			Stage:      MCPAuditStageProposal,
+			ReasonCode: mcpAdmissionReasonCode(err),
+			ServerID:   mcpMutationDescriptorServerID(descriptor),
+			ToolAlias:  mcpMutationDescriptorAlias(descriptor),
+			PolicyID:   p.Policy.PolicyID,
+		}
+		if haveRuntime {
+			event.RunID = runtime.Auth.RunID
+			event.TraceID = runtime.Auth.TraceID
+			event.CallID = runtime.CallID
+			event.Identity = runtime.Auth.Identity
+			event.Principal = runtime.Principal
+		}
+		recordMCPAdmissionDenied(ctx, p.Store, event)
+	}()
 	if err := p.Policy.Validate(); err != nil {
 		return MCPMutationProposal{}, err
 	}
@@ -662,6 +702,7 @@ func (p *MCPMutationProposer) Propose(ctx context.Context, tool AgentTool, descr
 		strings.TrimSpace(runtime.Auth.Identity.AgentID) == "" {
 		return MCPMutationProposal{}, ErrMCPMutationRunIdentity
 	}
+	haveRuntime = true
 	if err := AuthorizeToolCall(runtime.Auth, tool, args); err != nil {
 		return MCPMutationProposal{}, err
 	}
@@ -730,7 +771,7 @@ func (p *MCPMutationProposer) Propose(ctx context.Context, tool AgentTool, descr
 	if err != nil {
 		return MCPMutationProposal{}, fmt.Errorf("%w: policy snapshot is not serializable", ErrMCPMutationPolicyInvalid)
 	}
-	proposal := MCPMutationProposal{
+	proposal = MCPMutationProposal{
 		IdentityVersion:    MCPMutationIdentityVersion,
 		State:              MCPProposalApprovalRequired,
 		RunID:              runtime.Auth.RunID,
@@ -1219,6 +1260,20 @@ func (v MCPMutationApprovalVerifier) Verify(ctx context.Context, proposal MCPMut
 		return MCPMutationApproval{}, ErrMCPMutationApproval
 	}
 	return approval, nil
+}
+
+func mcpMutationDescriptorServerID(descriptor *mcpMutationTool) string {
+	if descriptor == nil || descriptor.server == nil {
+		return ""
+	}
+	return descriptor.server.config.ID
+}
+
+func mcpMutationDescriptorAlias(descriptor *mcpMutationTool) string {
+	if descriptor == nil {
+		return ""
+	}
+	return descriptor.alias
 }
 
 func emitMCPMutationAudit(runtime ToolRuntime, descriptor *mcpMutationTool, proposal MCPMutationProposal, outcome, reason string) {

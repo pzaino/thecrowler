@@ -484,15 +484,55 @@ func processToolCall(
 
 	tool, ok := config.Registry.Get(call.Name)
 	if !ok {
+		// A model can still name an operator-policy alias that was never
+		// registered for this run. Record the denial when the alias is known,
+		// then return the same unknown-tool denial as before.
+		policy := CurrentMCPMutationPolicy()
+		if operation, found := policy.OperationByAlias(call.Name); found {
+			recordMCPAdmissionDeniedDB(loopCtx, toolRuntimeDB(config), MCPAdmissionDeniedEvent{
+				EventType:  MCPAuditEventAdmissionDenied,
+				Stage:      MCPAuditStageToolLoop,
+				RunID:      auth.RunID,
+				TraceID:    auth.TraceID,
+				CallID:     callID,
+				Identity:   auth.Identity,
+				Principal:  config.Principal,
+				ServerID:   operation.ServerID,
+				ToolAlias:  operation.ToolAlias,
+				PolicyID:   policy.PolicyID,
+				ReasonCode: ToolDenyUnknownTool,
+			})
+		}
 		return deny(ToolDenyUnknownTool)
+	}
+	auditDenied := func(code string) {
+		info, isMCPProposal := mcpMutationProposalAuditIdentity(tool)
+		if !isMCPProposal {
+			return
+		}
+		recordMCPAdmissionDeniedDB(loopCtx, toolRuntimeDB(config), MCPAdmissionDeniedEvent{
+			EventType:  MCPAuditEventAdmissionDenied,
+			Stage:      MCPAuditStageToolLoop,
+			RunID:      auth.RunID,
+			TraceID:    auth.TraceID,
+			CallID:     callID,
+			Identity:   auth.Identity,
+			Principal:  config.Principal,
+			ServerID:   info.ServerID,
+			ToolAlias:  info.ToolAlias,
+			PolicyID:   info.PolicyID,
+			ReasonCode: code,
+		})
 	}
 	// Re-resolve arguments through the Phase 2 normalizer (string forms,
 	// object copies, explicit errors) so wire shapes stay uniform.
 	args, err := normalizeToolArguments(call.Arguments)
 	if err != nil {
+		auditDenied(ToolDenyArguments)
 		return deny(ToolDenyArguments)
 	}
 	if state.toolCalls+1 > config.Limits.MaxToolCalls {
+		auditDenied(ToolDenyBudget)
 		return deny(ToolDenyBudget)
 	}
 	if err := AuthorizeToolCall(auth, tool, args); err != nil {
@@ -500,9 +540,11 @@ func processToolCall(
 		if authErr, ok := err.(*ToolAuthError); ok {
 			code = authErr.Code
 		}
+		auditDenied(code)
 		return deny(code)
 	}
 	if err := loopCtx.Err(); err != nil {
+		auditDenied(ToolDenyContext)
 		return deny(ToolDenyContext)
 	}
 
