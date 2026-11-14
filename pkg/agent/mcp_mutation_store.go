@@ -265,7 +265,8 @@ func mapMCPMutationDatabaseError(err error) error {
 		return ErrMCPMutationApproval
 	case errors.Is(err, ErrMCPMutationPrincipal), errors.Is(err, ErrMCPMutationStoreUnavailable),
 		errors.Is(err, ErrMCPMutationOperationUnauthorized), errors.Is(err, ErrMCPMutationPolicyUnavailable),
-		errors.Is(err, ErrMCPMutationPolicyMismatch), errors.Is(err, ErrMCPMutationApprovalForbidden):
+		errors.Is(err, ErrMCPMutationPolicyMismatch), errors.Is(err, ErrMCPMutationApprovalForbidden),
+		errors.Is(err, ErrMCPMutationAdministrationForbidden):
 		return err
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return err
@@ -366,6 +367,9 @@ type DatabaseMCPMutationApprovalStore struct {
 	// Authority is the mandatory in-transaction approver/principal/source
 	// authority boundary. A nil authority fails closed.
 	Authority MCPMutationApprovalAuthorizer
+	// AdministrationAuthority is the mandatory in-transaction deny/revoke
+	// actor authority boundary. A nil authority fails closed.
+	AdministrationAuthority MCPMutationAdministrationAuthorizer
 	// Policy, Inventory and Agent are trusted current-policy seams for tests
 	// and for the API service. Nil means use the process-wide frozen policy and
 	// trusted agent registry. A nil agent lookup fails closed.
@@ -387,9 +391,10 @@ func NewDatabaseMCPMutationApprovalStore(db *cdb.Handler, maxLifetime time.Durat
 		maxLifetime = time.Hour
 	}
 	return &DatabaseMCPMutationApprovalStore{
-		DB:          db,
-		MaxLifetime: maxLifetime,
-		Authority:   &DatabaseMCPMutationApprovalAuthorizer{DB: db},
+		DB:                      db,
+		MaxLifetime:             maxLifetime,
+		Authority:               &DatabaseMCPMutationApprovalAuthorizer{DB: db},
+		AdministrationAuthority: &DatabaseMCPMutationAdministrationAuthorizer{DB: db},
 	}, nil
 }
 
@@ -631,8 +636,14 @@ func (s *DatabaseMCPMutationApprovalStore) Revoke(ctx context.Context, approvalI
 	if err := principal.Validate(); err != nil {
 		return MCPMutationApproval{}, false, ErrMCPMutationPrincipal
 	}
-	row, revoked, err := cdb.RevokeMCPMutationApproval(ctx, s.DB, strings.TrimSpace(approvalID),
-		principal.UserID, principal.Username, reason, s.now())
+	if s.AdministrationAuthority == nil {
+		return MCPMutationApproval{}, false, ErrMCPMutationStoreUnavailable
+	}
+	authority := func(txCtx context.Context, tx *sql.Tx, proposal cdb.MCPMutationProposalRow) error {
+		return s.AdministrationAuthority.AuthorizeMCPMutationAdministration(txCtx, tx, proposal, principal)
+	}
+	row, revoked, err := cdb.RevokeMCPMutationApprovalAuthorized(ctx, s.DB, strings.TrimSpace(approvalID),
+		principal.UserID, principal.Username, reason, s.now(), authority)
 	if err != nil {
 		return MCPMutationApproval{}, false, mapMCPMutationDatabaseError(err)
 	}
@@ -641,6 +652,28 @@ func (s *DatabaseMCPMutationApprovalStore) Revoke(ctx context.Context, approvalI
 		return MCPMutationApproval{}, revoked, err
 	}
 	return converted, revoked, nil
+}
+
+// Deny terminally denies one proposal with in-transaction actor authority.
+func (s *DatabaseMCPMutationApprovalStore) Deny(ctx context.Context, proposalID string, actor MCPMutationPrincipal, reason string) (cdb.MCPMutationProposalRow, bool, error) {
+	if s == nil || s.DB == nil || *s.DB == nil {
+		return cdb.MCPMutationProposalRow{}, false, ErrMCPMutationStoreUnavailable
+	}
+	if err := actor.Validate(); err != nil {
+		return cdb.MCPMutationProposalRow{}, false, ErrMCPMutationPrincipal
+	}
+	if s.AdministrationAuthority == nil {
+		return cdb.MCPMutationProposalRow{}, false, ErrMCPMutationStoreUnavailable
+	}
+	authority := func(txCtx context.Context, tx *sql.Tx, proposal cdb.MCPMutationProposalRow) error {
+		return s.AdministrationAuthority.AuthorizeMCPMutationAdministration(txCtx, tx, proposal, actor)
+	}
+	row, transitioned, err := cdb.DenyMCPMutationProposalAuthorized(ctx, s.DB, strings.TrimSpace(proposalID),
+		actor.UserID, actor.Username, reason, s.now(), authority)
+	if err != nil {
+		return cdb.MCPMutationProposalRow{}, false, mapMCPMutationDatabaseError(err)
+	}
+	return row, transitioned, nil
 }
 
 // GetActiveForProposal returns the current active approval for a proposal.

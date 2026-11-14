@@ -67,6 +67,16 @@ func newMCPMutationSQLiteTestDB(t *testing.T) (*sql.DB, Handler) {
 	return db, Handler(&SQLiteHandler{db: db, dbms: DBSQLiteStr})
 }
 
+func revokeMCPMutationApprovalForTest(ctx context.Context, db *Handler, approvalID string, principalUserID uint64, revokedBy, reason string, now time.Time) (MCPMutationApprovalRow, bool, error) {
+	return RevokeMCPMutationApprovalAuthorized(ctx, db, approvalID, principalUserID, revokedBy, reason, now,
+		func(context.Context, *sql.Tx, MCPMutationProposalRow) error { return nil })
+}
+
+func denyMCPMutationProposalForTest(ctx context.Context, db *Handler, proposalID string, actorUserID uint64, actorID, reason string, now time.Time) (MCPMutationProposalRow, bool, error) {
+	return DenyMCPMutationProposalAuthorized(ctx, db, proposalID, actorUserID, actorID, reason, now,
+		func(context.Context, *sql.Tx, MCPMutationProposalRow) error { return nil })
+}
+
 func issueMCPMutationApprovalForTest(ctx context.Context, db *Handler, approval MCPMutationApprovalRow, expectedProposalSHA256 string, now time.Time) (MCPMutationApprovalRow, bool, error) {
 	return IssueMCPMutationApprovalAuthorized(ctx, db, approval, expectedProposalSHA256, now,
 		func(context.Context, *sql.Tx, MCPMutationProposalRow) error { return nil })
@@ -136,7 +146,7 @@ func TestMCPMutationCapabilityAndAdmission(t *testing.T) {
 	if err := handler.QueryRowContext(ctx, `SELECT active_count FROM MCPMutationRunQuota WHERE run_id=?`, "run-1").Scan(&active); err != nil || active != 1 {
 		t.Fatalf("run quota count = %d err=%v", active, err)
 	}
-	denied, transitioned, err := DenyMCPMutationProposal(ctx, &handler, first.ProposalID, 9, "admin-1", "test denial", now.Add(time.Minute))
+	denied, transitioned, err := denyMCPMutationProposalForTest(ctx, &handler, first.ProposalID, 9, "admin-1", "test denial", now.Add(time.Minute))
 	if err != nil || !transitioned || denied.State != MCPMutationStateDenied {
 		t.Fatalf("deny = %+v transitioned=%v err=%v", denied, transitioned, err)
 	}
@@ -182,7 +192,7 @@ func TestMCPMutationApprovalLifecycle(t *testing.T) {
 	if err != nil || inserted || existing.ApprovalID != issued.ApprovalID {
 		t.Fatalf("duplicate approval = %+v inserted=%v err=%v", existing, inserted, err)
 	}
-	revoked, transitioned, err := RevokeMCPMutationApproval(ctx, &handler, issued.ApprovalID, 9, "admin-1", "test revoke", now.Add(3*time.Minute))
+	revoked, transitioned, err := revokeMCPMutationApprovalForTest(ctx, &handler, issued.ApprovalID, 9, "admin-1", "test revoke", now.Add(3*time.Minute))
 	if err != nil || !transitioned || revoked.State != "revoked" {
 		t.Fatalf("revoke approval = %+v transitioned=%v err=%v", revoked, transitioned, err)
 	}
@@ -194,7 +204,7 @@ func TestMCPMutationApprovalLifecycle(t *testing.T) {
 	if err != nil || !inserted || reissued.ApprovalID != replacement.ApprovalID {
 		t.Fatalf("reissue approval = %+v inserted=%v err=%v", reissued, inserted, err)
 	}
-	denied, transitioned, err := DenyMCPMutationProposal(ctx, &handler, proposal.ProposalID, 9, "admin-1", "deny after reapproval", now.Add(5*time.Minute))
+	denied, transitioned, err := denyMCPMutationProposalForTest(ctx, &handler, proposal.ProposalID, 9, "admin-1", "deny after reapproval", now.Add(5*time.Minute))
 	if err != nil || !transitioned || denied.State != MCPMutationStateDenied {
 		t.Fatalf("deny after reapproval = %+v transitioned=%v err=%v", denied, transitioned, err)
 	}
@@ -393,7 +403,7 @@ func TestMCPMutationRevocationReopensProposal(t *testing.T) {
 	if _, inserted, err := issueMCPMutationApprovalForTest(ctx, &handler, approval, proposal.ProposalSHA256, now.Add(time.Minute)); err != nil || !inserted {
 		t.Fatalf("approve for revoke inserted=%v err=%v", inserted, err)
 	}
-	if _, transitioned, err := RevokeMCPMutationApproval(ctx, &handler, approval.ApprovalID, 9, "admin-1", "revoke", now.Add(2*time.Minute)); err != nil || !transitioned {
+	if _, transitioned, err := revokeMCPMutationApprovalForTest(ctx, &handler, approval.ApprovalID, 9, "admin-1", "revoke", now.Add(2*time.Minute)); err != nil || !transitioned {
 		t.Fatalf("revoke transitioned=%v err=%v", transitioned, err)
 	}
 	stored, found, err := GetMCPMutationProposal(ctx, &handler, proposal.ProposalID)
@@ -429,7 +439,7 @@ func TestMCPMutationDenyClassifiesExpiredApproval(t *testing.T) {
 	if _, inserted, err := issueMCPMutationApprovalForTest(ctx, &handler, approval, proposal.ProposalSHA256, now.Add(time.Minute)); err != nil || !inserted {
 		t.Fatalf("approve before deny inserted=%v err=%v", inserted, err)
 	}
-	denied, transitioned, err := DenyMCPMutationProposal(ctx, &handler, proposal.ProposalID, 9, "admin-1", "deny after approval expiry", now.Add(3*time.Minute))
+	denied, transitioned, err := denyMCPMutationProposalForTest(ctx, &handler, proposal.ProposalID, 9, "admin-1", "deny after approval expiry", now.Add(3*time.Minute))
 	if err != nil || !transitioned || denied.State != MCPMutationStateDenied {
 		t.Fatalf("deny after approval expiry = %+v transitioned=%v err=%v", denied, transitioned, err)
 	}
@@ -524,7 +534,7 @@ func TestMCPMutationQuotaConsistencyAfterTransitions(t *testing.T) {
 		t.Fatalf("admit consistency second: %v", err)
 	}
 	assertMCPMutationQuotaConsistency(t, db)
-	if _, _, err := DenyMCPMutationProposal(ctx, &handler, first.ProposalID, 9, "admin-1", "consistency deny", now.Add(time.Minute)); err != nil {
+	if _, _, err := denyMCPMutationProposalForTest(ctx, &handler, first.ProposalID, 9, "admin-1", "consistency deny", now.Add(time.Minute)); err != nil {
 		t.Fatalf("deny consistency first: %v", err)
 	}
 	assertMCPMutationQuotaConsistency(t, db)
@@ -739,7 +749,7 @@ func TestMCPMutationLifecycleNeverCreatesDispatchAttempts(t *testing.T) {
 	if err != nil || !inserted {
 		t.Fatalf("issue inert approval = %+v inserted=%v err=%v", issued, inserted, err)
 	}
-	if _, _, err := DenyMCPMutationProposal(ctx, &handler, proposal.ProposalID, 9, "admin-1", "inert denial", now.Add(2*time.Minute)); err != nil {
+	if _, _, err := denyMCPMutationProposalForTest(ctx, &handler, proposal.ProposalID, 9, "admin-1", "inert denial", now.Add(2*time.Minute)); err != nil {
 		t.Fatalf("deny inert proposal: %v", err)
 	}
 	var attempts int

@@ -281,7 +281,7 @@ func TestPostgresMCPMutationDurableStore(t *testing.T) {
 	if active, found, err := GetActiveMCPMutationApprovalByProposal(ctx, &handler, proposal.ProposalSHA256, now.Add(2*time.Minute)); err != nil || !found || active.ApprovalID != issued.ApprovalID {
 		t.Fatalf("PostgreSQL usable approval lookup = %+v found=%v err=%v", active, found, err)
 	}
-	revoked, transitioned, err := RevokeMCPMutationApproval(ctx, &handler, issued.ApprovalID, 9, "admin-1", "integration revoke", now.Add(2*time.Minute))
+	revoked, transitioned, err := revokeMCPMutationApprovalForTest(ctx, &handler, issued.ApprovalID, 9, "admin-1", "integration revoke", now.Add(2*time.Minute))
 	if err != nil || !transitioned || revoked.State != "revoked" {
 		t.Fatalf("PostgreSQL revocation = %+v transitioned=%v err=%v", revoked, transitioned, err)
 	}
@@ -434,7 +434,7 @@ func TestPostgresMCPMutationDurableStore(t *testing.T) {
 		issueRevokeResults <- err
 	}()
 	go func() {
-		_, _, err := RevokeMCPMutationApproval(ctx, &secondHandler, issuedInitial.ApprovalID, 9, "admin-1", "race revoke", now.Add(3*time.Minute))
+		_, _, err := revokeMCPMutationApprovalForTest(ctx, &secondHandler, issuedInitial.ApprovalID, 9, "admin-1", "race revoke", now.Add(3*time.Minute))
 		issueRevokeResults <- err
 	}()
 	for i := 0; i < 2; i++ {
@@ -656,4 +656,173 @@ func TestPostgresMCPMutationApprovalAuthorityLockOrder(t *testing.T) {
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM MCPMutationApprovals WHERE proposal_id=$1`, roleProposal.ProposalID).Scan(&roleApprovals); err != nil || roleApprovals != 0 {
 		t.Fatalf("approvals after role revocation = %d err=%v", roleApprovals, err)
 	}
+
+	// Restore the admin grant and source owner for deny/revoke authority tests.
+	if _, err := db.ExecContext(ctx, `INSERT INTO UserRoles(user_id, role_id) VALUES (9, 1) ON CONFLICT DO NOTHING`); err != nil {
+		t.Fatalf("restore admin role: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE Sources SET usr_id=7 WHERE source_id=42`); err != nil {
+		t.Fatalf("restore source owner: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE SourceOwnership SET user_id=7 WHERE source_id=42`); err != nil {
+		t.Fatalf("restore source provenance: %v", err)
+	}
+	adminAuthority := func(actorID uint64) MCPMutationAdministrationAuthority {
+		return func(txCtx context.Context, tx *sql.Tx, proposal MCPMutationProposalRow) error {
+			return AuthorizeMCPMutationAdministrationTx(txCtx, tx, handler, MCPMutationAdministrationAuthorityRequest{
+				SourceIDs: proposal.SourceIDs, ActorUserID: actorID,
+			})
+		}
+	}
+
+	denyProposal := mcpMutationTestProposal("admin-deny-after-transfer", "admin-deny-run", "admin-deny-call", now)
+	if _, inserted, err := AdmitMCPMutationProposal(ctx, &handler, denyProposal, 4, 8); err != nil || !inserted {
+		t.Fatalf("admit deny proposal inserted=%v err=%v", inserted, err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE Sources SET usr_id=8 WHERE source_id=42`); err != nil {
+		t.Fatalf("transfer source for admin deny: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE SourceOwnership SET user_id=8 WHERE source_id=42`); err != nil {
+		t.Fatalf("transfer provenance for admin deny: %v", err)
+	}
+	denied, transitioned, err := DenyMCPMutationProposalAuthorized(ctx, &handler, denyProposal.ProposalID, 9, "admin-1", "emergency deny", now.Add(2*time.Minute), adminAuthority(9))
+	if err != nil || !transitioned || denied.State != MCPMutationStateDenied {
+		t.Fatalf("admin deny after transfer = %+v transitioned=%v err=%v", denied, transitioned, err)
+	}
+	unauthorizedDeny := mcpMutationTestProposal("unauthorized-deny", "unauthorized-deny-run", "unauthorized-deny-call", now)
+	if _, inserted, err := AdmitMCPMutationProposal(ctx, &handler, unauthorizedDeny, 4, 8); err != nil || !inserted {
+		t.Fatalf("admit unauthorized deny proposal inserted=%v err=%v", inserted, err)
+	}
+	if _, _, err := DenyMCPMutationProposalAuthorized(ctx, &handler, unauthorizedDeny.ProposalID, 7, "owner-1", "unauthorized deny", now.Add(2*time.Minute), adminAuthority(7)); !errors.Is(err, ErrMCPMutationAdministrationForbidden) {
+		t.Fatalf("non-admin deny after transfer error = %v, want administration forbidden", err)
+	}
+
+	// Admin revoke remains available after the proposal principal is disabled.
+	if _, err := db.ExecContext(ctx, `UPDATE Sources SET usr_id=7 WHERE source_id=42`); err != nil {
+		t.Fatalf("restore owner for revoke: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE SourceOwnership SET user_id=7 WHERE source_id=42`); err != nil {
+		t.Fatalf("restore provenance for revoke: %v", err)
+	}
+	revokeProposal := mcpMutationTestProposal("admin-revoke-disabled-principal", "admin-revoke-run", "admin-revoke-call", now)
+	if _, inserted, err := AdmitMCPMutationProposal(ctx, &handler, revokeProposal, 4, 8); err != nil || !inserted {
+		t.Fatalf("admit revoke proposal inserted=%v err=%v", inserted, err)
+	}
+	revokeApproval := makeApproval("admin-revoke")
+	revokeApproval.ProposalID = revokeProposal.ProposalID
+	revokeApproval.ApprovedAt = now.Add(time.Minute)
+	issuedRevoke, _, err := IssueMCPMutationApprovalAuthorized(ctx, &handler, revokeApproval, revokeProposal.ProposalSHA256, now.Add(time.Minute), authority)
+	if err != nil {
+		t.Fatalf("issue approval for revoke test: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE Users SET disabled=TRUE WHERE user_id=7`); err != nil {
+		t.Fatalf("disable proposal principal: %v", err)
+	}
+	revokedRow, transitioned, err := RevokeMCPMutationApprovalAuthorized(ctx, &handler, issuedRevoke.ApprovalID, 9, "admin-1", "emergency revoke", now.Add(2*time.Minute), adminAuthority(9))
+	if err != nil || !transitioned || revokedRow.State != "revoked" {
+		t.Fatalf("admin revoke after principal disable = %+v transitioned=%v err=%v", revokedRow, transitioned, err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE Users SET disabled=FALSE WHERE user_id=7`); err != nil {
+		t.Fatalf("re-enable principal: %v", err)
+	}
+
+	// Role revocation contends with deny and must fail closed after commit.
+	denyRoleProposal := mcpMutationTestProposal("deny-role-race", "deny-role-run", "deny-role-call", now)
+	if _, inserted, err := AdmitMCPMutationProposal(ctx, &handler, denyRoleProposal, 4, 8); err != nil || !inserted {
+		t.Fatalf("admit deny-role proposal inserted=%v err=%v", inserted, err)
+	}
+	denyRoleTx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin deny role transaction: %v", err)
+	}
+	if _, err := denyRoleTx.ExecContext(ctx, `DELETE FROM UserRoles WHERE user_id=9 AND role_id=1`); err != nil {
+		_ = denyRoleTx.Rollback()
+		t.Fatalf("delete admin role for deny: %v", err)
+	}
+	denyRoleResult := make(chan error, 1)
+	go func() {
+		_, _, err := DenyMCPMutationProposalAuthorized(ctx, &handler, denyRoleProposal.ProposalID, 9, "admin-1", "role race deny", now.Add(2*time.Minute), adminAuthority(9))
+		denyRoleResult <- err
+	}()
+	time.Sleep(250 * time.Millisecond)
+	if err := denyRoleTx.Commit(); err != nil {
+		t.Fatalf("commit deny role revocation: %v", err)
+	}
+	if err := <-denyRoleResult; !errors.Is(err, ErrMCPMutationAdministrationForbidden) {
+		t.Fatalf("deny after role revocation error = %v, want administration forbidden", err)
+	}
+	var denyState string
+	if err := db.QueryRowContext(ctx, `SELECT state FROM MCPMutationProposals WHERE proposal_id=$1`, denyRoleProposal.ProposalID).Scan(&denyState); err != nil || denyState != MCPMutationStateApprovalRequired {
+		t.Fatalf("deny after role revocation state = %q err=%v", denyState, err)
+	}
+	var attempts int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM MCPMutationDispatchAttempts`).Scan(&attempts); err != nil || attempts != 0 {
+		t.Fatalf("dispatch attempts after administration tests = %d err=%v", attempts, err)
+	}
+}
+
+func TestPostgresMCPMutationAdminRoleCascadeContention(t *testing.T) {
+	target, err := mcpPostgresDisposableTarget()
+	if errors.Is(err, errMCPPostgresDisposableOptInRequired) || errors.Is(err, errMCPPostgresDSNRequired) {
+		t.Skip(err)
+	}
+	if err != nil {
+		t.Fatalf("disposable PostgreSQL target: %v", err)
+	}
+	db, _, _ := newMCPPostgresDisposableDB(t, target)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	for _, statement := range []string{
+		`CREATE TABLE Users (user_id BIGINT PRIMARY KEY, username TEXT NOT NULL, disabled BOOLEAN NOT NULL DEFAULT FALSE, deleted_at TIMESTAMPTZ)`,
+		`CREATE TABLE AuthRoles (role_id BIGINT PRIMARY KEY, name TEXT NOT NULL UNIQUE)`,
+		`CREATE TABLE UserRoles (user_id BIGINT NOT NULL, role_id BIGINT NOT NULL REFERENCES AuthRoles(role_id) ON DELETE CASCADE, PRIMARY KEY (user_id, role_id))`,
+		`INSERT INTO Users(user_id, username) VALUES (9, 'admin-1')`,
+		`INSERT INTO AuthRoles(role_id, name) VALUES (1, 'admin')`,
+		`INSERT INTO UserRoles(user_id, role_id) VALUES (9, 1)`,
+	} {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			t.Fatalf("setup cascade contention schema: %v\n%s", err, statement)
+		}
+	}
+	deleteTx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin role delete transaction: %v", err)
+	}
+	if _, err := deleteTx.ExecContext(ctx, `SET LOCAL lock_timeout='2s'`); err != nil {
+		_ = deleteTx.Rollback()
+		t.Fatalf("set delete lock timeout: %v", err)
+	}
+	if _, err := deleteTx.ExecContext(ctx, `DELETE FROM AuthRoles WHERE role_id=1`); err != nil {
+		_ = deleteTx.Rollback()
+		t.Fatalf("delete role for contention: %v", err)
+	}
+	lockResult := make(chan error, 1)
+	go func() {
+		lockTx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			lockResult <- err
+			return
+		}
+		defer func() { _ = lockTx.Rollback() }()
+		if _, err := lockTx.ExecContext(ctx, `SET LOCAL lock_timeout='2s'`); err != nil {
+			lockResult <- err
+			return
+		}
+		handler := Handler(&PostgresHandler{db: db, dbms: DBPostgresStr})
+		lockResult <- lockUserAdminRoleTx(ctx, lockTx, handler, 9)
+	}()
+	time.Sleep(250 * time.Millisecond)
+	commitErr := deleteTx.Commit()
+	lockErr := <-lockResult
+	if commitErr == nil && lockErr == nil {
+		t.Fatalf("role deletion and admin lock both succeeded without contention")
+	}
+	if commitErr != nil && lockErr != nil {
+		t.Logf("role deletion and lock both blocked: delete=%v lock=%v", commitErr, lockErr)
+		return
+	}
+	if commitErr == nil && !errors.Is(lockErr, ErrSourceMutationForbidden) {
+		t.Fatalf("role deletion committed but lock error = %v, want forbidden", lockErr)
+	}
+	t.Logf("role cascade contention outcome: delete=%v lock=%v", commitErr, lockErr)
 }

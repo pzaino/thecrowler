@@ -34,13 +34,18 @@ jobs:
           test -z "${CROWLER_E2E_KEEP:-}"
           test -z "${CROWLER_E2E_STOP_AFTER:-}"
           test -z "${CROWLER_E2E_PREFLIGHT_ONLY:-}"
+          dind_image="docker:dind@sha256:7bf70dcb85c822e3fa6f2d332143e474b99147b9d7b39102b0cfe8b04a7dd61b"
+          docker pull "" >/dev/null
+          mkdir -p "$RUNNER_TEMP/crowler-e2e-artifacts"
+          docker image inspect "$dind_image" --format '{{json .}}' \
+            >"$RUNNER_TEMP/crowler-e2e-artifacts/dind-image.json"
           docker run -d --privileged --name "$DIND_NAME" \
             --label "org.crowler.e2e.dind=${{ github.run_id }}" \
             -e DOCKER_TLS_CERTDIR= \
             -p 127.0.0.1::2375 \
             -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
             -v "$RUNNER_TEMP:$RUNNER_TEMP" \
-            docker:dind
+            "$dind_image"
           address="$(docker port "$DIND_NAME" 2375/tcp | head -1)"
           case "$address" in 127.0.0.1:*) ;; *) echo "dind port is not loopback: $address" >&2; exit 1 ;; esac
           echo "DOCKER_HOST=tcp://${address}" >>"$GITHUB_ENV"

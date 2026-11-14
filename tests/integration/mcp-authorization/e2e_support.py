@@ -70,12 +70,13 @@ def new_run_id() -> str:
 
 
 def source_tree_digest(root: Path) -> tuple[str, int]:
-    excludes = {".git", "bin", "data", ".env", "artifacts"}
+    excludes = {".git", "bin", "data", ".env", "config.yaml", "artifacts", "__pycache__"}
+    bytecode_suffixes = {".pyc", ".pyo"}
     digest = __import__("hashlib").sha256()
     total = 0
     for path in sorted(root.rglob("*")):
         rel = path.relative_to(root)
-        if any(part in excludes for part in rel.parts):
+        if any(part in excludes for part in rel.parts) or path.suffix in bytecode_suffixes:
             continue
         if path.is_symlink():
             target = os.readlink(path)

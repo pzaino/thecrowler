@@ -288,7 +288,8 @@ if [ "$REUSE_IMAGES" = "1" ]; then
   done
 fi
 
-tar --exclude=.git --exclude=bin --exclude=data --exclude=.env --exclude=artifacts \
+tar --exclude=.git --exclude=bin --exclude=data --exclude=.env --exclude=config.yaml --exclude=artifacts \
+  --exclude=__pycache__ --exclude='*.pyc' --exclude='*.pyo' \
   -cf "$WORK/source.tar" -C "$ROOT" .
 tar -xf "$WORK/source.tar" -C "$WORK/repo"
 cp "$WORK/repo/config.default" "$WORK/repo/config.yaml"

@@ -147,16 +147,6 @@ func validateStoredMCPMutationProposal(row cdb.MCPMutationProposalRow) error {
 	return nil
 }
 
-// authorizeMCPMutationAdministration allows an administrator to deny or revoke
-// a proposal even when source ownership provenance changed after proposal
-// creation. Approval separately requires current proposal-principal ownership.
-func authorizeMCPMutationAdministration(ctx context.Context, principal agentpkg.MCPMutationPrincipal, identity auth.Identity, row cdb.MCPMutationProposalRow) error {
-	if mcpMutationIsAdmin(identity) {
-		return nil
-	}
-	return authorizeMCPMutationProposal(ctx, principal, identity, row)
-}
-
 // authorizeMCPMutationObservation allows administrators to observe every
 // proposal, including source-scoped proposals whose ownership provenance has
 // changed. Non-admin observation still requires verified ownership of every
@@ -202,7 +192,8 @@ func mcpMutationErrorCode(err error) int {
 		return http.StatusUnauthorized
 	case errors.Is(err, errMCPMutationForbidden), errors.Is(err, errSourceForbidden),
 		errors.Is(err, errSourceOwnerUnknown), errors.Is(err, agentpkg.ErrMCPMutationPrincipal),
-		errors.Is(err, agentpkg.ErrMCPMutationApprovalForbidden):
+		errors.Is(err, agentpkg.ErrMCPMutationApprovalForbidden),
+		errors.Is(err, agentpkg.ErrMCPMutationAdministrationForbidden):
 		return http.StatusForbidden
 	case errors.Is(err, cdb.ErrMCPMutationProposalNotFound), errors.Is(err, cdb.ErrMCPMutationApprovalNotFound):
 		return http.StatusNotFound
@@ -646,7 +637,7 @@ func mcpMutationDenyHandler(w http.ResponseWriter, r *http.Request) {
 			nil, "Invalid MCP mutation denial request", http.StatusBadRequest, 0)
 		return
 	}
-	principal, identity, err := resolveMCPMutationPrincipal(r.Context())
+	principal, _, err := resolveMCPMutationPrincipal(r.Context())
 	if err != nil {
 		handleErrorAndRespond(w, err, nil, "MCP mutation authentication failed", mcpMutationErrorCode(err), 0)
 		return
@@ -669,12 +660,12 @@ func mcpMutationDenyHandler(w http.ResponseWriter, r *http.Request) {
 			"MCP mutation proposal content changed", http.StatusConflict, 0)
 		return
 	}
-	if err := authorizeMCPMutationAdministration(r.Context(), principal, identity, proposal); err != nil {
-		handleErrorAndRespond(w, err, nil, "MCP mutation denial is not authorized", mcpMutationErrorCode(err), 0)
+	approvalStore, err := mcpMutationApprovalStoreFactory(&dbHandler, time.Hour)
+	if err != nil {
+		handleErrorAndRespond(w, err, nil, "MCP mutation approval store unavailable", mcpMutationErrorCode(err), 0)
 		return
 	}
-	denied, transitioned, err := cdb.DenyMCPMutationProposal(r.Context(), &dbHandler, proposalID,
-		principal.UserID, principal.Username, request.Reason, time.Now().UTC())
+	denied, transitioned, err := approvalStore.Deny(r.Context(), proposalID, principal, request.Reason)
 	if err != nil {
 		handleErrorAndRespond(w, err, nil, "MCP mutation denial failed", mcpMutationErrorCode(err), 0)
 		return
@@ -704,7 +695,7 @@ func mcpMutationRevokeHandler(w http.ResponseWriter, r *http.Request) {
 			nil, "Invalid MCP mutation revocation request", http.StatusBadRequest, 0)
 		return
 	}
-	principal, identity, err := resolveMCPMutationPrincipal(r.Context())
+	principal, _, err := resolveMCPMutationPrincipal(r.Context())
 	if err != nil {
 		handleErrorAndRespond(w, err, nil, "MCP mutation authentication failed", mcpMutationErrorCode(err), 0)
 		return
@@ -725,10 +716,6 @@ func mcpMutationRevokeHandler(w http.ResponseWriter, r *http.Request) {
 	if proposal.ProposalSHA256 != request.ProposalSHA256 {
 		handleErrorAndRespond(w, cdb.ErrMCPMutationProposalConflict, nil,
 			"MCP mutation proposal content changed", http.StatusConflict, 0)
-		return
-	}
-	if err := authorizeMCPMutationAdministration(r.Context(), principal, identity, proposal); err != nil {
-		handleErrorAndRespond(w, err, nil, "MCP mutation revocation is not authorized", mcpMutationErrorCode(err), 0)
 		return
 	}
 	approvalRow, found, err := cdb.GetMCPMutationApproval(r.Context(), &dbHandler, request.ApprovalID)

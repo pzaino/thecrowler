@@ -925,3 +925,30 @@ No dispatcher, dispatch-attempt write, retry/reconciliation worker or remote
 mutating `tools/call` is enabled. Future dispatch remains a separate design and
 approval gate; see `WP-04C2L_DISPATCH_DESIGN.md` and
 `WP-04C2M_DISPATCH_APPROVAL_REQUEST.md`.
+
+## 31. WP-04C2M CI recovery, administration authority and provenance hygiene
+
+WP-04C2M keeps schema 1.17, writer generation
+`verified-ownership-v1.17`, release `v2.3.0`, `execution_backend: none` and the
+record-only proposal/approval lifecycle.
+
+PostgreSQL CI now selects the versioned 17 client binaries from
+`postgresql-client-17`, persists that directory through `$GITHUB_PATH`, and
+asserts `pg_dump`, `pg_restore` and the server are major 17. The dedicated MCP
+step also requires the admin-role cascade contention test.
+
+Deny and revoke now use the same in-transaction authority pattern as approval:
+a mandatory `MCPMutationAdministrationAuthority` rechecks current actor account,
+admin grant and verified source ownership before quota/proposal locks. Current
+admins retain emergency deny/revoke authority after ownership transfer or
+principal disablement; non-admins must be current verified owners. No public
+HTTP contract changed.
+
+The E2E source digest and copy now exclude `__pycache__`, `.pyc` and `.pyo`.
+Tracked bytecode was removed. Runtime provenance compares the container image ID
+with the source-labelled image metadata and inspects the image's own labels.
+The opt-in GitHub E2E workflow remains `workflow_dispatch` only and uses a
+digest-pinned dind runtime with a dynamic loopback API port.
+
+Option A (read-only execution-profile simulator) is **not approved**. No
+simulator code was added. Option B (external execution) remains pending.
