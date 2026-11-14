@@ -19,6 +19,33 @@ import (
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 )
 
+var (
+	mcpAPITestPolicy    agentpkg.MCPMutationPolicy
+	mcpAPITestInventory cfg.MCPConfig
+	mcpAPITestAgent     agentpkg.AgentIdentity
+)
+
+func setupMCPMutationApprovalFactory(t *testing.T) {
+	t.Helper()
+	previous := mcpMutationApprovalStoreFactory
+	mcpMutationApprovalStoreFactory = func(db *cdb.Handler, maxLifetime time.Duration) (*agentpkg.DatabaseMCPMutationApprovalStore, error) {
+		store, err := agentpkg.NewDatabaseMCPMutationApprovalStore(db, maxLifetime)
+		if err != nil {
+			return nil, err
+		}
+		store.Policy = func() agentpkg.MCPMutationPolicy { return mcpAPITestPolicy }
+		store.Inventory = func() cfg.MCPConfig { return mcpAPITestInventory }
+		store.Agent = func(agentID string) (agentpkg.AgentIdentity, bool) {
+			if agentID != mcpAPITestAgent.AgentID {
+				return agentpkg.AgentIdentity{}, false
+			}
+			return mcpAPITestAgent, true
+		}
+		return store, nil
+	}
+	t.Cleanup(func() { mcpMutationApprovalStoreFactory = previous })
+}
+
 func mcpMutationAPITestHash(seed string) string {
 	sum := sha256.Sum256([]byte(seed))
 	return hex.EncodeToString(sum[:])
@@ -69,7 +96,7 @@ func mcpMutationAPISeedProposalForOwner(t *testing.T, handler cdb.Handler, seed,
 	operation := agentpkg.MCPMutationOperationPolicy{
 		ServerID:             "fixture",
 		ToolName:             "mutate_counter",
-		ToolAlias:            "fixture__mutate_counter",
+		ToolAlias:            agentpkg.MCPToolAlias("fixture", "mutate_counter"),
 		AllowedAgents:        []string{"agent-1"},
 		RequiredCapabilities: []string{"tool_execution"},
 		MinTrustLevel:        "trusted",
@@ -83,13 +110,16 @@ func mcpMutationAPISeedProposalForOwner(t *testing.T, handler cdb.Handler, seed,
 		AllowedTransports:    []string{"stdio"},
 		AuditRequired:        true,
 	}
+	sourceArguments := map[string]any(nil)
 	if len(sourceIDs) > 0 {
 		arguments = []byte(fmt.Sprintf(`{"source_id":%d}`, sourceIDs[0]))
+		sourceArguments = map[string]any{"source_id": sourceIDs[0]}
 		operation.AllowedSources = append([]uint64(nil), sourceIDs...)
 		operation.RequiredArgumentFields = []string{"source_id"}
 		operation.AllowedArgumentFields = []string{"source_id"}
 	} else {
 		arguments = []byte(fmt.Sprintf(`{"resource":%q}`, externalResource))
+		sourceArguments = map[string]any{"resource": externalResource}
 		operation.AllowedResources = []string{externalResource}
 		operation.RequiredArgumentFields = []string{"resource"}
 		operation.AllowedArgumentFields = []string{"resource"}
@@ -114,11 +144,11 @@ func mcpMutationAPISeedProposalForOwner(t *testing.T, handler cdb.Handler, seed,
 		Principal:          agentpkg.MCPMutationPrincipal{UserID: ownerID, Username: ownerName, Issuer: "crowler"},
 		ServerID:           "fixture",
 		RawToolName:        "mutate_counter",
-		ToolAlias:          "fixture__mutate_counter",
+		ToolAlias:          agentpkg.MCPToolAlias("fixture", "mutate_counter"),
 		Transport:          "stdio",
 		TransportIdentity:  "fixture-command",
 		SchemaSHA256:       mcpMutationAPITestHash("schema:" + seed),
-		Arguments:          map[string]any{"source_id": sourceIDs},
+		Arguments:          sourceArguments,
 		CanonicalArguments: arguments,
 		ArgumentsSHA256:    mcpMutationAPITestHash(string(arguments)),
 		PolicyID:           policy.PolicyID,
@@ -132,6 +162,19 @@ func mcpMutationAPISeedProposalForOwner(t *testing.T, handler cdb.Handler, seed,
 		CreatedAt:          now.UTC(),
 		LastUpdatedAt:      now.UTC(),
 		ExpiresAt:          now.Add(time.Hour).UTC(),
+	}
+	mcpAPITestPolicy = policy
+	mcpAPITestInventory = cfg.MCPConfig{Servers: []cfg.MCPServerConfig{{
+		ID: "fixture", Enabled: true, Transport: "stdio", Command: "fixture-command",
+		AllowedAgents: []string{"agent-1"},
+		ApprovedTools: []cfg.MCPApprovedTool{{
+			Name: "mutate_counter", Effect: "mutation", AllowMutationProposal: true,
+			RequiredCapabilities: []string{"tool_execution"}, AllowedSources: []uint64{42, 43},
+		}},
+	}}}
+	mcpAPITestAgent = agentpkg.AgentIdentity{
+		AgentID: "agent-1", Owner: ownerName, TrustLevel: "trusted",
+		Capabilities: []string{"tool_execution"},
 	}
 	proposal.ProposalSHA256 = agentpkg.MCPMutationProposalFingerprint(proposal)
 	store, err := agentpkg.NewDatabaseMCPMutationProposalStore(&handler)
@@ -187,6 +230,25 @@ func TestMCPMutationApprovalAPIApproveRevokeDeny(t *testing.T) {
 	approvalID, _ := approval["approval_id"].(string)
 	if len(approvalID) != 64 {
 		t.Fatalf("unexpected approval response: %s", approve.Body.String())
+	}
+	duplicate := callMCPMutationHandler(t, mcpMutationApproveHandler, http.MethodPost,
+		"/v1/console/mcp/mutations/proposals/"+first.ProposalID+"/approve",
+		mcpMutationApproveBody(first.ProposalSHA256, now.Add(30*time.Minute)), &owner)
+	if duplicate.Code != http.StatusOK {
+		t.Fatalf("duplicate approve status %d: %s", duplicate.Code, duplicate.Body.String())
+	}
+	var duplicateResponse map[string]any
+	if err := json.Unmarshal(duplicate.Body.Bytes(), &duplicateResponse); err != nil {
+		t.Fatalf("decode duplicate approval: %v", err)
+	}
+	duplicateApproval, _ := duplicateResponse["approval"].(map[string]any)
+	if duplicateResponse["reused"] != true || duplicateApproval["approval_id"] != approvalID {
+		t.Fatalf("duplicate approval was not idempotent: %s", duplicate.Body.String())
+	}
+	var approvalCount int
+	if err := handler.(*sourceAPITestHandler).db.QueryRow(
+		`SELECT COUNT(*) FROM MCPMutationApprovals WHERE proposal_id=?`, first.ProposalID).Scan(&approvalCount); err != nil || approvalCount != 1 {
+		t.Fatalf("approval rows after duplicate = %d err=%v", approvalCount, err)
 	}
 	stored, found, err := cdb.GetMCPMutationProposal(context.Background(), &handler, first.ProposalID)
 	if err != nil || !found || stored.State != cdb.MCPMutationStateApproved {

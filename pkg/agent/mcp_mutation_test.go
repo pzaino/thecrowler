@@ -912,6 +912,11 @@ func TestMCPMutationScopeRejectsMixedSelectors(t *testing.T) {
 	}); !errors.Is(err, ErrMCPMutationArguments) {
 		t.Fatalf("mixed resource/source selector error = %v, want arguments error", err)
 	}
+	if _, _, err := mcpMutationScope(resourceOperation, map[string]any{
+		"resource": "fixture-resource", "resource_id": "other-resource",
+	}); !errors.Is(err, ErrMCPMutationArguments) {
+		t.Fatalf("ambiguous resource/resource_id selectors error = %v, want arguments error", err)
+	}
 }
 
 func TestMCPMutationFingerprintNormalizesSourceIDs(t *testing.T) {

@@ -16,6 +16,7 @@
 package agent
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -261,6 +262,13 @@ func getInput(params map[string]interface{}) (map[string]interface{}, error) {
 type Action interface {
 	Name() string
 	Execute(params map[string]interface{}) (map[string]interface{}, error)
+}
+
+// ContextAction is an optional action extension for trusted runtime
+// cancellation. The context is supplied by the job engine, never from
+// serialized params, manifests or model output.
+type ContextAction interface {
+	ExecuteContext(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error)
 }
 
 /*

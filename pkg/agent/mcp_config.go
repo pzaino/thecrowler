@@ -58,7 +58,20 @@ var (
 // inventory. Passing an empty config disables MCP. The setter is intended to
 // be called once during service startup, not from model/tool input.
 func SetMCPOperatorConfig(config cfg.MCPConfig) error {
-	normalized, err := normalizeMCPOperatorConfig(config)
+	return setMCPOperatorConfig(config, true)
+}
+
+// SetMCPOperatorConfigForApproval installs the same normalized policy and
+// inventory as SetMCPOperatorConfig, but does not require stdio command
+// executables to exist in this process. The API approval service compares
+// configured transport identities and never launches MCP servers, so requiring
+// the binaries in the API container would only break deployment.
+func SetMCPOperatorConfigForApproval(config cfg.MCPConfig) error {
+	return setMCPOperatorConfig(config, false)
+}
+
+func setMCPOperatorConfig(config cfg.MCPConfig, requireLocalFiles bool) error {
+	normalized, err := normalizeMCPOperatorConfigWithFileCheck(config, requireLocalFiles)
 	if err != nil {
 		return err
 	}
@@ -157,6 +170,10 @@ func MCPToolAlias(serverID, rawTool string) string {
 }
 
 func normalizeMCPOperatorConfig(config cfg.MCPConfig) (cfg.MCPConfig, error) {
+	return normalizeMCPOperatorConfigWithFileCheck(config, true)
+}
+
+func normalizeMCPOperatorConfigWithFileCheck(config cfg.MCPConfig, requireLocalFiles bool) (cfg.MCPConfig, error) {
 	out := cfg.MCPConfig{
 		Servers:        make([]cfg.MCPServerConfig, 0, len(config.Servers)),
 		MutationPolicy: config.MutationPolicy.Clone(),
@@ -164,7 +181,7 @@ func normalizeMCPOperatorConfig(config cfg.MCPConfig) (cfg.MCPConfig, error) {
 	seenServers := map[string]bool{}
 	seenAliases := map[string]string{}
 	for index, server := range config.Servers {
-		normalized, err := normalizeMCPServerConfig(server)
+		normalized, err := normalizeMCPServerConfigWithFileCheck(server, requireLocalFiles)
 		if err != nil {
 			return cfg.MCPConfig{}, fmt.Errorf("mcp.servers[%d]: %w", index, err)
 		}
@@ -191,6 +208,10 @@ func normalizeMCPOperatorConfig(config cfg.MCPConfig) (cfg.MCPConfig, error) {
 }
 
 func normalizeMCPServerConfig(server cfg.MCPServerConfig) (cfg.MCPServerConfig, error) {
+	return normalizeMCPServerConfigWithFileCheck(server, true)
+}
+
+func normalizeMCPServerConfigWithFileCheck(server cfg.MCPServerConfig, requireLocalFiles bool) (cfg.MCPServerConfig, error) {
 	// Never mutate caller-owned slices or maps while normalizing. A startup
 	// caller may still hold the source configuration, and concurrent validation
 	// must not observe writes to shared backing arrays.
@@ -207,11 +228,11 @@ func normalizeMCPServerConfig(server cfg.MCPServerConfig) (cfg.MCPServerConfig, 
 	}
 	switch server.Transport {
 	case mcpTransportStdio:
-		if err := validateMCPStdioConfig(&server); err != nil {
+		if err := validateMCPStdioConfig(&server, requireLocalFiles); err != nil {
 			return cfg.MCPServerConfig{}, err
 		}
 	case mcpTransportStreamableHTTP:
-		if err := validateMCPHTTPConfig(&server); err != nil {
+		if err := validateMCPHTTPConfig(&server, requireLocalFiles); err != nil {
 			return cfg.MCPServerConfig{}, err
 		}
 	default:
@@ -286,14 +307,14 @@ func normalizeMCPServerConfig(server cfg.MCPServerConfig) (cfg.MCPServerConfig, 
 	return server, nil
 }
 
-func validateMCPStdioConfig(server *cfg.MCPServerConfig) error {
+func validateMCPStdioConfig(server *cfg.MCPServerConfig, requireLocalFiles bool) error {
 	if strings.TrimSpace(server.Endpoint) != "" || server.Auth.Mode != "" ||
 		server.Auth.TokenEnv != "" || server.Auth.TokenFile != "" ||
 		server.TLS.CAFile != "" || len(server.Network.AllowedPrivateCIDRs) > 0 ||
 		server.Network.AllowInsecureLoopback || server.Protocol.AllowLegacy {
 		return fmt.Errorf("streamable HTTP connection fields are only valid for transport %q", mcpTransportStreamableHTTP)
 	}
-	if err := validateMCPCommand(server.Command); err != nil {
+	if err := validateMCPCommand(server.Command, requireLocalFiles); err != nil {
 		return err
 	}
 	if len(server.Args) > 64 {
@@ -313,9 +334,11 @@ func validateMCPStdioConfig(server *cfg.MCPServerConfig) error {
 		if !filepath.IsAbs(server.WorkingDirectory) {
 			return fmt.Errorf("working_directory must be absolute")
 		}
-		info, err := os.Stat(server.WorkingDirectory)
-		if err != nil || !info.IsDir() {
-			return fmt.Errorf("working_directory is not a readable directory")
+		if requireLocalFiles {
+			info, err := os.Stat(server.WorkingDirectory)
+			if err != nil || !info.IsDir() {
+				return fmt.Errorf("working_directory is not a readable directory")
+			}
 		}
 	}
 	envSeen := map[string]bool{}
@@ -344,7 +367,7 @@ func validateMCPStdioConfig(server *cfg.MCPServerConfig) error {
 	return nil
 }
 
-func validateMCPHTTPConfig(server *cfg.MCPServerConfig) error {
+func validateMCPHTTPConfig(server *cfg.MCPServerConfig, requireLocalFiles bool) error {
 	if server.Command != "" || len(server.Args) > 0 || server.WorkingDirectory != "" ||
 		len(server.EnvironmentAllowlist) > 0 || len(server.Environment) > 0 {
 		return fmt.Errorf("stdio process fields are only valid for transport %q", mcpTransportStdio)
@@ -386,9 +409,11 @@ func validateMCPHTTPConfig(server *cfg.MCPServerConfig) error {
 			if !filepath.IsAbs(server.Auth.TokenFile) {
 				return fmt.Errorf("auth.token_file must be absolute")
 			}
-			info, err := os.Stat(server.Auth.TokenFile)
-			if err != nil || !info.Mode().IsRegular() {
-				return fmt.Errorf("auth.token_file is not a readable regular file")
+			if requireLocalFiles {
+				info, err := os.Stat(server.Auth.TokenFile)
+				if err != nil || !info.Mode().IsRegular() {
+					return fmt.Errorf("auth.token_file is not a readable regular file")
+				}
 			}
 		}
 	default:
@@ -399,9 +424,11 @@ func validateMCPHTTPConfig(server *cfg.MCPServerConfig) error {
 		if !filepath.IsAbs(server.TLS.CAFile) {
 			return fmt.Errorf("tls.ca_file must be absolute")
 		}
-		info, err := os.Stat(server.TLS.CAFile)
-		if err != nil || !info.Mode().IsRegular() {
-			return fmt.Errorf("tls.ca_file is not a readable regular file")
+		if requireLocalFiles {
+			info, err := os.Stat(server.TLS.CAFile)
+			if err != nil || !info.Mode().IsRegular() {
+				return fmt.Errorf("tls.ca_file is not a readable regular file")
+			}
 		}
 	}
 	seenCIDRs := map[string]bool{}
@@ -528,7 +555,7 @@ func mcpLoopbackHost(host string) bool {
 	return false
 }
 
-func validateMCPCommand(command string) error {
+func validateMCPCommand(command string, requireLocalFiles bool) error {
 	command = strings.TrimSpace(command)
 	if command == "" {
 		return fmt.Errorf("command is required")
@@ -540,6 +567,9 @@ func validateMCPCommand(command string) error {
 	switch base {
 	case "sh", "bash", "dash", "zsh", "ksh", "csh", "tcsh", "fish", "cmd", "cmd.exe", "powershell", "powershell.exe", "pwsh", "pwsh.exe":
 		return fmt.Errorf("shell executables are not permitted for stdio MCP servers")
+	}
+	if !requireLocalFiles {
+		return nil
 	}
 	info, err := os.Stat(command)
 	if err != nil {

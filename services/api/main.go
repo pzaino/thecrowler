@@ -33,6 +33,7 @@ import (
 	"syscall"
 	"time"
 
+	agt "github.com/pzaino/thecrowler/pkg/agent"
 	auth "github.com/pzaino/thecrowler/pkg/auth"
 	cmn "github.com/pzaino/thecrowler/pkg/common"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
@@ -70,7 +71,32 @@ var (
 	allowedAPIPlugins  map[string]bool
 	allowedAPINetworks []*net.IPNet
 	apiWSHub           *ws.Hub
+
+	mcpAuthorityMtx   sync.Mutex
+	mcpAuthorityReady bool
 )
+
+// initializeMCPAuthority freezes the API process's trusted MCP mutation policy
+// and agent registry once. SIGHUP re-runs initAll for the rest of the API
+// configuration, but an operator policy change requires a process restart; a
+// mismatched API/Events policy fails closed at approval time.
+func initializeMCPAuthority(config cfg.Config) error {
+	mcpAuthorityMtx.Lock()
+	defer mcpAuthorityMtx.Unlock()
+	if mcpAuthorityReady {
+		return nil
+	}
+	if err := agt.SetMCPOperatorConfigForApproval(config.MCP); err != nil {
+		return fmt.Errorf("invalid MCP operator configuration: %w", err)
+	}
+	registry := agt.NewJobConfig()
+	if err := registry.LoadConfig(config.Agents); err != nil {
+		return fmt.Errorf("load agent registry for MCP approval: %w", err)
+	}
+	agt.AgentsRegistry = registry
+	mcpAuthorityReady = true
+	return nil
+}
 
 func setSysReady(newStatus int) {
 	if newStatus < 0 || newStatus > 2 {
@@ -103,6 +129,14 @@ func initAll(configFile *string, config *cfg.Config, lmt **rate.Limiter) error {
 
 	// Set the OS variable
 	config.OS = runtime.GOOS
+
+	// The approval endpoint needs the same frozen operator policy and current
+	// agent identities that produced the proposal. The API and Events services
+	// are separate processes; policy deployment requires restarting both.
+	if err := initializeMCPAuthority(*config); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlFatal, "%v", err)
+		return err
+	}
 
 	// Set the rate limiter
 	var rl, bl int

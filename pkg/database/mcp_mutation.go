@@ -785,8 +785,25 @@ func AdmitMCPMutationProposal(ctx context.Context, db *Handler, row MCPMutationP
 	return AdmitMCPMutationProposalAt(ctx, db, row, maxPerRun, maxPendingPerPrincipal, time.Now().UTC())
 }
 
+// MCPMutationAdmissionAuthority is an optional trusted authorization callback
+// executed inside the proposal admission transaction, immediately before the
+// insert. It may use the supplied transaction for account and ownership reads
+// so the final check and the insert share one lock scope.
+type MCPMutationAdmissionAuthority func(ctx context.Context, tx *sql.Tx) error
+
 // AdmitMCPMutationProposalAt is the deterministic-clock admission boundary.
 func AdmitMCPMutationProposalAt(ctx context.Context, db *Handler, row MCPMutationProposalRow, maxPerRun, maxPendingPerPrincipal int, now time.Time) (MCPMutationProposalRow, bool, error) {
+	return admitMCPMutationProposalAt(ctx, db, row, maxPerRun, maxPendingPerPrincipal, now, nil)
+}
+
+// AdmitMCPMutationProposalAuthorizedAt is the admission boundary for paths
+// that must revalidate current account and ownership authority atomically with
+// the durable insert.
+func AdmitMCPMutationProposalAuthorizedAt(ctx context.Context, db *Handler, row MCPMutationProposalRow, maxPerRun, maxPendingPerPrincipal int, now time.Time, authority MCPMutationAdmissionAuthority) (MCPMutationProposalRow, bool, error) {
+	return admitMCPMutationProposalAt(ctx, db, row, maxPerRun, maxPendingPerPrincipal, now, authority)
+}
+
+func admitMCPMutationProposalAt(ctx context.Context, db *Handler, row MCPMutationProposalRow, maxPerRun, maxPendingPerPrincipal int, now time.Time, authority MCPMutationAdmissionAuthority) (MCPMutationProposalRow, bool, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -831,6 +848,14 @@ func AdmitMCPMutationProposalAt(ctx context.Context, db *Handler, row MCPMutatio
 	active, pending, err := readMCPMutationQuotaTx(txCtx, tx, *db, row.RunID, row.PrincipalUserID)
 	if err != nil {
 		return MCPMutationProposalRow{}, false, err
+	}
+	// Revalidate current authority before treating a replay as admitted. A
+	// duplicate fingerprint must not report current authorization after the
+	// account or ownership has changed.
+	if authority != nil {
+		if err := authority(txCtx, tx); err != nil {
+			return MCPMutationProposalRow{}, false, err
+		}
 	}
 
 	existing, found, err := getMCPMutationProposalWhere(txCtx, tx, (*db).DBMS(),

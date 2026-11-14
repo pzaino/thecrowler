@@ -1,0 +1,23 @@
+format_version: v2
+agent_identity:
+  agent_id: mcp-e2e-agent
+  name: MCP E2E Agent
+  owner: e2e-owner
+  trust_level: trusted
+  capabilities: [tool_execution]
+jobs:
+  - name: MCP E2E Agent
+    process: serial
+    trigger_type: manual
+    trigger_name: run
+    steps:
+      - action: AgentToolLoop
+        params:
+          provider: openai
+          url: http://host.docker.internal:18095/v1/chat/completions
+          model: scripted
+          prompt: Call the approved mutation proposal tool once, then reply.
+          allowlist: [mcp_approved-server_mutate_counter]
+          input: {}
+          limits:
+            timeout: "20s"

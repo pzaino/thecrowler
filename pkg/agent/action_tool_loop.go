@@ -35,9 +35,24 @@ type AgentToolLoopAction struct{}
 // Name returns the name of the action.
 func (a *AgentToolLoopAction) Name() string { return "AgentToolLoop" }
 
-// Execute runs the tool loop for one job-group attempt.
+// Execute runs the tool loop with no caller context. Framework callers use
+// ExecuteContext so HTTP cancellation reaches MCP and model operations.
 func (a *AgentToolLoopAction) Execute(params map[string]interface{}) (map[string]interface{}, error) {
+	return a.ExecuteContext(context.Background(), params)
+}
+
+// ExecuteContext runs the tool loop for one job-group attempt using the
+// trusted job-engine context.
+func (a *AgentToolLoopAction) ExecuteContext(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	rval := map[string]interface{}{StrResponse: nil, StrConfig: nil}
+	if err := ctx.Err(); err != nil {
+		rval[StrStatus] = StatusError
+		rval[StrMessage] = "tool loop cancelled: " + err.Error()
+		return rval, err
+	}
 
 	config, err := getConfig(params)
 	if err != nil {
@@ -65,7 +80,7 @@ func (a *AgentToolLoopAction) Execute(params map[string]interface{}) (map[string
 		return rval, err
 	}
 
-	loopConfig, err := normalizeToolLoopConfig(params, config, ictx, identity)
+	loopConfig, err := normalizeToolLoopConfigWithContext(ctx, params, config, ictx, identity)
 	if err != nil {
 		rval[StrStatus] = StatusError
 		rval[StrMessage] = err.Error()
@@ -107,6 +122,13 @@ func toolLoopResultMap(result ToolLoopResult) map[string]any {
 // must be statically declared: any input-reference marker in their raw
 // values is rejected so model-influenced data can never widen authority.
 func normalizeToolLoopConfig(params, config map[string]interface{}, ictx InputContext, identity AgentIdentity) (ToolLoopConfig, error) {
+	return normalizeToolLoopConfigWithContext(context.Background(), params, config, ictx, identity)
+}
+
+func normalizeToolLoopConfigWithContext(parent context.Context, params, config map[string]interface{}, ictx InputContext, identity AgentIdentity) (ToolLoopConfig, error) {
+	if parent == nil {
+		parent = context.Background()
+	}
 	loop := ToolLoopConfig{
 		Identity:    identity,
 		Enforcement: true,
@@ -260,7 +282,11 @@ func normalizeToolLoopConfig(params, config map[string]interface{}, ictx InputCo
 			deadline = loop.GroupDeadline
 		}
 	}
-	runCtx, runCancel := context.WithDeadline(context.Background(), deadline)
+	runCtx, runCancel := context.WithDeadline(parent, deadline)
+	if err := runCtx.Err(); err != nil {
+		runCancel()
+		return loop, fmt.Errorf("tool loop denied: %w", err)
+	}
 	keepContext := false
 	defer func() {
 		if !keepContext {

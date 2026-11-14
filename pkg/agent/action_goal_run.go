@@ -37,10 +37,24 @@ type AgentGoalRunAction struct{}
 // Name returns the action name.
 func (a *AgentGoalRunAction) Name() string { return "AgentGoalRun" }
 
-// Execute runs one goal step. Non-criteria_met terminals are action errors so
-// the engine's retry/fallback policy cannot treat them as success.
+// Execute runs one goal step without a caller context. Framework callers use
+// ExecuteContext so HTTP cancellation reaches MCP and model operations.
 func (a *AgentGoalRunAction) Execute(params map[string]interface{}) (map[string]interface{}, error) {
+	return a.ExecuteContext(context.Background(), params)
+}
+
+// ExecuteContext runs one goal step. Non-criteria_met terminals are action
+// errors so the engine's retry/fallback policy cannot treat them as success.
+func (a *AgentGoalRunAction) ExecuteContext(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	rval := map[string]interface{}{StrResponse: nil, StrConfig: nil}
+	if err := ctx.Err(); err != nil {
+		rval[StrStatus] = StatusError
+		rval[StrMessage] = "goal run cancelled: " + err.Error()
+		return rval, err
+	}
 	config, err := getConfig(params)
 	if err != nil {
 		rval[StrStatus] = StatusError
@@ -103,7 +117,7 @@ func (a *AgentGoalRunAction) Execute(params map[string]interface{}) (map[string]
 		traceID = uuid.NewString()
 	}
 	runDeadline := goalExecutionDeadline(spec, inheritedDeadline, time.Now())
-	runCtx, runCancel := context.WithDeadline(context.Background(), runDeadline)
+	runCtx, runCancel := context.WithDeadline(ctx, runDeadline)
 	defer runCancel()
 	failInitialization := func(err error) (map[string]interface{}, error) {
 		if runCtx.Err() == nil {

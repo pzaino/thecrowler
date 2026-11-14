@@ -211,8 +211,11 @@ func mcpMutationErrorCode(err error) int {
 		return http.StatusTooManyRequests
 	case errors.Is(err, agentpkg.ErrMCPMutationProposalConflict), errors.Is(err, agentpkg.ErrMCPMutationApproval),
 		errors.Is(err, cdb.ErrMCPMutationProposalConflict), errors.Is(err, cdb.ErrMCPMutationApprovalConflict),
-		errors.Is(err, cdb.ErrMCPMutationApprovalExpired), errors.Is(err, cdb.ErrMCPMutationApprovalRevoked):
+		errors.Is(err, cdb.ErrMCPMutationApprovalExpired), errors.Is(err, cdb.ErrMCPMutationApprovalRevoked),
+		errors.Is(err, agentpkg.ErrMCPMutationPolicyMismatch), errors.Is(err, agentpkg.ErrMCPMutationOperationUnauthorized):
 		return http.StatusConflict
+	case errors.Is(err, agentpkg.ErrMCPMutationPolicyUnavailable):
+		return http.StatusServiceUnavailable
 	case errors.Is(err, agentpkg.ErrMCPMutationProposalCorrupt), errors.Is(err, agentpkg.ErrMCPMutationApprovalCorrupt),
 		errors.Is(err, agentpkg.ErrMCPMutationStoreUnavailable), errors.Is(err, cdb.ErrMCPMutationSchemaUnavailable),
 		errors.Is(err, cdb.ErrMCPMutationStoreUnsupported):
@@ -550,6 +553,11 @@ func decodeMCPMutationJSON(w http.ResponseWriter, r *http.Request, dst any) erro
 	return decodeJSON(r, dst)
 }
 
+// mcpMutationApprovalStoreFactory is the test seam for the single
+// authoritative approval service boundary. Production always uses the durable
+// store, whose Issue method performs current-policy revalidation.
+var mcpMutationApprovalStoreFactory = agentpkg.NewDatabaseMCPMutationApprovalStore
+
 func mcpMutationApproveHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -600,7 +608,7 @@ func mcpMutationApproveHandler(w http.ResponseWriter, r *http.Request) {
 		handleErrorAndRespond(w, err, nil, "MCP mutation proposal principal is not active", mcpMutationErrorCode(err), 0)
 		return
 	}
-	approvalStore, err := agentpkg.NewDatabaseMCPMutationApprovalStore(&dbHandler, time.Hour)
+	approvalStore, err := mcpMutationApprovalStoreFactory(&dbHandler, time.Hour)
 	if err != nil {
 		handleErrorAndRespond(w, err, nil, "MCP mutation approval store unavailable", mcpMutationErrorCode(err), 0)
 		return
@@ -736,7 +744,7 @@ func mcpMutationRevokeHandler(w http.ResponseWriter, r *http.Request) {
 			"MCP mutation approval not found", http.StatusNotFound, 0)
 		return
 	}
-	approvalStore, err := agentpkg.NewDatabaseMCPMutationApprovalStore(&dbHandler, time.Hour)
+	approvalStore, err := mcpMutationApprovalStoreFactory(&dbHandler, time.Hour)
 	if err != nil {
 		handleErrorAndRespond(w, err, nil, "MCP mutation approval store unavailable", mcpMutationErrorCode(err), 0)
 		return

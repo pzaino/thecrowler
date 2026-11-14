@@ -95,6 +95,25 @@ func newMCPMutationStoreTestHandler(t *testing.T) cdb.Handler {
 			t.Fatalf("apply MCP mutation statement: %v\n%s", err, statement)
 		}
 	}
+	if _, err := db.Exec(`
+		CREATE TABLE Users (user_id INTEGER PRIMARY KEY, username TEXT NOT NULL UNIQUE, disabled BOOLEAN NOT NULL DEFAULT FALSE, deleted_at TIMESTAMP);
+		CREATE TABLE AuthRoles (role_id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE);
+		CREATE TABLE AuthScopes (scope_id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE);
+		CREATE TABLE UserRoles (user_id INTEGER NOT NULL, role_id INTEGER NOT NULL, PRIMARY KEY (user_id, role_id));
+		CREATE TABLE UserScopes (user_id INTEGER NOT NULL, scope_id INTEGER NOT NULL, PRIMARY KEY (user_id, scope_id));
+		CREATE TABLE RoleScopes (role_id INTEGER NOT NULL, scope_id INTEGER NOT NULL, PRIMARY KEY (role_id, scope_id));
+		CREATE TABLE Sources (source_id INTEGER PRIMARY KEY, source_uid TEXT, url TEXT, name TEXT, status TEXT, disabled BOOLEAN, usr_id INTEGER, deleted_at TIMESTAMP);
+		CREATE TABLE SourceOwnership (source_id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, verified_at TIMESTAMP NOT NULL, verified_by_user_id INTEGER NOT NULL, verified_by TEXT NOT NULL, verification_method TEXT NOT NULL);
+		INSERT INTO Users(user_id, username, disabled, deleted_at) VALUES (7, 'mcp-owner', FALSE, NULL);
+		INSERT INTO AuthRoles(role_id, name) VALUES (1, 'admin'), (2, 'user');
+		INSERT INTO UserRoles(user_id, role_id) VALUES (7, 2);
+		INSERT INTO Sources(source_id, source_uid, url, name, status, disabled, usr_id, deleted_at)
+		VALUES (42, 'fixture-source-42', 'https://fixture.example/42', 'fixture', 'new', FALSE, 7, NULL);
+		INSERT INTO SourceOwnership(source_id, user_id, verified_at, verified_by_user_id, verified_by, verification_method)
+		VALUES (42, 7, CURRENT_TIMESTAMP, 7, 'test-fixture', 'admin_verification');
+	`); err != nil {
+		t.Fatalf("seed MCP admission authorization fixture: %v", err)
+	}
 	handler := cdb.Handler(&mcpMutationSQLiteHandler{db: db})
 	t.Cleanup(func() { _ = db.Close() })
 	return handler
@@ -135,6 +154,14 @@ func TestDatabaseMCPMutationStoreAdmitAndApproval(t *testing.T) {
 	approvalStore, err := NewDatabaseMCPMutationApprovalStore(&handler, time.Hour)
 	if err != nil {
 		t.Fatalf("new database approval store: %v", err)
+	}
+	approvalStore.Policy = func() MCPMutationPolicy { return mcpMutationTestPolicy(alias) }
+	approvalStore.Inventory = func() cfg.MCPConfig { return CurrentMCPOperatorConfig() }
+	approvalStore.Agent = func(agentID string) (AgentIdentity, bool) {
+		if agentID != identity.AgentID {
+			return AgentIdentity{}, false
+		}
+		return identity, true
 	}
 	approver := MCPMutationPrincipal{UserID: 9, Username: "admin-1", Issuer: "test-issuer"}
 	approval, inserted, err := approvalStore.Issue(ctx, MCPMutationApprovalRequest{

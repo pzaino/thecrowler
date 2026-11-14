@@ -17,9 +17,11 @@ package agent
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -125,6 +127,12 @@ func toSourceIDArg(raw any) (uint64, error) {
 			return 0, fmt.Errorf("source_id must be a positive integer")
 		}
 		return v, nil
+	case json.Number:
+		id, err := strconv.ParseUint(string(v), 10, 64)
+		if err != nil || id < 1 {
+			return 0, fmt.Errorf("source_id must be a positive integer")
+		}
+		return id, nil
 	default:
 		return 0, fmt.Errorf("source_id must be a positive integer")
 	}

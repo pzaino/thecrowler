@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 )
 
@@ -19,8 +20,9 @@ import (
 // implements the same Admit/Get contract as the in-memory test store; it never
 // dispatches an external operation.
 type DatabaseMCPMutationProposalStore struct {
-	DB  *cdb.Handler
-	Now func() time.Time
+	DB         *cdb.Handler
+	Now        func() time.Time
+	Authorizer MCPMutationAdmissionAuthorizer
 }
 
 func (s *DatabaseMCPMutationProposalStore) now() time.Time {
@@ -42,7 +44,10 @@ func NewDatabaseMCPMutationProposalStore(db *cdb.Handler) (*DatabaseMCPMutationP
 	if err := cdb.CheckMCPMutationCapability(ctx, db); err != nil {
 		return nil, ErrMCPMutationStoreUnavailable
 	}
-	return &DatabaseMCPMutationProposalStore{DB: db}, nil
+	return &DatabaseMCPMutationProposalStore{
+		DB:         db,
+		Authorizer: &DatabaseMCPMutationAdmissionAuthorizer{DB: db},
+	}, nil
 }
 
 func mcpProposalDBRow(proposal MCPMutationProposal) cdb.MCPMutationProposalRow {
@@ -257,6 +262,10 @@ func mapMCPMutationDatabaseError(err error) error {
 		return ErrMCPMutationProposalConflict
 	case errors.Is(err, cdb.ErrMCPMutationApprovalNotFound):
 		return ErrMCPMutationApproval
+	case errors.Is(err, ErrMCPMutationPrincipal), errors.Is(err, ErrMCPMutationStoreUnavailable),
+		errors.Is(err, ErrMCPMutationOperationUnauthorized), errors.Is(err, ErrMCPMutationPolicyUnavailable),
+		errors.Is(err, ErrMCPMutationPolicyMismatch):
+		return err
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return err
 	default:
@@ -278,7 +287,13 @@ func (s *DatabaseMCPMutationProposalStore) Admit(ctx context.Context, proposal M
 	if len(proposal.PolicySnapshot) == 0 {
 		return MCPMutationProposal{}, fmt.Errorf("%w: policy snapshot is required for durable persistence", ErrMCPMutationPolicyInvalid)
 	}
-	row, _, err := cdb.AdmitMCPMutationProposalAt(ctx, s.DB, mcpProposalDBRow(proposal), maxPerRun, maxPendingPerPrincipal, s.now())
+	if s.Authorizer == nil {
+		return MCPMutationProposal{}, ErrMCPMutationStoreUnavailable
+	}
+	authority := func(txCtx context.Context, tx *sql.Tx) error {
+		return s.Authorizer.AuthorizeMCPMutationAdmission(txCtx, tx, proposal)
+	}
+	row, _, err := cdb.AdmitMCPMutationProposalAuthorizedAt(ctx, s.DB, mcpProposalDBRow(proposal), maxPerRun, maxPendingPerPrincipal, s.now(), authority)
 	if err != nil {
 		return MCPMutationProposal{}, mapMCPMutationDatabaseError(err)
 	}
@@ -325,6 +340,12 @@ type DatabaseMCPMutationApprovalStore struct {
 	DB          *cdb.Handler
 	MaxLifetime time.Duration
 	Now         func() time.Time
+	// Policy, Inventory and Agent are trusted current-policy seams for tests
+	// and for the API service. Nil means use the process-wide frozen policy and
+	// trusted agent registry. A nil agent lookup fails closed.
+	Policy    func() MCPMutationPolicy
+	Inventory func() cfg.MCPConfig
+	Agent     func(agentID string) (AgentIdentity, bool)
 }
 
 func NewDatabaseMCPMutationApprovalStore(db *cdb.Handler, maxLifetime time.Duration) (*DatabaseMCPMutationApprovalStore, error) {
@@ -446,7 +467,25 @@ func (s *DatabaseMCPMutationApprovalStore) Issue(ctx context.Context, request MC
 	if !found {
 		return MCPMutationApproval{}, false, ErrMCPMutationProposalConflict
 	}
-	if _, err := mcpProposalFromDBRow(proposalRow); err != nil {
+	proposal, err := mcpProposalFromDBRow(proposalRow)
+	if err != nil {
+		return MCPMutationApproval{}, false, err
+	}
+	current := CurrentMCPMutationApprovalPolicy()
+	if s.Policy != nil {
+		current.Policy = s.Policy()
+	}
+	if s.Inventory != nil {
+		current.Inventory = s.Inventory()
+	}
+	lookup := s.Agent
+	if lookup == nil {
+		lookup = CurrentAgentIdentityForMCPApproval
+	}
+	if agent, ok := lookup(proposal.AgentID); ok {
+		current.Agent = &agent
+	}
+	if err := EvaluateMCPMutationApproval(proposal, current); err != nil {
 		return MCPMutationApproval{}, false, err
 	}
 	if proposalRow.ProposalSHA256 != fingerprint {

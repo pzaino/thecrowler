@@ -123,7 +123,7 @@ func agentRunHandler(w http.ResponseWriter, r *http.Request) {
 		agentRunError(w, http.StatusRequestTimeout, "request cancelled", err)
 		return
 	}
-	result, err := agt.AgentsEngine.ExecuteManualAgentResult(agentRef, input)
+	result, err := agt.AgentsEngine.ExecuteManualAgentResultContext(r.Context(), agentRef, input)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "manual agent execution failed: %v", err)
 		agentRunError(w, http.StatusBadGateway, "agent execution failed", err)

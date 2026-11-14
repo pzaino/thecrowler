@@ -1,0 +1,23 @@
+format_version: v2
+agent_identity:
+  agent_id: mcp-e2e-slow-agent
+  name: MCP E2E Slow Agent
+  owner: e2e-owner
+  trust_level: trusted
+  capabilities: [api_request, tool_execution]
+jobs:
+  - name: MCP E2E Slow Agent
+    process: serial
+    trigger_type: manual
+    trigger_name: run
+    steps:
+      - action: AgentToolLoop
+        params:
+          provider: openai
+          url: http://host.docker.internal:18096/v1/chat/completions
+          model: scripted
+          prompt: Wait for the slow model and reply.
+          allowlist: [mcp_approved-server_mutate_counter]
+          input: {}
+          limits:
+            timeout: "20s"

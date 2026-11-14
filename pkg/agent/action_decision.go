@@ -16,6 +16,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -32,8 +33,18 @@ func (d *DecisionAction) Name() string {
 	return "Decision"
 }
 
-// Execute evaluates conditions and executes steps
+// Execute evaluates conditions and executes steps without a caller context.
 func (d *DecisionAction) Execute(params map[string]interface{}) (map[string]interface{}, error) {
+	return d.ExecuteContext(context.Background(), params)
+}
+
+// ExecuteContext evaluates conditions and executes steps with the trusted
+// caller context. Delegated agents inherit it so manual-run cancellation
+// reaches the whole delegation chain.
+func (d *DecisionAction) ExecuteContext(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	rval := make(map[string]interface{})
 	rval[StrResponse] = nil
 	rval[StrConfig] = nil
@@ -176,7 +187,7 @@ func (d *DecisionAction) Execute(params map[string]interface{}) (map[string]inte
 		} else {
 			delegationCtx[StrRequest] = map[string]interface{}{}
 		}
-		delegated, err := AgentsEngine.ExecuteAgentResult(agentRef, delegationCtx)
+		delegated, err := AgentsEngine.ExecuteAgentResultContext(ctx, agentRef, delegationCtx)
 		if err != nil {
 			emitDelegationAudit(params, agentRef, auditOutcomeError, err.Error())
 			rval[StrStatus] = StatusError

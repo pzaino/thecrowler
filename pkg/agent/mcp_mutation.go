@@ -863,6 +863,14 @@ func mcpMutationScope(operation MCPMutationOperationPolicy, args map[string]any)
 	if _, ok := args["source_id"]; ok {
 		return nil, "", fmt.Errorf("%w: source_id is not allowed for an external-resource mutation", ErrMCPMutationArguments)
 	}
+	// Two external-resource selector names must never disagree: the canonical
+	// fingerprint would bind one value while a future transport could read the
+	// other.
+	_, hasResource := args["resource"]
+	_, hasResourceID := args["resource_id"]
+	if hasResource && hasResourceID {
+		return nil, "", fmt.Errorf("%w: resource and resource_id are ambiguous together", ErrMCPMutationArguments)
+	}
 	rawResource, ok := args["resource"]
 	if !ok {
 		rawResource, ok = args["resource_id"]

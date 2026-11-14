@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -29,6 +30,21 @@ func TestMCPToolAliasIsStableAndBounded(t *testing.T) {
 	}
 	if long != MCPToolAlias("alpha", strings.Repeat("tool.", 40)) {
 		t.Fatalf("alias is not deterministic")
+	}
+}
+
+func TestSetMCPOperatorConfigForApprovalDoesNotRequireCommand(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing-mcp-command")
+	config := validMCPConfig(missing)
+	if err := SetMCPOperatorConfig(config); err == nil {
+		t.Fatalf("set operator config accepted a missing command")
+	}
+	if err := SetMCPOperatorConfigForApproval(config); err != nil {
+		t.Fatalf("approval policy rejected a missing command: %v", err)
+	}
+	t.Cleanup(func() { _ = SetMCPOperatorConfig(cfg.MCPConfig{}) })
+	if approved, ok := CurrentMCPApprovedTool(MCPToolAlias("fixture", "echo")); !ok || approved.ServerID != "fixture" {
+		t.Fatalf("approval approved-tool lookup failed: %+v ok=%v", approved, ok)
 	}
 }
 

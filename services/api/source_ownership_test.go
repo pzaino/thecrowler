@@ -31,6 +31,7 @@ func setupSourceOwnershipTest(t *testing.T) cdb.Handler {
 	dbHandler = handler
 	dbAdmission = newDBAdmissionGate(1)
 	config.API.Auth = cfg.AuthConfig{Enabled: true, Mode: "local", Issuer: "crowler", HMACSecret: "test-secret", TokenTTL: 60}
+	setupMCPMutationApprovalFactory(t)
 
 	db := handler.(*sourceAPITestHandler).db
 	for _, statement := range []string{
