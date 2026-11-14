@@ -52,8 +52,10 @@ func (handler *SQLiteHandler) TransactionTimeoutSeconds() int {
 // Connect connects to an SQLite database
 func (handler *SQLiteHandler) Connect(c cfg.Config) error {
 	handler.transactionTimeout = normalizedTransactionTimeoutSeconds(c.Database.TransactionTimeout)
-	// Construct the connection string from the Config struct
-	connectionString := fmt.Sprintf("file:%s?cache=shared&mode=rwc", c.Database.DBName)
+	// Construct the connection string from the Config struct.
+	// G3: every pooled runtime connection must enforce the declared foreign
+	// keys, not only the setup/migration connection.
+	connectionString := fmt.Sprintf("file:%s?cache=shared&mode=rwc&_foreign_keys=on", c.Database.DBName)
 
 	var err error
 	handler.db, err = sql.Open("sqlite3", connectionString)
@@ -512,7 +514,7 @@ func NewHandler(c cfg.Config) (Handler, error) {
 		handler := &PostgresHandler{}
 		handler.dbms = dbms
 		return handler, nil
-	case DBSQLiteStr:
+	case DBSQLiteStr, "sqlite":
 		handler := &SQLiteHandler{}
 		handler.dbms = dbms
 		return handler, nil

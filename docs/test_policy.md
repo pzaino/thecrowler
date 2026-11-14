@@ -380,3 +380,29 @@ creating a proposal, approval or dispatch attempt.
   produce one proposal denial and one registration denial, then assert the two
   durable audit rows, zero proposals/approvals/dispatch attempts, an absent
   mutation counter and no secret in the audit table or Events logs.
+
+## WP-04C2J G3 schema deployment and SQLite foreign-key tests
+
+G3 tests must prove that the additive MCP capability can be applied to an
+existing schema-1.17 database without changing the schema version or writer
+generation, and that SQLite enforces declared foreign keys on every runtime
+connection.
+
+- SQLite tests must open the handler through `SQLiteHandler.Connect`, prove two
+  pooled connections both report `PRAGMA foreign_keys=1`, and prove orphan
+  inserts fail on both connections.
+- Startup compatibility tests must reject foreign keys disabled and existing
+  `PRAGMA foreign_key_check` violations.
+- Deployment tests must apply the embedded migration to a SQLite database,
+  verify the capability marker/checksum and object probes, disable only the
+  marker, and prove proposal/approval/audit row counts are unchanged.
+- Deployment tests must reject a non-1.17 schema and a missing backup directory.
+- A PostgreSQL integration test must apply the migration twice, verify
+  privileges, insert history, disable the marker, verify history survives, and
+  re-apply the capability on a disposable database.
+- Live Docker tests must run `dbDeploy -check`, `-apply -backup-dir` and
+  `-disable` against disposable PostgreSQL and SQLite databases, verify the
+  backup files, and prove the container includes `dbDeploy`, the CGO SQLite
+  driver and `pg_dump`.
+- The schema version must remain `1.17` and the writer generation must remain
+  `verified-ownership-v1.17` after every deployment and rollback step.

@@ -808,9 +808,9 @@ execution and dispatch remain disabled.
   retry, reconciliation worker or automatic approval execution exists.
 - Approval, denial and revocation remain record-only operator actions.
   `MCPMutationDispatchAttempts` stays empty.
-- B4 current-policy revalidation at approval and G3 schema deployment/SQLite
-  FK decisions remain pending. B5 denied-admission audit is described in
-  section 28.
+- B4 current-policy revalidation at approval remains pending. B5
+  denied-admission audit is described in section 28; G3 schema deployment and
+  SQLite foreign-key enforcement are described in section 29.
 
 ## 28. WP-04C2I B5 denied-admission audit and retention
 
@@ -848,3 +848,35 @@ record without creating a proposal or a dispatch path.
 
 See `docs/crowler-agents/reviews/WP-04C2I_DENIED_ADMISSION_AUDIT.md` for the
 event/reason contract and `WP-04C2I_TEST_REPORT.md` for live evidence.
+
+## 29. WP-04C2J G3 schema deployment and SQLite foreign keys
+
+G3 was approved and implemented. Schema remains `1.17` with writer generation
+`verified-ownership-v1.17`. No new schema version was added.
+
+- SQLite runtime connections now use `_foreign_keys=on`. The startup
+  compatibility check verifies `PRAGMA foreign_keys=1` and runs
+  `PRAGMA foreign_key_check`; existing orphan rows fail closed with
+  table/rowid/parent details. G3 does not silently delete or rewrite data.
+- `cmd/dbDeploy` verifies schema 1.17, the capability marker/checksum,
+  table/index/foreign-key probes and application privileges. `-apply` requires
+  a backup directory, creates a full database backup, applies the embedded
+  additive MCP migration in a transaction and re-verifies the capability.
+  `-disable` removes only the capability marker and refuses success if any MCP
+  history row count changed.
+- PostgreSQL backups use `pg_dump --format=custom`; SQLite backups use
+  `VACUUM INTO`. Backup paths are sanitized and never overwritten. Passwords
+  are supplied through `PGPASSWORD`, not command arguments.
+- `-apply`/`-disable` require an administrative connection for DDL/owner and
+  marker deletion. `-db-user` selects the runtime application user for
+  ownership, grants and `has_table_privilege` checks.
+- Production builds use `CGO_ENABLED=1` so the SQLite driver is present.
+  `dbDeploy` is included in the Events, API and Engine images, and
+  `postgresql-client` supplies `pg_dump`.
+- The additive migration remains the existing
+  `mcp-mutation-authorization-v1` capability; no schema version, writer
+  generation, dispatch, retry, reconciliation or external mutation changed.
+
+See `docs/crowler-agents/schema-deployment.md` for the operator procedure and
+`docs/crowler-agents/reviews/WP-04C2J_*` for the G3 decision, security and test
+evidence.

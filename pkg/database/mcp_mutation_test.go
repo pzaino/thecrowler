@@ -649,7 +649,7 @@ func TestMCPMutationCapabilityFailsOnSchema117WithoutCapability(t *testing.T) {
 	}
 }
 
-func TestSQLiteMCPMutationForeignKeysAreDeclaredButNotRuntimeEnforced(t *testing.T) {
+func TestSQLiteMCPMutationForeignKeysAreRuntimeEnforced(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "mcp-fk-runtime.db")
 	var handler Handler = &SQLiteHandler{dbms: DBSQLiteStr}
@@ -676,28 +676,24 @@ func TestSQLiteMCPMutationForeignKeysAreDeclaredButNotRuntimeEnforced(t *testing
 	if err := conn2.QueryRowContext(ctx, `PRAGMA foreign_keys`).Scan(&fk2); err != nil {
 		t.Fatalf("read connection 2 foreign_keys: %v", err)
 	}
-	if fk1 != 0 || fk2 != 0 {
-		t.Fatalf("runtime SQLite foreign_keys default = %d/%d, want 0/0", fk1, fk2)
+	if fk1 != 1 || fk2 != 1 {
+		t.Fatalf("runtime SQLite foreign_keys = %d/%d, want 1/1", fk1, fk2)
 	}
 	for _, statement := range []string{
 		`CREATE TABLE fk_parent (id INTEGER PRIMARY KEY)`,
 		`CREATE TABLE fk_child (id INTEGER PRIMARY KEY, parent_id INTEGER REFERENCES fk_parent(id))`,
+		`INSERT INTO fk_parent (id) VALUES (1)`,
+		`INSERT INTO fk_child (id, parent_id) VALUES (1, 1)`,
 	} {
 		if _, err := conn1.ExecContext(ctx, statement); err != nil {
-			t.Fatalf("create FK fixture: %v", err)
+			t.Fatalf("create/insert valid FK fixture: %v", err)
 		}
 	}
-	if _, err := conn1.ExecContext(ctx, `INSERT INTO fk_child (id, parent_id) VALUES (1, 999)`); err != nil {
-		t.Fatalf("orphan insert with FK off unexpectedly failed: %v", err)
-	}
-	if _, err := conn1.ExecContext(ctx, `PRAGMA foreign_keys=ON`); err != nil {
-		t.Fatalf("enable FK on connection 1: %v", err)
-	}
 	if _, err := conn1.ExecContext(ctx, `INSERT INTO fk_child (id, parent_id) VALUES (2, 999)`); err == nil {
-		t.Fatalf("orphan insert with FK on unexpectedly succeeded")
+		t.Fatalf("orphan insert on connection 1 succeeded with runtime FK on")
 	}
-	if _, err := conn2.ExecContext(ctx, `INSERT INTO fk_child (id, parent_id) VALUES (3, 999)`); err != nil {
-		t.Fatalf("connection 2 did not remain per-connection FK-off: %v", err)
+	if _, err := conn2.ExecContext(ctx, `INSERT INTO fk_child (id, parent_id) VALUES (3, 999)`); err == nil {
+		t.Fatalf("orphan insert on connection 2 succeeded with runtime FK on")
 	}
 	_ = conn1.Close()
 	_ = conn2.Close()

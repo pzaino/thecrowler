@@ -120,6 +120,13 @@ func CheckStartupCompatibility(ctx context.Context, db Handler) error {
 			}
 		}
 	}
+	// G3: SQLite must enforce declared foreign keys on runtime connections and
+	// must not start with pre-existing orphan rows.
+	if normalizeDBMS(db.DBMS()) == "sqlite" {
+		if err := CheckSQLiteForeignKeyEnforcement(ctx, db); err != nil {
+			missing = append(missing, err.Error())
+		}
+	}
 
 	var generation string
 	if err := db.QueryRowContext(ctx, `SELECT writer_generation FROM DatabaseWriterCompatibility WHERE lock_id = 1`).Scan(&generation); err != nil {
