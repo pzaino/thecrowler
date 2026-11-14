@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -43,6 +44,15 @@ var (
 	ErrMCPMutationApprovalConflict  = errors.New("MCP mutation approval conflicts with an existing approval")
 	ErrMCPMutationApprovalExpired   = errors.New("MCP mutation approval has expired")
 	ErrMCPMutationApprovalRevoked   = errors.New("MCP mutation approval has been revoked")
+	// ErrMCPMutationApproverForbidden means the current approver lost the
+	// administrative or source authority required to issue this approval.
+	ErrMCPMutationApproverForbidden = errors.New("MCP mutation approver is not authorized for the proposal")
+	// ErrMCPMutationProposalPrincipalForbidden means the proposal-origin
+	// principal or its verified source ownership is no longer valid.
+	ErrMCPMutationProposalPrincipalForbidden = errors.New("MCP mutation proposal principal is not authorized for the proposal")
+	// ErrMCPMutationApprovalAuthorityUnavailable means the caller omitted the
+	// mandatory in-transaction approval authority.
+	ErrMCPMutationApprovalAuthorityUnavailable = errors.New("MCP mutation approval authority is unavailable")
 )
 
 // MCPMutationProposalRow is the durable representation of one inert proposal.
@@ -839,6 +849,13 @@ func admitMCPMutationProposalAt(ctx context.Context, db *Handler, row MCPMutatio
 	if !row.ExpiresAt.After(now) {
 		return MCPMutationProposalRow{}, false, ErrMCPMutationProposalExpired
 	}
+	// Authority first so every admission path follows the same source/user ->
+	// quota -> proposal lock order as approval issuance and source transfer.
+	if authority != nil {
+		if err := authority(txCtx, tx); err != nil {
+			return MCPMutationProposalRow{}, false, err
+		}
+	}
 	if _, _, err := ensureAndLockMCPMutationQuotaTx(txCtx, tx, *db, row.RunID, row.PrincipalUserID); err != nil {
 		return MCPMutationProposalRow{}, false, err
 	}
@@ -851,13 +868,8 @@ func admitMCPMutationProposalAt(ctx context.Context, db *Handler, row MCPMutatio
 	}
 	// Revalidate current authority before treating a replay as admitted. A
 	// duplicate fingerprint must not report current authorization after the
-	// account or ownership has changed.
-	if authority != nil {
-		if err := authority(txCtx, tx); err != nil {
-			return MCPMutationProposalRow{}, false, err
-		}
-	}
-
+	// account or ownership has changed. The authority already ran above, before
+	// quota locks; the replay path below therefore observes the same decision.
 	existing, found, err := getMCPMutationProposalWhere(txCtx, tx, (*db).DBMS(),
 		`proposal_sha256 = `+mcpMutationPlaceholder(*db, 1), row.ProposalSHA256)
 	if err != nil {
@@ -1114,9 +1126,154 @@ func lockMCPMutationProposalTx(ctx context.Context, tx *sql.Tx, db Handler, prop
 	return row, true, nil
 }
 
-// IssueMCPMutationApproval persists one operator approval and moves the
-// proposal to approved. It never dispatches an external operation.
-func IssueMCPMutationApproval(ctx context.Context, db *Handler, approval MCPMutationApprovalRow, expectedProposalSHA256 string, now time.Time) (MCPMutationApprovalRow, bool, error) {
+// MCPMutationApprovalAuthorityRequest is the trusted, current authority input
+// for approval issuance. SourceIDs are the proposal's immutable source scope;
+// ExternalResource marks an administrator-only external-resource proposal.
+type MCPMutationApprovalAuthorityRequest struct {
+	SourceIDs           []uint64
+	ExternalResource    bool
+	ApproverUserID      uint64
+	ProposalPrincipalID uint64
+}
+
+// MCPMutationApprovalAuthority is executed inside the approval transaction
+// before quota/proposal locks. It must acquire source and account locks in the
+// documented order and fail closed on any authority change.
+type MCPMutationApprovalAuthority func(ctx context.Context, tx *sql.Tx, proposal MCPMutationProposalRow) error
+
+// AuthorizeMCPMutationApprovalTx revalidates the current approver and the
+// proposal-origin principal against current account, role and verified source
+// ownership state. It follows the application's transfer lock order:
+// source rows first, then user rows in ascending ID order, then administrative
+// grant rows. It does not read policy; that remains the agent service's
+// responsibility before this DB authority runs.
+func AuthorizeMCPMutationApprovalTx(ctx context.Context, tx *sql.Tx, db Handler, request MCPMutationApprovalAuthorityRequest) error {
+	if tx == nil {
+		return fmt.Errorf("transaction is nil")
+	}
+	if request.ApproverUserID == 0 {
+		return ErrMCPMutationApproverForbidden
+	}
+	if request.ProposalPrincipalID == 0 {
+		return ErrMCPMutationProposalPrincipalForbidden
+	}
+	sources := append([]uint64(nil), request.SourceIDs...)
+	sort.Slice(sources, func(i, j int) bool { return sources[i] < sources[j] })
+	unique := sources[:0]
+	for _, sourceID := range sources {
+		if sourceID == 0 {
+			return ErrMCPMutationProposalPrincipalForbidden
+		}
+		if len(unique) == 0 || unique[len(unique)-1] != sourceID {
+			unique = append(unique, sourceID)
+		}
+	}
+	if request.ExternalResource && len(unique) > 0 {
+		return ErrMCPMutationProposalPrincipalForbidden
+	}
+	if !request.ExternalResource && len(unique) == 0 {
+		return ErrMCPMutationProposalPrincipalForbidden
+	}
+	owners := make(map[uint64]SourceOwner, len(unique))
+	for _, sourceID := range unique {
+		owner, err := lockSourceOwnerTx(ctx, tx, db, sourceID)
+		if err != nil {
+			return err
+		}
+		if !owner.Found {
+			return fmt.Errorf("%w: source %d not found", ErrMCPMutationProposalPrincipalForbidden, sourceID)
+		}
+		if owner.Deleted {
+			return fmt.Errorf("%w: source %d is deleted", ErrMCPMutationProposalPrincipalForbidden, sourceID)
+		}
+		owners[sourceID] = owner
+	}
+
+	users := []uint64{request.ApproverUserID, request.ProposalPrincipalID}
+	sort.Slice(users, func(i, j int) bool { return users[i] < users[j] })
+	uniqueUsers := users[:0]
+	for _, userID := range users {
+		if len(uniqueUsers) == 0 || uniqueUsers[len(uniqueUsers)-1] != userID {
+			uniqueUsers = append(uniqueUsers, userID)
+		}
+	}
+	for _, userID := range uniqueUsers {
+		if err := lockActiveUserTx(ctx, tx, db, userID); err != nil {
+			if errors.Is(err, ErrSourceMutationForbidden) {
+				if userID == request.ApproverUserID {
+					return ErrMCPMutationApproverForbidden
+				}
+				return ErrMCPMutationProposalPrincipalForbidden
+			}
+			return err
+		}
+	}
+	admin := make(map[uint64]bool, len(uniqueUsers))
+	for _, userID := range uniqueUsers {
+		hasAdmin, err := hasMCPMutationAdminRoleTx(ctx, tx, db, userID)
+		if err != nil {
+			return err
+		}
+		admin[userID] = hasAdmin
+		if hasAdmin {
+			if err := lockUserAdminRoleTx(ctx, tx, db, userID); err != nil {
+				if errors.Is(err, ErrSourceMutationForbidden) {
+					if userID == request.ApproverUserID {
+						return ErrMCPMutationApproverForbidden
+					}
+					return ErrMCPMutationProposalPrincipalForbidden
+				}
+				return err
+			}
+		}
+	}
+	if request.ExternalResource {
+		if !admin[request.ApproverUserID] {
+			return ErrMCPMutationApproverForbidden
+		}
+		return nil
+	}
+	for _, sourceID := range unique {
+		owner := owners[sourceID]
+		if !owner.Verified && !admin[request.ProposalPrincipalID] {
+			return fmt.Errorf("%w: source %d is not verified", ErrMCPMutationProposalPrincipalForbidden, sourceID)
+		}
+		if owner.UserID != request.ProposalPrincipalID && !admin[request.ProposalPrincipalID] {
+			return fmt.Errorf("%w: source %d is owned by another principal", ErrMCPMutationProposalPrincipalForbidden, sourceID)
+		}
+		if !owner.Verified && !admin[request.ApproverUserID] {
+			return fmt.Errorf("%w: source %d has no verified approver provenance", ErrMCPMutationApproverForbidden, sourceID)
+		}
+		if owner.UserID != request.ApproverUserID && !admin[request.ApproverUserID] {
+			return ErrMCPMutationApproverForbidden
+		}
+	}
+	return nil
+}
+
+func hasMCPMutationAdminRoleTx(ctx context.Context, tx *sql.Tx, db Handler, userID uint64) (bool, error) {
+	p := func(n int) string { return sourceOwnershipPlaceholder(db, n) }
+	query := `SELECT 1 FROM UserRoles ur
+		JOIN AuthRoles r ON r.role_id = ur.role_id
+		WHERE ur.user_id = ` + p(1) + `
+		  AND LOWER(r.name) IN (` + p(2) + `,` + p(3) + `)
+		LIMIT 1`
+	var one int
+	err := tx.QueryRowContext(ctx, query, userID, "admin", "superadmin").Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read administrative role: %w", err)
+	}
+	return true, nil
+}
+
+// IssueMCPMutationApprovalAuthorized persists one operator approval and moves
+// the proposal to approved. The authority callback is mandatory and runs inside
+// the transaction before quota/proposal locks. It never dispatches an external
+// operation.
+func IssueMCPMutationApprovalAuthorized(ctx context.Context, db *Handler, approval MCPMutationApprovalRow, expectedProposalSHA256 string, now time.Time, authority MCPMutationApprovalAuthority) (MCPMutationApprovalRow, bool, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -1144,6 +1301,12 @@ func IssueMCPMutationApproval(ctx context.Context, db *Handler, approval MCPMuta
 	}
 	if !found {
 		return MCPMutationApprovalRow{}, false, ErrMCPMutationProposalNotFound
+	}
+	if authority == nil {
+		return MCPMutationApprovalRow{}, false, ErrMCPMutationApprovalAuthorityUnavailable
+	}
+	if err := authority(txCtx, tx, proposal); err != nil {
+		return MCPMutationApprovalRow{}, false, err
 	}
 	if _, _, err := ensureAndLockMCPMutationQuotaTx(txCtx, tx, *db, proposal.RunID, proposal.PrincipalUserID); err != nil {
 		return MCPMutationApprovalRow{}, false, err

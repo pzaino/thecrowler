@@ -14,7 +14,7 @@ jobs:
       - action: AgentToolLoop
         params:
           provider: openai
-          url: http://host.docker.internal:18096/v1/chat/completions
+          url: http://crowler-e2e-slow-model:18095/v1/chat/completions
           model: scripted
           prompt: Wait for the slow model and reply.
           allowlist: [mcp_approved-server_mutate_counter]

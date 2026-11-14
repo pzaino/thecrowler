@@ -261,6 +261,9 @@ func TestMCPMutationApprovalAPIApproveRevokeDeny(t *testing.T) {
 	if crossTenant.Code != http.StatusForbidden {
 		t.Fatalf("cross-tenant approve status %d: %s", crossTenant.Code, crossTenant.Body.String())
 	}
+	if strings.Contains(crossTenant.Body.String(), "source 42") || strings.Contains(crossTenant.Body.String(), "owned by another") {
+		t.Fatalf("approval denial leaked source ownership detail: %s", crossTenant.Body.String())
+	}
 
 	revoke := callMCPMutationHandler(t, mcpMutationRevokeHandler, http.MethodPost,
 		"/v1/console/mcp/mutations/proposals/"+first.ProposalID+"/revoke",

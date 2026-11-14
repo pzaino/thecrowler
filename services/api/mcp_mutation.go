@@ -201,7 +201,8 @@ func mcpMutationErrorCode(err error) int {
 	case errors.Is(err, errMCPMutationAuthRequired), errors.Is(err, errSourceUnauthenticated):
 		return http.StatusUnauthorized
 	case errors.Is(err, errMCPMutationForbidden), errors.Is(err, errSourceForbidden),
-		errors.Is(err, errSourceOwnerUnknown), errors.Is(err, agentpkg.ErrMCPMutationPrincipal):
+		errors.Is(err, errSourceOwnerUnknown), errors.Is(err, agentpkg.ErrMCPMutationPrincipal),
+		errors.Is(err, agentpkg.ErrMCPMutationApprovalForbidden):
 		return http.StatusForbidden
 	case errors.Is(err, cdb.ErrMCPMutationProposalNotFound), errors.Is(err, cdb.ErrMCPMutationApprovalNotFound):
 		return http.StatusNotFound
@@ -576,7 +577,7 @@ func mcpMutationApproveHandler(w http.ResponseWriter, r *http.Request) {
 			nil, "Invalid MCP mutation approval request", http.StatusBadRequest, 0)
 		return
 	}
-	principal, identity, err := resolveMCPMutationPrincipal(r.Context())
+	_, identity, err := resolveMCPMutationPrincipal(r.Context())
 	if err != nil {
 		handleErrorAndRespond(w, err, nil, "MCP mutation authentication failed", mcpMutationErrorCode(err), 0)
 		return
@@ -600,24 +601,20 @@ func mcpMutationApproveHandler(w http.ResponseWriter, r *http.Request) {
 			"MCP mutation proposal content changed", http.StatusConflict, 0)
 		return
 	}
-	if err := authorizeMCPMutationProposal(r.Context(), principal, identity, proposal); err != nil {
-		handleErrorAndRespond(w, err, nil, "MCP mutation approval is not authorized", mcpMutationErrorCode(err), 0)
-		return
-	}
-	if err := requireActiveMCPProposalPrincipal(r.Context(), proposal); err != nil {
-		handleErrorAndRespond(w, err, nil, "MCP mutation proposal principal is not active", mcpMutationErrorCode(err), 0)
-		return
-	}
 	approvalStore, err := mcpMutationApprovalStoreFactory(&dbHandler, time.Hour)
 	if err != nil {
 		handleErrorAndRespond(w, err, nil, "MCP mutation approval store unavailable", mcpMutationErrorCode(err), 0)
 		return
 	}
-	approval, inserted, err := approvalStore.Issue(r.Context(), agentpkg.MCPMutationApprovalRequest{
-		ProposalID: proposalID, ProposalSHA256: request.ProposalSHA256,
-		Approver: principal, ExpiresAt: request.RequestedExpiry,
-		MaxExecutions: request.MaxExecutions,
-		Reason:        request.Reason,
+	approvalStore.SetSnapshot(agentpkg.MCPMutationApprovalSnapshot{
+		Policy:    agentpkg.CurrentMCPMutationPolicy(),
+		Inventory: agentpkg.CurrentMCPOperatorConfig(),
+		Agent:     agentpkg.CurrentAgentIdentityForMCPApproval,
+	})
+	approval, inserted, err := approvalStore.Approve(r.Context(), agentpkg.MCPMutationApprovalCommand{
+		Approver: identity, ProposalID: proposalID, ProposalSHA256: request.ProposalSHA256,
+		IdentityVersion: request.IdentityVersion, ExpiresAt: request.RequestedExpiry,
+		MaxExecutions: request.MaxExecutions, Reason: request.Reason,
 	})
 	if err != nil {
 		handleErrorAndRespond(w, err, nil, "MCP mutation approval failed", mcpMutationErrorCode(err), 0)

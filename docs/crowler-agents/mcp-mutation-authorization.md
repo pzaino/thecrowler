@@ -880,3 +880,48 @@ G3 was approved and implemented. Schema remains `1.17` with writer generation
 See `docs/crowler-agents/schema-deployment.md` for the operator procedure and
 `docs/crowler-agents/reviews/WP-04C2J_*` for the G3 decision, security and test
 evidence.
+
+## 30. WP-04C2L approval authority and hermetic E2E
+
+WP-04C2L keeps the lifecycle record-only and schema 1.17 unchanged.
+
+Approval issuance now has one typed production path:
+`DatabaseMCPMutationApprovalStore.Approve` derives the approver from the
+authenticated middleware identity and calls the durable `Issue` transaction.
+`Issue` requires an in-transaction authority callback that revalidates the
+current approver account, administrative/source authority, proposal principal
+and verified source ownership. The callback runs before quota/proposal locks.
+Policy ID, version, canonical hash, exact operation, agent, inventory, scope,
+arguments, transport and `execution_backend: none` are revalidated against the
+API process's explicit current snapshot.
+
+The shared lock order is:
+
+```text
+source rows -> users ascending -> administrative grants -> quota -> proposal -> approval/audit
+```
+
+Proposal admission follows the same order. PostgreSQL tests cover transfer-first,
+approval-first and concurrent administrative-role revocation. A transfer that
+commits after an approval is a later ownership change and must be revalidated by
+any future executor.
+
+The E2E fixture is now test-only, run-scoped and ownership-safe:
+
+- random run ID and Compose project;
+- dynamic loopback API/Events ports;
+- no PostgreSQL host port;
+- internal fake-model services;
+- source/digest-labelled run-scoped images;
+- exact-label cleanup and no broad `down`/prune;
+- structured, redacted artifacts;
+- negative safety tests for collisions, work roots, concurrent runs, stale PIDs,
+  unsafe bindings and stale images.
+
+The negative harness tests and the full 59-check fixture pass on a disposable
+Docker-in-Docker daemon. The opt-in E2E workflow is `workflow_dispatch` only.
+
+No dispatcher, dispatch-attempt write, retry/reconciliation worker or remote
+mutating `tools/call` is enabled. Future dispatch remains a separate design and
+approval gate; see `WP-04C2L_DISPATCH_DESIGN.md` and
+`WP-04C2M_DISPATCH_APPROVAL_REQUEST.md`.

@@ -1,0 +1,122 @@
+name: MCP authorization E2E (opt-in)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mcp-authorization-e2e-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  isolated-e2e:
+    name: isolated-e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Start disposable Docker daemon
+        env:
+          DIND_NAME: wp04c2l-dind-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          test -z "${CROWLER_E2E_KEEP:-}"
+          test -z "${CROWLER_E2E_STOP_AFTER:-}"
+          test -z "${CROWLER_E2E_PREFLIGHT_ONLY:-}"
+          docker run -d --privileged --name "$DIND_NAME" \
+            --label "org.crowler.e2e.dind=${{ github.run_id }}" \
+            -e DOCKER_TLS_CERTDIR= \
+            -p 127.0.0.1::2375 \
+            -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
+            -v "$RUNNER_TEMP:$RUNNER_TEMP" \
+            docker:dind
+          address="$(docker port "$DIND_NAME" 2375/tcp | head -1)"
+          case "$address" in 127.0.0.1:*) ;; *) echo "dind port is not loopback: $address" >&2; exit 1 ;; esac
+          echo "DOCKER_HOST=tcp://${address}" >>"$GITHUB_ENV"
+          export DOCKER_HOST="tcp://${address}"
+          for _ in $(seq 1 60); do
+            if docker info >/dev/null 2>&1; then
+              echo "Disposable Docker daemon ready"
+              docker version --format '{{.Server.Version}}'
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Disposable Docker daemon did not become ready" >&2
+          exit 1
+
+      - name: Run harness safety tests on disposable daemon
+        run: |
+          python3 tests/integration/mcp-authorization/safety_tests.py \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --artifacts "$RUNNER_TEMP/crowler-e2e-safety"
+
+      - name: Run isolated authorization fixture
+        env:
+          TMPDIR: ${{ runner.temp }}
+          CROWLER_E2E_WORK: ${{ runner.temp }}/crowler-e2e-work-root
+          CROWLER_E2E_ARTIFACT_ROOT: ${{ runner.temp }}/crowler-e2e-artifacts
+        run: |
+          test -z "${CROWLER_E2E_KEEP:-}"
+          test -z "${CROWLER_E2E_STOP_AFTER:-}"
+          test -z "${CROWLER_E2E_PREFLIGHT_ONLY:-}"
+          mkdir -p "$CROWLER_E2E_WORK"
+          bash tests/integration/mcp-authorization/run.sh
+
+      - name: Verify structured result is PASS
+        if: always()
+        run: |
+          set -euo pipefail
+          result="$(find "$RUNNER_TEMP/crowler-e2e-artifacts" -name results.json -print -quit)"
+          test -n "$result"
+          python3 - "$result" <<'PY'
+          import json
+          import sys
+          data = json.load(open(sys.argv[1], encoding="utf-8"))
+          print(json.dumps({"conclusion": data.get("conclusion"), "counts": data.get("counts")}, indent=2))
+          counts = data.get("counts", {})
+          cleanup = data.get("cleanup") or {}
+          if data.get("conclusion") != "PASS":
+              raise SystemExit("E2E conclusion is not PASS")
+          if counts.get("FAIL", 0) or counts.get("BLOCKED", 0) or counts.get("SKIP", 0):
+              raise SystemExit("E2E contains failed, blocked or skipped checks")
+          if cleanup.get("status") != "PASS":
+              raise SystemExit("E2E cleanup did not report PASS")
+          if counts.get("PASS", 0) < 50:
+              raise SystemExit("E2E did not run the expected authorization matrix")
+          if not any(c.get("name") == "fixture completed" and c.get("status") == "PASS" for c in data.get("checks", [])):
+              raise SystemExit("E2E did not reach the final completion marker")
+          PY
+
+      - name: Upload sanitized E2E evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mcp-authorization-e2e-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/crowler-e2e-artifacts
+            ${{ runner.temp }}/crowler-e2e-safety
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Remove disposable Docker daemon
+        if: always()
+        run: |
+          set +e
+          ids="$(docker ps -aq --filter label=org.crowler.e2e.dind=${{ github.run_id }})"
+          for id in $ids; do
+            label="$(docker inspect -f '{{ index .Config.Labels "org.crowler.e2e.dind" }}' "$id" 2>/dev/null)"
+            [ "$label" = "${{ github.run_id }}" ] && docker rm -f "$id"
+          done
+          exit 0

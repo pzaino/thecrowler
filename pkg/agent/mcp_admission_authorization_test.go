@@ -64,9 +64,6 @@ func TestMCPAdmissionRevalidatesCurrentPrincipalAndOwnership(t *testing.T) {
 		{
 			name: "ownership unverified",
 			mutate: func(h *mcpMutationSQLiteHandler) {
-				if _, err := h.db.Exec(`INSERT INTO Users(user_id, username, disabled, deleted_at) VALUES (8, 'other-owner', FALSE, NULL)`); err != nil {
-					t.Fatalf("insert other owner: %v", err)
-				}
 				if _, err := h.db.Exec(`UPDATE SourceOwnership SET user_id=8 WHERE source_id=42`); err != nil {
 					t.Fatalf("unverify ownership: %v", err)
 				}
@@ -76,9 +73,6 @@ func TestMCPAdmissionRevalidatesCurrentPrincipalAndOwnership(t *testing.T) {
 		{
 			name: "ownership transferred",
 			mutate: func(h *mcpMutationSQLiteHandler) {
-				if _, err := h.db.Exec(`INSERT INTO Users(user_id, username, disabled, deleted_at) VALUES (8, 'other-owner', FALSE, NULL)`); err != nil {
-					t.Fatalf("insert other owner: %v", err)
-				}
 				if _, err := h.db.Exec(`UPDATE Sources SET usr_id=8 WHERE source_id=42`); err != nil {
 					t.Fatalf("transfer source: %v", err)
 				}
@@ -219,9 +213,6 @@ func TestMCPAdmissionReplayRevalidatesAuthority(t *testing.T) {
 		{
 			name: "ownership transferred before replay",
 			mutate: func(h *mcpMutationSQLiteHandler) {
-				if _, err := h.db.Exec(`INSERT INTO Users(user_id, username, disabled, deleted_at) VALUES (8, 'other-owner', FALSE, NULL)`); err != nil {
-					t.Fatalf("insert other owner: %v", err)
-				}
 				if _, err := h.db.Exec(`UPDATE Sources SET usr_id=8 WHERE source_id=42`); err != nil {
 					t.Fatalf("transfer source: %v", err)
 				}
@@ -274,5 +265,36 @@ func TestMCPAdmissionAuthorizerPreservesCancellation(t *testing.T) {
 	cancel()
 	if err := authorizer.AuthorizeMCPMutationAdmission(ctx, tx, proposal); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled authorizer error = %v, want context.Canceled", err)
+	}
+}
+
+func TestMCPAdmissionLocksMultiSourceScopeInSortedOrder(t *testing.T) {
+	handler := newMCPMutationStoreTestHandler(t)
+	db := handler.(*mcpMutationSQLiteHandler).db
+	for _, statement := range []string{
+		`INSERT INTO Sources(source_id, source_uid, url, name, status, disabled, usr_id, deleted_at)
+		 VALUES (43, 'fixture-source-43', 'https://fixture.example/43', 'fixture-43', 'new', FALSE, 7, NULL)`,
+		`INSERT INTO SourceOwnership(source_id, user_id, verified_at, verified_by_user_id, verified_by, verification_method)
+		 VALUES (43, 7, CURRENT_TIMESTAMP, 7, 'test-fixture', 'admin_verification')`,
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatalf("seed multi-source fixture: %v", err)
+		}
+	}
+	manager, policy, aliases, _, cleanup := newMCPAuthorityManager(t)
+	defer cleanup()
+	proposal := sourceAdmissionProposal(t, manager, policy, aliases[1], "multi-source-run", "multi-source-call")
+	proposal.SourceIDs = []uint64{43, 42}
+	proposal.ProposalSHA256 = proposalFingerprint(proposal)
+	store, err := NewDatabaseMCPMutationProposalStore(&handler)
+	if err != nil {
+		t.Fatalf("new durable store: %v", err)
+	}
+	admitted, err := store.Admit(context.Background(), proposal, 4, 8)
+	if err != nil {
+		t.Fatalf("multi-source admission: %v", err)
+	}
+	if len(admitted.SourceIDs) != 2 {
+		t.Fatalf("multi-source admission scope = %+v", admitted.SourceIDs)
 	}
 }

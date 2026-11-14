@@ -274,7 +274,7 @@ func TestPostgresMCPMutationDurableStore(t *testing.T) {
 		MaxExecutions:    1,
 		LastUpdatedAt:    now.Add(time.Minute),
 	}
-	issued, inserted, err := IssueMCPMutationApproval(ctx, &handler, approval, proposal.ProposalSHA256, now.Add(time.Minute))
+	issued, inserted, err := issueMCPMutationApprovalForTest(ctx, &handler, approval, proposal.ProposalSHA256, now.Add(time.Minute))
 	if err != nil || !inserted || issued.State != "active" {
 		t.Fatalf("PostgreSQL approval = %+v inserted=%v err=%v", issued, inserted, err)
 	}
@@ -389,11 +389,11 @@ func TestPostgresMCPMutationDurableStore(t *testing.T) {
 	approvalB.ApprovalID = mcpMutationTestHash("pg-approval-race-b")
 	approvalResults := make(chan error, 2)
 	go func() {
-		_, _, err := IssueMCPMutationApproval(ctx, &handler, approvalA, raceProposal.ProposalSHA256, now.Add(time.Minute))
+		_, _, err := issueMCPMutationApprovalForTest(ctx, &handler, approvalA, raceProposal.ProposalSHA256, now.Add(time.Minute))
 		approvalResults <- err
 	}()
 	go func() {
-		_, _, err := IssueMCPMutationApproval(ctx, &secondHandler, approvalB, raceProposal.ProposalSHA256, now.Add(time.Minute))
+		_, _, err := issueMCPMutationApprovalForTest(ctx, &secondHandler, approvalB, raceProposal.ProposalSHA256, now.Add(time.Minute))
 		approvalResults <- err
 	}()
 	for i := 0; i < 2; i++ {
@@ -419,7 +419,7 @@ func TestPostgresMCPMutationDurableStore(t *testing.T) {
 	initial.ApprovedAt = now.Add(2 * time.Minute)
 	initial.ExpiresAt = now.Add(20 * time.Minute)
 	initial.LastUpdatedAt = now.Add(2 * time.Minute)
-	issuedInitial, _, err := IssueMCPMutationApproval(ctx, &handler, initial, revokeRaceProposal.ProposalSHA256, now.Add(2*time.Minute))
+	issuedInitial, _, err := issueMCPMutationApprovalForTest(ctx, &handler, initial, revokeRaceProposal.ProposalSHA256, now.Add(2*time.Minute))
 	if err != nil {
 		t.Fatalf("issue initial race approval: %v", err)
 	}
@@ -430,7 +430,7 @@ func TestPostgresMCPMutationDurableStore(t *testing.T) {
 	replacement.LastUpdatedAt = now.Add(3 * time.Minute)
 	issueRevokeResults := make(chan error, 2)
 	go func() {
-		_, _, err := IssueMCPMutationApproval(ctx, &handler, replacement, revokeRaceProposal.ProposalSHA256, now.Add(3*time.Minute))
+		_, _, err := issueMCPMutationApprovalForTest(ctx, &handler, replacement, revokeRaceProposal.ProposalSHA256, now.Add(3*time.Minute))
 		issueRevokeResults <- err
 	}()
 	go func() {
@@ -476,5 +476,184 @@ func TestPostgresMCPMutationDurableStore(t *testing.T) {
 	}
 	if err := CheckMCPMutationCapability(ctx, &handler); !errors.Is(err, ErrMCPMutationSchemaUnavailable) {
 		t.Fatalf("wrong column type capability error = %v", err)
+	}
+}
+
+func TestPostgresMCPMutationApprovalAuthorityLockOrder(t *testing.T) {
+	target, err := mcpPostgresDisposableTarget()
+	if errors.Is(err, errMCPPostgresDisposableOptInRequired) || errors.Is(err, errMCPPostgresDSNRequired) {
+		t.Skip(err)
+	}
+	if err != nil {
+		t.Fatalf("disposable PostgreSQL target: %v", err)
+	}
+	db, _, _ := newMCPPostgresDisposableDB(t, target)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	var user string
+	if err := db.QueryRowContext(ctx, `SELECT current_user`).Scan(&user); err != nil {
+		t.Fatalf("read current user: %v", err)
+	}
+	applyMCPMutationPostgresMigration(t, db, user)
+	for _, statement := range []string{
+		`CREATE TABLE Users (user_id BIGINT PRIMARY KEY, username TEXT NOT NULL, disabled BOOLEAN NOT NULL DEFAULT FALSE, deleted_at TIMESTAMPTZ)`,
+		`CREATE TABLE AuthRoles (role_id BIGINT PRIMARY KEY, name TEXT NOT NULL UNIQUE)`,
+		`CREATE TABLE UserRoles (user_id BIGINT NOT NULL, role_id BIGINT NOT NULL, PRIMARY KEY (user_id, role_id))`,
+		`CREATE TABLE Sources (source_id BIGINT PRIMARY KEY, usr_id BIGINT, deleted_at TIMESTAMPTZ, last_updated_at TIMESTAMPTZ)`,
+		`CREATE TABLE SourceOwnership (source_id BIGINT PRIMARY KEY, user_id BIGINT NOT NULL, verified_at TIMESTAMPTZ NOT NULL, verified_by_user_id BIGINT NOT NULL, verified_by TEXT NOT NULL, verification_method TEXT NOT NULL, verification_reason TEXT, last_updated_at TIMESTAMPTZ)`,
+		`INSERT INTO Users(user_id, username) VALUES (7, 'owner-1'), (8, 'other-owner'), (9, 'admin-1')`,
+		`INSERT INTO AuthRoles(role_id, name) VALUES (1, 'admin'), (2, 'user')`,
+		`INSERT INTO UserRoles(user_id, role_id) VALUES (7, 2), (8, 2), (9, 1)`,
+		`INSERT INTO Sources(source_id, usr_id) VALUES (42, 7)`,
+		`INSERT INTO SourceOwnership(source_id, user_id, verified_at, verified_by_user_id, verified_by, verification_method) VALUES (42, 7, CURRENT_TIMESTAMP, 9, 'admin-1', 'test')`,
+	} {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			t.Fatalf("setup approval authority schema: %v\n%s", err, statement)
+		}
+	}
+	var handler Handler = &PostgresHandler{db: db, dbms: DBPostgresStr, connStr: target.String()}
+	now := time.Now().UTC()
+	proposal := mcpMutationTestProposal("approval-lock", "approval-lock-run", "approval-lock-call", now)
+	if _, inserted, err := AdmitMCPMutationProposal(ctx, &handler, proposal, 4, 8); err != nil || !inserted {
+		t.Fatalf("admit approval-lock proposal inserted=%v err=%v", inserted, err)
+	}
+	makeApproval := func(seed string) MCPMutationApprovalRow {
+		return MCPMutationApprovalRow{
+			ApprovalID:       mcpMutationTestHash("approval-lock:" + seed),
+			ProposalID:       proposal.ProposalID,
+			ApprovedByUserID: 9,
+			ApprovedBy:       "admin-1",
+			ApprovedByIssuer: "test-issuer",
+			ApprovedAt:       now.Add(time.Minute),
+			ExpiresAt:        now.Add(20 * time.Minute),
+			MaxExecutions:    1,
+			LastUpdatedAt:    now.Add(time.Minute),
+		}
+	}
+	authority := func(txCtx context.Context, tx *sql.Tx, row MCPMutationProposalRow) error {
+		return AuthorizeMCPMutationApprovalTx(txCtx, tx, handler, MCPMutationApprovalAuthorityRequest{
+			SourceIDs: row.SourceIDs, ApproverUserID: 9, ProposalPrincipalID: row.PrincipalUserID,
+		})
+	}
+
+	// Transfer holds the source row first; approval must wait, then fail closed
+	// because the proposal principal no longer owns the source.
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin transfer transaction: %v", err)
+	}
+	if _, err := lockSourceOwnerTx(ctx, tx, handler, 42); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("lock source for transfer: %v", err)
+	}
+	transferFirst := make(chan error, 1)
+	go func() {
+		_, _, err := IssueMCPMutationApprovalAuthorized(ctx, &handler, makeApproval("transfer-first"), proposal.ProposalSHA256, now.Add(time.Minute), authority)
+		transferFirst <- err
+	}()
+	time.Sleep(250 * time.Millisecond)
+	if _, err := tx.ExecContext(ctx, `UPDATE Sources SET usr_id=8, last_updated_at=CURRENT_TIMESTAMP WHERE source_id=42`); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("update source owner: %v", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE SourceOwnership SET user_id=8, verified_at=CURRENT_TIMESTAMP WHERE source_id=42`); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("update source provenance: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit transfer: %v", err)
+	}
+	if err := <-transferFirst; !errors.Is(err, ErrMCPMutationProposalPrincipalForbidden) {
+		t.Fatalf("approval after transfer-first error = %v, want forbidden", err)
+	}
+	var approvals int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM MCPMutationApprovals WHERE proposal_id=$1`, proposal.ProposalID).Scan(&approvals); err != nil || approvals != 0 {
+		t.Fatalf("approvals after transfer-first = %d err=%v", approvals, err)
+	}
+
+	// Restore the owner and let approval hold the source lock first. Transfer
+	// must wait for the approval transaction, then commit normally. The
+	// resulting approval is historical: future dispatch must recheck ownership.
+	if _, err := db.ExecContext(ctx, `UPDATE Sources SET usr_id=7 WHERE source_id=42`); err != nil {
+		t.Fatalf("restore source owner: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE SourceOwnership SET user_id=7 WHERE source_id=42`); err != nil {
+		t.Fatalf("restore provenance: %v", err)
+	}
+	locked := make(chan struct{})
+	release := make(chan struct{})
+	approvalFirst := make(chan error, 1)
+	go func() {
+		appAuthority := func(txCtx context.Context, tx *sql.Tx, row MCPMutationProposalRow) error {
+			if err := authority(txCtx, tx, row); err != nil {
+				return err
+			}
+			close(locked)
+			<-release
+			return nil
+		}
+		_, _, err := IssueMCPMutationApprovalAuthorized(ctx, &handler, makeApproval("approval-first"), proposal.ProposalSHA256, now.Add(time.Minute), appAuthority)
+		approvalFirst <- err
+	}()
+	<-locked
+	transferDone := make(chan error, 1)
+	go func() {
+		_, err := VerifySourceOwnershipContext(ctx, &handler, SourceOwnershipVerification{
+			SourceID: 42, UserID: 8, VerifiedByUserID: 9, VerifiedBy: "admin-1",
+			VerificationMethod: "test",
+		})
+		transferDone <- err
+	}()
+	time.Sleep(250 * time.Millisecond)
+	close(release)
+	if err := <-approvalFirst; err != nil {
+		t.Fatalf("approval-first error: %v", err)
+	}
+	if err := <-transferDone; err != nil {
+		t.Fatalf("transfer after approval-first error: %v", err)
+	}
+	var owner uint64
+	if err := db.QueryRowContext(ctx, `SELECT usr_id FROM Sources WHERE source_id=42`).Scan(&owner); err != nil || owner != 8 {
+		t.Fatalf("final source owner = %d err=%v", owner, err)
+	}
+
+	// Administrative role revocation waits for the approval transaction and
+	// must make the approval fail after the delete commits.
+	if _, err := db.ExecContext(ctx, `UPDATE Sources SET usr_id=7 WHERE source_id=42`); err != nil {
+		t.Fatalf("restore owner for role race: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE SourceOwnership SET user_id=7 WHERE source_id=42`); err != nil {
+		t.Fatalf("restore provenance for role race: %v", err)
+	}
+	roleProposal := mcpMutationTestProposal("approval-role-race", "approval-role-run", "approval-role-call", now)
+	if _, inserted, err := AdmitMCPMutationProposal(ctx, &handler, roleProposal, 4, 8); err != nil || !inserted {
+		t.Fatalf("admit role-race proposal inserted=%v err=%v", inserted, err)
+	}
+	roleTx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin role revocation transaction: %v", err)
+	}
+	if _, err := roleTx.ExecContext(ctx, `DELETE FROM UserRoles WHERE user_id=9 AND role_id=1`); err != nil {
+		_ = roleTx.Rollback()
+		t.Fatalf("delete admin role: %v", err)
+	}
+	roleApproval := makeApproval("role-race")
+	roleApproval.ProposalID = roleProposal.ProposalID
+	roleApproval.ApprovedAt = now.Add(time.Minute)
+	roleResult := make(chan error, 1)
+	go func() {
+		_, _, err := IssueMCPMutationApprovalAuthorized(ctx, &handler, roleApproval, roleProposal.ProposalSHA256, now.Add(time.Minute), authority)
+		roleResult <- err
+	}()
+	time.Sleep(250 * time.Millisecond)
+	if err := roleTx.Commit(); err != nil {
+		t.Fatalf("commit role revocation: %v", err)
+	}
+	if err := <-roleResult; !errors.Is(err, ErrMCPMutationApproverForbidden) {
+		t.Fatalf("approval after role revocation error = %v, want approver forbidden", err)
+	}
+	var roleApprovals int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM MCPMutationApprovals WHERE proposal_id=$1`, roleProposal.ProposalID).Scan(&roleApprovals); err != nil || roleApprovals != 0 {
+		t.Fatalf("approvals after role revocation = %d err=%v", roleApprovals, err)
 	}
 }

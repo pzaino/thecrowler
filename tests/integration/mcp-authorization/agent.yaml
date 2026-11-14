@@ -14,7 +14,7 @@ jobs:
       - action: AgentToolLoop
         params:
           provider: openai
-          url: http://host.docker.internal:18095/v1/chat/completions
+          url: http://crowler-e2e-model:18095/v1/chat/completions
           model: scripted
           prompt: Call the approved mutation proposal tool once, then reply.
           allowlist: [mcp_approved-server_mutate_counter]

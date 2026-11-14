@@ -52,34 +52,39 @@ func (a DatabaseMCPMutationAdmissionAuthorizer) AuthorizeMCPMutationAdmission(ct
 		return err
 	}
 
-	// Source-scoped proposals follow the application's transfer lock order:
-	// source first, then user. Resolve the principal once to obtain current
-	// roles for the administrative override, then let
-	// AuthorizeSourceMutationTx acquire the source and user locks. Re-resolve
-	// after the locks to reject a username or issuer change that committed
-	// before the locks were taken.
+	// Source-scoped proposals use the shared approval/transfer lock order:
+	// all source rows sorted, then user rows sorted, then grant rows. The
+	// proposal principal is both requester and principal here, so the database
+	// authority verifies current verified ownership or current admin authority.
 	resolved, err := resolveMCPAdmissionIdentity(ctx, tx, proposal.Principal)
 	if err != nil {
 		return err
 	}
-	principal := CrawlPrincipal{
-		UserID:   proposal.Principal.UserID,
-		Username: resolved.Username,
-		Issuer:   resolved.Issuer,
-		Roles:    append([]string(nil), resolved.Roles...),
-		Scopes:   append([]string(nil), resolved.Scopes...),
-	}
-	for _, sourceID := range proposal.SourceIDs {
-		if _, err := cdb.AuthorizeSourceMutationTx(ctx, tx, *a.DB, sourceID,
-			principal.UserID, principal.IsSourceAdministrator()); err != nil {
-			return mapMCPAdmissionSourceError(ctx, sourceID, err)
+	if err := cdb.AuthorizeMCPMutationApprovalTx(ctx, tx, *a.DB, cdb.MCPMutationApprovalAuthorityRequest{
+		SourceIDs: proposal.SourceIDs, ApproverUserID: proposal.Principal.UserID,
+		ProposalPrincipalID: proposal.Principal.UserID,
+	}); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		switch {
+		case errors.Is(err, cdb.ErrMCPMutationApproverForbidden),
+			errors.Is(err, cdb.ErrMCPMutationProposalPrincipalForbidden),
+			errors.Is(err, cdb.ErrSourceMutationNotFound),
+			errors.Is(err, cdb.ErrSourceMutationDeleted),
+			errors.Is(err, cdb.ErrSourceMutationForbidden),
+			errors.Is(err, cdb.ErrSourceMutationUnverified),
+			errors.Is(err, cdb.ErrSourceOwnershipAdminRequired):
+			return fmt.Errorf("%w: source ownership or authority changed", ErrMCPMutationOperationUnauthorized)
+		default:
+			return fmt.Errorf("%w: source authority unavailable", ErrMCPMutationStoreUnavailable)
 		}
 	}
 	locked, err := resolveMCPAdmissionIdentity(ctx, tx, proposal.Principal)
 	if err != nil {
 		return err
 	}
-	if locked.Username != principal.Username || locked.Issuer != principal.Issuer {
+	if locked.Username != resolved.Username || locked.Issuer != resolved.Issuer {
 		return ErrMCPMutationPrincipal
 	}
 	return nil
@@ -103,22 +108,6 @@ func resolveMCPAdmissionIdentity(ctx context.Context, tx *sql.Tx, principal MCPM
 		return auth.Identity{}, ErrMCPMutationPrincipal
 	}
 	return resolved, nil
-}
-
-func mapMCPAdmissionSourceError(ctx context.Context, sourceID uint64, err error) error {
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		return ctxErr
-	}
-	switch {
-	case errors.Is(err, cdb.ErrSourceMutationNotFound),
-		errors.Is(err, cdb.ErrSourceMutationDeleted),
-		errors.Is(err, cdb.ErrSourceMutationForbidden),
-		errors.Is(err, cdb.ErrSourceMutationUnverified),
-		errors.Is(err, cdb.ErrSourceOwnershipAdminRequired):
-		return fmt.Errorf("%w: source %d: %v", ErrMCPMutationOperationUnauthorized, sourceID, err)
-	default:
-		return fmt.Errorf("%w: source %d authorization unavailable: %v", ErrMCPMutationStoreUnavailable, sourceID, err)
-	}
 }
 
 func lockMCPPrincipalTx(ctx context.Context, tx *sql.Tx, db cdb.Handler, userID uint64) error {

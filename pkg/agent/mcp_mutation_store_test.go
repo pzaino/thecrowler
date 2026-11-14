@@ -104,9 +104,12 @@ func newMCPMutationStoreTestHandler(t *testing.T) cdb.Handler {
 		CREATE TABLE RoleScopes (role_id INTEGER NOT NULL, scope_id INTEGER NOT NULL, PRIMARY KEY (role_id, scope_id));
 		CREATE TABLE Sources (source_id INTEGER PRIMARY KEY, source_uid TEXT, url TEXT, name TEXT, status TEXT, disabled BOOLEAN, usr_id INTEGER, deleted_at TIMESTAMP);
 		CREATE TABLE SourceOwnership (source_id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, verified_at TIMESTAMP NOT NULL, verified_by_user_id INTEGER NOT NULL, verified_by TEXT NOT NULL, verification_method TEXT NOT NULL);
-		INSERT INTO Users(user_id, username, disabled, deleted_at) VALUES (7, 'mcp-owner', FALSE, NULL);
+		INSERT INTO Users(user_id, username, disabled, deleted_at) VALUES
+			(7, 'mcp-owner', FALSE, NULL),
+			(8, 'other-owner', FALSE, NULL),
+			(9, 'admin-1', FALSE, NULL);
 		INSERT INTO AuthRoles(role_id, name) VALUES (1, 'admin'), (2, 'user');
-		INSERT INTO UserRoles(user_id, role_id) VALUES (7, 2);
+		INSERT INTO UserRoles(user_id, role_id) VALUES (7, 2), (8, 2), (9, 1);
 		INSERT INTO Sources(source_id, source_uid, url, name, status, disabled, usr_id, deleted_at)
 		VALUES (42, 'fixture-source-42', 'https://fixture.example/42', 'fixture', 'new', FALSE, 7, NULL);
 		INSERT INTO SourceOwnership(source_id, user_id, verified_at, verified_by_user_id, verified_by, verification_method)

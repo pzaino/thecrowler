@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/pzaino/thecrowler/pkg/auth"
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 )
@@ -264,7 +265,7 @@ func mapMCPMutationDatabaseError(err error) error {
 		return ErrMCPMutationApproval
 	case errors.Is(err, ErrMCPMutationPrincipal), errors.Is(err, ErrMCPMutationStoreUnavailable),
 		errors.Is(err, ErrMCPMutationOperationUnauthorized), errors.Is(err, ErrMCPMutationPolicyUnavailable),
-		errors.Is(err, ErrMCPMutationPolicyMismatch):
+		errors.Is(err, ErrMCPMutationPolicyMismatch), errors.Is(err, ErrMCPMutationApprovalForbidden):
 		return err
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return err
@@ -325,12 +326,34 @@ func (s *DatabaseMCPMutationProposalStore) Get(ctx context.Context, proposalID s
 
 // MCPMutationApprovalRequest is one trusted operator approval request.
 type MCPMutationApprovalRequest struct {
-	ProposalID     string
-	ProposalSHA256 string
-	Approver       MCPMutationPrincipal
-	ExpiresAt      time.Time
-	MaxExecutions  int
-	Reason         string
+	ProposalID      string
+	ProposalSHA256  string
+	IdentityVersion int
+	Approver        MCPMutationPrincipal
+	ExpiresAt       time.Time
+	MaxExecutions   int
+	Reason          string
+}
+
+// MCPMutationApprovalCommand is the typed production approval request. The
+// approver identity must come from authenticated middleware, never from request
+// JSON, model output or an arbitrary map.
+type MCPMutationApprovalCommand struct {
+	Approver        auth.Identity
+	ProposalID      string
+	ProposalSHA256  string
+	IdentityVersion int
+	ExpiresAt       time.Time
+	MaxExecutions   int
+	Reason          string
+}
+
+// MCPMutationApprovalSnapshot is an explicit, process-frozen authority view.
+// Agent may be nil, which fails closed when an approval is evaluated.
+type MCPMutationApprovalSnapshot struct {
+	Policy    MCPMutationPolicy
+	Inventory cfg.MCPConfig
+	Agent     func(agentID string) (AgentIdentity, bool)
 }
 
 // DatabaseMCPMutationApprovalStore is the durable approval adapter. It
@@ -340,6 +363,9 @@ type DatabaseMCPMutationApprovalStore struct {
 	DB          *cdb.Handler
 	MaxLifetime time.Duration
 	Now         func() time.Time
+	// Authority is the mandatory in-transaction approver/principal/source
+	// authority boundary. A nil authority fails closed.
+	Authority MCPMutationApprovalAuthorizer
 	// Policy, Inventory and Agent are trusted current-policy seams for tests
 	// and for the API service. Nil means use the process-wide frozen policy and
 	// trusted agent registry. A nil agent lookup fails closed.
@@ -360,7 +386,11 @@ func NewDatabaseMCPMutationApprovalStore(db *cdb.Handler, maxLifetime time.Durat
 	if maxLifetime <= 0 {
 		maxLifetime = time.Hour
 	}
-	return &DatabaseMCPMutationApprovalStore{DB: db, MaxLifetime: maxLifetime}, nil
+	return &DatabaseMCPMutationApprovalStore{
+		DB:          db,
+		MaxLifetime: maxLifetime,
+		Authority:   &DatabaseMCPMutationApprovalAuthorizer{DB: db},
+	}, nil
 }
 
 func (s *DatabaseMCPMutationApprovalStore) now() time.Time {
@@ -440,6 +470,50 @@ func (s *DatabaseMCPMutationApprovalStore) Lookup(ctx context.Context, approvalI
 	return converted, true, nil
 }
 
+// SetSnapshot installs an explicit current-policy/inventory/agent snapshot.
+// Existing non-nil fields are preserved so test seams can inject a controlled
+// snapshot without process-global state.
+func (s *DatabaseMCPMutationApprovalStore) SetSnapshot(snapshot MCPMutationApprovalSnapshot) {
+	if s == nil {
+		return
+	}
+	if s.Policy == nil {
+		s.Policy = func() MCPMutationPolicy { return snapshot.Policy }
+	}
+	if s.Inventory == nil {
+		s.Inventory = func() cfg.MCPConfig { return snapshot.Inventory }
+	}
+	if s.Agent == nil {
+		s.Agent = snapshot.Agent
+	}
+}
+
+// Approve is the typed production approval path. It derives the approver
+// principal only from the authenticated identity and delegates all current
+// policy, account, role, source and state checks to Issue inside the durable
+// transaction.
+func (s *DatabaseMCPMutationApprovalStore) Approve(ctx context.Context, command MCPMutationApprovalCommand) (MCPMutationApproval, bool, error) {
+	if s == nil || s.DB == nil || *s.DB == nil {
+		return MCPMutationApproval{}, false, ErrMCPMutationStoreUnavailable
+	}
+	if command.IdentityVersion <= 0 {
+		return MCPMutationApproval{}, false, ErrMCPMutationProposalConflict
+	}
+	principal, err := MCPMutationPrincipalFromAuthIdentity(command.Approver)
+	if err != nil {
+		return MCPMutationApproval{}, false, ErrMCPMutationPrincipal
+	}
+	return s.Issue(ctx, MCPMutationApprovalRequest{
+		ProposalID:      command.ProposalID,
+		ProposalSHA256:  command.ProposalSHA256,
+		IdentityVersion: command.IdentityVersion,
+		Approver:        principal,
+		ExpiresAt:       command.ExpiresAt,
+		MaxExecutions:   command.MaxExecutions,
+		Reason:          command.Reason,
+	})
+}
+
 // Issue persists one operator approval and moves the proposal to approved.
 func (s *DatabaseMCPMutationApprovalStore) Issue(ctx context.Context, request MCPMutationApprovalRequest) (MCPMutationApproval, bool, error) {
 	if s == nil || s.DB == nil || *s.DB == nil {
@@ -491,6 +565,9 @@ func (s *DatabaseMCPMutationApprovalStore) Issue(ctx context.Context, request MC
 	if proposalRow.ProposalSHA256 != fingerprint {
 		return MCPMutationApproval{}, false, ErrMCPMutationProposalConflict
 	}
+	if request.IdentityVersion != 0 && proposalRow.IdentityVersion != request.IdentityVersion {
+		return MCPMutationApproval{}, false, ErrMCPMutationProposalConflict
+	}
 	now := s.now()
 	if !proposalRow.ExpiresAt.After(now) {
 		return MCPMutationApproval{}, false, ErrMCPMutationProposalExpired
@@ -522,7 +599,20 @@ func (s *DatabaseMCPMutationApprovalStore) Issue(ctx context.Context, request MC
 		MaxExecutions:    maxExecutions,
 		LastUpdatedAt:    now.UTC(),
 	}
-	stored, inserted, err := cdb.IssueMCPMutationApproval(ctx, s.DB, row, fingerprint, now)
+	if s.Authority == nil {
+		return MCPMutationApproval{}, false, ErrMCPMutationStoreUnavailable
+	}
+	authority := func(txCtx context.Context, tx *sql.Tx, lockedRow cdb.MCPMutationProposalRow) error {
+		lockedProposal, err := mcpProposalFromDBRow(lockedRow)
+		if err != nil {
+			return err
+		}
+		if err := EvaluateMCPMutationApproval(lockedProposal, current); err != nil {
+			return err
+		}
+		return s.Authority.AuthorizeMCPMutationApproval(txCtx, tx, lockedRow, request.Approver)
+	}
+	stored, inserted, err := cdb.IssueMCPMutationApprovalAuthorized(ctx, s.DB, row, fingerprint, now, authority)
 	if err != nil {
 		return MCPMutationApproval{}, false, mapMCPMutationDatabaseError(err)
 	}
