@@ -49,18 +49,73 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn('"$image_id_before" != "$image_id_container"', run)
         self.assertNotRegex(run, r'docker run[^\n]*\n(?:[^\n]*\n){0,8}\s+docker:dind(?:\s|$)')
 
+    def test_attempt_label_and_metadata_are_bound(self) -> None:
+        step = self.step("Start disposable Docker daemon")
+        run = step["run"]
+        self.assertIn('org.crowler.e2e.attempt=${{ github.run_attempt }}', run)
+        self.assertIn('"name":"%s"', run)
+        self.assertIn('"run_attempt":"%s"', run)
+        self.assertEqual(step.get("env", {}).get("RUN_ATTEMPT"), "${{ github.run_attempt }}")
+
+    def test_cleanup_script_rejects_non_exact_ownership(self) -> None:
+        script = (ROOT / "scripts" / "cleanup-e2e-dind.sh").read_text(encoding="utf-8")
+        for needle in (
+            'org.crowler.e2e.attempt',
+            'actual_name',
+            'actual_attempt',
+            'expected_id',
+            'recorded container ID',
+            'preserving',
+        ):
+            self.assertIn(needle, script)
+        for comparison in (
+            'if [ "$actual_name" != "$dind_name" ]; then',
+            'if [ "$actual_run" != "$run_id" ]; then',
+            'if [ "$actual_attempt" != "$run_attempt" ]; then',
+            'if [ -n "$expected_id" ] && [ "$actual_id" != "$expected_id" ]; then',
+        ):
+            self.assertIn(comparison, script)
+        self.assertNotIn("docker system prune", script)
+        self.assertNotIn("down -v", script)
+
+    def test_cleanup_script_uses_host_daemon_only(self) -> None:
+        script = (ROOT / "scripts" / "cleanup-e2e-dind.sh").read_text(encoding="utf-8")
+        for selector in ("DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH"):
+            self.assertIn(f"-u {selector}", script)
+        self.assertIn('host_docker info', script)
+        self.assertIn('host_docker context show', script)
+        self.assertIn('unexpected host Docker context', script)
+        self.assertIn('name=${name_pattern}', script)
+
+    def test_fast_ci_runs_workflow_and_cleanup_tests(self) -> None:
+        workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "go.yml").read_text(encoding="utf-8"))
+        steps = workflow["jobs"]["build"]["steps"]
+        runs = "\n".join(step.get("run", "") for step in steps)
+        self.assertIn("PyYAML==6.0.2", runs)
+        self.assertIn("scripts/tests/cleanup-e2e-dind.sh", runs)
+        self.assertIn("actionlint@v1.7.7", runs)
+        self.assertIn("mcp-authorization-e2e.yml", runs)
+        triggers = workflow.get(True, workflow.get("on"))
+        self.assertIn("pull_request", triggers)
+        self.assertIn("push", triggers)
+
     def test_host_endpoint_is_guarded_before_dind(self) -> None:
         run = self.step("Start disposable Docker daemon")["run"]
         for selector in ("DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH"):
             self.assertIn(selector, run)
         self.assertIn("host Docker endpoint selectors must be unset", run)
+        self.assertIn('host_context="$(docker context show)"', run)
+        self.assertIn('[ "$host_context" != "default" ]', run)
+        self.assertIn("unexpected host Docker context", run)
 
     def test_cleanup_uses_host_scoped_script(self) -> None:
         step = self.step("Remove disposable Docker daemon from host endpoint")
         self.assertEqual(step.get("if"), "always()")
         run = step["run"]
-        self.assertIn('bash scripts/cleanup-e2e-dind.sh "$RUN_ID" "$DIND_NAME"', run)
+        self.assertIn('bash scripts/cleanup-e2e-dind.sh "$RUN_ID" "$RUN_ATTEMPT" "$DIND_NAME" "$DIND_METADATA"', run)
         self.assertIn("cleanup.log", run)
+        self.assertEqual(step.get("env", {}).get("RUN_ATTEMPT"), "${{ github.run_attempt }}")
+        self.assertIn("DIND_METADATA", step.get("env", {}))
         self.assertNotIn("docker rm", run)
         self.assertNotIn("prune", run)
         self.assertNotIn("down -v", run)

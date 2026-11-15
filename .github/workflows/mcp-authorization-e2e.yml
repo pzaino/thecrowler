@@ -28,7 +28,8 @@ jobs:
 
       - name: Start disposable Docker daemon
         env:
-          DIND_NAME: wp04c2n-dind-${{ github.run_id }}-${{ github.run_attempt }}
+          DIND_NAME: crowler-e2e-dind-${{ github.run_id }}-${{ github.run_attempt }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -euo pipefail
           test -z "${CROWLER_E2E_KEEP:-}"
@@ -42,7 +43,12 @@ jobs:
             echo "BLOCKED: host Docker endpoint selectors must be unset before dind startup" >&2
             exit 1
           fi
-          echo "host docker context: $(docker context show)"
+          host_context="$(docker context show)"
+          if [ "$host_context" != "default" ]; then
+            echo "BLOCKED: unexpected host Docker context '${host_context}'; expected 'default'" >&2
+            exit 1
+          fi
+          echo "host docker context: ${host_context}"
           echo "host docker server: $(docker info --format '{{.ServerVersion}}')"
 
           dind_image="docker:dind@sha256:7bf70dcb85c822e3fa6f2d332143e474b99147b9d7b39102b0cfe8b04a7dd61b"
@@ -54,6 +60,7 @@ jobs:
             >"$RUNNER_TEMP/crowler-e2e-artifacts/dind-image.json"
           container_id="$(docker run -d --privileged --name "$DIND_NAME" \
             --label "org.crowler.e2e.dind=${{ github.run_id }}" \
+            --label "org.crowler.e2e.attempt=${{ github.run_attempt }}" \
             -e DOCKER_TLS_CERTDIR= \
             -p 127.0.0.1::2375 \
             -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
@@ -64,8 +71,9 @@ jobs:
             echo "BLOCKED: dind image changed between verification and launch" >&2
             exit 1
           fi
-          printf '{"container_id":"%s","image_id":"%s","image":"%s"}\n' \
-            "$container_id" "$image_id_container" "$dind_image" \
+          printf '{"container_id":"%s","image_id":"%s","image":"%s","name":"%s","run_id":"%s","run_attempt":"%s"}\n' \
+            "$container_id" "$image_id_container" "$dind_image" "$DIND_NAME" \
+            "${{ github.run_id }}" "$RUN_ATTEMPT" \
             >"$RUNNER_TEMP/crowler-e2e-artifacts/dind-container.json"
 
           address="$(docker port "$DIND_NAME" 2375/tcp | head -1)"
@@ -133,11 +141,13 @@ jobs:
         if: always()
         env:
           RUN_ID: ${{ github.run_id }}
-          DIND_NAME: wp04c2n-dind-${{ github.run_id }}-${{ github.run_attempt }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          DIND_NAME: crowler-e2e-dind-${{ github.run_id }}-${{ github.run_attempt }}
+          DIND_METADATA: ${{ runner.temp }}/crowler-e2e-artifacts/dind-container.json
         run: |
-          set -o pipefail
+          set -euo pipefail
           mkdir -p "$RUNNER_TEMP/crowler-e2e-artifacts"
-          bash scripts/cleanup-e2e-dind.sh "$RUN_ID" "$DIND_NAME" \
+          bash scripts/cleanup-e2e-dind.sh "$RUN_ID" "$RUN_ATTEMPT" "$DIND_NAME" "$DIND_METADATA" \
             | tee "$RUNNER_TEMP/crowler-e2e-artifacts/cleanup.log"
 
       - name: Upload sanitized E2E evidence
