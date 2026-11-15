@@ -15,6 +15,7 @@
 package agent
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -88,8 +89,8 @@ func testAsyncGoalBaseCheckpoint(t *testing.T) goalAsyncCheckpoint {
 		testAsyncGoalSpec(), testAsyncGoalIdentity(), testAsyncGoalPrincipal(),
 		"run-async-test", "trace-async-test", "corr-async-test",
 		"ledger-async-test", strings.Repeat("b", 64),
-		testAsyncGoalNow, testAsyncGoalNow.Add(2*time.Minute),
-		goalAsyncLimits{MaxSlices: 8, MaxRetries: 2, MaxScheduledWorkRequests: 4},
+		testAsyncGoalNow, testAsyncGoalNow.Add(10*time.Minute),
+		goalAsyncLimits{MaxSlices: 8, MaxRetries: 2, MaxScheduledWorkRequests: 4, LogicalLifetime: 10 * time.Minute},
 	)
 	if err != nil {
 		t.Fatalf("new checkpoint: %v", err)
@@ -123,26 +124,33 @@ func testAsyncGoalStart(t *testing.T, cp goalAsyncCheckpoint) goalAsyncCheckpoin
 
 func testAsyncProposalWork() goalAsyncWorkRef {
 	return goalAsyncWorkRef{
-		Kind:           goalAsyncWorkCrawlProposal,
-		State:          goalAsyncWorkAwaitingApproval,
-		RequestID:      strings.Repeat("1", 64),
-		ProposalSHA256: strings.Repeat("2", 64),
-		SourceID:       42,
-		ExpiresAt:      testAsyncGoalNow.Add(30 * time.Minute),
+		Kind:              goalAsyncWorkCrawlProposal,
+		State:             goalAsyncWorkAwaitingApproval,
+		RequestID:         strings.Repeat("1", 64),
+		ProposalSHA256:    strings.Repeat("2", 64),
+		SourceID:          42,
+		ProposalExpiresAt: testAsyncGoalNow.Add(30 * time.Minute),
 	}
 }
 
 func testAsyncOperationWork() goalAsyncWorkRef {
+	return testAsyncOperationWorkAt(testAsyncGoalNow.Add(time.Second))
+}
+
+func testAsyncOperationWorkAt(acceptedAt time.Time) goalAsyncWorkRef {
 	return goalAsyncWorkRef{
-		Kind:           goalAsyncWorkCrawlOperation,
-		State:          goalAsyncWorkScheduled,
-		RequestID:      strings.Repeat("1", 64),
-		ProposalSHA256: strings.Repeat("2", 64),
-		ApprovalID:     strings.Repeat("3", 64),
-		ApprovalSHA256: strings.Repeat("4", 64),
-		OperationID:    strings.Repeat("5", 64),
-		SourceID:       42,
-		ExpiresAt:      testAsyncGoalNow.Add(30 * time.Minute),
+		Kind:              goalAsyncWorkCrawlOperation,
+		State:             goalAsyncWorkScheduled,
+		RequestID:         strings.Repeat("1", 64),
+		ProposalSHA256:    strings.Repeat("2", 64),
+		ApprovalID:        strings.Repeat("3", 64),
+		ApprovalSHA256:    strings.Repeat("4", 64),
+		OperationID:       strings.Repeat("5", 64),
+		SourceID:          42,
+		ProposalExpiresAt: testAsyncGoalNow.Add(30 * time.Minute),
+		ApprovalExpiresAt: testAsyncGoalNow.Add(30 * time.Minute),
+		SubmitBy:          testAsyncGoalNow.Add(20 * time.Minute),
+		AcceptedAt:        acceptedAt,
 	}
 }
 
@@ -162,9 +170,28 @@ func testAsyncGoalAwaitApproval(t *testing.T, cp goalAsyncCheckpoint) goalAsyncC
 	return next
 }
 
+func testAsyncSchedulingObservation(cp goalAsyncCheckpoint, work goalAsyncWorkRef, observedAt time.Time) goalAsyncSchedulingObservation {
+	return goalAsyncSchedulingObservation{
+		RunID: cp.RunID, GoalID: cp.GoalID, GoalSpecHash: cp.GoalSpecHash,
+		AgentID: cp.AgentID, Owner: cp.Owner,
+		Principal: testAsyncGoalPrincipal(), Work: work,
+		ApprovalValid: true, ObservedAt: observedAt,
+	}
+}
+
+func testAsyncSchedulingPrerequisite(t *testing.T, cp goalAsyncCheckpoint, work goalAsyncWorkRef, observedAt time.Time) goalAsyncSchedulingPrerequisite {
+	t.Helper()
+	scheduling, err := newGoalAsyncSchedulingPrerequisite(cp, testAsyncSchedulingObservation(cp, work, observedAt))
+	if err != nil {
+		t.Fatalf("scheduling prerequisite: %v", err)
+	}
+	return scheduling
+}
+
 func testAsyncGoalAwaitExternal(t *testing.T, cp goalAsyncCheckpoint) goalAsyncCheckpoint {
 	t.Helper()
 	work := testAsyncOperationWork()
+	scheduling := testAsyncSchedulingPrerequisite(t, cp, work, cp.UpdatedAt)
 	used := goalAsyncUsed{ScheduledWorkRequests: 1}
 	next, _ := testAsyncGoalTransition(t, cp, goalAsyncTransitionRequest{
 		OperationID:      "op-await-external",
@@ -173,7 +200,7 @@ func testAsyncGoalAwaitExternal(t *testing.T, cp goalAsyncCheckpoint) goalAsyncC
 		Now:              cp.UpdatedAt.Add(time.Second),
 		ReasonCode:       goalAsyncReasonAwaitingExternalWork,
 		Used:             &used,
-		Work:             &work,
+		Scheduling:       &scheduling,
 	})
 	return next
 }
@@ -285,9 +312,6 @@ func testAsyncResumeGrant(t *testing.T, cp goalAsyncCheckpoint, workState goalAs
 		AllowedSources:  append([]uint64(nil), cp.AllowedSources...),
 		VerifiedSources: []uint64{42},
 		AgentEnabled:    true,
-		ApprovalID:      operation.ApprovalID,
-		ApprovalSHA256:  operation.ApprovalSHA256,
-		ApprovalValid:   true,
 	}
 	grant, err := newGoalAsyncResumeGrant(cp, current, operation.OperationID, workState, cp.UpdatedAt.Add(time.Second))
 	if err != nil {
@@ -570,7 +594,7 @@ func TestAsyncGoalSerializationRoundTripAndStrictness(t *testing.T) {
 	}
 
 	badVersion := cloneGoalAsyncCheckpoint(cp)
-	badVersion.CheckpointVersion = 2
+	badVersion.CheckpointVersion = 3
 	badData, _ := json.Marshal(badVersion)
 	if _, err := parseGoalAsyncCheckpoint(badData); !errors.Is(err, ErrGoalAsyncCheckpointInvalid) {
 		t.Fatalf("bad version error = %v, want checkpoint invalid", err)
@@ -691,8 +715,8 @@ func TestAsyncGoalErrorsAreSanitized(t *testing.T) {
 		spec, testAsyncGoalIdentity(), testAsyncGoalPrincipal(),
 		"run-async-test", "trace-async-test", "",
 		"ledger-async-test", strings.Repeat("b", 64),
-		testAsyncGoalNow, testAsyncGoalNow.Add(2*time.Minute),
-		goalAsyncLimits{MaxSlices: 8, MaxRetries: 2, MaxScheduledWorkRequests: 4},
+		testAsyncGoalNow, testAsyncGoalNow.Add(10*time.Minute),
+		goalAsyncLimits{MaxSlices: 8, MaxRetries: 2, MaxScheduledWorkRequests: 4, LogicalLifetime: 10 * time.Minute},
 	)
 	if err != nil {
 		t.Fatalf("new checkpoint: %v", err)
@@ -883,15 +907,21 @@ func TestAsyncGoalWorkReferenceFailures(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, _, err := applyGoalAsyncTransition(cp, goalAsyncTransitionRequest{
-				OperationID:      "op-work-invalid",
-				ExpectedRevision: cp.Revision,
-				Kind:             tc.kind,
-				Now:              cp.UpdatedAt.Add(time.Second),
-				ReasonCode:       goalAsyncReasonAwaitingApproval,
-				Used:             &used,
-				Work:             &tc.work,
-			})
+			var err error
+			if tc.kind == goalAsyncTransitionAwaitExternalWork {
+				observation := testAsyncSchedulingObservation(cp, tc.work, cp.UpdatedAt)
+				_, err = newGoalAsyncSchedulingPrerequisite(cp, observation)
+			} else {
+				_, _, err = applyGoalAsyncTransition(cp, goalAsyncTransitionRequest{
+					OperationID:      "op-work-invalid",
+					ExpectedRevision: cp.Revision,
+					Kind:             tc.kind,
+					Now:              cp.UpdatedAt.Add(time.Second),
+					ReasonCode:       goalAsyncReasonAwaitingApproval,
+					Used:             &used,
+					Work:             &tc.work,
+				})
+			}
 			if err == nil {
 				t.Fatal("expected invalid work reference")
 			}
@@ -1134,8 +1164,6 @@ func TestAsyncGoalResumeAuthorizationFailures(t *testing.T) {
 		PolicySHA256: cp.PolicySHA256, AllowedTools: append([]string(nil), cp.AllowedTools...),
 		AllowedSources:  append([]uint64(nil), cp.AllowedSources...),
 		VerifiedSources: []uint64{42}, AgentEnabled: true,
-		ApprovalID: operation.ApprovalID, ApprovalSHA256: operation.ApprovalSHA256,
-		ApprovalValid: true,
 	}
 	cases := map[string]func(*goalAsyncCurrentAuthority){
 		"agent":            func(c *goalAsyncCurrentAuthority) { c.AgentID = "agent-other" },
@@ -1146,9 +1174,6 @@ func TestAsyncGoalResumeAuthorizationFailures(t *testing.T) {
 		"sources":          func(c *goalAsyncCurrentAuthority) { c.AllowedSources = []uint64{43} },
 		"verified sources": func(c *goalAsyncCurrentAuthority) { c.VerifiedSources = []uint64{43} },
 		"agent disabled":   func(c *goalAsyncCurrentAuthority) { c.AgentEnabled = false },
-		"approval id":      func(c *goalAsyncCurrentAuthority) { c.ApprovalID = strings.Repeat("6", 64) },
-		"approval hash":    func(c *goalAsyncCurrentAuthority) { c.ApprovalSHA256 = strings.Repeat("6", 64) },
-		"approval invalid": func(c *goalAsyncCurrentAuthority) { c.ApprovalValid = false },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -1172,8 +1197,6 @@ func TestAsyncGoalResumeWrongOperation(t *testing.T) {
 		PolicySHA256: cp.PolicySHA256, AllowedTools: append([]string(nil), cp.AllowedTools...),
 		AllowedSources:  append([]uint64(nil), cp.AllowedSources...),
 		VerifiedSources: []uint64{42}, AgentEnabled: true,
-		ApprovalID: operation.ApprovalID, ApprovalSHA256: operation.ApprovalSHA256,
-		ApprovalValid: true,
 	}
 	if _, err := newGoalAsyncResumeGrant(cp, current, strings.Repeat("6", 64), goalAsyncWorkProcessing, cp.UpdatedAt.Add(time.Second)); !errors.Is(err, ErrGoalAsyncResumeDenied) {
 		t.Fatalf("wrong operation error = %v, want denied", err)
@@ -1433,5 +1456,487 @@ func TestAsyncGoalImmutableBindings(t *testing.T) {
 		cp.Used.EvidenceRecords < base.Used.EvidenceRecords || cp.Used.EvidenceBytes < base.Used.EvidenceBytes ||
 		cp.Used.ScheduledWorkRequests < base.Used.ScheduledWorkRequests {
 		t.Fatalf("cumulative counters regressed: %+v", cp.Used)
+	}
+}
+
+func testAsyncCurrentAuthority(cp goalAsyncCheckpoint) goalAsyncCurrentAuthority {
+	return goalAsyncCurrentAuthority{
+		AgentID: cp.AgentID, Owner: cp.Owner, Principal: testAsyncGoalPrincipal(),
+		PolicySHA256:    cp.PolicySHA256,
+		AllowedTools:    append([]string(nil), cp.AllowedTools...),
+		AllowedSources:  append([]uint64(nil), cp.AllowedSources...),
+		VerifiedSources: []uint64{42}, AgentEnabled: true,
+	}
+}
+
+func TestAsyncGoalLogicalLifetimeAndSliceCeiling(t *testing.T) {
+	base := testAsyncGoalBaseCheckpoint(t)
+	if base.Deadline.Sub(base.CreatedAt) != 10*time.Minute {
+		t.Fatalf("logical lifetime = %s, want 10m", base.Deadline.Sub(base.CreatedAt))
+	}
+	if base.Ceilings.MaxSliceElapsed != 2*time.Minute {
+		t.Fatalf("slice ceiling = %s, want 2m", base.Ceilings.MaxSliceElapsed)
+	}
+	sliceDeadline, err := goalAsyncSliceDeadline(base, testAsyncGoalNow.Add(3*time.Minute))
+	if err != nil {
+		t.Fatalf("slice deadline: %v", err)
+	}
+	if sliceDeadline.Sub(testAsyncGoalNow.Add(3*time.Minute)) != 2*time.Minute {
+		t.Fatalf("slice deadline = %s, want 2m", sliceDeadline.Sub(testAsyncGoalNow.Add(3*time.Minute)))
+	}
+	lateSliceDeadline, err := goalAsyncSliceDeadline(base, testAsyncGoalNow.Add(9*time.Minute))
+	if err != nil || !lateSliceDeadline.Equal(base.Deadline) {
+		t.Fatalf("slice deadline did not cap at logical deadline: %s %v", lateSliceDeadline, err)
+	}
+	if _, err := goalAsyncSliceDeadline(base, base.Deadline); !errors.Is(err, ErrGoalAsyncDeadline) {
+		t.Fatalf("deadline slice error = %v, want deadline", err)
+	}
+
+	cp := testAsyncGoalStart(t, base)
+	cp = testAsyncGoalAwaitApproval(t, cp)
+
+	acceptedAt := testAsyncGoalNow.Add(3 * time.Minute)
+	work := testAsyncOperationWorkAt(acceptedAt)
+	scheduling := testAsyncSchedulingPrerequisite(t, cp, work, acceptedAt)
+	used := goalAsyncUsed{ScheduledWorkRequests: 1}
+	cp, _ = testAsyncGoalTransition(t, cp, goalAsyncTransitionRequest{
+		OperationID: "op-long-schedule", ExpectedRevision: cp.Revision,
+		Kind: goalAsyncTransitionAwaitExternalWork, Now: acceptedAt,
+		ReasonCode: goalAsyncReasonAwaitingExternalWork,
+		Used:       &used, Scheduling: &scheduling,
+	})
+	if cp.State != goalAsyncAwaitingExternalWork || !cp.Deadline.Equal(base.Deadline) {
+		t.Fatalf("unexpected long-wait checkpoint: %+v", cp)
+	}
+	awaitingExternal := cp
+
+	grant, err := newGoalAsyncResumeGrant(cp, testAsyncCurrentAuthority(cp), work.OperationID, goalAsyncWorkProcessing, testAsyncGoalNow.Add(4*time.Minute))
+	if err != nil {
+		t.Fatalf("long-wait resume grant: %v", err)
+	}
+	processing := work
+	processing.State = goalAsyncWorkProcessing
+	cp, _ = testAsyncGoalTransition(t, cp, goalAsyncTransitionRequest{
+		OperationID: "op-long-resume", ExpectedRevision: cp.Revision,
+		Kind: goalAsyncTransitionResume, Now: testAsyncGoalNow.Add(4 * time.Minute),
+		ReasonCode: goalAsyncReasonResumed, Work: &processing, Resume: &grant,
+	})
+	if cp.Slices != 2 || cp.Deadline.Sub(cp.CreatedAt) != 10*time.Minute ||
+		cp.Used.ScheduledWorkRequests != 1 {
+		t.Fatalf("long wait reset progress: %+v", cp)
+	}
+	cp = testAsyncGoalCriteriaMet(t, cp)
+	if cp.State != goalAsyncCriteriaMet {
+		t.Fatalf("long wait completion state = %s", cp.State)
+	}
+
+	// A completion at the logical deadline is refused.
+	running := testAsyncGoalStart(t, base)
+	decision, record := testAsyncVerifierDecision(t, running)
+	ref := testAsyncEvidenceRef(record)
+	used = running.Used
+	used.ModelRounds = 1
+	used.ToolAttempts = 1
+	used.ResultBytes = 128
+	used.EvidenceRecords = 1
+	used.EvidenceBytes = 128
+	if _, _, err := applyGoalAsyncTransition(running, goalAsyncTransitionRequest{
+		OperationID: "op-deadline-met", ExpectedRevision: running.Revision,
+		Kind: goalAsyncTransitionCriteriaMet, Now: running.Deadline,
+		Used: &used, Evidence: []goalAsyncEvidenceRef{ref}, Verifier: &decision,
+	}); !errors.Is(err, ErrGoalAsyncDeadline) {
+		t.Fatalf("deadline completion error = %v, want deadline", err)
+	}
+
+	// A resume at the logical deadline is refused even with a previously valid grant.
+	if _, _, err := applyGoalAsyncTransition(awaitingExternal, goalAsyncTransitionRequest{
+		OperationID: "op-deadline-resume", ExpectedRevision: awaitingExternal.Revision,
+		Kind: goalAsyncTransitionResume, Now: awaitingExternal.Deadline,
+		ReasonCode: goalAsyncReasonResumed, Work: &processing, Resume: &grant,
+	}); !errors.Is(err, ErrGoalAsyncDeadline) {
+		t.Fatalf("deadline resume error = %v, want deadline", err)
+	}
+	if _, _, err := applyGoalAsyncTransition(cp, goalAsyncTransitionRequest{
+		OperationID: "op-terminal-resume", ExpectedRevision: cp.Revision,
+		Kind: goalAsyncTransitionResume, Now: cp.Deadline,
+		ReasonCode: goalAsyncReasonResumed,
+	}); !errors.Is(err, ErrGoalAsyncTransitionInvalid) {
+		// A completed goal is terminal; the table must reject before any grant.
+		t.Fatalf("terminal resume error = %v, want transition invalid", err)
+	}
+}
+
+func TestAsyncGoalLogicalLifetimeBounds(t *testing.T) {
+	spec := testAsyncGoalSpec()
+	identity := testAsyncGoalIdentity()
+	principal := testAsyncGoalPrincipal()
+	baseArgs := func() (goalAsyncLimits, time.Time) {
+		return goalAsyncLimits{MaxSlices: 8, MaxRetries: 2, MaxScheduledWorkRequests: 4, LogicalLifetime: 10 * time.Minute}, testAsyncGoalNow.Add(10 * time.Minute)
+	}
+	cases := []struct {
+		name     string
+		limits   goalAsyncLimits
+		deadline time.Time
+		mutate   func(*AgentGoalSpec)
+	}{
+		{name: "negative lifetime", limits: goalAsyncLimits{LogicalLifetime: -time.Minute}, deadline: testAsyncGoalNow.Add(10 * time.Minute)},
+		{name: "oversized lifetime", limits: goalAsyncLimits{LogicalLifetime: 25 * time.Hour}, deadline: testAsyncGoalNow.Add(25 * time.Hour)},
+		{name: "deadline extension", limits: func() goalAsyncLimits { l, _ := baseArgs(); return l }(), deadline: testAsyncGoalNow.Add(11 * time.Minute)},
+		{name: "deadline in past", limits: func() goalAsyncLimits { l, _ := baseArgs(); return l }(), deadline: testAsyncGoalNow},
+		{name: "oversized slice", limits: func() goalAsyncLimits { l, _ := baseArgs(); return l }(), deadline: testAsyncGoalNow.Add(10 * time.Minute),
+			mutate: func(s *AgentGoalSpec) { s.Budgets.MaxElapsed = 3 * time.Minute }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := spec
+			specCopy := *spec
+			s = &specCopy
+			if tc.mutate != nil {
+				tc.mutate(s)
+				s.SpecHash = computeGoalSpecHash(s)
+			}
+			if _, err := newGoalAsyncCheckpoint(s, identity, principal, "run-async-test", "trace-async-test", "",
+				"ledger-async-test", strings.Repeat("b", 64), testAsyncGoalNow, tc.deadline, tc.limits); err == nil {
+				t.Fatal("expected lifetime/slice validation failure")
+			}
+		})
+	}
+
+	base := testAsyncGoalBaseCheckpoint(t)
+	if _, _, err := applyGoalAsyncTransition(base, goalAsyncTransitionRequest{
+		OperationID: "op-backwards", ExpectedRevision: base.Revision,
+		Kind: goalAsyncTransitionStart, Now: base.CreatedAt.Add(-time.Second),
+		ReasonCode: goalAsyncReasonStarted,
+	}); err == nil {
+		t.Fatal("expected backwards clock failure")
+	}
+}
+
+func TestAsyncGoalSchedulingAdmission(t *testing.T) {
+	cp := testAsyncGoalStart(t, testAsyncGoalBaseCheckpoint(t))
+	work := testAsyncOperationWork()
+	used := goalAsyncUsed{ScheduledWorkRequests: 1}
+	if _, _, err := applyGoalAsyncTransition(cp, goalAsyncTransitionRequest{
+		OperationID: "op-bare-work", ExpectedRevision: cp.Revision,
+		Kind: goalAsyncTransitionAwaitExternalWork, Now: cp.UpdatedAt.Add(time.Second),
+		ReasonCode: goalAsyncReasonAwaitingExternalWork, Used: &used, Work: &work,
+	}); !errors.Is(err, ErrGoalAsyncTransitionInvalid) {
+		t.Fatalf("bare work error = %v, want transition invalid", err)
+	}
+
+	scheduling := testAsyncSchedulingPrerequisite(t, cp, work, cp.UpdatedAt)
+	next, _ := testAsyncGoalTransition(t, cp, goalAsyncTransitionRequest{
+		OperationID: "op-scheduled", ExpectedRevision: cp.Revision,
+		Kind: goalAsyncTransitionAwaitExternalWork, Now: cp.UpdatedAt.Add(time.Second),
+		ReasonCode: goalAsyncReasonAwaitingExternalWork, Used: &used, Scheduling: &scheduling,
+	})
+	if next.State != goalAsyncAwaitingExternalWork {
+		t.Fatalf("scheduled state = %s", next.State)
+	}
+
+	awaiting := testAsyncGoalAwaitApproval(t, testAsyncGoalStart(t, testAsyncGoalBaseCheckpoint(t)))
+	mutations := map[string]func(*goalAsyncSchedulingObservation){
+		"run":       func(o *goalAsyncSchedulingObservation) { o.RunID = "run-other" },
+		"goal":      func(o *goalAsyncSchedulingObservation) { o.GoalID = "goal-other" },
+		"spec":      func(o *goalAsyncSchedulingObservation) { o.GoalSpecHash = strings.Repeat("c", 64) },
+		"agent":     func(o *goalAsyncSchedulingObservation) { o.AgentID = "agent-other" },
+		"owner":     func(o *goalAsyncSchedulingObservation) { o.Owner = "other" },
+		"principal": func(o *goalAsyncSchedulingObservation) { o.Principal.UserID = 8 },
+		"source":    func(o *goalAsyncSchedulingObservation) { o.Work.SourceID = 99 },
+		"request":   func(o *goalAsyncSchedulingObservation) { o.Work.RequestID = strings.Repeat("6", 64) },
+		"proposal":  func(o *goalAsyncSchedulingObservation) { o.Work.ProposalSHA256 = strings.Repeat("6", 64) },
+		"completed": func(o *goalAsyncSchedulingObservation) {
+			o.Work.State = goalAsyncWorkCompleted
+			o.Work.ObservedAt = o.ObservedAt
+		},
+		"approval invalid":  func(o *goalAsyncSchedulingObservation) { o.ApprovalValid = false },
+		"observed before":   func(o *goalAsyncSchedulingObservation) { o.ObservedAt = o.Work.AcceptedAt.Add(-time.Second) },
+		"observed deadline": func(o *goalAsyncSchedulingObservation) { o.ObservedAt = awaiting.Deadline },
+	}
+	for name, mutate := range mutations {
+		t.Run(name, func(t *testing.T) {
+			obs := testAsyncSchedulingObservation(awaiting, testAsyncOperationWork(), awaiting.UpdatedAt)
+			mutate(&obs)
+			if _, err := newGoalAsyncSchedulingPrerequisite(awaiting, obs); err == nil {
+				t.Fatal("expected scheduling admission failure")
+			}
+		})
+	}
+
+	// A proposal result with no accepted operation is not a scheduling proof.
+	proposalOnly := testAsyncProposalWork()
+	if _, err := newGoalAsyncSchedulingPrerequisite(cp, testAsyncSchedulingObservation(cp, proposalOnly, cp.UpdatedAt)); err == nil {
+		t.Fatal("proposal-only scheduling proof was accepted")
+	}
+
+	// An observation from the future cannot be used to advance the checkpoint early.
+	futureWork := testAsyncOperationWork()
+	future := testAsyncSchedulingPrerequisite(t, cp, futureWork, cp.UpdatedAt.Add(10*time.Second))
+	if _, _, err := applyGoalAsyncTransition(cp, goalAsyncTransitionRequest{
+		OperationID: "op-future-schedule", ExpectedRevision: cp.Revision,
+		Kind: goalAsyncTransitionAwaitExternalWork, Now: cp.UpdatedAt.Add(time.Second),
+		ReasonCode: goalAsyncReasonAwaitingExternalWork, Used: &used, Scheduling: &future,
+	}); !errors.Is(err, ErrGoalAsyncTransitionInvalid) {
+		t.Fatalf("future scheduling observation error = %v, want transition invalid", err)
+	}
+}
+
+func TestAsyncGoalCompletionAfterApprovalExpiry(t *testing.T) {
+	cp := testAsyncGoalAwaitApproval(t, testAsyncGoalStart(t, testAsyncGoalBaseCheckpoint(t)))
+	work := testAsyncOperationWorkAt(testAsyncGoalNow.Add(time.Minute))
+	work.ApprovalExpiresAt = testAsyncGoalNow.Add(3 * time.Minute)
+	work.SubmitBy = testAsyncGoalNow.Add(2 * time.Minute)
+	scheduling := testAsyncSchedulingPrerequisite(t, cp, work, testAsyncGoalNow.Add(time.Minute))
+	used := goalAsyncUsed{ScheduledWorkRequests: 1}
+	cp, _ = testAsyncGoalTransition(t, cp, goalAsyncTransitionRequest{
+		OperationID: "op-expiry-schedule", ExpectedRevision: cp.Revision,
+		Kind: goalAsyncTransitionAwaitExternalWork, Now: testAsyncGoalNow.Add(time.Minute),
+		ReasonCode: goalAsyncReasonAwaitingExternalWork, Used: &used, Scheduling: &scheduling,
+	})
+
+	grant, err := newGoalAsyncResumeGrant(cp, testAsyncCurrentAuthority(cp), work.OperationID, goalAsyncWorkCompleted, testAsyncGoalNow.Add(6*time.Minute))
+	if err != nil {
+		t.Fatalf("completion grant: %v", err)
+	}
+	completed := work
+	completed.State = goalAsyncWorkCompleted
+	completed.ObservedAt = testAsyncGoalNow.Add(6 * time.Minute)
+	cp, _ = testAsyncGoalTransition(t, cp, goalAsyncTransitionRequest{
+		OperationID: "op-expiry-complete", ExpectedRevision: cp.Revision,
+		Kind: goalAsyncTransitionResume, Now: testAsyncGoalNow.Add(6 * time.Minute),
+		ReasonCode: goalAsyncReasonResumed, Work: &completed, Resume: &grant,
+	})
+	if cp.State != goalAsyncRunning || cp.Work[0].State != goalAsyncWorkCompleted {
+		t.Fatalf("completion after approval expiry not represented: %+v", cp)
+	}
+	cp = testAsyncGoalCriteriaMet(t, cp)
+	if cp.State != goalAsyncCriteriaMet {
+		t.Fatalf("completion after approval expiry state = %s", cp.State)
+	}
+
+	// ObservedAt before acceptedAt, and mismatched provenance, are rejected.
+	badCases := map[string]func(*goalAsyncWorkRef){
+		"fabricated observed time": func(w *goalAsyncWorkRef) { w.ObservedAt = work.AcceptedAt.Add(-time.Second) },
+		"wrong source":             func(w *goalAsyncWorkRef) { w.SourceID = 43 },
+		"wrong proposal":           func(w *goalAsyncWorkRef) { w.ProposalSHA256 = strings.Repeat("6", 64) },
+		"wrong operation":          func(w *goalAsyncWorkRef) { w.OperationID = strings.Repeat("6", 64) },
+		"wrong accepted time":      func(w *goalAsyncWorkRef) { w.AcceptedAt = work.AcceptedAt.Add(time.Second) },
+	}
+	for name, mutate := range badCases {
+		t.Run(name, func(t *testing.T) {
+			fresh := testAsyncGoalRunningWithWork(t)
+			bad := completed
+			mutate(&bad)
+			if _, _, err := applyGoalAsyncTransition(fresh, goalAsyncTransitionRequest{
+				OperationID: "op-bad-completion", ExpectedRevision: fresh.Revision,
+				Kind: goalAsyncTransitionResume, Now: testAsyncGoalNow.Add(6 * time.Minute),
+				ReasonCode: goalAsyncReasonResumed, Work: &bad, Resume: &grant,
+			}); err == nil {
+				t.Fatal("mismatched completion provenance was accepted")
+			}
+		})
+	}
+}
+
+func TestAsyncGoalExpiredApprovalFreshSchedule(t *testing.T) {
+	cp := testAsyncGoalAwaitApproval(t, testAsyncGoalStart(t, testAsyncGoalBaseCheckpoint(t)))
+	work := testAsyncOperationWorkAt(testAsyncGoalNow.Add(4 * time.Minute))
+	work.ApprovalExpiresAt = testAsyncGoalNow.Add(3 * time.Minute)
+	work.SubmitBy = testAsyncGoalNow.Add(2 * time.Minute)
+	if _, err := newGoalAsyncSchedulingPrerequisite(cp, testAsyncSchedulingObservation(cp, work, testAsyncGoalNow.Add(4*time.Minute))); err == nil {
+		t.Fatal("expired approval scheduling proof was accepted")
+	}
+	work = testAsyncOperationWork()
+	obs := testAsyncSchedulingObservation(cp, work, cp.UpdatedAt)
+	obs.ApprovalValid = false
+	if _, err := newGoalAsyncSchedulingPrerequisite(cp, obs); err == nil {
+		t.Fatal("invalid approval scheduling proof was accepted")
+	}
+}
+
+func TestAsyncGoalStrictCheckpointDecoding(t *testing.T) {
+	cp := testAsyncGoalRunningWithWork(t)
+	cp = testAsyncGoalResumeProcessing(t, cp)
+	cp = testAsyncGoalCriteriaMet(t, cp)
+	cp.AuditRefs = []string{"audit-1"}
+	data, err := marshalGoalAsyncCheckpoint(cp)
+	if err != nil {
+		t.Fatalf("marshal canonical checkpoint: %v", err)
+	}
+	parsed, err := parseGoalAsyncCheckpoint(data)
+	if err != nil {
+		t.Fatalf("parse canonical checkpoint: %v", err)
+	}
+	second, err := marshalGoalAsyncCheckpoint(parsed)
+	if err != nil || !bytes.Equal(data, second) {
+		t.Fatalf("canonical round trip changed bytes: %v", err)
+	}
+	digest, err := goalAsyncCheckpointDigest(cp)
+	if err != nil {
+		t.Fatalf("checkpoint digest: %v", err)
+	}
+	tampered := cloneGoalAsyncCheckpoint(cp)
+	tampered.TraceID = "trace-other"
+	tamperedDigest, err := goalAsyncCheckpointDigest(tampered)
+	if err != nil || tamperedDigest == digest {
+		t.Fatalf("digest did not change for bound field: %v", err)
+	}
+	noncanonical := cloneGoalAsyncCheckpoint(cp)
+	noncanonical.AllowedSources = []uint64{43, 42}
+	if _, err := marshalGoalAsyncCheckpoint(noncanonical); !errors.Is(err, ErrGoalAsyncCheckpointInvalid) {
+		t.Fatalf("noncanonical marshal error = %v, want checkpoint invalid", err)
+	}
+
+	decode := func() map[string]any {
+		var object map[string]any
+		if err := json.Unmarshal(data, &object); err != nil {
+			t.Fatalf("unmarshal canonical object: %v", err)
+		}
+		return object
+	}
+	encode := func(object map[string]any) []byte {
+		encoded, err := json.Marshal(object)
+		if err != nil {
+			t.Fatalf("marshal mutated object: %v", err)
+		}
+		return encoded
+	}
+
+	cases := map[string]func(map[string]any){
+		"zero duplicate sources": func(o map[string]any) { o["allowed_sources"] = []any{0, 42, 42} },
+		"unsorted sources":       func(o map[string]any) { o["allowed_sources"] = []any{43, 42} },
+		"duplicate tools":        func(o map[string]any) { o["allowed_tools"] = []any{"get_source_status", "get_source_status"} },
+		"duplicate evidence":     func(o map[string]any) { o["evidence"].([]any)[0].(map[string]any)["source_ids"] = []any{42, 42} },
+		"duplicate verifier IDs": func(o map[string]any) {
+			id := cp.Evidence[0].EvidenceID
+			o["verification"].(map[string]any)["evidence_ids"] = []any{id, id}
+		},
+		"duplicate audit IDs": func(o map[string]any) { o["audit_refs"] = []any{"audit-1", "audit-1"} },
+		"overlong sources": func(o map[string]any) {
+			values := make([]any, 33)
+			for i := range values {
+				values[i] = i + 1
+			}
+			o["allowed_sources"] = values
+		},
+		"invalid timestamp": func(o map[string]any) { o["created_at"] = "not-a-time" },
+		"foreign verifier evidence": func(o map[string]any) {
+			o["verification"].(map[string]any)["evidence_ids"] = []any{"ev_" + strings.Repeat("f", 32)}
+		},
+		"unknown field": func(o map[string]any) { o["unknown_field"] = true },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			object := decode()
+			mutate(object)
+			if _, err := parseGoalAsyncCheckpoint(encode(object)); err == nil {
+				t.Fatal("malformed checkpoint was accepted")
+			}
+		})
+	}
+
+	for name, mutate := range map[string]func(map[string]any){
+		"version 1":   func(o map[string]any) { o["checkpoint_version"] = float64(1) },
+		"version 3":   func(o map[string]any) { o["checkpoint_version"] = float64(3) },
+		"contract v1": func(o map[string]any) { o["contract_version"] = "goal-async-v1" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			object := decode()
+			mutate(object)
+			if _, err := parseGoalAsyncCheckpoint(encode(object)); !errors.Is(err, ErrGoalAsyncCheckpointInvalid) {
+				t.Fatalf("version error = %v, want checkpoint invalid", err)
+			}
+		})
+	}
+
+	duplicateState := strings.Replace(string(data), `"state":"criteria_met"`, `"state":"criteria_met","state":"criteria_met"`, 1)
+	if _, err := parseGoalAsyncCheckpoint([]byte(duplicateState)); !errors.Is(err, ErrGoalAsyncSerialization) {
+		t.Fatalf("duplicate state key error = %v, want serialization", err)
+	}
+	evidenceKey := `"evidence_id":"` + cp.Evidence[0].EvidenceID + `"`
+	duplicateEvidence := strings.Replace(string(data), evidenceKey, evidenceKey+","+evidenceKey, 1)
+	if _, err := parseGoalAsyncCheckpoint([]byte(duplicateEvidence)); !errors.Is(err, ErrGoalAsyncSerialization) {
+		t.Fatalf("duplicate nested key error = %v, want serialization", err)
+	}
+	if _, err := parseGoalAsyncCheckpoint(append(data, []byte("{}")...)); !errors.Is(err, ErrGoalAsyncSerialization) {
+		t.Fatalf("trailing data error = %v, want serialization", err)
+	}
+	oversized := make([]byte, maxGoalAsyncCheckpointBytes+1)
+	for i := range oversized {
+		oversized[i] = 'x'
+	}
+	if _, err := parseGoalAsyncCheckpoint(oversized); !errors.Is(err, ErrGoalAsyncSerialization) {
+		t.Fatalf("oversized error = %v, want serialization", err)
+	}
+}
+
+func TestAsyncGoalCountersSurviveSlices(t *testing.T) {
+	base := testAsyncGoalBaseCheckpoint(t)
+	counters := goalAsyncUsed{
+		ModelRounds: 1, ToolAttempts: 2, ResultBytes: 128,
+		Retries: 1, ConsecutiveDenials: 1,
+	}
+	cp, _ := testAsyncGoalTransition(t, base, goalAsyncTransitionRequest{
+		OperationID: "op-counter-start", ExpectedRevision: base.Revision,
+		Kind: goalAsyncTransitionStart, Now: base.UpdatedAt.Add(time.Second),
+		ReasonCode: goalAsyncReasonStarted, Used: &counters,
+	})
+	proposal := testAsyncProposalWork()
+	counters.ScheduledWorkRequests = 1
+	cp, _ = testAsyncGoalTransition(t, cp, goalAsyncTransitionRequest{
+		OperationID: "op-counter-approval", ExpectedRevision: cp.Revision,
+		Kind: goalAsyncTransitionAwaitApproval, Now: cp.UpdatedAt.Add(time.Second),
+		ReasonCode: goalAsyncReasonAwaitingApproval, Used: &counters, Work: &proposal,
+	})
+	operation := testAsyncOperationWork()
+	scheduling := testAsyncSchedulingPrerequisite(t, cp, operation, cp.UpdatedAt)
+	cp, _ = testAsyncGoalTransition(t, cp, goalAsyncTransitionRequest{
+		OperationID: "op-counter-schedule", ExpectedRevision: cp.Revision,
+		Kind: goalAsyncTransitionAwaitExternalWork, Now: cp.UpdatedAt.Add(time.Second),
+		ReasonCode: goalAsyncReasonAwaitingExternalWork, Used: &counters, Scheduling: &scheduling,
+	})
+	grant := testAsyncResumeGrant(t, cp, goalAsyncWorkProcessing)
+	cp, _ = testAsyncGoalTransition(t, cp, goalAsyncTransitionRequest{
+		OperationID: "op-counter-resume", ExpectedRevision: cp.Revision,
+		Kind: goalAsyncTransitionResume, Now: cp.UpdatedAt.Add(time.Second),
+		ReasonCode: goalAsyncReasonResumed, Work: func() *goalAsyncWorkRef {
+			w := operation
+			w.State = goalAsyncWorkProcessing
+			return &w
+		}(), Resume: &grant,
+	})
+	if cp.Used.ModelRounds != 1 || cp.Used.ToolAttempts != 2 || cp.Used.ResultBytes != 128 ||
+		cp.Used.Retries != 1 || cp.Used.ScheduledWorkRequests != 1 || cp.Used.ConsecutiveDenials != 1 {
+		t.Fatalf("counters changed across slices: %+v", cp.Used)
+	}
+	decision, record := testAsyncVerifierDecision(t, cp)
+	ref := testAsyncEvidenceRef(record)
+	counters.EvidenceRecords = 1
+	counters.EvidenceBytes = 128
+	cp, _ = testAsyncGoalTransition(t, cp, goalAsyncTransitionRequest{
+		OperationID: "op-counter-met", ExpectedRevision: cp.Revision,
+		Kind: goalAsyncTransitionCriteriaMet, Now: cp.UpdatedAt.Add(time.Second),
+		Used: &counters, Evidence: []goalAsyncEvidenceRef{ref}, Verifier: &decision,
+	})
+	if cp.Used.ModelRounds != 1 || cp.Used.ToolAttempts != 2 || cp.Used.ResultBytes != 128 ||
+		cp.Used.Retries != 1 || cp.Used.ScheduledWorkRequests != 1 || cp.Used.ConsecutiveDenials != 1 ||
+		cp.Used.EvidenceRecords != 1 || cp.Used.EvidenceBytes != 128 {
+		t.Fatalf("completion counters changed: %+v", cp.Used)
+	}
+}
+
+func TestAsyncGoalTerminalCannotResumeWithCompletion(t *testing.T) {
+	completed := testAsyncOperationWork()
+	completed.State = goalAsyncWorkCompleted
+	completed.ObservedAt = testAsyncGoalNow.Add(2 * time.Minute)
+	for _, state := range []goalAsyncState{goalAsyncCriteriaMet, goalAsyncCancelled, goalAsyncDenied, goalAsyncFailed} {
+		cp := testAsyncGoalCheckpointInState(t, state)
+		if _, _, err := applyGoalAsyncTransition(cp, goalAsyncTransitionRequest{
+			OperationID: "op-terminal-completion", ExpectedRevision: cp.Revision,
+			Kind: goalAsyncTransitionResume, Now: cp.UpdatedAt.Add(time.Second),
+			ReasonCode: goalAsyncReasonResumed, Work: &completed,
+		}); !errors.Is(err, ErrGoalAsyncTransitionInvalid) {
+			t.Fatalf("%s resume error = %v, want transition invalid", state, err)
+		}
 	}
 }

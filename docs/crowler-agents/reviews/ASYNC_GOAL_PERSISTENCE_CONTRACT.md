@@ -42,14 +42,16 @@ Required columns:
 - `principal_issuer VARCHAR(512) NOT NULL DEFAULT ''`
 - `goal_id VARCHAR(128) NOT NULL`
 - `goal_spec_hash CHAR(64) NOT NULL`
-- `contract_version VARCHAR(32) NOT NULL`
-- `checkpoint_version SMALLINT NOT NULL`
+- `contract_version VARCHAR(32) NOT NULL` (`goal-async-v2`)
+- `checkpoint_version SMALLINT NOT NULL` (`2`)
 - `policy_sha256 CHAR(64) NOT NULL`
 - `state VARCHAR(32) NOT NULL`
 - `revision BIGINT NOT NULL`
 - `created_at TIMESTAMPTZ(6) NOT NULL`
 - `updated_at TIMESTAMPTZ(6) NOT NULL`
 - `deadline TIMESTAMPTZ(6) NOT NULL`
+- `logical_lifetime_ns BIGINT NOT NULL` (effective lifetime
+  `deadline - created_at`, derived and checked)
 - `reason_code VARCHAR(64) NOT NULL`
 - `ledger_id VARCHAR(128) NOT NULL`
 - `run_nonce_hash CHAR(64) NOT NULL`
@@ -66,14 +68,17 @@ Immutable ceiling columns:
 - `max_slices INTEGER`, `max_model_rounds INTEGER`, `max_tool_attempts INTEGER`,
   `max_result_bytes BIGINT`, `max_evidence_records INTEGER`,
   `max_evidence_bytes BIGINT`, `max_retries INTEGER`,
-  `max_scheduled_work_requests INTEGER`, `max_consecutive_denials INTEGER`.
+  `max_scheduled_work_requests INTEGER`, `max_consecutive_denials INTEGER`,
+  `max_slice_elapsed_ns BIGINT` (the synchronous slice ceiling, not the
+  logical lifetime).
 
 Cumulative used columns:
 
 - `used_slices INTEGER`, `used_model_rounds INTEGER`,
   `used_tool_attempts INTEGER`, `used_result_bytes BIGINT`,
   `used_evidence_records INTEGER`, `used_evidence_bytes BIGINT`,
-  `used_retries INTEGER`, `used_scheduled_work_requests INTEGER`.
+  `used_retries INTEGER`, `used_scheduled_work_requests INTEGER`,
+  `used_consecutive_denials INTEGER`.
 
 Constraints:
 
@@ -82,7 +87,9 @@ Constraints:
 - every used counter `<=` its ceiling, with `used_consecutive_denials`
   allowed to reset to zero but never exceed its ceiling;
 - `updated_at >= created_at`;
-- `deadline > created_at`;
+- `deadline > created_at` and `logical_lifetime_ns = deadline - created_at`;
+- `max_slice_elapsed_ns` is 1..120 seconds; the whole-goal deadline may exceed
+  it;
 - active and completion states have `updated_at < deadline`; terminal
   cancellation/budget/denial/failure may be at or after the deadline;
 - `principal_kind = 'user'` requires a positive user ID and non-empty
@@ -120,23 +127,37 @@ One row per outstanding work reference:
 - `approval_sha256 CHAR(64)` nullable;
 - `operation_id CHAR(64)` nullable;
 - `source_id BIGINT NOT NULL`;
-- `expires_at TIMESTAMPTZ(6) NOT NULL`;
+- `proposal_expires_at TIMESTAMPTZ(6) NOT NULL`;
+- `approval_expires_at TIMESTAMPTZ(6)` nullable;
+- `submit_by TIMESTAMPTZ(6)` nullable;
+- `accepted_at TIMESTAMPTZ(6)` nullable;
 - `observed_at TIMESTAMPTZ(6)` nullable;
 - `created_at`, `updated_at`;
 - primary key `(goal_run_id, request_id)`;
 - partial unique indexes on `(goal_run_id, operation_id)` and
   `(goal_run_id, approval_id)` where non-null;
 - checks preserving the state/identity matrix:
-  - proposal: no approval/operation/observed fields;
-  - operation scheduled/processing: approval and operation required, observed
-    null;
-  - operation completed: approval/operation/observed required, and
-    `observed_at < expires_at`;
+  - proposal: proposal expiry required; no approval, operation, submit-by,
+    accepted-at or observed field;
+  - operation scheduled/processing: proposal expiry, approval expiry,
+    submit-by, accepted-at, approval and operation required; observed null;
+  - operation completed: the same fields plus observed-at required;
+  - operation: `accepted_at >= created_at`,
+    `accepted_at <= updated_at`, `accepted_at < submit_by`,
+    `submit_by <= proposal_expires_at`, `submit_by <= approval_expires_at`,
+    `accepted_at < proposal_expires_at`, `accepted_at < approval_expires_at`;
+  - completed: `observed_at >= accepted_at`, and `observed_at <= updated_at`;
+  - **no** `observed_at < approval_expires_at` or
+    `observed_at < proposal_expires_at` check. Those expiries bound
+    submission, not later completion;
 - `source_id` must be present in `AgentGoalRunSources` (application check or a
   composite FK).
 
 This table is the durable representation of `goalAsyncWorkRef`. The kernel's
-16-work bound and scheduled-work ceiling apply.
+16-work bound and scheduled-work ceiling apply. `proposal_expires_at`,
+`approval_expires_at` and `submit_by` are distinct submission-validity facts;
+`accepted_at` is the durable operation creation; `observed_at` is the later
+completion observation.
 
 ### 4. `AgentGoalRunEvidence`
 
@@ -186,6 +207,32 @@ The main-row CAS is the concurrency guard. The transition row is the replay
 record: the same operation ID and hash is `replayed`; the same ID with a
 different hash is a conflict; a stale expected revision is a conflict.
 
+## Canonical checkpoint wire v2
+
+The durable adapter must store and validate the canonical v2 checkpoint
+representation:
+
+- `checkpoint_version = 2`, `contract_version = goal-async-v2`;
+- deterministic field ordering and sorted unique identity lists;
+- UTC microsecond timestamps; no local timezone or sub-microsecond values;
+- explicit zero values for absent optional timestamps, never a silently
+  normalized alternative; required fields must be present and non-null, and a
+  missing/null required value fails validation;
+- bounded arrays, strings, work/evidence/audit references and total bytes;
+- `max_slice_elapsed_ns` for the synchronous slice ceiling and
+  `deadline - created_at` for the logical lifetime;
+- no normalization on the read boundary. Parsing rejects unknown fields,
+  duplicate JSON object keys at any depth, trailing data, invalid UTF-8,
+  unknown versions, unsorted/duplicate lists, zero/duplicate IDs, malformed
+  timestamps and inconsistent verification/work/evidence references;
+- the canonical bytes used by `goalAsyncCheckpointDigest` include the v2
+  domain separator. The digest is an unkeyed integrity/audit reference, not
+  authentication.
+
+No production durable checkpoint exists yet, so there is no data migration in
+this package. The version bump is deliberate because the work-reference
+timestamps, slice ceiling and canonical strictness changed.
+
 ## Indexes
 
 - `AgentGoalRuns(state, deadline)` for eligible resume candidates;
@@ -207,8 +254,12 @@ Use one transaction per checkpoint revision:
    source rows ascending `source_id`, user rows ascending `user_id`,
    administrative grant rows, then the goal-run row. This preserves the
    existing source/user/grant lock order.
-3. Re-read the live account, agent, source ownership, policy and approval
-   checks. Compare the checkpoint's immutable bindings. Any mismatch denies
+3. Re-read the live account, agent and source ownership, and the exact current
+   policy. Compare the checkpoint's immutable bindings. For a new scheduling
+   admission, require a trusted scheduling prerequisite with approval valid at
+   submission. For resume of an already accepted operation, do **not** require
+   the historic approval to remain unexpired; any new privileged action later
+   requires a fresh approval and authorization check. Any mismatch denies
    resume before a write.
 4. Update the goal row with a compare-and-swap:
 
@@ -228,17 +279,47 @@ Use one transaction per checkpoint revision:
 
    A zero-row result is a revision/state/cancellation conflict; reload and
    return a typed conflict.
-5. Insert the transition row with unique `(goal_run_id, operation_id)`. If the
-   row already exists, compare the hash: same hash is a replay; different hash
-   is a conflict.
+5. Consult the unique transition ledger `(goal_run_id, operation_id)` before
+   applying a new revision. A later replay of **any** stored operation, not
+   only the last one, must return the stored result when the hash matches and
+   a typed conflict when it differs. Do not apply an older operation ID as a
+   new transition merely because the current revision matches. Insert the new
+   transition row in the same transaction; the unique key is the durable
+   idempotency boundary.
 6. Apply child work/evidence/audit changes in the same transaction. Work
    replacement (proposal -> operation) is a delete plus insert. Evidence rows
    are insert-only with unique identity/hash.
 7. Commit. Any error rolls back the entire checkpoint revision.
 
 The pure kernel's `expected_revision`, last operation ID and transition hash
-map directly to this contract. The kernel does not claim that a database
+map to this contract. The kernel only recognizes the last operation for
+in-process replay; the durable store must use the complete transition ledger
+to recognize older replays. The kernel does not claim that a database
 transaction exists.
+
+## Scheduling prerequisite construction
+
+The future trusted adapter constructs the unexported scheduling prerequisite
+only after transactional reads that establish all of:
+
+- the `CrawlProposals` row: request ID, run ID, agent ID, owner,
+  principal user ID, source ID, proposal SHA-256, state and proposal expiry;
+- the `CrawlApprovals` row: approval ID, proposal/request/run/agent/owner/
+  principal/source binding, approval SHA-256, approver identity, approved-at,
+  expiry and revocation state;
+- the `Status` row keyed by `status_sha256`: durable operation ID, request ID,
+  run ID, principal user ID, agent ID, owner, source ID, operation type,
+  approval ID/hash, approved-at, submit-by expiry, state and `created_at`;
+- current source ownership/verified provenance and current agent/policy
+  authority.
+
+The prerequisite binds exact run, goal, goal-spec hash, agent, owner,
+principal, source, request, proposal hash, approval ID/hash, operation ID,
+operation state (`scheduled` or `processing`), proposal/approval/submit-by
+expiries, accepted-at and observation time. A proposal `approval_required`
+result, model text, MCP result body, caller boolean or `crawl_completed` event
+is never sufficient. Approval must be valid at submission; later expiry does
+not invalidate the accepted operation's provenance.
 
 ## Resume authorization
 
@@ -262,14 +343,17 @@ Before any new slice or external submission, from live trusted sources:
 - current user/account active, current roles/scopes;
 - current agent exists, is enabled, has the required trust/capability/contract;
 - every source in the checkpoint is currently verified-owned by the bound
-  owner/principal and is not deleted/disabled;
+  owner/principal and is not deleted/disabled; the async contract is source-scoped and
+  does not authorize source-neutral external-resource goals;
 - the current operator policy ID/version/canonical hash exactly matches
   `policy_sha256`; no expansion or narrowing is silently accepted;
-- the referenced crawl approval is current, unexpired, unrevoked and issued by
-  an authorized approver;
-- the referenced proposal/operation still matches the checkpoint's IDs and
-  hashes;
-- the goal spec hash still matches the frozen manifest.
+- the referenced proposal/operation still matches the checkpoint's IDs,
+  proposal/approval hashes and accepted-at provenance;
+- the goal spec hash still matches the frozen manifest;
+- for a **new** scheduling action, a fresh approval is current, unexpired,
+  unrevoked and issued by an authorized approver. For reading or evaluating an
+  already accepted operation's completion evidence, the historic approval need
+  not remain unexpired; new privileged actions still require the fresh check.
 
 A revoked user, transferred source, disabled source/agent, changed policy,
 changed approval or mismatched operation denies resume. The checkpoint's
@@ -295,7 +379,8 @@ only needs the goal row; it does not acquire source locks. Therefore:
 details. It does **not** carry the goal run ID, request ID, proposal hash or
 operation ID. It is not a reliable correlation for a specific goal work item.
 
-The plan's `event_observed` predicate remains disabled in v1. Completion must
+The plan's `event_observed` predicate remains disabled in the current async
+contract. Completion must
 use trusted evidence:
 
 - the `Status` operation row keyed by `status_sha256`, whose `details` JSON
@@ -325,13 +410,13 @@ MCP or Selenium connection, and explicit timeout semantics.
 
 ## Work claiming and double execution
 
-The CAS in the persistence phase prevents duplicate checkpoint revisions, but it does not by
-itself prevent two workers from executing the same slice or submitting the
-same external operation. the resume phase must add a claim/lease with a unique owner,
-expiry, heartbeat and cancellation check, or an equivalent transactional claim
-with `FOR UPDATE SKIP LOCKED` on PostgreSQL and a serialized SQLite claim.
-The existing scheduler's operation ID/request ID idempotency is a second line
-of defense, not a replacement for a goal claim.
+The CAS in the persistence phase prevents duplicate checkpoint revisions, but
+it does not by itself prevent two workers from executing the same slice or
+submitting the same external operation. The resume phase must add a claim/lease
+with a unique owner, expiry, heartbeat and cancellation check, or an equivalent
+transactional claim with `FOR UPDATE SKIP LOCKED` on PostgreSQL and a
+serialized SQLite claim. The existing scheduler's operation ID/request ID
+idempotency is a second line of defense, not a replacement for a goal claim.
 
 ## Schema, migration and compatibility
 
@@ -345,6 +430,8 @@ Recommended approval scope for the persistence phase:
 - a new additive migration, proposed as schema `1.18`;
 - a new writer generation, proposed as `goal-checkpoint-v1.18` (the final name
   is a maintainer decision);
+- an explicit internal logical-lifetime default and maximum (provisional:
+  15 minutes and 24 hours) and a separate public/deployed TTL decision;
 - updated `DBSchemaVersion`, `DatabaseWriterCompatibility`, startup
   compatibility checks and deployment backup/rollback procedure;
 - PostgreSQL 17 and PostgreSQL 15.10 validation;
@@ -371,9 +458,10 @@ must be backed up and rehearsed on a disposable database.
 
 ## Exact approvals still required
 
-1. **Persistence phase:** approve or reject the `AgentGoalRuns` model, new
+1. **Persistence phase:** approve or reject the `AgentGoalRuns` v2 model, new
    migration, schema `1.18` (or an approved alternative), writer-generation
-   change, CAS/lock/transaction contract and retention.
+   change, logical-lifetime policy, CAS/lock/transaction contract and
+   retention.
 2. **Resume phase:** approve or reject the claim/lease, event or bounded-poll
    trigger, current-authority refresh, cancellation/shutdown and recovery
    engine.

@@ -46,23 +46,24 @@ fail with `ErrGoalAsyncTransitionInvalid` or
 
 Implementation:
 
-- state vocabulary: `pkg/agent/goal_async_state.go` lines 108-143;
-- transition vocabulary and targets: lines 146-197;
-- table and lookup: lines 199-241;
-- terminal predicate: lines 134-143.
+- state vocabulary: `pkg/agent/goal_async_state.go` lines 119-154;
+- transition vocabulary and targets: lines 157-208;
+- table and lookup: lines 210-252;
+- terminal predicate: lines 145-154.
 
 ## Checkpoint model
 
 `goalAsyncCheckpoint` binds:
 
-- checkpoint/contract version and monotonic revision;
+- checkpoint version 2 and contract `goal-async-v2`, plus monotonic revision;
 - run, trace, correlation, agent, owner and goal IDs;
 - frozen goal-spec hash and policy hash;
 - a typed principal reference (user or system), never a token or tenant field;
 - sorted allowed tools and source IDs;
 - lifecycle state, slice count, UTC timestamps and absolute deadline;
 - immutable ceilings and cumulative used counters;
-- typed work references, bounded evidence references and audit references;
+- typed work references carrying proposal, approval, submission and accepted
+  timestamps; bounded evidence references and audit references;
 - a verifier reference only for `criteria_met`, including the bounded verifier
   evidence IDs;
 - last transition identity/hash for replay detection;
@@ -70,6 +71,22 @@ Implementation:
 
 The type is unexported. It has no prompt, message, argument, result payload,
 token, password, DSN, MCP credential or source configuration field.
+
+### Canonical wire v2
+
+The serialized v2 checkpoint is strict. `parseGoalAsyncCheckpoint` rejects
+unknown fields, duplicate object keys at any depth, trailing data, invalid
+UTF-8, non-UTC or non-microsecond timestamps, unsorted or duplicate identity
+lists, duplicate/zero IDs, inconsistent verification evidence, overlong
+arrays/strings and oversized input. It does **not** normalize a persisted
+snapshot on read. Normalization is reserved for newly constructed trusted
+snapshots and transitions.
+
+Required fields must be present and non-null; a missing or null required value
+fails validation. Optional timestamp fields use explicit zero values, and the
+writer never silently substitutes a different value. `marshalGoalAsyncCheckpoint`
+and `goalAsyncCheckpointDigest` operate on the same validated canonical bytes. The digest is an unkeyed integrity/audit
+reference, not authentication.
 
 ## Identity and authority
 
@@ -97,22 +114,88 @@ deliberately does not store or bind `AgentGoalSpec.Auth`; the current trusted
 configuration supplies any credential at resume, and no token enters the
 checkpoint.
 
+## Logical lifetime and slice budget
+
+The whole logical goal lifetime is separate from one synchronous model/tool
+slice:
+
+- `goalAsyncLimits.LogicalLifetime` is the trusted internal whole-goal limit.
+  The provisional default is 15 minutes and the provisional internal maximum is
+  24 hours. Both are internal decisions; deployed/public TTL policy requires a
+  separate approval.
+- `goalAsyncCeilings.MaxSliceElapsed` is the frozen `GoalBudgets.MaxElapsed`
+  slice ceiling, bounded by the existing 30-second default and 2-minute hard
+  limit.
+- `goalAsyncSliceDeadline` returns `min(now + MaxSliceElapsed, Deadline)` and
+  refuses a slice at or after the logical deadline.
+- Waiting consumes wall-clock time but does not refresh counters or extend the
+  logical deadline.
+- Active state advancement is refused at or after the logical deadline; a
+  post-deadline success is impossible.
+
+The effective logical lifetime is `Deadline - CreatedAt`. The absolute
+`CreatedAt` and `Deadline` are immutable across revisions. `Auth` is not stored;
+the trusted resume configuration supplies the current credential.
+
+## Source scope
+
+The async contract is source-scoped only. `AllowedSources` must contain at least one
+positive source ID, and work/evidence source IDs must be within that frozen
+scope. Source-neutral external-resource goals are not silently authorized by
+this kernel; they require a separate design and approval.
+
 ## Work references
 
 The work model distinguishes:
 
-- `crawl_proposal` / `awaiting_approval`: a durable `CrawlProposals.RequestID`
-  and proposal hash, with no operation or approval ID;
+- `crawl_proposal` / `awaiting_approval`: a durable `CrawlProposals.RequestID`,
+  proposal hash, source and proposal expiry, with no approval, operation,
+  submit-by, accepted-at or completion field;
 - `crawl_operation` / `scheduled` or `processing`: a durable `Status`
-  operation key (`OperationID`), proposal identity, approval ID/hash and source;
-- `crawl_operation` / `completed`: the same operation identity plus an
+  operation key (`OperationID`), proposal identity, approval ID/hash, source,
+  proposal expiry, approval expiry, submit-by expiry and `AcceptedAt`;
+- `crawl_operation` / `completed`: the same accepted operation identity plus an
   `ObservedAt` completion observation.
 
+Proposal expiry and approval expiry bound **submission**. They do not bound
+later operation completion. `AcceptedAt` must be before the submit-by and
+approval expiry; `ObservedAt` must be at or after `AcceptedAt` and at or before
+the checkpoint update, but may be after proposal/approval expiry. The logical
+goal deadline still bounds every successful transition.
+
 A proposal awaiting approval cannot be represented as a scheduled operation.
-An issued approval alone cannot create a work reference without the operation
-identity. A scheduled operation cannot enter `criteria_met`. A completed
-operation can be recorded only through the resume path after a current-authority
-grant.
+An issued approval alone cannot create a work reference without the accepted
+operation identity. A scheduled operation cannot enter `criteria_met`. A
+completed operation can be recorded only through the resume path after a
+current-authority grant. The resume grant does not require the historic
+approval to remain unexpired; any new privileged action still requires fresh
+live authorization.
+
+## Scheduling admission
+
+`running -> awaiting_external_work` and
+`awaiting_approval -> awaiting_external_work` require a
+`goalAsyncSchedulingPrerequisite`, not a bare work reference. The prerequisite
+is unexported and non-serializable and is constructed by a trusted caller from
+a `goalAsyncSchedulingObservation` fixture. It binds:
+
+- exact run, goal, goal-spec hash, agent, owner and principal;
+- source, request, proposal hash, approval ID/hash and durable operation ID;
+- operation state (`scheduled`/`processing`), proposal/approval/submit-by
+  expiries and `AcceptedAt`;
+- the scheduling observation time.
+
+The constructor validates the fixture; it does **not** claim to have queried
+PostgreSQL or SQLite. A future trusted adapter must construct it only after
+transactional reads of `CrawlProposals`, `CrawlApprovals` and `Status`. A
+proposal `approval_required` result, model text, MCP result body, caller
+boolean or source-level `crawl_completed` notification is not scheduling
+authority.
+
+For `awaiting_approval`, the prerequisite must match the stored proposal
+exactly. For `running` without a prior proposal, the observation still binds
+the accepted operation to the run, agent, owner, principal, source, proposal
+and approval; a durable-looking operation ID alone is insufficient.
 
 Duplicate request, operation, approval or exact work identities are rejected.
 Contradictory source/run/proposal/approval bindings are rejected. Work IDs are
@@ -164,12 +247,13 @@ may never exceed its ceiling. A transition cannot reset a cumulative counter,
 exceed a ceiling or shrink a cumulative counter. A new slice increments only
 the slice count; the caller supplies the other counters.
 
-The deadline is one absolute UTC timestamp. It cannot be changed by a
+The logical deadline is one absolute UTC timestamp. It cannot be changed by a
 transition. `start`, `resume`, `await_*`, `criteria_met` and `incomplete` are
 rejected at or after the deadline. `cancelled`, `budget_exhausted`, `denied` and
 `failed` may be recorded at or after it. `budget_exhausted` is accepted only
 when a ceiling is reached or the deadline passed. `incomplete` is rejected
-when a ceiling is reached.
+when a ceiling is reached. The synchronous `AgentGoalRun` keeps its own
+30-second/2-minute slice path and is not changed by the logical lifetime.
 
 ## Replay and revision
 
@@ -185,9 +269,11 @@ operation ID, expected revision and canonical request hash. The kernel:
 - returns `ErrGoalAsyncRevisionConflict` for a new operation on a stale
   revision.
 
-This is a pure model of compare-and-swap. It does not claim database
-concurrency safety. The persistence proposal requires a transactional
-`UPDATE ... WHERE revision = expected` guard.
+This is a pure model of compare-and-swap for the **last** transition. It does
+not claim database concurrency safety. The persistence contract requires a
+transactional `UPDATE ... WHERE revision = expected` guard and a complete
+unique `(goal_run_id, operation_id)` transition ledger so a replay of any
+older stored operation cannot duplicate work after later revisions.
 
 ## Deadline, cancellation and terminal behavior
 

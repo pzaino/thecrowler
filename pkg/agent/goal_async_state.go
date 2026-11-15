@@ -20,6 +20,7 @@ package agent
 // durable store and resume engine must be separately approved.
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -30,13 +31,15 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
-	goalAsyncCheckpointVersion = 1
-	goalAsyncContractVersion   = "goal-async-v1"
+	goalAsyncCheckpointVersion = 2
+	goalAsyncContractVersion   = "goal-async-v2"
 
 	maxGoalAsyncCheckpointBytes = 32 << 10
+	maxGoalAsyncJSONDepth       = 64
 	maxGoalAsyncWorkRefs        = 16
 	maxGoalAsyncEvidenceRefs    = 32
 	maxGoalAsyncAuditRefs       = 32
@@ -47,6 +50,12 @@ const (
 	hardGoalAsyncMaxRetries                  = 16
 	defaultGoalAsyncMaxScheduledWorkRequests = 8
 	hardGoalAsyncMaxScheduledWorkRequests    = 32
+
+	// The logical goal lifetime is deliberately separate from the synchronous
+	// model/tool slice ceiling. The provisional upper bound is internal only;
+	// deployed/public TTL policy requires a separate maintainer decision.
+	defaultGoalAsyncLogicalLifetime = 15 * time.Minute
+	hardGoalAsyncLogicalLifetime    = 24 * time.Hour
 )
 
 const (
@@ -76,6 +85,8 @@ var (
 	goalAsyncReasonPattern     = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 	goalAsyncOperationID       = regexp.MustCompile(`^[a-f0-9]{64}$`)
 )
+
+var errGoalAsyncJSONDuplicateKey = errors.New("duplicate JSON key")
 
 var (
 	// ErrGoalAsyncCheckpointInvalid means the internal checkpoint is malformed,
@@ -292,15 +303,16 @@ func (p goalAsyncPrincipal) copyPrincipal() goalAsyncPrincipal {
 // goalAsyncCeilings are the immutable initial ceilings. They are copied from
 // the frozen goal spec plus explicit internal limits.
 type goalAsyncCeilings struct {
-	MaxSlices                int `json:"max_slices"`
-	MaxModelRounds           int `json:"max_model_rounds"`
-	MaxToolAttempts          int `json:"max_tool_attempts"`
-	MaxResultBytes           int `json:"max_result_bytes"`
-	MaxEvidenceRecords       int `json:"max_evidence_records"`
-	MaxEvidenceBytes         int `json:"max_evidence_bytes"`
-	MaxRetries               int `json:"max_retries"`
-	MaxScheduledWorkRequests int `json:"max_scheduled_work_requests"`
-	MaxConsecutiveDenials    int `json:"max_consecutive_denials"`
+	MaxSlices                int           `json:"max_slices"`
+	MaxModelRounds           int           `json:"max_model_rounds"`
+	MaxToolAttempts          int           `json:"max_tool_attempts"`
+	MaxResultBytes           int           `json:"max_result_bytes"`
+	MaxEvidenceRecords       int           `json:"max_evidence_records"`
+	MaxEvidenceBytes         int           `json:"max_evidence_bytes"`
+	MaxRetries               int           `json:"max_retries"`
+	MaxScheduledWorkRequests int           `json:"max_scheduled_work_requests"`
+	MaxConsecutiveDenials    int           `json:"max_consecutive_denials"`
+	MaxSliceElapsed          time.Duration `json:"max_slice_elapsed_ns"`
 }
 
 type goalAsyncUsed struct {
@@ -341,6 +353,9 @@ func (c goalAsyncCeilings) validate() error {
 	}
 	if c.MaxConsecutiveDenials < 1 || c.MaxConsecutiveDenials > hardGoalConsecutiveDenials {
 		return goalAsyncInvalid("ceilings.max_consecutive_denials")
+	}
+	if c.MaxSliceElapsed < time.Second || c.MaxSliceElapsed > hardGoalMaxElapsed {
+		return goalAsyncInvalid("ceilings.max_slice_elapsed")
 	}
 	return nil
 }
@@ -419,16 +434,19 @@ const (
 )
 
 type goalAsyncWorkRef struct {
-	Kind           goalAsyncWorkKind  `json:"kind"`
-	State          goalAsyncWorkState `json:"state"`
-	RequestID      string             `json:"request_id"`
-	ProposalSHA256 string             `json:"proposal_sha256"`
-	ApprovalID     string             `json:"approval_id,omitempty"`
-	ApprovalSHA256 string             `json:"approval_sha256,omitempty"`
-	OperationID    string             `json:"operation_id,omitempty"`
-	SourceID       uint64             `json:"source_id"`
-	ExpiresAt      time.Time          `json:"expires_at"`
-	ObservedAt     time.Time          `json:"observed_at,omitempty"`
+	Kind              goalAsyncWorkKind  `json:"kind"`
+	State             goalAsyncWorkState `json:"state"`
+	RequestID         string             `json:"request_id"`
+	ProposalSHA256    string             `json:"proposal_sha256"`
+	ApprovalID        string             `json:"approval_id,omitempty"`
+	ApprovalSHA256    string             `json:"approval_sha256,omitempty"`
+	OperationID       string             `json:"operation_id,omitempty"`
+	SourceID          uint64             `json:"source_id"`
+	ProposalExpiresAt time.Time          `json:"proposal_expires_at"`
+	ApprovalExpiresAt time.Time          `json:"approval_expires_at,omitempty"`
+	SubmitBy          time.Time          `json:"submit_by,omitempty"`
+	AcceptedAt        time.Time          `json:"accepted_at,omitempty"`
+	ObservedAt        time.Time          `json:"observed_at,omitempty"`
 }
 
 func (w goalAsyncWorkRef) sortKey() string {
@@ -445,8 +463,8 @@ func (w goalAsyncWorkRef) validate(allowedSources []uint64, createdAt, updatedAt
 	if !goalAsyncHashPattern.MatchString(w.ProposalSHA256) {
 		return goalAsyncInvalid("work.proposal_sha256")
 	}
-	if !validGoalAsyncTime(w.ExpiresAt) || !w.ExpiresAt.After(createdAt) {
-		return goalAsyncInvalid("work.expires_at")
+	if !validGoalAsyncTime(w.ProposalExpiresAt) || !w.ProposalExpiresAt.After(createdAt) {
+		return goalAsyncInvalid("work.proposal_expires_at")
 	}
 	switch w.Kind {
 	case goalAsyncWorkCrawlProposal:
@@ -456,8 +474,8 @@ func (w goalAsyncWorkRef) validate(allowedSources []uint64, createdAt, updatedAt
 		if w.ApprovalID != "" || w.ApprovalSHA256 != "" || w.OperationID != "" {
 			return goalAsyncInvalid("work.proposal_identity")
 		}
-		if !w.ObservedAt.IsZero() {
-			return goalAsyncInvalid("work.observed_at")
+		if !w.ApprovalExpiresAt.IsZero() || !w.SubmitBy.IsZero() || !w.AcceptedAt.IsZero() || !w.ObservedAt.IsZero() {
+			return goalAsyncInvalid("work.proposal_timestamps")
 		}
 	case goalAsyncWorkCrawlOperation:
 		if w.State != goalAsyncWorkScheduled && w.State != goalAsyncWorkProcessing && w.State != goalAsyncWorkCompleted {
@@ -472,18 +490,164 @@ func (w goalAsyncWorkRef) validate(allowedSources []uint64, createdAt, updatedAt
 		if !goalAsyncOperationID.MatchString(w.OperationID) {
 			return goalAsyncInvalid("work.operation_id")
 		}
+		if !validGoalAsyncTime(w.ApprovalExpiresAt) || !w.ApprovalExpiresAt.After(createdAt) {
+			return goalAsyncInvalid("work.approval_expires_at")
+		}
+		if !validGoalAsyncTime(w.SubmitBy) || !w.SubmitBy.After(createdAt) {
+			return goalAsyncInvalid("work.submit_by")
+		}
+		if w.SubmitBy.After(w.ProposalExpiresAt) || w.SubmitBy.After(w.ApprovalExpiresAt) {
+			return goalAsyncInvalid("work.submit_by")
+		}
+		if !validGoalAsyncTime(w.AcceptedAt) || w.AcceptedAt.Before(createdAt) {
+			return goalAsyncInvalid("work.accepted_at")
+		}
+		if !w.AcceptedAt.Before(w.SubmitBy) ||
+			!w.AcceptedAt.Before(w.ProposalExpiresAt) ||
+			!w.AcceptedAt.Before(w.ApprovalExpiresAt) {
+			return goalAsyncInvalid("work.accepted_at")
+		}
 		if w.State == goalAsyncWorkCompleted {
-			if !validGoalAsyncTime(w.ObservedAt) || w.ObservedAt.Before(createdAt) || w.ObservedAt.After(updatedAt) {
+			if !validGoalAsyncTime(w.ObservedAt) || w.ObservedAt.Before(w.AcceptedAt) || w.ObservedAt.After(updatedAt) {
 				return goalAsyncInvalid("work.observed_at")
 			}
-			if !w.ExpiresAt.After(w.ObservedAt) {
-				return goalAsyncInvalid("work.expires_at")
-			}
+			// Proposal/approval expiry bounds submission, not later completion.
+			// The logical goal deadline is enforced by the checkpoint transition.
 		} else if !w.ObservedAt.IsZero() {
 			return goalAsyncInvalid("work.observed_at")
 		}
 	default:
 		return goalAsyncInvalid("work.kind")
+	}
+	return nil
+}
+
+// goalAsyncSchedulingObservation is a trusted test/dev fixture for a scheduling
+// admission. It is not a database query and must not be populated from model
+// text, tool arguments/results or event payloads.
+type goalAsyncSchedulingObservation struct {
+	RunID         string
+	GoalID        string
+	GoalSpecHash  string
+	AgentID       string
+	Owner         string
+	Principal     goalAsyncPrincipal
+	Work          goalAsyncWorkRef
+	ApprovalValid bool
+	ObservedAt    time.Time
+}
+
+// goalAsyncSchedulingPrerequisite is the unexported, non-serializable proof
+// that a trusted caller observed an already-accepted operation for this exact
+// run, proposal, approval and source. It is not a stored grant.
+type goalAsyncSchedulingPrerequisite struct {
+	runID              string
+	goalID             string
+	goalSpecHash       string
+	agentID            string
+	owner              string
+	principal          goalAsyncPrincipal
+	work               goalAsyncWorkRef
+	approvalValid      bool
+	observedAt         time.Time
+	prerequisiteSHA256 string
+}
+
+func newGoalAsyncSchedulingPrerequisite(cp goalAsyncCheckpoint, obs goalAsyncSchedulingObservation) (goalAsyncSchedulingPrerequisite, error) {
+	if err := validateGoalAsyncCheckpoint(cp); err != nil {
+		return goalAsyncSchedulingPrerequisite{}, err
+	}
+	if cp.State != goalAsyncRunning && cp.State != goalAsyncAwaitingApproval {
+		return goalAsyncSchedulingPrerequisite{}, ErrGoalAsyncTransitionInvalid
+	}
+	if obs.RunID != cp.RunID || obs.GoalID != cp.GoalID || obs.GoalSpecHash != cp.GoalSpecHash ||
+		obs.AgentID != cp.AgentID || obs.Owner != cp.Owner {
+		return goalAsyncSchedulingPrerequisite{}, ErrGoalAsyncTransitionInvalid
+	}
+	if !obs.Principal.equal(goalAsyncPrincipal{
+		Kind: cp.PrincipalKind, UserID: cp.PrincipalUserID,
+		Username: cp.PrincipalUsername, Issuer: cp.PrincipalIssuer,
+	}) {
+		return goalAsyncSchedulingPrerequisite{}, ErrGoalAsyncTransitionInvalid
+	}
+	if !obs.ApprovalValid {
+		return goalAsyncSchedulingPrerequisite{}, ErrGoalAsyncTransitionInvalid
+	}
+	if obs.Work.Kind != goalAsyncWorkCrawlOperation ||
+		(obs.Work.State != goalAsyncWorkScheduled && obs.Work.State != goalAsyncWorkProcessing) {
+		return goalAsyncSchedulingPrerequisite{}, ErrGoalAsyncTransitionInvalid
+	}
+	if err := obs.Work.validate(cp.AllowedSources, cp.CreatedAt, cp.UpdatedAt); err != nil {
+		return goalAsyncSchedulingPrerequisite{}, err
+	}
+	if !validGoalAsyncTime(obs.ObservedAt) || obs.ObservedAt.Before(obs.Work.AcceptedAt) ||
+		!obs.ObservedAt.Before(cp.Deadline) {
+		return goalAsyncSchedulingPrerequisite{}, ErrGoalAsyncTransitionInvalid
+	}
+	if cp.State == goalAsyncAwaitingApproval {
+		if _, ok := findGoalAsyncProposal(cp.Work, obs.Work.RequestID, obs.Work.ProposalSHA256, obs.Work.SourceID); !ok {
+			return goalAsyncSchedulingPrerequisite{}, ErrGoalAsyncTransitionInvalid
+		}
+	}
+	prerequisite := goalAsyncSchedulingPrerequisite{
+		runID: cp.RunID, goalID: cp.GoalID, goalSpecHash: cp.GoalSpecHash,
+		agentID: cp.AgentID, owner: cp.Owner,
+		principal: obs.Principal.copyPrincipal(), work: obs.Work,
+		approvalValid: obs.ApprovalValid,
+		observedAt:    normalizeGoalAsyncTime(obs.ObservedAt),
+	}
+	prerequisite.prerequisiteSHA256 = goalAsyncSchedulingPrerequisiteHash(prerequisite)
+	return prerequisite, nil
+}
+
+func goalAsyncSchedulingPrerequisiteHash(p goalAsyncSchedulingPrerequisite) string {
+	payload := struct {
+		RunID, GoalID, GoalSpecHash, AgentID, Owner string
+		Principal                                   goalAsyncPrincipal
+		Work                                        goalAsyncWorkRef
+		ApprovalValid                               bool
+		ObservedAt                                  time.Time
+	}{
+		p.runID, p.goalID, p.goalSpecHash, p.agentID, p.owner,
+		p.principal, p.work, p.approvalValid, normalizeGoalAsyncTime(p.observedAt),
+	}
+	data, _ := json.Marshal(payload)
+	sum := sha256.Sum256(append([]byte("crowler-goal-async-scheduling-v2\x00"), data...))
+	return hex.EncodeToString(sum[:])
+}
+
+func (p goalAsyncSchedulingPrerequisite) validate(cp goalAsyncCheckpoint) error {
+	if cp.State != goalAsyncRunning && cp.State != goalAsyncAwaitingApproval {
+		return ErrGoalAsyncTransitionInvalid
+	}
+	if p.runID != cp.RunID || p.goalID != cp.GoalID || p.goalSpecHash != cp.GoalSpecHash ||
+		p.agentID != cp.AgentID || p.owner != cp.Owner {
+		return ErrGoalAsyncTransitionInvalid
+	}
+	if !p.principal.equal(goalAsyncPrincipal{
+		Kind: cp.PrincipalKind, UserID: cp.PrincipalUserID,
+		Username: cp.PrincipalUsername, Issuer: cp.PrincipalIssuer,
+	}) {
+		return ErrGoalAsyncTransitionInvalid
+	}
+	if !p.approvalValid || p.work.Kind != goalAsyncWorkCrawlOperation ||
+		(p.work.State != goalAsyncWorkScheduled && p.work.State != goalAsyncWorkProcessing) {
+		return ErrGoalAsyncTransitionInvalid
+	}
+	if err := p.work.validate(cp.AllowedSources, cp.CreatedAt, cp.UpdatedAt); err != nil {
+		return err
+	}
+	if !validGoalAsyncTime(p.observedAt) || p.observedAt.Before(p.work.AcceptedAt) ||
+		!p.observedAt.Before(cp.Deadline) {
+		return ErrGoalAsyncTransitionInvalid
+	}
+	if cp.State == goalAsyncAwaitingApproval {
+		if _, ok := findGoalAsyncProposal(cp.Work, p.work.RequestID, p.work.ProposalSHA256, p.work.SourceID); !ok {
+			return ErrGoalAsyncTransitionInvalid
+		}
+	}
+	if p.prerequisiteSHA256 != goalAsyncSchedulingPrerequisiteHash(p) {
+		return ErrGoalAsyncTransitionInvalid
 	}
 	return nil
 }
@@ -613,13 +777,16 @@ type goalAsyncCheckpoint struct {
 
 // goalAsyncLimits are trusted internal limits that are not part of the public
 // agent manifest. They are explicit so the future store cannot silently grant
-// more slices, retries or work requests. The zero value selects safe defaults;
-// once any field is set, a zero retry or scheduled-work value means exactly
-// zero rather than a default.
+// a longer logical lifetime, more slices, retries or work requests. The zero
+// value selects safe defaults; once any field is set, a zero retry or
+// scheduled-work value means exactly zero rather than a default. A zero
+// LogicalLifetime still selects the provisional default; negative, sub-second
+// or over-hard-bound values are rejected.
 type goalAsyncLimits struct {
 	MaxSlices                int
 	MaxRetries               int
 	MaxScheduledWorkRequests int
+	LogicalLifetime          time.Duration
 }
 
 func newGoalAsyncCheckpoint(spec *AgentGoalSpec, identity AgentIdentity, principal goalAsyncPrincipal,
@@ -684,21 +851,21 @@ func newGoalAsyncCheckpoint(spec *AgentGoalSpec, identity AgentIdentity, princip
 	if err != nil {
 		return goalAsyncCheckpoint{}, err
 	}
-	maxElapsed := spec.Budgets.MaxElapsed
-	if maxElapsed <= 0 {
-		maxElapsed = defaultGoalMaxElapsed
+	logicalLifetime := limits.LogicalLifetime
+	if logicalLifetime == 0 {
+		logicalLifetime = defaultGoalAsyncLogicalLifetime
 	}
-	if maxElapsed < time.Second || maxElapsed > hardGoalMaxElapsed {
-		return goalAsyncCheckpoint{}, goalAsyncInvalid("max_elapsed")
+	if logicalLifetime < time.Second || logicalLifetime > hardGoalAsyncLogicalLifetime {
+		return goalAsyncCheckpoint{}, goalAsyncInvalid("logical_lifetime")
 	}
 	deadline = normalizeGoalAsyncTime(deadline)
 	if deadline.IsZero() {
-		deadline = now.Add(maxElapsed)
+		deadline = now.Add(logicalLifetime)
 	}
 	if !deadline.After(now) {
 		return goalAsyncCheckpoint{}, goalAsyncInvalid("deadline")
 	}
-	if deadline.Sub(now) > maxElapsed {
+	if deadline.Sub(now) > logicalLifetime {
 		return goalAsyncCheckpoint{}, goalAsyncInvalid("deadline_extension")
 	}
 
@@ -770,6 +937,7 @@ func goalAsyncCeilingsFromSpec(spec *AgentGoalSpec, limits goalAsyncLimits) (goa
 		MaxRetries:               maxRetries,
 		MaxScheduledWorkRequests: maxScheduled,
 		MaxConsecutiveDenials:    budgets.MaxConsecutiveDenials,
+		MaxSliceElapsed:          budgets.MaxElapsed,
 	}
 	if c.MaxModelRounds <= 0 {
 		c.MaxModelRounds = defaultGoalModelRounds
@@ -788,6 +956,9 @@ func goalAsyncCeilingsFromSpec(spec *AgentGoalSpec, limits goalAsyncLimits) (goa
 	}
 	if c.MaxConsecutiveDenials <= 0 {
 		c.MaxConsecutiveDenials = defaultGoalConsecutiveDenials
+	}
+	if c.MaxSliceElapsed <= 0 {
+		c.MaxSliceElapsed = defaultGoalMaxElapsed
 	}
 	if err := c.validate(); err != nil {
 		return goalAsyncCeilings{}, err
@@ -904,7 +1075,10 @@ func normalizeGoalAsyncCheckpoint(cp goalAsyncCheckpoint) goalAsyncCheckpoint {
 		work := make([]goalAsyncWorkRef, len(cp.Work))
 		for i, ref := range cp.Work {
 			work[i] = ref
-			work[i].ExpiresAt = normalizeGoalAsyncTime(ref.ExpiresAt)
+			work[i].ProposalExpiresAt = normalizeGoalAsyncTime(ref.ProposalExpiresAt)
+			work[i].ApprovalExpiresAt = normalizeGoalAsyncTime(ref.ApprovalExpiresAt)
+			work[i].SubmitBy = normalizeGoalAsyncTime(ref.SubmitBy)
+			work[i].AcceptedAt = normalizeGoalAsyncTime(ref.AcceptedAt)
 			work[i].ObservedAt = normalizeGoalAsyncTime(ref.ObservedAt)
 		}
 		sort.Slice(work, func(i, j int) bool { return work[i].sortKey() < work[j].sortKey() })
@@ -1040,6 +1214,9 @@ func validateGoalAsyncCheckpoint(cp goalAsyncCheckpoint) error {
 	if !cp.Deadline.After(cp.CreatedAt) {
 		return goalAsyncInvalid("deadline")
 	}
+	if cp.Deadline.Sub(cp.CreatedAt) > hardGoalAsyncLogicalLifetime {
+		return goalAsyncInvalid("deadline")
+	}
 	if err := cp.Ceilings.validate(); err != nil {
 		return err
 	}
@@ -1163,6 +1340,9 @@ func validateGoalAsyncWorkSet(work []goalAsyncWorkRef, allowedSources []uint64, 
 		if err := ref.validate(allowedSources, createdAt, updatedAt); err != nil {
 			return err
 		}
+		if ref.Kind == goalAsyncWorkCrawlOperation && ref.AcceptedAt.After(updatedAt) {
+			return goalAsyncInvalid("work.accepted_at")
+		}
 		if existing, ok := requests[ref.RequestID]; ok {
 			if existing.Kind != ref.Kind || existing.SourceID != ref.SourceID ||
 				existing.ProposalSHA256 != ref.ProposalSHA256 {
@@ -1223,6 +1403,28 @@ func validateGoalAsyncEvidenceSet(evidence []goalAsyncEvidenceRef, allowedSource
 	return nil
 }
 
+// goalAsyncSliceDeadline bounds one execution slice by both the synchronous
+// slice ceiling and the logical goal deadline. It does not start a timer or
+// perform I/O; a future executor supplies the trusted clock and uses the
+// returned deadline for one model/tool slice.
+func goalAsyncSliceDeadline(cp goalAsyncCheckpoint, now time.Time) (time.Time, error) {
+	if err := validateGoalAsyncCheckpoint(cp); err != nil {
+		return time.Time{}, err
+	}
+	now = normalizeGoalAsyncTime(now)
+	if now.IsZero() || now.Before(cp.CreatedAt) {
+		return time.Time{}, goalAsyncInvalid("now")
+	}
+	if !now.Before(cp.Deadline) {
+		return time.Time{}, ErrGoalAsyncDeadline
+	}
+	sliceDeadline := now.Add(cp.Ceilings.MaxSliceElapsed)
+	if sliceDeadline.After(cp.Deadline) {
+		sliceDeadline = cp.Deadline
+	}
+	return sliceDeadline, nil
+}
+
 // goalAsyncTransitionRequest is a trusted internal request. Prerequisite
 // objects are deliberately unexported and non-serializable; a stored record
 // cannot become a current grant or verifier decision.
@@ -1238,6 +1440,7 @@ type goalAsyncTransitionRequest struct {
 	AuditRefs        []string
 	Verifier         *goalAsyncVerifierDecision
 	Resume           *goalAsyncResumeGrant
+	Scheduling       *goalAsyncSchedulingPrerequisite
 }
 
 type goalAsyncTransitionOutcome string
@@ -1351,14 +1554,16 @@ func goalAsyncVerifierDecisionHash(d goalAsyncVerifierDecision) string {
 		RunID, GoalID, GoalSpecHash, LedgerID, RunNonceHash, AgentID, Owner string
 		EvaluationSHA256, ReasonCode                                        string
 		VerifiedAt                                                          time.Time
+		EvidenceIDs                                                         []string
 		CriteriaMet                                                         bool
 	}{
 		d.runID, d.goalID, d.goalSpecHash, d.ledgerID, d.runNonceHash,
 		d.agentID, d.owner, d.evaluationSHA256, d.reasonCode,
-		normalizeGoalAsyncTime(d.verifiedAt), d.criteriaMet,
+		normalizeGoalAsyncTime(d.verifiedAt), sortedUniqueStrings(d.evidenceIDs),
+		d.criteriaMet,
 	}
 	data, _ := json.Marshal(payload)
-	sum := sha256.Sum256(append([]byte("crowler-goal-async-verifier-v1\x00"), data...))
+	sum := sha256.Sum256(append([]byte("crowler-goal-async-verifier-v2\x00"), data...))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -1389,8 +1594,10 @@ func (d goalAsyncVerifierDecision) validate(cp goalAsyncCheckpoint) error {
 }
 
 // goalAsyncCurrentAuthority is supplied by a future resume adapter after live
-// account, source ownership, agent and approval checks. It is not serialized
-// into the checkpoint and is not a new grant.
+// account, source ownership, agent and policy checks. Approval validity is a
+// scheduling-time fact; it is bound by the scheduling prerequisite and is not
+// required for later evidence evaluation. This value is not serialized into
+// the checkpoint and is not a new grant.
 type goalAsyncCurrentAuthority struct {
 	AgentID         string
 	Owner           string
@@ -1400,9 +1607,6 @@ type goalAsyncCurrentAuthority struct {
 	AllowedSources  []uint64
 	VerifiedSources []uint64
 	AgentEnabled    bool
-	ApprovalID      string
-	ApprovalSHA256  string
-	ApprovalValid   bool
 }
 
 type goalAsyncResumeGrant struct {
@@ -1464,9 +1668,6 @@ func newGoalAsyncResumeGrant(cp goalAsyncCheckpoint, current goalAsyncCurrentAut
 	if work.State == goalAsyncWorkCompleted && workState != goalAsyncWorkCompleted {
 		return goalAsyncResumeGrant{}, ErrGoalAsyncResumeDenied
 	}
-	if !work.ApprovalValidFor(current) {
-		return goalAsyncResumeGrant{}, ErrGoalAsyncResumeDenied
-	}
 	now = normalizeGoalAsyncTime(now)
 	if now.IsZero() || now.Before(cp.UpdatedAt) || !now.Before(cp.Deadline) {
 		return goalAsyncResumeGrant{}, ErrGoalAsyncResumeDenied
@@ -1486,14 +1687,6 @@ func newGoalAsyncResumeGrant(cp goalAsyncCheckpoint, current goalAsyncCurrentAut
 	return grant, nil
 }
 
-func (w goalAsyncWorkRef) ApprovalValidFor(current goalAsyncCurrentAuthority) bool {
-	if w.ApprovalID == "" || w.ApprovalSHA256 == "" {
-		return false
-	}
-	return current.ApprovalValid && current.ApprovalID == w.ApprovalID &&
-		current.ApprovalSHA256 == w.ApprovalSHA256
-}
-
 func goalAsyncResumeGrantHash(g goalAsyncResumeGrant) string {
 	payload := struct {
 		RunID, GoalID, GoalSpecHash, AgentID, Owner string
@@ -1511,7 +1704,7 @@ func goalAsyncResumeGrantHash(g goalAsyncResumeGrant) string {
 		normalizeGoalAsyncTime(g.checkedAt),
 	}
 	data, _ := json.Marshal(payload)
-	sum := sha256.Sum256(append([]byte("crowler-goal-async-resume-v1\x00"), data...))
+	sum := sha256.Sum256(append([]byte("crowler-goal-async-resume-v2\x00"), data...))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -1581,6 +1774,11 @@ func cloneGoalAsyncTransitionRequest(request goalAsyncTransitionRequest) goalAsy
 		resume.allowedTools = append([]string(nil), request.Resume.allowedTools...)
 		resume.allowedSources = append([]uint64(nil), request.Resume.allowedSources...)
 		out.Resume = &resume
+	}
+	if request.Scheduling != nil {
+		scheduling := *request.Scheduling
+		scheduling.work = request.Scheduling.work
+		out.Scheduling = &scheduling
 	}
 	return out
 }
@@ -1662,6 +1860,12 @@ func applyGoalAsyncTransition(previous goalAsyncCheckpoint, request goalAsyncTra
 	if request.Kind != goalAsyncTransitionResume && request.Resume != nil {
 		return goalAsyncCheckpoint{}, "", ErrGoalAsyncTransitionInvalid
 	}
+	if request.Kind != goalAsyncTransitionAwaitExternalWork && request.Scheduling != nil {
+		return goalAsyncCheckpoint{}, "", ErrGoalAsyncTransitionInvalid
+	}
+	if request.Kind == goalAsyncTransitionAwaitExternalWork && request.Scheduling == nil {
+		return goalAsyncCheckpoint{}, "", ErrGoalAsyncTransitionInvalid
+	}
 	if request.Kind == goalAsyncTransitionCriteriaMet && request.Verifier == nil {
 		return goalAsyncCheckpoint{}, "", ErrGoalAsyncVerification
 	}
@@ -1669,7 +1873,6 @@ func applyGoalAsyncTransition(previous goalAsyncCheckpoint, request goalAsyncTra
 		return goalAsyncCheckpoint{}, "", ErrGoalAsyncResumeDenied
 	}
 	if request.Kind != goalAsyncTransitionAwaitApproval &&
-		request.Kind != goalAsyncTransitionAwaitExternalWork &&
 		request.Kind != goalAsyncTransitionResume && request.Work != nil {
 		return goalAsyncCheckpoint{}, "", ErrGoalAsyncTransitionInvalid
 	}
@@ -1694,10 +1897,10 @@ func applyGoalAsyncTransition(previous goalAsyncCheckpoint, request goalAsyncTra
 			return goalAsyncCheckpoint{}, "", err
 		}
 	case goalAsyncTransitionAwaitExternalWork:
-		if request.Work == nil {
+		if request.Scheduling == nil {
 			return goalAsyncCheckpoint{}, "", ErrGoalAsyncTransitionInvalid
 		}
-		if err := appendGoalAsyncWork(&next, previous, *request.Work, used); err != nil {
+		if err := appendGoalAsyncScheduledWork(&next, previous, *request.Scheduling, used); err != nil {
 			return goalAsyncCheckpoint{}, "", err
 		}
 	case goalAsyncTransitionResume:
@@ -1757,37 +1960,54 @@ func applyGoalAsyncTransition(previous goalAsyncCheckpoint, request goalAsyncTra
 }
 
 func appendGoalAsyncWork(next *goalAsyncCheckpoint, previous goalAsyncCheckpoint, work goalAsyncWorkRef, used goalAsyncUsed) error {
+	if work.Kind != goalAsyncWorkCrawlProposal || next.State != goalAsyncAwaitingApproval {
+		return ErrGoalAsyncTransitionInvalid
+	}
 	if err := work.validate(next.AllowedSources, next.CreatedAt, next.UpdatedAt); err != nil {
 		return err
 	}
-	switch work.Kind {
-	case goalAsyncWorkCrawlProposal:
-		if next.State != goalAsyncAwaitingApproval {
-			return ErrGoalAsyncTransitionInvalid
+	for _, existing := range next.Work {
+		if existing.sortKey() == work.sortKey() {
+			return goalAsyncInvalid("work.duplicate")
 		}
-	case goalAsyncWorkCrawlOperation:
-		if next.State != goalAsyncAwaitingExternalWork {
-			return ErrGoalAsyncTransitionInvalid
-		}
-		if work.State != goalAsyncWorkScheduled && work.State != goalAsyncWorkProcessing {
-			return ErrGoalAsyncTransitionInvalid
-		}
-		if previous.State == goalAsyncAwaitingApproval {
-			proposalIndex := -1
-			for i, existing := range next.Work {
-				if existing.Kind == goalAsyncWorkCrawlProposal &&
-					existing.RequestID == work.RequestID &&
-					existing.ProposalSHA256 == work.ProposalSHA256 &&
-					existing.SourceID == work.SourceID {
-					proposalIndex = i
-					break
-				}
+	}
+	next.Work = append(next.Work, work)
+	sort.Slice(next.Work, func(i, j int) bool { return next.Work[i].sortKey() < next.Work[j].sortKey() })
+	if len(next.Work) > maxGoalAsyncWorkRefs || len(next.Work) > next.Ceilings.MaxScheduledWorkRequests {
+		return goalAsyncInvalid("work")
+	}
+	if len(next.Work) > len(previous.Work) && used.ScheduledWorkRequests <= previous.Used.ScheduledWorkRequests {
+		return goalAsyncInvalid("used.scheduled_work_requests")
+	}
+	if used.ScheduledWorkRequests < len(next.Work) {
+		return goalAsyncInvalid("used.scheduled_work_requests")
+	}
+	return validateGoalAsyncWorkSet(next.Work, next.AllowedSources, next.CreatedAt, next.UpdatedAt, next.Ceilings)
+}
+
+func appendGoalAsyncScheduledWork(next *goalAsyncCheckpoint, previous goalAsyncCheckpoint, scheduling goalAsyncSchedulingPrerequisite, used goalAsyncUsed) error {
+	if err := scheduling.validate(previous); err != nil {
+		return err
+	}
+	if next.UpdatedAt.Before(scheduling.observedAt) {
+		return ErrGoalAsyncTransitionInvalid
+	}
+	work := scheduling.work
+	if previous.State == goalAsyncAwaitingApproval {
+		proposalIndex := -1
+		for i, existing := range next.Work {
+			if existing.Kind == goalAsyncWorkCrawlProposal &&
+				existing.RequestID == work.RequestID &&
+				existing.ProposalSHA256 == work.ProposalSHA256 &&
+				existing.SourceID == work.SourceID {
+				proposalIndex = i
+				break
 			}
-			if proposalIndex < 0 {
-				return ErrGoalAsyncTransitionInvalid
-			}
-			next.Work = append(next.Work[:proposalIndex], next.Work[proposalIndex+1:]...)
 		}
+		if proposalIndex < 0 {
+			return ErrGoalAsyncTransitionInvalid
+		}
+		next.Work = append(next.Work[:proposalIndex], next.Work[proposalIndex+1:]...)
 	}
 	for _, existing := range next.Work {
 		if existing.sortKey() == work.sortKey() {
@@ -1878,7 +2098,10 @@ func sameGoalAsyncWorkIdentity(a, b goalAsyncWorkRef) bool {
 	return a.Kind == b.Kind && a.RequestID == b.RequestID &&
 		a.ProposalSHA256 == b.ProposalSHA256 && a.ApprovalID == b.ApprovalID &&
 		a.ApprovalSHA256 == b.ApprovalSHA256 && a.OperationID == b.OperationID &&
-		a.SourceID == b.SourceID
+		a.SourceID == b.SourceID &&
+		a.ProposalExpiresAt.Equal(b.ProposalExpiresAt) &&
+		a.ApprovalExpiresAt.Equal(b.ApprovalExpiresAt) &&
+		a.SubmitBy.Equal(b.SubmitBy) && a.AcceptedAt.Equal(b.AcceptedAt)
 }
 
 func appendGoalAsyncEvidence(next *goalAsyncCheckpoint, previous goalAsyncCheckpoint, added []goalAsyncEvidenceRef, used goalAsyncUsed) error {
@@ -1920,15 +2143,16 @@ func appendGoalAsyncEvidence(next *goalAsyncCheckpoint, previous goalAsyncCheckp
 
 func goalAsyncTransitionRequestHash(request goalAsyncTransitionRequest) string {
 	payload := struct {
-		OperationID string
-		Kind        goalAsyncTransitionKind
-		ReasonCode  string
-		Used        *goalAsyncUsed
-		Work        *goalAsyncWorkRef
-		Evidence    []goalAsyncEvidenceRef
-		AuditRefs   []string
-		VerifierSHA string
-		ResumeSHA   string
+		OperationID   string
+		Kind          goalAsyncTransitionKind
+		ReasonCode    string
+		Used          *goalAsyncUsed
+		Work          *goalAsyncWorkRef
+		Evidence      []goalAsyncEvidenceRef
+		AuditRefs     []string
+		VerifierSHA   string
+		ResumeSHA     string
+		SchedulingSHA string
 	}{
 		OperationID: request.OperationID,
 		Kind:        request.Kind,
@@ -1944,9 +2168,12 @@ func goalAsyncTransitionRequestHash(request goalAsyncTransitionRequest) string {
 	if request.Resume != nil {
 		payload.ResumeSHA = request.Resume.grantSHA256
 	}
+	if request.Scheduling != nil {
+		payload.SchedulingSHA = request.Scheduling.prerequisiteSHA256
+	}
 	sort.Slice(payload.Evidence, func(i, j int) bool { return payload.Evidence[i].EvidenceID < payload.Evidence[j].EvidenceID })
 	data, _ := json.Marshal(payload)
-	sum := sha256.Sum256(append([]byte("crowler-goal-async-transition-v1\x00"), data...))
+	sum := sha256.Sum256(append([]byte("crowler-goal-async-transition-v2\x00"), data...))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -1964,12 +2191,82 @@ func marshalGoalAsyncCheckpoint(cp goalAsyncCheckpoint) ([]byte, error) {
 	return data, nil
 }
 
+func validateGoalAsyncJSONShape(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	if err := scanGoalAsyncJSONValue(decoder, 0); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return fmt.Errorf("%w: trailing checkpoint data", ErrGoalAsyncSerialization)
+	}
+	return nil
+}
+
+func scanGoalAsyncJSONValue(decoder *json.Decoder, depth int) error {
+	if depth > maxGoalAsyncJSONDepth {
+		return errors.New("JSON nesting is too deep")
+	}
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delim, ok := token.(json.Delim)
+	if !ok {
+		return nil
+	}
+	switch delim {
+	case '{':
+		seen := map[string]bool{}
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return errors.New("object key is not a string")
+			}
+			if seen[key] {
+				return errGoalAsyncJSONDuplicateKey
+			}
+			seen[key] = true
+			if err := scanGoalAsyncJSONValue(decoder, depth+1); err != nil {
+				return err
+			}
+		}
+		_, err := decoder.Token()
+		return err
+	case '[':
+		for decoder.More() {
+			if err := scanGoalAsyncJSONValue(decoder, depth+1); err != nil {
+				return err
+			}
+		}
+		_, err := decoder.Token()
+		return err
+	default:
+		return errors.New("unexpected JSON delimiter")
+	}
+}
+
 func parseGoalAsyncCheckpoint(data []byte) (goalAsyncCheckpoint, error) {
 	if len(data) == 0 || len(data) > maxGoalAsyncCheckpointBytes {
 		return goalAsyncCheckpoint{}, fmt.Errorf("%w: checkpoint size", ErrGoalAsyncSerialization)
 	}
+	if !utf8.Valid(data) {
+		return goalAsyncCheckpoint{}, fmt.Errorf("%w: malformed checkpoint", ErrGoalAsyncSerialization)
+	}
+	if err := validateGoalAsyncJSONShape(data); err != nil {
+		if errors.Is(err, errGoalAsyncJSONDuplicateKey) {
+			return goalAsyncCheckpoint{}, fmt.Errorf("%w: duplicate JSON key", ErrGoalAsyncSerialization)
+		}
+		if errors.Is(err, ErrGoalAsyncSerialization) {
+			return goalAsyncCheckpoint{}, err
+		}
+		return goalAsyncCheckpoint{}, fmt.Errorf("%w: malformed checkpoint", ErrGoalAsyncSerialization)
+	}
 	var cp goalAsyncCheckpoint
-	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&cp); err != nil {
 		return goalAsyncCheckpoint{}, fmt.Errorf("%w: malformed checkpoint", ErrGoalAsyncSerialization)
@@ -1978,7 +2275,6 @@ func parseGoalAsyncCheckpoint(data []byte) (goalAsyncCheckpoint, error) {
 	if err := decoder.Decode(&extra); err != io.EOF {
 		return goalAsyncCheckpoint{}, fmt.Errorf("%w: trailing checkpoint data", ErrGoalAsyncSerialization)
 	}
-	cp = normalizeGoalAsyncCheckpoint(cp)
 	if err := validateGoalAsyncCheckpoint(cp); err != nil {
 		return goalAsyncCheckpoint{}, err
 	}
@@ -1990,7 +2286,7 @@ func goalAsyncCheckpointDigest(cp goalAsyncCheckpoint) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	sum := sha256.Sum256(append([]byte("crowler-goal-async-checkpoint-v1\x00"), data...))
+	sum := sha256.Sum256(append([]byte("crowler-goal-async-checkpoint-v2\x00"), data...))
 	return hex.EncodeToString(sum[:]), nil
 }
 
@@ -2035,6 +2331,19 @@ func hasActiveGoalAsyncWork(work []goalAsyncWorkRef) bool {
 		}
 	}
 	return false
+}
+
+func findGoalAsyncProposal(work []goalAsyncWorkRef, requestID, proposalSHA256 string, sourceID uint64) (goalAsyncWorkRef, bool) {
+	for _, ref := range work {
+		if ref.Kind == goalAsyncWorkCrawlProposal &&
+			ref.State == goalAsyncWorkAwaitingApproval &&
+			ref.RequestID == requestID &&
+			ref.ProposalSHA256 == proposalSHA256 &&
+			ref.SourceID == sourceID {
+			return ref, true
+		}
+	}
+	return goalAsyncWorkRef{}, false
 }
 
 func findGoalAsyncWork(work []goalAsyncWorkRef, operationID string) (goalAsyncWorkRef, bool) {

@@ -13,10 +13,13 @@ or public contract was added.
 
 Approval is required before adding:
 
-- the durable goal-run/checkpoint schema and migration;
+- the durable goal-run/checkpoint v2 schema and migration;
 - the proposed schema `1.18` or an approved alternative;
 - the writer-generation change and startup compatibility check;
-- the compare-and-swap transaction, lock order and conflict semantics;
+- the internal logical-lifetime default/maximum and any public/deployed TTL;
+- the strict canonical checkpoint wire and duplicate-key rejection contract;
+- the compare-and-swap transaction, full replay ledger, lock order and conflict
+  semantics;
 - child work/evidence/audit/transition records;
 - retention and pruning ownership;
 - PostgreSQL 17/15.10 and SQLite compatibility gates.
@@ -32,7 +35,9 @@ Approval is required before adding:
 
 - a background resume claim/lease;
 - an event trigger or bounded poller;
-- live account, agent, source ownership, policy and approval refresh;
+- live account, agent, source ownership and policy refresh;
+- fresh approval checks for new privileged actions (historic acceptance does
+  not require an unexpired approval merely to read completion evidence);
 - cancellation, shutdown and preemption semantics;
 - crash/replay reconciliation and uncertain-write recovery;
 - a durable worker or event consumer.
@@ -60,7 +65,10 @@ No public schema or example was changed.
 - Pure-Go internal checkpoint and lifecycle model.
 - Closed transition table and terminal predicate.
 - Verifier-backed completion binding to `EvaluateGoal`.
-- Typed proposal/scheduled/completed work references.
+- Typed proposal/approval/submission/accepted/completed work references.
+- Separate logical lifetime and synchronous slice ceiling.
+- Trusted scheduling-admission prerequisite.
+- Strict v2 wire decoding without read-boundary normalization.
 - Cumulative budget/deadline/replay validation.
 - Defensive copying, strict serialization, bounded references.
 - Adversarial unit and race tests.
