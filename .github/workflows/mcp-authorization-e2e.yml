@@ -28,26 +28,51 @@ jobs:
 
       - name: Start disposable Docker daemon
         env:
-          DIND_NAME: wp04c2l-dind-${{ github.run_id }}-${{ github.run_attempt }}
+          DIND_NAME: wp04c2n-dind-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -euo pipefail
           test -z "${CROWLER_E2E_KEEP:-}"
           test -z "${CROWLER_E2E_STOP_AFTER:-}"
           test -z "${CROWLER_E2E_PREFLIGHT_ONLY:-}"
+
+          # The outer dind container lives on the host daemon. Do not inherit a
+          # nested or preconfigured endpoint before it is created.
+          if [ -n "${DOCKER_HOST:-}" ] || [ -n "${DOCKER_CONTEXT:-}" ] || \
+             [ -n "${DOCKER_TLS_VERIFY:-}" ] || [ -n "${DOCKER_CERT_PATH:-}" ]; then
+            echo "BLOCKED: host Docker endpoint selectors must be unset before dind startup" >&2
+            exit 1
+          fi
+          echo "host docker context: $(docker context show)"
+          echo "host docker server: $(docker info --format '{{.ServerVersion}}')"
+
           dind_image="docker:dind@sha256:7bf70dcb85c822e3fa6f2d332143e474b99147b9d7b39102b0cfe8b04a7dd61b"
-          docker pull "" >/dev/null
           mkdir -p "$RUNNER_TEMP/crowler-e2e-artifacts"
+          docker pull "$dind_image" >/dev/null
+          image_id_before="$(docker image inspect "$dind_image" --format '{{.Id}}')"
+          test -n "$image_id_before"
           docker image inspect "$dind_image" --format '{{json .}}' \
             >"$RUNNER_TEMP/crowler-e2e-artifacts/dind-image.json"
-          docker run -d --privileged --name "$DIND_NAME" \
+          container_id="$(docker run -d --privileged --name "$DIND_NAME" \
             --label "org.crowler.e2e.dind=${{ github.run_id }}" \
             -e DOCKER_TLS_CERTDIR= \
             -p 127.0.0.1::2375 \
             -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
             -v "$RUNNER_TEMP:$RUNNER_TEMP" \
-            "$dind_image"
+            "$dind_image")"
+          image_id_container="$(docker inspect -f '{{.Image}}' "$container_id")"
+          if [ "$image_id_before" != "$image_id_container" ]; then
+            echo "BLOCKED: dind image changed between verification and launch" >&2
+            exit 1
+          fi
+          printf '{"container_id":"%s","image_id":"%s","image":"%s"}\n' \
+            "$container_id" "$image_id_container" "$dind_image" \
+            >"$RUNNER_TEMP/crowler-e2e-artifacts/dind-container.json"
+
           address="$(docker port "$DIND_NAME" 2375/tcp | head -1)"
-          case "$address" in 127.0.0.1:*) ;; *) echo "dind port is not loopback: $address" >&2; exit 1 ;; esac
+          case "$address" in
+            127.0.0.1:*) ;;
+            *) echo "dind port is not loopback: $address" >&2; exit 1 ;;
+          esac
           echo "DOCKER_HOST=tcp://${address}" >>"$GITHUB_ENV"
           export DOCKER_HOST="tcp://${address}"
           for _ in $(seq 1 60); do
@@ -104,6 +129,17 @@ jobs:
               raise SystemExit("E2E did not reach the final completion marker")
           PY
 
+      - name: Remove disposable Docker daemon from host endpoint
+        if: always()
+        env:
+          RUN_ID: ${{ github.run_id }}
+          DIND_NAME: wp04c2n-dind-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/crowler-e2e-artifacts"
+          bash scripts/cleanup-e2e-dind.sh "$RUN_ID" "$DIND_NAME" \
+            | tee "$RUNNER_TEMP/crowler-e2e-artifacts/cleanup.log"
+
       - name: Upload sanitized E2E evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -114,14 +150,3 @@ jobs:
             ${{ runner.temp }}/crowler-e2e-safety
           if-no-files-found: warn
           retention-days: 7
-
-      - name: Remove disposable Docker daemon
-        if: always()
-        run: |
-          set +e
-          ids="$(docker ps -aq --filter label=org.crowler.e2e.dind=${{ github.run_id }})"
-          for id in $ids; do
-            label="$(docker inspect -f '{{ index .Config.Labels "org.crowler.e2e.dind" }}' "$id" 2>/dev/null)"
-            [ "$label" = "${{ github.run_id }}" ] && docker rm -f "$id"
-          done
-          exit 0
