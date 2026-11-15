@@ -22,3 +22,35 @@ column repair because its supported versions cannot conditionally add columns in
 SQL; the SQL ledger is safe to re-run. MySQL uses guarded column/index procedures
 and is safe to re-run. The migration does not bulk-verify historical `usr_id`
 values.
+
+The unreleased 1.17 baseline also contains the asynchronous goal persistence
+tables (`AgentGoalRuns`, `AgentGoalRunTools`, `AgentGoalRunSources`,
+`AgentGoalRunWork`, `AgentGoalRunEvidence`,
+`AgentGoalRunVerificationEvidence`, `AgentGoalRunAuditRefs` and
+`AgentGoalRunTransitions`). A fresh install and the v1.16 -> v1.17 migration
+create them. The database release stays **1.17** and the writer generation stays
+**`verified-ownership-v1.17`**.
+
+Development databases already stamped 1.17 from an earlier in-development
+baseline can add the missing goal objects with:
+
+- `postgresql-agent-goal-v1.17.pgsql`
+- `sqlite-agent-goal-v1.17.sqlite3`
+
+These are manual, opt-in, administrator scripts. For PostgreSQL run them with
+the `postgres` admin account and `-v CROWLER_DB_USER=<runtime role>`; the script
+creates the objects and transfers ownership and grants to the runtime role. For
+SQLite, run the script with the `sqlite3` command-line tool while no service is
+writing. The scripts do not change `DBSchemaVersion` or
+`DatabaseWriterCompatibility`, are safe to re-run, preserve goal history, and
+fail closed when a same-named table, column, index, foreign key or check
+constraint is structurally incompatible. They are not applied automatically at
+startup.
+
+MySQL keeps its existing 1.17 startup and migration behavior. Asynchronous goal
+persistence is deliberately unsupported on MySQL in this phase; the MySQL
+scripts contain no goal tables.
+
+The migration files are source artifacts. They are not approval to apply DDL to
+a persistent, shared, staging or production database. Take a backup, rehearse on
+a disposable database, and obtain separate deployment authorization first.

@@ -4,28 +4,40 @@
 
 The internal async goal lifecycle/checkpoint kernel is implemented and tested.
 It is not wired to production execution, persistence, Events, the scheduler,
-the crawler or MCP. No database migration, worker, claim, lease, event consumer
-or public contract was added.
+the crawler or MCP. The schema-1.17 goal tables and same-version development
+addon are prepared. No Go store, worker, claim, lease, event consumer or public
+contract was added.
 
-## Decision 1: persistence phase
+## Decision 0: schema and writer version freeze
+
+**Status: DECIDED by the WP-05B2B1 task direction.**
+
+The database release remains **1.17** because 1.17 has not shipped. The writer
+generation remains **`verified-ownership-v1.17`**. The asynchronous-goal tables
+are incorporated into the unreleased 1.17 fresh-install and v1.16 -> v1.17
+migration paths. Development databases already stamped 1.17 use the manual,
+same-version addon.
+
+No named approver or approval date is asserted. The decision is recorded in the
+work-package direction, not in a separate signed approval record.
+
+## Decision 1: transactional store and runtime phase
 
 **Status: PENDING.**
 
 Approval is required before adding:
 
-- the durable goal-run/checkpoint v2 schema and migration;
-- the proposed schema `1.18` or an approved alternative;
-- the writer-generation change and startup compatibility check;
+- the Go durable goal-run/checkpoint store and CAS adapter;
 - the internal logical-lifetime default/maximum and any public/deployed TTL;
 - the strict canonical checkpoint wire and duplicate-key rejection contract;
 - the compare-and-swap transaction, full replay ledger, lock order and conflict
   semantics;
-- child work/evidence/audit/transition records;
+- runtime record hydration and load/save operations;
 - retention and pruning ownership;
-- PostgreSQL 17/15.10 and SQLite compatibility gates.
+- production deployment and backup/rollback scheduling.
 
-The proposal is in `ASYNC_GOAL_PERSISTENCE_CONTRACT.md`. It is not a migration
-and does not authorize one.
+The DDL is prepared in `ASYNC_GOAL_PERSISTENCE_CONTRACT.md`. Prepared DDL is not
+approval of the store, runtime or deployment.
 
 ## Decision 2: resume phase
 
@@ -62,6 +74,11 @@ No public schema or example was changed.
 
 ## What is already authorized and complete
 
+- Schema-1.17 PostgreSQL/SQLite goal tables in fresh installs and the v1.16 ->
+  v1.17 migration.
+- Manual same-version addons for development databases already stamped 1.17.
+- Read-only `CheckAsyncGoalPersistenceSchema`, deliberately not wired to normal
+  startup.
 - Pure-Go internal checkpoint and lifecycle model.
 - Closed transition table and terminal predicate.
 - Verifier-backed completion binding to `EvaluateGoal`.
@@ -76,7 +93,7 @@ No public schema or example was changed.
 
 ## Explicit non-approvals
 
-- The persistence proposal is not approval.
+- Prepared 1.17 DDL is not approval of the Go store or a production migration.
 - The resume design is not approval.
 - The public-contract discussion is not approval.
 - A chat request, a new engineering task or an inferred intention is not
@@ -96,6 +113,6 @@ No public schema or example was changed.
 
 ## Next action
 
-An independent review of this work package, followed by a separate maintainer
-decision on the persistence, resume and public-contract phases. Do not begin
-those phases automatically.
+Independent review of WP-05B2B1, followed by a separate maintainer decision on
+the transactional store, resume and public-contract phases. Do not apply the
+addon to a persistent database or begin those phases automatically.

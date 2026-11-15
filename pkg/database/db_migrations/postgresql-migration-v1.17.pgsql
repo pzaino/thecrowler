@@ -361,6 +361,358 @@ $$
 LANGUAGE plpgsql;
 
 
+-- BEGIN AGENT GOAL PERSISTENCE (schema 1.17)
+-- Asynchronous goal checkpoint persistence. This is internal agent state; it
+-- never stores prompts, model messages, raw tool arguments/results, evidence
+-- payloads or credentials. The schema contract is goal-async-v2.
+
+CREATE TABLE IF NOT EXISTS AgentGoalRuns (
+    goal_run_id                 TEXT PRIMARY KEY,
+    checkpoint_version          SMALLINT NOT NULL,
+    contract_version            TEXT NOT NULL,
+    revision                    BIGINT NOT NULL,
+    trace_id                    TEXT NOT NULL,
+    correlation_id              TEXT,
+    agent_id                    TEXT NOT NULL,
+    owner                       TEXT NOT NULL,
+    principal_kind              TEXT NOT NULL,
+    principal_user_id           BIGINT NOT NULL DEFAULT 0,
+    principal_username          TEXT NOT NULL DEFAULT '',
+    principal_issuer            TEXT NOT NULL DEFAULT '',
+    goal_id                     TEXT NOT NULL,
+    goal_spec_hash              CHAR(64) NOT NULL,
+    policy_sha256               CHAR(64) NOT NULL,
+    state                       TEXT NOT NULL,
+    slices                      INTEGER NOT NULL DEFAULT 0,
+    created_at                  TIMESTAMPTZ(6) NOT NULL,
+    updated_at                  TIMESTAMPTZ(6) NOT NULL,
+    deadline                    TIMESTAMPTZ(6) NOT NULL,
+    reason_code                 TEXT NOT NULL,
+    ledger_id                   TEXT NOT NULL,
+    run_nonce_hash              CHAR(64) NOT NULL,
+    last_transition_id          TEXT,
+    last_transition_hash        CHAR(64),
+    verification_verifier       TEXT,
+    verification_sha256         CHAR(64),
+    verified_at                 TIMESTAMPTZ(6),
+    cancel_requested_at         TIMESTAMPTZ(6),
+    cancel_requested_by_user_id BIGINT,
+    max_slices                  INTEGER NOT NULL,
+    max_model_rounds            INTEGER NOT NULL,
+    max_tool_attempts           INTEGER NOT NULL,
+    max_result_bytes            BIGINT NOT NULL,
+    max_evidence_records        INTEGER NOT NULL,
+    max_evidence_bytes          BIGINT NOT NULL,
+    max_retries                 INTEGER NOT NULL,
+    max_scheduled_work_requests INTEGER NOT NULL,
+    max_consecutive_denials     INTEGER NOT NULL,
+    max_slice_elapsed_ns        BIGINT NOT NULL,
+    used_model_rounds           INTEGER NOT NULL DEFAULT 0,
+    used_tool_attempts          INTEGER NOT NULL DEFAULT 0,
+    used_result_bytes           BIGINT NOT NULL DEFAULT 0,
+    used_evidence_records       INTEGER NOT NULL DEFAULT 0,
+    used_evidence_bytes         BIGINT NOT NULL DEFAULT 0,
+    used_retries                INTEGER NOT NULL DEFAULT 0,
+    used_scheduled_work_requests INTEGER NOT NULL DEFAULT 0,
+    used_consecutive_denials    INTEGER NOT NULL DEFAULT 0,
+    CONSTRAINT chk_agent_goal_versions CHECK (
+        checkpoint_version = 2 AND contract_version = 'goal-async-v2'
+    ),
+    CONSTRAINT chk_agent_goal_revision CHECK (revision > 0),
+    CONSTRAINT chk_agent_goal_state CHECK (state IN (
+        'created', 'running', 'awaiting_approval', 'awaiting_external_work',
+        'criteria_met', 'incomplete', 'budget_exhausted', 'cancelled',
+        'denied', 'failed'
+    )),
+    CONSTRAINT chk_agent_goal_principal CHECK (
+        (principal_kind = 'user' AND principal_user_id > 0
+            AND length(btrim(principal_username)) BETWEEN 1 AND 256
+            AND length(btrim(principal_issuer)) BETWEEN 1 AND 512)
+        OR
+        (principal_kind = 'system' AND principal_user_id = 0
+            AND principal_username = '' AND principal_issuer = '')
+    ),
+    CONSTRAINT chk_agent_goal_identity CHECK (
+        length(btrim(goal_run_id)) BETWEEN 1 AND 128
+        AND length(btrim(trace_id)) BETWEEN 1 AND 128
+        AND length(btrim(agent_id)) BETWEEN 1 AND 128
+        AND length(btrim(owner)) BETWEEN 1 AND 256
+        AND length(btrim(goal_id)) BETWEEN 1 AND 128
+        AND length(btrim(ledger_id)) BETWEEN 1 AND 128
+        AND (correlation_id IS NULL
+             OR length(btrim(correlation_id)) BETWEEN 1 AND 128)
+    ),
+    CONSTRAINT chk_agent_goal_hashes CHECK (
+        goal_spec_hash ~ '^[0-9a-f]{64}$'
+        AND policy_sha256 ~ '^[0-9a-f]{64}$'
+        AND run_nonce_hash ~ '^[0-9a-f]{64}$'
+        AND (last_transition_hash IS NULL OR last_transition_hash ~ '^[0-9a-f]{64}$')
+        AND (verification_sha256 IS NULL OR verification_sha256 ~ '^[0-9a-f]{64}$')
+    ),
+    CONSTRAINT chk_agent_goal_timestamps CHECK (
+        updated_at >= created_at
+        AND deadline > created_at
+        AND deadline <= created_at + INTERVAL '24 hours'
+    ),
+    CONSTRAINT chk_agent_goal_active_deadline CHECK (
+        state NOT IN ('created', 'running', 'awaiting_approval',
+                      'awaiting_external_work', 'criteria_met', 'incomplete')
+        OR updated_at < deadline
+    ),
+    CONSTRAINT chk_agent_goal_ceilings CHECK (
+        max_slices BETWEEN 1 AND 64
+        AND max_model_rounds BETWEEN 1 AND 8
+        AND max_tool_attempts BETWEEN 1 AND 16
+        AND max_result_bytes BETWEEN 1024 AND 65536
+        AND max_evidence_records BETWEEN 1 AND 32
+        AND max_evidence_bytes BETWEEN 1024 AND 65536
+        AND max_retries BETWEEN 0 AND 16
+        AND max_scheduled_work_requests BETWEEN 0 AND 32
+        AND max_consecutive_denials BETWEEN 1 AND 5
+        AND max_slice_elapsed_ns BETWEEN 1000000000 AND 120000000000
+    ),
+    CONSTRAINT chk_agent_goal_used CHECK (
+        slices BETWEEN 0 AND max_slices
+        AND used_model_rounds BETWEEN 0 AND max_model_rounds
+        AND used_tool_attempts BETWEEN 0 AND max_tool_attempts
+        AND used_result_bytes BETWEEN 0 AND max_result_bytes
+        AND used_evidence_records BETWEEN 0 AND max_evidence_records
+        AND used_evidence_bytes BETWEEN 0 AND max_evidence_bytes
+        AND used_retries BETWEEN 0 AND max_retries
+        AND used_scheduled_work_requests BETWEEN 0 AND max_scheduled_work_requests
+        AND used_consecutive_denials BETWEEN 0 AND max_consecutive_denials
+    ),
+    CONSTRAINT chk_agent_goal_verification CHECK (
+        (state = 'criteria_met'
+            AND verification_verifier = 'deterministic_verifier'
+            AND verification_sha256 IS NOT NULL AND verified_at IS NOT NULL)
+        OR
+        (state <> 'criteria_met'
+            AND verification_verifier IS NULL
+            AND verification_sha256 IS NULL AND verified_at IS NULL)
+    ),
+    CONSTRAINT chk_agent_goal_last_transition CHECK (
+        (revision = 1 AND last_transition_id IS NULL AND last_transition_hash IS NULL)
+        OR
+        (revision > 1 AND length(btrim(last_transition_id)) BETWEEN 1 AND 128
+            AND last_transition_hash IS NOT NULL)
+    ),
+    CONSTRAINT chk_agent_goal_cancel CHECK (
+        (cancel_requested_at IS NULL AND cancel_requested_by_user_id IS NULL)
+        OR
+        (cancel_requested_at IS NOT NULL AND cancel_requested_by_user_id > 0)
+    ),
+    CONSTRAINT chk_agent_goal_reason CHECK (
+        length(btrim(reason_code)) BETWEEN 1 AND 64
+        AND (state <> 'criteria_met'
+             OR reason_code IN ('criteria_all_met', 'criteria_any_met'))
+    )
+);
+
+CREATE TABLE IF NOT EXISTS AgentGoalRunTools (
+    goal_run_id TEXT NOT NULL,
+    tool_name   TEXT NOT NULL,
+    PRIMARY KEY (goal_run_id, tool_name),
+    CONSTRAINT fk_agent_goal_tool_run FOREIGN KEY (goal_run_id)
+        REFERENCES AgentGoalRuns (goal_run_id) ON DELETE CASCADE,
+    CONSTRAINT chk_agent_goal_tool_name CHECK (length(btrim(tool_name)) BETWEEN 1 AND 64)
+);
+
+CREATE TABLE IF NOT EXISTS AgentGoalRunSources (
+    goal_run_id TEXT NOT NULL,
+    source_id   BIGINT NOT NULL CONSTRAINT chk_agent_goal_source_id CHECK (source_id > 0),
+    PRIMARY KEY (goal_run_id, source_id),
+    CONSTRAINT fk_agent_goal_source_run FOREIGN KEY (goal_run_id)
+        REFERENCES AgentGoalRuns (goal_run_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS AgentGoalRunWork (
+    goal_run_id          TEXT NOT NULL,
+    request_id           CHAR(64) NOT NULL,
+    kind                 TEXT NOT NULL,
+    state                TEXT NOT NULL,
+    proposal_sha256      CHAR(64) NOT NULL,
+    approval_id          CHAR(64),
+    approval_sha256      CHAR(64),
+    operation_id         CHAR(64),
+    source_id            BIGINT NOT NULL,
+    proposal_expires_at  TIMESTAMPTZ(6) NOT NULL,
+    approval_expires_at  TIMESTAMPTZ(6),
+    submit_by            TIMESTAMPTZ(6),
+    accepted_at          TIMESTAMPTZ(6),
+    observed_at          TIMESTAMPTZ(6),
+    created_at           TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at           TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (goal_run_id, request_id),
+    CONSTRAINT fk_agent_goal_work_run FOREIGN KEY (goal_run_id)
+        REFERENCES AgentGoalRuns (goal_run_id) ON DELETE CASCADE,
+    CONSTRAINT fk_agent_goal_work_source FOREIGN KEY (goal_run_id, source_id)
+        REFERENCES AgentGoalRunSources (goal_run_id, source_id) ON DELETE CASCADE,
+    CONSTRAINT chk_agent_goal_work_ids CHECK (
+        request_id ~ '^[0-9a-f]{64}$'
+        AND proposal_sha256 ~ '^[0-9a-f]{64}$'
+        AND (approval_id IS NULL OR approval_id ~ '^[0-9a-f]{64}$')
+        AND (approval_sha256 IS NULL OR approval_sha256 ~ '^[0-9a-f]{64}$')
+        AND (operation_id IS NULL OR operation_id ~ '^[0-9a-f]{64}$')
+        AND source_id > 0
+    ),
+    CONSTRAINT chk_agent_goal_work_state CHECK (
+        (kind = 'crawl_proposal' AND state = 'awaiting_approval'
+            AND approval_id IS NULL AND approval_sha256 IS NULL
+            AND operation_id IS NULL AND approval_expires_at IS NULL
+            AND submit_by IS NULL AND accepted_at IS NULL AND observed_at IS NULL)
+        OR
+        (kind = 'crawl_operation' AND state IN ('scheduled', 'processing', 'completed')
+            AND approval_id IS NOT NULL AND approval_sha256 IS NOT NULL
+            AND operation_id IS NOT NULL AND approval_expires_at IS NOT NULL
+            AND submit_by IS NOT NULL AND accepted_at IS NOT NULL
+            AND ((state = 'completed' AND observed_at IS NOT NULL)
+                 OR (state <> 'completed' AND observed_at IS NULL)))
+    ),
+    CONSTRAINT chk_agent_goal_work_times CHECK (
+        updated_at >= created_at
+        AND (kind = 'crawl_proposal'
+            OR (accepted_at <= updated_at
+                AND accepted_at < submit_by
+                AND submit_by <= proposal_expires_at
+                AND submit_by <= approval_expires_at
+                AND accepted_at < proposal_expires_at
+                AND accepted_at < approval_expires_at
+                AND (observed_at IS NULL
+                    OR (observed_at >= accepted_at AND observed_at <= updated_at))))
+    )
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_goal_work_operation
+    ON AgentGoalRunWork (goal_run_id, operation_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_goal_work_approval
+    ON AgentGoalRunWork (goal_run_id, approval_id);
+CREATE INDEX IF NOT EXISTS idx_agent_goal_work_state
+    ON AgentGoalRunWork (goal_run_id, kind, state);
+
+CREATE TABLE IF NOT EXISTS AgentGoalRunEvidence (
+    goal_run_id      TEXT NOT NULL,
+    evidence_id      TEXT NOT NULL,
+    kind             TEXT NOT NULL,
+    trust_class      TEXT NOT NULL,
+    producer         TEXT NOT NULL,
+    source_ids       JSONB NOT NULL DEFAULT '[]'::jsonb,
+    observed_at      TIMESTAMPTZ(6) NOT NULL,
+    expires_at       TIMESTAMPTZ(6) NOT NULL,
+    payload_sha256   CHAR(64) NOT NULL,
+    record_sha256    CHAR(64) NOT NULL,
+    size_bytes       INTEGER NOT NULL,
+    created_at       TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (goal_run_id, evidence_id),
+    CONSTRAINT fk_agent_goal_evidence_run FOREIGN KEY (goal_run_id)
+        REFERENCES AgentGoalRuns (goal_run_id) ON DELETE CASCADE,
+    CONSTRAINT chk_agent_goal_evidence_ids CHECK (
+        evidence_id ~ '^ev_[0-9a-f]{32}$'
+        AND payload_sha256 ~ '^[0-9a-f]{64}$'
+        AND record_sha256 ~ '^[0-9a-f]{64}$'
+    ),
+    CONSTRAINT chk_agent_goal_evidence_kind CHECK (
+        kind IN ('source_status', 'source_metadata', 'indexed_page',
+                 'scraped_field', 'artifact', 'tool_observation')
+        AND trust_class IN ('system_verified', 'tool_observation')
+        AND length(btrim(producer)) BETWEEN 1 AND 256
+    ),
+    CONSTRAINT chk_agent_goal_evidence_sources CHECK (
+        jsonb_typeof(source_ids) = 'array'
+        AND jsonb_array_length(source_ids) <= 32
+    ),
+    CONSTRAINT chk_agent_goal_evidence_times CHECK (expires_at > observed_at),
+    CONSTRAINT chk_agent_goal_evidence_size CHECK (size_bytes BETWEEN 1 AND 16384)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_goal_evidence_record
+    ON AgentGoalRunEvidence (goal_run_id, record_sha256);
+CREATE INDEX IF NOT EXISTS idx_agent_goal_evidence_observed
+    ON AgentGoalRunEvidence (goal_run_id, observed_at);
+
+CREATE TABLE IF NOT EXISTS AgentGoalRunVerificationEvidence (
+    goal_run_id TEXT NOT NULL,
+    evidence_id TEXT NOT NULL,
+    created_at  TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (goal_run_id, evidence_id),
+    CONSTRAINT fk_agent_goal_verification_evidence FOREIGN KEY (goal_run_id, evidence_id)
+        REFERENCES AgentGoalRunEvidence (goal_run_id, evidence_id) ON DELETE CASCADE,
+    CONSTRAINT chk_agent_goal_verification_evidence_time CHECK (created_at IS NOT NULL)
+);
+
+CREATE TABLE IF NOT EXISTS AgentGoalRunAuditRefs (
+    goal_run_id TEXT NOT NULL,
+    audit_ref   TEXT NOT NULL,
+    created_at  TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (goal_run_id, audit_ref),
+    CONSTRAINT fk_agent_goal_audit_run FOREIGN KEY (goal_run_id)
+        REFERENCES AgentGoalRuns (goal_run_id) ON DELETE CASCADE,
+    CONSTRAINT chk_agent_goal_audit_ref CHECK (length(btrim(audit_ref)) BETWEEN 1 AND 128)
+);
+
+CREATE TABLE IF NOT EXISTS AgentGoalRunTransitions (
+    goal_run_id     TEXT NOT NULL,
+    revision        BIGINT NOT NULL,
+    operation_id    TEXT NOT NULL,
+    transition_hash CHAR(64) NOT NULL,
+    from_state      TEXT NOT NULL,
+    to_state        TEXT NOT NULL,
+    reason_code     TEXT NOT NULL,
+    created_at      TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (goal_run_id, revision),
+    CONSTRAINT fk_agent_goal_transition_run FOREIGN KEY (goal_run_id)
+        REFERENCES AgentGoalRuns (goal_run_id) ON DELETE CASCADE,
+    CONSTRAINT chk_agent_goal_transition_ids CHECK (
+        revision > 0
+        AND length(btrim(operation_id)) BETWEEN 1 AND 128
+        AND transition_hash ~ '^[0-9a-f]{64}$'
+    ),
+    CONSTRAINT chk_agent_goal_transition_states CHECK (
+        from_state IN ('created', 'running', 'awaiting_approval',
+                       'awaiting_external_work', 'criteria_met', 'incomplete',
+                       'budget_exhausted', 'cancelled', 'denied', 'failed')
+        AND to_state IN ('running', 'awaiting_approval',
+                         'awaiting_external_work', 'criteria_met', 'incomplete',
+                         'budget_exhausted', 'cancelled', 'denied', 'failed')
+        AND from_state <> to_state
+    ),
+    CONSTRAINT chk_agent_goal_transition_reason CHECK (
+        length(btrim(reason_code)) BETWEEN 1 AND 64
+    )
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_goal_transition_operation
+    ON AgentGoalRunTransitions (goal_run_id, operation_id);
+CREATE INDEX IF NOT EXISTS idx_agent_goal_transitions_created
+    ON AgentGoalRunTransitions (goal_run_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_agent_goal_runs_state_deadline
+    ON AgentGoalRuns (state, deadline);
+CREATE INDEX IF NOT EXISTS idx_agent_goal_runs_principal
+    ON AgentGoalRuns (principal_user_id, state);
+CREATE INDEX IF NOT EXISTS idx_agent_goal_runs_agent
+    ON AgentGoalRuns (agent_id, state);
+CREATE INDEX IF NOT EXISTS idx_agent_goal_runs_owner
+    ON AgentGoalRuns (owner, state);
+-- END AGENT GOAL PERSISTENCE (schema 1.17)
+
+ALTER TABLE AgentGoalRuns OWNER TO :CROWLER_DB_USER;
+ALTER TABLE AgentGoalRunTools OWNER TO :CROWLER_DB_USER;
+ALTER TABLE AgentGoalRunSources OWNER TO :CROWLER_DB_USER;
+ALTER TABLE AgentGoalRunWork OWNER TO :CROWLER_DB_USER;
+ALTER TABLE AgentGoalRunEvidence OWNER TO :CROWLER_DB_USER;
+ALTER TABLE AgentGoalRunVerificationEvidence OWNER TO :CROWLER_DB_USER;
+ALTER TABLE AgentGoalRunAuditRefs OWNER TO :CROWLER_DB_USER;
+ALTER TABLE AgentGoalRunTransitions OWNER TO :CROWLER_DB_USER;
+GRANT SELECT, INSERT, UPDATE ON AgentGoalRuns TO :CROWLER_DB_USER;
+GRANT SELECT, INSERT ON AgentGoalRunTools TO :CROWLER_DB_USER;
+GRANT SELECT, INSERT ON AgentGoalRunSources TO :CROWLER_DB_USER;
+GRANT SELECT, INSERT, UPDATE, DELETE ON AgentGoalRunWork TO :CROWLER_DB_USER;
+GRANT SELECT, INSERT ON AgentGoalRunEvidence TO :CROWLER_DB_USER;
+GRANT SELECT, INSERT ON AgentGoalRunVerificationEvidence TO :CROWLER_DB_USER;
+GRANT SELECT, INSERT ON AgentGoalRunAuditRefs TO :CROWLER_DB_USER;
+GRANT SELECT, INSERT ON AgentGoalRunTransitions TO :CROWLER_DB_USER;
+
 UPDATE DBSchemaVersion SET is_current=FALSE;
 INSERT INTO DBSchemaVersion(version,description,is_current)
 VALUES ('1.17','Durable crawl approval persistence',TRUE)

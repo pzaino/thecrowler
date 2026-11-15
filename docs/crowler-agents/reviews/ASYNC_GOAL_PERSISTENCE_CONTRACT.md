@@ -2,12 +2,16 @@
 
 ## Status
 
-**Design proposal only. No migration, table, index, query or database write was
-implemented in this work package.**
+**The schema objects for this contract are now part of the unreleased schema
+1.17. The transactional Go store, resume engine and runtime wiring remain
+unimplemented.**
 
 The pure kernel is in `pkg/agent/goal_async_state.go`. This document specifies
 what a separately approved durable store and resume engine would need. It is
-grounded in the current schema and runtime, not in assumed tables.
+grounded in the current schema and runtime, not in assumed tables. The database
+release stays 1.17 and the writer generation stays `verified-ownership-v1.17`;
+this document does not authorize a new release version or a production
+migration.
 
 ## Existing storage evaluated
 
@@ -17,13 +21,15 @@ grounded in the current schema and runtime, not in assumed tables.
 | `CrawlApprovals` | Operator approval for a crawl proposal | **Do not reuse.** Approval is not goal state and is not execution proof. The checkpoint may reference its ID/hash. |
 | `Status` | Crawl scheduling operation row keyed by `status_sha256`, with `details` JSON | **Do not reuse as the goal row.** It is the external work record. Its operation key is the work reference. |
 | `MCPMutationProposals` / `MCPMutationApprovals` | MCP mutation proposal/approval lifecycle | **Do not reuse.** Different lifecycle, different authority, separately gated. |
-| `DBSchemaVersion` / `DatabaseWriterCompatibility` | Schema and writer compatibility metadata | **Do not overload.** A new migration and version decision are required. |
+| `DBSchemaVersion` / `DatabaseWriterCompatibility` | Schema and writer compatibility metadata | **Do not overload.** The goal tables are part of the unreleased 1.17 DDL. The schema version and writer generation stay unchanged; a same-version addon updates development databases already stamped 1.17. |
 | `AgentMemory` / memory store | Short/long-term agent memory | **Do not reuse.** Memory is not a durable goal-run state machine. |
 
 ## Proposed durable records
 
-The names below are proposals. The final names, schema version and writer
-generation require maintainer approval.
+The names below are the schema-1.17 tables prepared by WP-05B2B1. The database
+release remains 1.17 and the writer generation remains
+`verified-ownership-v1.17`. The Go store that will use these tables remains
+unimplemented.
 
 ### 1. `AgentGoalRuns`
 
@@ -420,36 +426,46 @@ idempotency is a second line of defense, not a replacement for a goal claim.
 
 ## Schema, migration and compatibility
 
-The current startup contract requires schema `1.17` and writer generation
-`verified-ownership-v1.17`. Adding these tables without a version change would
-make the new storage invisible to the existing startup check. Do not silently
-extend 1.17.
+The database release schema remains **1.17** because 1.17 has not shipped. The
+writer generation remains **`verified-ownership-v1.17`**. The asynchronous-goal
+tables are part of the unreleased 1.17 fresh-install and v1.16 -> v1.17
+migration paths, and a same-version additive script updates development
+databases already stamped 1.17:
 
-Recommended approval scope for the persistence phase:
+- PostgreSQL: `db_migrations/postgresql-agent-goal-v1.17.pgsql`
+- SQLite: `db_migrations/sqlite-agent-goal-v1.17.sqlite3`
 
-- a new additive migration, proposed as schema `1.18`;
-- a new writer generation, proposed as `goal-checkpoint-v1.18` (the final name
-  is a maintainer decision);
-- an explicit internal logical-lifetime default and maximum (provisional:
-  15 minutes and 24 hours) and a separate public/deployed TTL decision;
-- updated `DBSchemaVersion`, `DatabaseWriterCompatibility`, startup
-  compatibility checks and deployment backup/rollback procedure;
-- PostgreSQL 17 and PostgreSQL 15.10 validation;
-- SQLite migration and foreign-key/startup validation;
-- explicit unsupported MySQL behavior.
+Those scripts are manual, opt-in, administrator operations. They do not change
+`DBSchemaVersion` or `DatabaseWriterCompatibility`, are safe to re-run, preserve
+goal history, and fail closed when a same-named object is structurally
+incompatible. They are not applied at service startup. The migration files are
+source artifacts, not approval to apply production DDL.
+
+MySQL keeps its existing 1.17 startup contract. Asynchronous goal persistence is
+explicitly unsupported on MySQL in this phase; no MySQL goal tables are added.
+`CheckAsyncGoalPersistenceSchema` returns the typed unsupported result there.
+
+The future store must call the read-only `CheckAsyncGoalPersistenceSchema`
+before opening a write path. That check is deliberately not wired into ordinary
+agent, crawler or Events startup, because development databases already stamped
+1.17 may not have the addon yet.
 
 The new tables are additive. No existing column, index or row is changed.
-Rollback requires stopping writers, exporting the new tables, dropping only the
-new tables, and restoring the prior writer generation. A production migration
-must be backed up and rehearsed on a disposable database.
+Rollback requires stopping writers and dropping only the new tables, or
+restoring the prior backup. A production migration must be backed up and
+rehearsed on a disposable database, and remains subject to separate deployment
+approval.
 
 ## Retention and privacy
 
-- Terminal goal runs: retain for an operator-approved period (proposed 30
-  days), then prune child work/evidence/audit refs/transitions in cascade
-  order.
-- Transition records: proposed 90 days for replay/audit, or the repository
-  audit-retention period if longer.
+No pruning or retention job is implemented in this work package. Parent goal
+runs and their child rows use cascading foreign keys, so the parent and children
+must be kept together for at least the longest approved audit/replay period. A
+scheduled prune of a parent while transition history is still required would be
+a contract violation. The final retention numbers and the pruning owner remain
+pending maintainer policy confirmation; do not encode a 30-day parent / 90-day
+transition split in code or tests.
+
 - No raw prompts, model messages, tool arguments, results, passwords, bearer
   tokens, API keys, DSNs, MCP credentials, cookies or source configuration
   blobs.
@@ -458,10 +474,10 @@ must be backed up and rehearsed on a disposable database.
 
 ## Exact approvals still required
 
-1. **Persistence phase:** approve or reject the `AgentGoalRuns` v2 model, new
-   migration, schema `1.18` (or an approved alternative), writer-generation
-   change, logical-lifetime policy, CAS/lock/transaction contract and
-   retention.
+1. **Persistence store phase:** approve or reject the transactional Go store,
+   CAS/lock/transaction contract, logical-lifetime policy and retention. The
+   1.17 DDL and same-version addon are prepared; they do not authorize a
+   production migration or runtime execution.
 2. **Resume phase:** approve or reject the claim/lease, event or bounded-poll
    trigger, current-authority refresh, cancellation/shutdown and recovery
    engine.
