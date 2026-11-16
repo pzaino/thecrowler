@@ -4,11 +4,11 @@
 
 The internal async goal lifecycle/checkpoint kernel, an internal unexported
 transactional store, durable cancellation fencing, stricter transition-ledger
-validation and a read-only crawl-operation observer are implemented and tested.
-None of this is wired to production execution, Events, the scheduler, the
-crawler or MCP. The schema-1.17 goal tables and same-version development addon
-are prepared. No worker, claim, lease, event consumer, resume engine or public
-contract was added.
+validation, a read-only crawl-operation observer and a read-only resume
+eligibility service are implemented and tested. None of this is wired to
+production execution, Events, the scheduler, the crawler or MCP. The schema-1.17
+goal tables and same-version development addon are prepared. No worker, claim,
+lease, event consumer, resume engine or public contract was added.
 
 ## Decision 0: schema and writer version freeze
 
@@ -67,6 +67,35 @@ work, create a resume grant, construct a verifier decision or execute anything.
 Approval of this internal observation layer does not authorize resumption,
 current-authority refresh or a claim/lease worker.
 
+## Decision 1b: read-only resume eligibility
+
+**Status: IMPLEMENTED internally; execution activation PENDING.**
+
+`goalAsyncResumeEligibility` loads the current persisted checkpoint and
+cancellation marker, revalidates the current user through
+`auth.ResolveActiveIdentity`, verifies every frozen source through verified
+`SourceOwnership` without administrator override, and requires an explicit
+current-agent authority provider bound to the exact agent, owner, goal spec,
+policy hash, tool set and source set. It returns `eligible`, `waiting`,
+`denied`, `uncertain` or `unavailable` with stable reason codes. No provider is
+installed globally; a nil provider fails closed. The registry-backed provider is
+an explicit process-snapshot helper, not proof of manifest freshness.
+
+`eligible` is a diagnostic decision, not an executable grant. The service runs
+its checks twice around operation correlation and compares a second checkpoint
+snapshot, but no claim/lease exists, so a later change is not covered. The
+future execution transaction must repeat the checks under its own lock.
+
+### Operation completion blocker
+
+No production code advances the specific `Status` operation row to `completed`
+after scheduling. The crawler updates `Sources.status` and emits a source-level
+`crawl_completed` event, which is not operation-specific proof. Real scheduled
+operations therefore remain `pending` for the observer. Automatic resumption is
+blocked until the exact durable operation is advanced or a separately approved
+authenticated correlation mechanism exists. Do not infer completion from source
+status, events or model text.
+
 ## Decision 2: resume phase
 
 **Status: PENDING.**
@@ -112,6 +141,10 @@ No public schema or example was changed.
   corruption tests.
 - Durable cancellation fencing, last-transition reason/timestamp ledger checks,
   and a read-only one-operation crawl observer for PostgreSQL and SQLite.
+- Historical approval-chronology and operation-timestamp validation.
+- Read-only resume eligibility with current user, verified source ownership and
+  explicit agent/policy authority for PostgreSQL and SQLite.
+- A real scheduler-to-observer acceptance test using authentic persisted rows.
 - Pure-Go internal checkpoint and lifecycle model.
 - Closed transition table and terminal predicate.
 - Verifier-backed completion binding to `EvaluateGoal`.
@@ -148,8 +181,8 @@ No public schema or example was changed.
 
 ## Next action
 
-Independent review of WP-05B3A, followed by a separate maintainer decision on
-current-authority refresh and guarded resume admission (WP-05B3B), cancellation
-finalization semantics, production store activation and the public-contract
-phases. Do not apply the addon to a persistent database or begin those phases
-automatically.
+Independent review of WP-05B3B, followed by a separate maintainer decision on
+durable execution ownership, claim/lease coordination, operation-completion
+correlation, cancellation finalization, production store activation and the
+public-contract phases. Do not apply the addon to a persistent database or begin
+those phases automatically.

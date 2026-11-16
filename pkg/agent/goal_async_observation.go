@@ -58,6 +58,8 @@ const (
 	goalAsyncObservationReasonIdentityConflict     = "goal_observation_identity_conflict"
 	goalAsyncObservationReasonOperationDeleted     = "goal_observation_operation_deleted"
 	goalAsyncObservationReasonApprovalBeforeAccept = "goal_observation_approval_revoked_before_acceptance"
+	goalAsyncObservationReasonAcceptBeforeApproval = "goal_observation_acceptance_before_approval"
+	goalAsyncObservationReasonTimestampInvalid     = "goal_observation_operation_timestamp_invalid"
 	goalAsyncObservationReasonInvalidState         = "goal_observation_state_invalid"
 )
 
@@ -236,6 +238,16 @@ func (s *goalAsyncStore) observeCrawlOperationAt(ctx context.Context, cp goalAsy
 		result.ReasonCode = goalAsyncObservationReasonIdentityConflict
 		return result, fmt.Errorf("%w: approval identity", errGoalAsyncObservationConflict)
 	}
+	if proposal.ExpiresAt.IsZero() || approval.ApprovedAt.IsZero() || approval.ExpiresAt.IsZero() {
+		result.Class = goalAsyncObservationConflict
+		result.ReasonCode = goalAsyncObservationReasonTimestampInvalid
+		return result, fmt.Errorf("%w: missing authoritative operation timestamps", errGoalAsyncObservationConflict)
+	}
+	if work.AcceptedAt.Before(approval.ApprovedAt) {
+		result.Class = goalAsyncObservationConflict
+		result.ReasonCode = goalAsyncObservationReasonAcceptBeforeApproval
+		return result, fmt.Errorf("%w: operation acceptance precedes approval", errGoalAsyncObservationConflict)
+	}
 	if !work.AcceptedAt.Before(approval.ExpiresAt) {
 		result.Class = goalAsyncObservationConflict
 		result.ReasonCode = goalAsyncObservationReasonIdentityConflict
@@ -278,6 +290,11 @@ func (s *goalAsyncStore) observeCrawlOperationAt(ctx context.Context, cp goalAsy
 		result.Class = goalAsyncObservationConflict
 		result.ReasonCode = goalAsyncObservationReasonIdentityConflict
 		return result, fmt.Errorf("%w: Status acceptance time", errGoalAsyncObservationConflict)
+	}
+	if status.LastUpdatedAt.Before(status.CreatedAt) {
+		result.Class = goalAsyncObservationUncertain
+		result.ReasonCode = goalAsyncObservationReasonTimestampInvalid
+		return result, fmt.Errorf("%w: Status timestamps run backwards", errGoalAsyncObservationUncertain)
 	}
 
 	details, err := decodeGoalAsyncOperationDetails(status.Details)

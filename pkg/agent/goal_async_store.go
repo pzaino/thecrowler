@@ -177,11 +177,20 @@ func (s *goalAsyncStore) CreateCheckpoint(ctx context.Context, cp goalAsyncCheck
 // pure validator and transition ledger checks. It performs no writes and no
 // authorization.
 func (s *goalAsyncStore) LoadCheckpoint(ctx context.Context, runID string) (goalAsyncCheckpoint, error) {
+	cp, _, err := s.LoadCheckpointWithCancellation(ctx, runID)
+	return cp, err
+}
+
+// LoadCheckpointWithCancellation reads the current checkpoint and the durable
+// cancellation marker from one read-only snapshot. The bool reports whether a
+// cancellation request is outstanding. It performs no writes and no
+// authorization; callers must treat the checkpoint as historical state.
+func (s *goalAsyncStore) LoadCheckpointWithCancellation(ctx context.Context, runID string) (goalAsyncCheckpoint, bool, error) {
 	if s == nil || s.db == nil {
-		return goalAsyncCheckpoint{}, errGoalAsyncStoreUnavailable
+		return goalAsyncCheckpoint{}, false, errGoalAsyncStoreUnavailable
 	}
 	if !goalAsyncIDPattern.MatchString(runID) {
-		return goalAsyncCheckpoint{}, fmt.Errorf("%w: run_id", ErrGoalAsyncCheckpointInvalid)
+		return goalAsyncCheckpoint{}, false, fmt.Errorf("%w: run_id", ErrGoalAsyncCheckpointInvalid)
 	}
 	txCtx, cancel := cdb.TransactionContextForHandler(ctx, s.db)
 	defer cancel()
@@ -191,18 +200,22 @@ func (s *goalAsyncStore) LoadCheckpoint(ctx context.Context, runID string) (goal
 	}
 	tx, err := (*s.db).BeginTx(txCtx, opts)
 	if err != nil {
-		return goalAsyncCheckpoint{}, fmt.Errorf("begin goal checkpoint load: %w", err)
+		return goalAsyncCheckpoint{}, false, fmt.Errorf("begin goal checkpoint load: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
 	cp, err := s.loadCheckpoint(txCtx, tx, runID, false)
 	if err != nil {
-		return goalAsyncCheckpoint{}, cdb.NormalizeTransactionError(txCtx, err)
+		return goalAsyncCheckpoint{}, false, cdb.NormalizeTransactionError(txCtx, err)
+	}
+	pending, err := s.cancellationPending(txCtx, tx, runID)
+	if err != nil {
+		return goalAsyncCheckpoint{}, false, cdb.NormalizeTransactionError(txCtx, err)
 	}
 	if err := tx.Commit(); err != nil {
-		return goalAsyncCheckpoint{}, cdb.NormalizeTransactionError(txCtx, err)
+		return goalAsyncCheckpoint{}, false, cdb.NormalizeTransactionError(txCtx, err)
 	}
-	return cp, nil
+	return cp, pending, nil
 }
 
 // TransitionCheckpoint applies an authorized transition atomically. The

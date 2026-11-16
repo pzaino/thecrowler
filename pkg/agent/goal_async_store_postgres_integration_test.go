@@ -172,7 +172,8 @@ func applyGoalAsyncPostgresSchema(t *testing.T, db *sql.DB) {
 		revoked_at TIMESTAMPTZ,
 		revoked_by_user_id BIGINT,
 		revoked_by TEXT,
-		revocation_reason TEXT
+		revocation_reason TEXT,
+		UNIQUE (request_id, run_id, principal_user_id, source_id, operation_type)
 	);
 	CREATE TABLE IF NOT EXISTS CrawlProposals (
 		request_id CHAR(64) PRIMARY KEY,
@@ -556,4 +557,117 @@ func TestPostgresGoalAsyncObservationRejectsConflict(t *testing.T) {
 	if observation.Class != goalAsyncObservationConflict {
 		t.Fatalf("PostgreSQL conflicting observation class = %q", observation.Class)
 	}
+}
+
+func openGoalAsyncEligibilityPostgresFixture(t *testing.T) (*goalAsyncStore, cdb.Handler, goalAsyncCheckpoint, goalAsyncWorkRef) {
+	t.Helper()
+	store, handler, _ := openGoalAsyncPostgresStore(t)
+	cp, work := buildGoalAsyncEligibilityFixture(t, store, handler)
+	return store, handler, cp, work
+}
+
+func TestPostgresGoalAsyncObservationRejectsChronology(t *testing.T) {
+	t.Run("accepted before approval issued", func(t *testing.T) {
+		store, handler, _ := openGoalAsyncPostgresStore(t)
+		cp, work := goalAsyncObservationCheckpoint(t)
+		insertGoalAsyncObservationFixture(t, handler, cp, work)
+		late := work.AcceptedAt.Add(time.Minute)
+		if _, err := handler.Exec(`UPDATE CrawlApprovals SET approved_at=$1 WHERE approval_id=$2`, late, work.ApprovalID); err != nil {
+			t.Fatalf("mutate PostgreSQL approval grant time: %v", err)
+		}
+		mutateGoalAsyncObservationDetails(t, handler, work, func(details *goalAsyncOperationDetails) {
+			details.ApprovedAt = late.UTC().Format(time.RFC3339Nano)
+		})
+		observation, err := observeGoalAsyncTestOperation(t, store, cp, work, late.Add(time.Minute))
+		if !errors.Is(err, errGoalAsyncObservationConflict) ||
+			observation.ReasonCode != goalAsyncObservationReasonAcceptBeforeApproval {
+			t.Fatalf("PostgreSQL chronology observation = %+v err=%v", observation, err)
+		}
+	})
+	t.Run("status updated before created", func(t *testing.T) {
+		store, handler, _ := openGoalAsyncPostgresStore(t)
+		cp, work := goalAsyncObservationCheckpoint(t)
+		insertGoalAsyncObservationFixture(t, handler, cp, work)
+		if _, err := handler.Exec(`UPDATE Status SET last_updated_at=$1 WHERE status_sha256=$2`,
+			work.AcceptedAt.Add(-time.Second), work.OperationID); err != nil {
+			t.Fatalf("mutate PostgreSQL operation timestamp: %v", err)
+		}
+		observation, err := observeGoalAsyncTestOperation(t, store, cp, work, work.AcceptedAt.Add(time.Minute))
+		if !errors.Is(err, errGoalAsyncObservationUncertain) ||
+			observation.ReasonCode != goalAsyncObservationReasonTimestampInvalid {
+			t.Fatalf("PostgreSQL timestamp observation = %+v err=%v", observation, err)
+		}
+	})
+}
+
+func TestPostgresGoalAsyncResumeEligibility(t *testing.T) {
+	t.Run("positive", func(t *testing.T) {
+		store, handler, cp, work := openGoalAsyncEligibilityPostgresFixture(t)
+		setGoalAsyncObservationCompleted(t, handler, work)
+		eligibility, _ := newGoalAsyncEligibilityForTest(store, cp)
+		decision, err := eligibility.evaluateAt(context.Background(), cp.RunID, work.OperationID, work.AcceptedAt.Add(time.Minute))
+		if err != nil || decision.Outcome != goalAsyncResumeEligible {
+			t.Fatalf("PostgreSQL eligibility decision = %+v err=%v", decision, err)
+		}
+	})
+	t.Run("user disabled", func(t *testing.T) {
+		store, handler, cp, work := openGoalAsyncEligibilityPostgresFixture(t)
+		setGoalAsyncObservationCompleted(t, handler, work)
+		if _, err := handler.Exec(`UPDATE Users SET disabled=TRUE WHERE user_id=7`); err != nil {
+			t.Fatalf("disable PostgreSQL user: %v", err)
+		}
+		eligibility, _ := newGoalAsyncEligibilityForTest(store, cp)
+		decision, err := eligibility.evaluateAt(context.Background(), cp.RunID, work.OperationID, work.AcceptedAt.Add(time.Minute))
+		if err != nil || decision.Outcome != goalAsyncResumeDenied {
+			t.Fatalf("PostgreSQL disabled user decision = %+v err=%v", decision, err)
+		}
+	})
+	t.Run("ownership transferred", func(t *testing.T) {
+		store, handler, cp, work := openGoalAsyncEligibilityPostgresFixture(t)
+		setGoalAsyncObservationCompleted(t, handler, work)
+		insertGoalAsyncEligibilityUser(t, handler, 8, "other-owner")
+		if _, err := handler.Exec(`UPDATE Sources SET usr_id=8 WHERE source_id=42`); err != nil {
+			t.Fatalf("transfer PostgreSQL source: %v", err)
+		}
+		if _, err := handler.Exec(`UPDATE SourceOwnership SET user_id=8 WHERE source_id=42`); err != nil {
+			t.Fatalf("transfer PostgreSQL provenance: %v", err)
+		}
+		eligibility, _ := newGoalAsyncEligibilityForTest(store, cp)
+		decision, err := eligibility.evaluateAt(context.Background(), cp.RunID, work.OperationID, work.AcceptedAt.Add(time.Minute))
+		if err != nil || decision.Outcome != goalAsyncResumeDenied ||
+			decision.ReasonCode != goalAsyncResumeReasonDeniedSourceOwnership {
+			t.Fatalf("PostgreSQL transferred source decision = %+v err=%v", decision, err)
+		}
+	})
+	t.Run("agent policy changed", func(t *testing.T) {
+		store, handler, cp, work := openGoalAsyncEligibilityPostgresFixture(t)
+		setGoalAsyncObservationCompleted(t, handler, work)
+		eligibility, provider := newGoalAsyncEligibilityForTest(store, cp)
+		authority := goalAsyncEligibilityAuthorityFor(cp)
+		authority.PolicySHA256 = strings.Repeat("f", 64)
+		provider.set(authority, true, nil)
+		decision, err := eligibility.evaluateAt(context.Background(), cp.RunID, work.OperationID, work.AcceptedAt.Add(time.Minute))
+		if err != nil || decision.Outcome != goalAsyncResumeDenied ||
+			decision.ReasonCode != goalAsyncResumeReasonDeniedPolicy {
+			t.Fatalf("PostgreSQL policy change decision = %+v err=%v", decision, err)
+		}
+	})
+	t.Run("cancellation requested", func(t *testing.T) {
+		store, handler, cp, work := openGoalAsyncEligibilityPostgresFixture(t)
+		setGoalAsyncObservationCompleted(t, handler, work)
+		if _, err := handler.Exec(`UPDATE AgentGoalRuns SET cancel_requested_at=CURRENT_TIMESTAMP, cancel_requested_by_user_id=7 WHERE goal_run_id=$1`, cp.RunID); err != nil {
+			t.Fatalf("set PostgreSQL cancellation: %v", err)
+		}
+		eligibility, _ := newGoalAsyncEligibilityForTest(store, cp)
+		decision, err := eligibility.evaluateAt(context.Background(), cp.RunID, work.OperationID, work.AcceptedAt.Add(time.Minute))
+		if err != nil || decision.Outcome != goalAsyncResumeDenied ||
+			decision.ReasonCode != goalAsyncResumeReasonDeniedCancelled {
+			t.Fatalf("PostgreSQL cancellation decision = %+v err=%v", decision, err)
+		}
+	})
+}
+
+func TestPostgresGoalAsyncEligibilityRealScheduler(t *testing.T) {
+	store, handler, _ := openGoalAsyncPostgresStore(t)
+	runGoalAsyncRealSchedulerObservationScenario(t, store, handler)
 }

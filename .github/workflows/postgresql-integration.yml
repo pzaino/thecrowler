@@ -336,7 +336,7 @@ jobs:
             exit 1
           fi
 
-      - name: Run asynchronous goal store and crawl observation PostgreSQL integration
+      - name: Run asynchronous goal store, observation and eligibility PostgreSQL integration
         timeout-minutes: 10
         run: |
           set -euo pipefail
@@ -356,7 +356,10 @@ jobs:
             TestPostgresGoalAsyncStoreCancellationBlocksTransitions \
             TestPostgresGoalAsyncStoreRejectsCorruptTransitionLedger \
             TestPostgresGoalAsyncObservationValidAndExpired \
-            TestPostgresGoalAsyncObservationRejectsConflict; do
+            TestPostgresGoalAsyncObservationRejectsConflict \
+            TestPostgresGoalAsyncObservationRejectsChronology \
+            TestPostgresGoalAsyncResumeEligibility \
+            TestPostgresGoalAsyncEligibilityRealScheduler; do
             grep -F -- "=== RUN   ${test}" "$log"
             grep -F -- "--- PASS: ${test}" "$log"
           done

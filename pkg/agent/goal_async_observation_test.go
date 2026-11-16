@@ -569,3 +569,44 @@ func TestGoalAsyncObservationSQLiteRejectsWrongDeterministicKey(t *testing.T) {
 		t.Fatalf("deterministic key mismatch class = %q", observation.Class)
 	}
 }
+
+func TestGoalAsyncObservationSQLiteRejectsChronology(t *testing.T) {
+	t.Run("accepted before approval issued", func(t *testing.T) {
+		store, handler, _ := openGoalAsyncSQLiteStore(t)
+		cp, work := goalAsyncObservationCheckpoint(t)
+		insertGoalAsyncObservationFixture(t, handler, cp, work)
+		late := work.AcceptedAt.Add(time.Minute)
+		if _, err := handler.Exec(`UPDATE CrawlApprovals SET approved_at=? WHERE approval_id=?`, late, work.ApprovalID); err != nil {
+			t.Fatalf("mutate approval grant time: %v", err)
+		}
+		mutateGoalAsyncObservationDetails(t, handler, work, func(details *goalAsyncOperationDetails) {
+			details.ApprovedAt = late.UTC().Format(time.RFC3339Nano)
+		})
+		observation, err := observeGoalAsyncTestOperation(t, store, cp, work, late.Add(time.Minute))
+		if !errors.Is(err, errGoalAsyncObservationConflict) {
+			t.Fatalf("chronology error = %v, want conflict", err)
+		}
+		if observation.Class != goalAsyncObservationConflict ||
+			observation.ReasonCode != goalAsyncObservationReasonAcceptBeforeApproval {
+			t.Fatalf("chronology observation = %+v", observation)
+		}
+	})
+
+	t.Run("status updated before created", func(t *testing.T) {
+		store, handler, _ := openGoalAsyncSQLiteStore(t)
+		cp, work := goalAsyncObservationCheckpoint(t)
+		insertGoalAsyncObservationFixture(t, handler, cp, work)
+		if _, err := handler.Exec(`UPDATE Status SET last_updated_at=? WHERE status_sha256=?`,
+			work.AcceptedAt.Add(-time.Second), work.OperationID); err != nil {
+			t.Fatalf("mutate operation timestamp: %v", err)
+		}
+		observation, err := observeGoalAsyncTestOperation(t, store, cp, work, work.AcceptedAt.Add(time.Minute))
+		if !errors.Is(err, errGoalAsyncObservationUncertain) {
+			t.Fatalf("timestamp error = %v, want uncertain", err)
+		}
+		if observation.Class != goalAsyncObservationUncertain ||
+			observation.ReasonCode != goalAsyncObservationReasonTimestampInvalid {
+			t.Fatalf("timestamp observation = %+v", observation)
+		}
+	})
+}
