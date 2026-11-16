@@ -112,6 +112,9 @@ var (
 	ErrGoalAsyncResumeDenied = errors.New("goal async resume authorization denied")
 	// ErrGoalAsyncSerialization means the checkpoint encoding was rejected.
 	ErrGoalAsyncSerialization = errors.New("goal async checkpoint serialization failed")
+	// ErrGoalAsyncCancellationPending means a durable cancellation request is
+	// outstanding and no new checkpoint transition is permitted yet.
+	ErrGoalAsyncCancellationPending = errors.New("goal async cancellation is pending")
 )
 
 // goalAsyncState is the internal goal lifecycle. It is deliberately distinct

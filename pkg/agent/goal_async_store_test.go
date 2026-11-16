@@ -295,6 +295,100 @@ func TestGoalAsyncStoreSQLiteReconcilesCommittedOutcome(t *testing.T) {
 	}
 }
 
+func TestGoalAsyncStoreSQLiteCancellationBlocksTransitions(t *testing.T) {
+	store, handler, _ := openGoalAsyncSQLiteStore(t)
+	cp := testAsyncGoalBaseCheckpoint(t)
+	if err := store.CreateCheckpoint(context.Background(), cp); err != nil {
+		t.Fatalf("create checkpoint: %v", err)
+	}
+	cp = applyAndStoreGoalAsyncTransition(t, store, cp, goalAsyncTestStartRequest(cp, "op-store-cancel-start"))
+	cancelAt := cp.UpdatedAt.Add(time.Second)
+	if _, err := handler.Exec(`UPDATE AgentGoalRuns
+		SET cancel_requested_at=?, cancel_requested_by_user_id=7
+		WHERE goal_run_id=?`, cancelAt, cp.RunID); err != nil {
+		t.Fatalf("set cancellation marker: %v", err)
+	}
+	loaded, err := store.LoadCheckpoint(context.Background(), cp.RunID)
+	if err != nil {
+		t.Fatalf("load pending-cancellation checkpoint: %v", err)
+	}
+	if !reflect.DeepEqual(cp, loaded) {
+		t.Fatalf("audit load changed checkpoint")
+	}
+
+	request := goalAsyncTestAwaitApprovalRequest(cp, "op-store-cancel-blocked")
+	if _, _, err := store.TransitionCheckpoint(context.Background(), cp.RunID, request); !errors.Is(err, ErrGoalAsyncCancellationPending) {
+		t.Fatalf("cancelled transition error = %v, want cancellation pending", err)
+	}
+	terminal := goalAsyncTransitionRequest{
+		OperationID:      "op-store-cancel-terminal",
+		ExpectedRevision: cp.Revision,
+		Kind:             goalAsyncTransitionCancelled,
+		Now:              cp.UpdatedAt.Add(time.Second),
+		ReasonCode:       goalAsyncReasonCancelled,
+	}
+	if _, _, err := store.TransitionCheckpoint(context.Background(), cp.RunID, terminal); !errors.Is(err, ErrGoalAsyncCancellationPending) {
+		t.Fatalf("terminal transition error = %v, want cancellation pending", err)
+	}
+	after, err := store.LoadCheckpoint(context.Background(), cp.RunID)
+	if err != nil {
+		t.Fatalf("load after blocked transitions: %v", err)
+	}
+	if !reflect.DeepEqual(cp, after) {
+		t.Fatalf("blocked transitions changed checkpoint")
+	}
+	var transitions, work int
+	if err := handler.QueryRow(`SELECT
+		(SELECT COUNT(*) FROM AgentGoalRunTransitions WHERE goal_run_id=?),
+		(SELECT COUNT(*) FROM AgentGoalRunWork WHERE goal_run_id=?)`, cp.RunID, cp.RunID).Scan(&transitions, &work); err != nil {
+		t.Fatalf("count blocked transition rows: %v", err)
+	}
+	if transitions != 1 || work != 0 {
+		t.Fatalf("blocked cancellation wrote transitions=%d work=%d", transitions, work)
+	}
+	var stillCanceled bool
+	if err := handler.QueryRow(`SELECT cancel_requested_at IS NOT NULL FROM AgentGoalRuns WHERE goal_run_id=?`, cp.RunID).Scan(&stillCanceled); err != nil {
+		t.Fatalf("read cancellation marker: %v", err)
+	}
+	if !stillCanceled {
+		t.Fatal("blocked transition erased cancellation marker")
+	}
+}
+
+func TestGoalAsyncStoreSQLiteCancellationCASFence(t *testing.T) {
+	store, handler, _ := openGoalAsyncSQLiteStore(t)
+	cp := testAsyncGoalBaseCheckpoint(t)
+	if err := store.CreateCheckpoint(context.Background(), cp); err != nil {
+		t.Fatalf("create checkpoint: %v", err)
+	}
+	request := goalAsyncTestStartRequest(cp, "op-store-cas-start")
+	next, _, err := applyGoalAsyncTransition(cp, request)
+	if err != nil {
+		t.Fatalf("apply transition: %v", err)
+	}
+	if _, err := handler.Exec(`UPDATE AgentGoalRuns
+		SET cancel_requested_at=?, cancel_requested_by_user_id=7
+		WHERE goal_run_id=?`, cp.UpdatedAt.Add(time.Second), cp.RunID); err != nil {
+		t.Fatalf("set cancellation marker: %v", err)
+	}
+	tx, err := handler.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("begin CAS transaction: %v", err)
+	}
+	err = store.updateRoot(context.Background(), tx, cp, next)
+	_ = tx.Rollback()
+	if !errors.Is(err, ErrGoalAsyncCancellationPending) {
+		t.Fatalf("CAS fence error = %v, want cancellation pending", err)
+	}
+	loaded, err := store.LoadCheckpoint(context.Background(), cp.RunID)
+	if err != nil {
+		t.Fatalf("load after CAS fence: %v", err)
+	}
+	if !reflect.DeepEqual(cp, loaded) {
+		t.Fatalf("CAS fence changed checkpoint")
+	}
+}
+
 func TestGoalAsyncStoreSQLiteAtomicRollback(t *testing.T) {
 	store, handler, _ := openGoalAsyncSQLiteStore(t)
 	cp := testAsyncGoalBaseCheckpoint(t)
@@ -447,6 +541,54 @@ func TestGoalAsyncStoreSQLiteRejectsCorruptState(t *testing.T) {
 		}
 	})
 
+	t.Run("last transition reason mismatch", func(t *testing.T) {
+		store, handler, _ := openGoalAsyncSQLiteStore(t)
+		cp := testAsyncGoalBaseCheckpoint(t)
+		if err := store.CreateCheckpoint(context.Background(), cp); err != nil {
+			t.Fatalf("create checkpoint: %v", err)
+		}
+		cp = applyAndStoreGoalAsyncTransition(t, store, cp, goalAsyncTestStartRequest(cp, "op-store-corrupt-reason"))
+		if _, err := handler.Exec(`UPDATE AgentGoalRunTransitions SET reason_code='wrong_reason' WHERE goal_run_id=? AND revision=?`, cp.RunID, cp.Revision); err != nil {
+			t.Fatalf("corrupt last transition reason: %v", err)
+		}
+		if _, err := store.LoadCheckpoint(context.Background(), cp.RunID); !errors.Is(err, errGoalAsyncStoreCorrupt) {
+			t.Fatalf("load corrupt reason error = %v, want store corrupt", err)
+		}
+	})
+
+	t.Run("last transition timestamp mismatch", func(t *testing.T) {
+		store, handler, _ := openGoalAsyncSQLiteStore(t)
+		cp := testAsyncGoalBaseCheckpoint(t)
+		if err := store.CreateCheckpoint(context.Background(), cp); err != nil {
+			t.Fatalf("create checkpoint: %v", err)
+		}
+		cp = applyAndStoreGoalAsyncTransition(t, store, cp, goalAsyncTestStartRequest(cp, "op-store-corrupt-time"))
+		if _, err := handler.Exec(`UPDATE AgentGoalRunTransitions SET created_at=? WHERE goal_run_id=? AND revision=?`, cp.UpdatedAt.Add(-time.Microsecond), cp.RunID, cp.Revision); err != nil {
+			t.Fatalf("corrupt last transition timestamp: %v", err)
+		}
+		if _, err := store.LoadCheckpoint(context.Background(), cp.RunID); !errors.Is(err, errGoalAsyncStoreCorrupt) {
+			t.Fatalf("load corrupt timestamp error = %v, want store corrupt", err)
+		}
+	})
+
+	t.Run("earlier transition timestamp outside interval", func(t *testing.T) {
+		store, handler, _ := openGoalAsyncSQLiteStore(t)
+		cp := testAsyncGoalBaseCheckpoint(t)
+		if err := store.CreateCheckpoint(context.Background(), cp); err != nil {
+			t.Fatalf("create checkpoint: %v", err)
+		}
+		cp = applyAndStoreGoalAsyncTransition(t, store, cp, goalAsyncTestStartRequest(cp, "op-store-corrupt-earlier-start"))
+		cp = applyAndStoreGoalAsyncTransition(t, store, cp, goalAsyncTestAwaitApprovalRequest(cp, "op-store-corrupt-earlier-approval"))
+		operation := testAsyncOperationWork()
+		cp = applyAndStoreGoalAsyncTransition(t, store, cp, goalAsyncTestAwaitExternalRequest(t, cp, "op-store-corrupt-earlier-external", operation, operation.AcceptedAt))
+		if _, err := handler.Exec(`UPDATE AgentGoalRunTransitions SET created_at=? WHERE goal_run_id=? AND revision=2`, cp.CreatedAt.Add(-time.Second), cp.RunID); err != nil {
+			t.Fatalf("corrupt earlier transition timestamp: %v", err)
+		}
+		if _, err := store.LoadCheckpoint(context.Background(), cp.RunID); !errors.Is(err, errGoalAsyncStoreCorrupt) {
+			t.Fatalf("load earlier timestamp error = %v, want store corrupt", err)
+		}
+	})
+
 	t.Run("malformed evidence child", func(t *testing.T) {
 		store, handler, _ := openGoalAsyncSQLiteStore(t)
 		cp := testAsyncGoalBaseCheckpoint(t)
@@ -537,6 +679,33 @@ func goalAsyncLateCompletionScenario(t *testing.T, store *goalAsyncStore) {
 	}
 	if !loaded.Work[0].ObservedAt.After(loaded.Work[0].ApprovalExpiresAt) {
 		t.Fatalf("observed_at did not follow approval expiry")
+	}
+}
+
+func TestGoalAsyncStoreSQLiteAllowsEqualTransitionTimestamps(t *testing.T) {
+	store, _, _ := openGoalAsyncSQLiteStore(t)
+	cp := testAsyncGoalBaseCheckpoint(t)
+	if err := store.CreateCheckpoint(context.Background(), cp); err != nil {
+		t.Fatalf("create checkpoint: %v", err)
+	}
+	cp = applyAndStoreGoalAsyncTransition(t, store, cp, goalAsyncTestStartRequest(cp, "op-store-equal-start"))
+	work := testAsyncProposalWork()
+	request := goalAsyncTransitionRequest{
+		OperationID:      "op-store-equal-approval",
+		ExpectedRevision: cp.Revision,
+		Kind:             goalAsyncTransitionAwaitApproval,
+		Now:              cp.UpdatedAt,
+		ReasonCode:       goalAsyncReasonAwaitingApproval,
+		Used:             &goalAsyncUsed{ScheduledWorkRequests: 1},
+		Work:             &work,
+	}
+	cp = applyAndStoreGoalAsyncTransition(t, store, cp, request)
+	loaded, err := store.LoadCheckpoint(context.Background(), cp.RunID)
+	if err != nil {
+		t.Fatalf("load equal-timestamp checkpoint: %v", err)
+	}
+	if !reflect.DeepEqual(cp, loaded) {
+		t.Fatalf("equal-timestamp checkpoint changed")
 	}
 }
 

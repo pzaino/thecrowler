@@ -268,6 +268,14 @@ func (s *goalAsyncStore) TransitionCheckpoint(ctx context.Context, runID string,
 		return previous, goalAsyncTransitionReplayed, nil
 	}
 
+	pending, err := s.cancellationPending(txCtx, tx, runID)
+	if err != nil {
+		return goalAsyncCheckpoint{}, "", cdb.NormalizeTransactionError(txCtx, err)
+	}
+	if pending {
+		return goalAsyncCheckpoint{}, "", ErrGoalAsyncCancellationPending
+	}
+
 	next, outcome, err := applyGoalAsyncTransition(previous, request)
 	if err != nil {
 		return goalAsyncCheckpoint{}, "", err
@@ -799,6 +807,9 @@ func (s *goalAsyncStore) validateTransitionLedger(ctx context.Context, q goalAsy
 		if !goalAsyncTransitionLedgerStatesAllowed(record.FromState, record.ToState) {
 			return fmt.Errorf("%w: transition ledger state pair is invalid at revision %d", errGoalAsyncStoreCorrupt, record.Revision)
 		}
+		if record.CreatedAt.Before(cp.CreatedAt) || record.CreatedAt.After(cp.UpdatedAt) {
+			return fmt.Errorf("%w: transition ledger timestamp is outside the checkpoint interval at revision %d", errGoalAsyncStoreCorrupt, record.Revision)
+		}
 		if !previousCreatedAt.IsZero() && record.CreatedAt.Before(previousCreatedAt) {
 			return fmt.Errorf("%w: transition ledger timestamps run backwards at revision %d", errGoalAsyncStoreCorrupt, record.Revision)
 		}
@@ -808,7 +819,9 @@ func (s *goalAsyncStore) validateTransitionLedger(ctx context.Context, q goalAsy
 	last := records[len(records)-1]
 	if last.TransitionHash != cp.LastTransitionHash ||
 		last.OperationID != cp.LastTransitionID ||
-		last.ToState != cp.State {
+		last.ToState != cp.State ||
+		last.ReasonCode != cp.ReasonCode ||
+		!last.CreatedAt.Equal(cp.UpdatedAt) {
 		return fmt.Errorf("%w: checkpoint does not match its last transition ledger row", errGoalAsyncStoreCorrupt)
 	}
 	return nil
@@ -926,7 +939,8 @@ func (s *goalAsyncStore) updateRoot(ctx context.Context, q goalAsyncStoreQueryer
 	args = append(args, next.RunID, int64(previous.Revision), string(previous.State))
 	where := `goal_run_id = ` + s.placeholder(len(fields)+1) +
 		` AND revision = ` + s.placeholder(len(fields)+2) +
-		` AND state = ` + s.placeholder(len(fields)+3)
+		` AND state = ` + s.placeholder(len(fields)+3) +
+		` AND cancel_requested_at IS NULL`
 	query := `UPDATE AgentGoalRuns SET ` + strings.Join(sets, ", ") + ` WHERE ` + where
 	result, err := q.ExecContext(ctx, query, args...)
 	if err != nil {
@@ -937,9 +951,30 @@ func (s *goalAsyncStore) updateRoot(ctx context.Context, q goalAsyncStoreQueryer
 		return fmt.Errorf("read goal checkpoint update result: %w", err)
 	}
 	if affected != 1 {
+		pending, err := s.cancellationPending(ctx, q, next.RunID)
+		if err != nil {
+			return fmt.Errorf("classify goal checkpoint CAS: %w", err)
+		}
+		if pending {
+			return ErrGoalAsyncCancellationPending
+		}
 		return ErrGoalAsyncRevisionConflict
 	}
 	return nil
+}
+
+func (s *goalAsyncStore) cancellationPending(ctx context.Context, q goalAsyncStoreQueryer, runID string) (bool, error) {
+	var cancelRequestedAt sql.NullTime
+	err := q.QueryRowContext(ctx,
+		`SELECT cancel_requested_at FROM AgentGoalRuns WHERE goal_run_id = `+s.placeholder(1),
+		runID).Scan(&cancelRequestedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read goal cancellation marker: %w", err)
+	}
+	return cancelRequestedAt.Valid, nil
 }
 
 func (s *goalAsyncStore) syncChildren(ctx context.Context, q goalAsyncStoreQueryer, previous, next goalAsyncCheckpoint) error {

@@ -336,7 +336,7 @@ jobs:
             exit 1
           fi
 
-      - name: Run asynchronous goal store PostgreSQL integration
+      - name: Run asynchronous goal store and crawl observation PostgreSQL integration
         timeout-minutes: 10
         run: |
           set -euo pipefail
@@ -345,19 +345,23 @@ jobs:
           export CROWLER_ASYNC_GOAL_POSTGRES_DSN="postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:5432/${POSTGRES_DB}?sslmode=disable"
           log="$(mktemp)"
           trap 'rm -f "$log"' EXIT
-          go test -tags=integration ./pkg/agent -run '^TestPostgresGoalAsyncStore' -count=1 -v 2>&1 | tee "$log"
+          go test -tags=integration ./pkg/agent -run '^TestPostgresGoalAsync' -count=1 -v 2>&1 | tee "$log"
           for test in \
             TestPostgresGoalAsyncStoreRoundTripAfterRestart \
             TestPostgresGoalAsyncStoreLifecycleAndConcurrency \
             TestPostgresGoalAsyncStoreReplayOlderTransition \
             TestPostgresGoalAsyncStoreRejectsCorruptLedger \
             TestPostgresGoalAsyncStorePreservesAcceptanceAndLateCompletion \
-            TestPostgresGoalAsyncStoreEvidenceAndVerification; do
+            TestPostgresGoalAsyncStoreEvidenceAndVerification \
+            TestPostgresGoalAsyncStoreCancellationBlocksTransitions \
+            TestPostgresGoalAsyncStoreRejectsCorruptTransitionLedger \
+            TestPostgresGoalAsyncObservationValidAndExpired \
+            TestPostgresGoalAsyncObservationRejectsConflict; do
             grep -F -- "=== RUN   ${test}" "$log"
             grep -F -- "--- PASS: ${test}" "$log"
           done
           if grep -Fq -- '--- SKIP' "$log"; then
-            echo "Asynchronous goal store PostgreSQL integration was skipped" >&2
+            echo "Asynchronous goal store or crawl observation PostgreSQL integration was skipped" >&2
             exit 1
           fi
 

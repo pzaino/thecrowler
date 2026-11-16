@@ -133,6 +133,70 @@ func applyGoalAsyncPostgresSchema(t *testing.T, db *sql.DB) {
 	if err != nil {
 		t.Fatalf("read PostgreSQL setup: %v", err)
 	}
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS Status (
+		status_sha256 CHAR(64) PRIMARY KEY,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		deleted_at TIMESTAMPTZ,
+		parent_status_sha256 CHAR(64),
+		agent_id TEXT,
+		source_id BIGINT,
+		operation_type TEXT,
+		status TEXT NOT NULL,
+		progress NUMERIC,
+		details JSONB NOT NULL
+	);
+	CREATE TABLE IF NOT EXISTS CrawlApprovals (
+		approval_id CHAR(64) PRIMARY KEY,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		proposal_sha256 CHAR(64) NOT NULL,
+		request_id TEXT NOT NULL,
+		run_id TEXT NOT NULL,
+		agent_id TEXT NOT NULL,
+		owner TEXT NOT NULL,
+		principal_user_id BIGINT NOT NULL,
+		source_id BIGINT NOT NULL,
+		operation_type TEXT NOT NULL,
+		issuer TEXT NOT NULL,
+		issued_by_user_id BIGINT NOT NULL,
+		issued_by TEXT NOT NULL,
+		issued_by_issuer TEXT NOT NULL,
+		approved_by_user_id BIGINT NOT NULL,
+		approved_by TEXT NOT NULL,
+		approved_by_issuer TEXT NOT NULL,
+		approval_sha256 CHAR(64) NOT NULL,
+		proposal_expires_at TIMESTAMPTZ NOT NULL,
+		approved_at TIMESTAMPTZ NOT NULL,
+		expires_at TIMESTAMPTZ NOT NULL,
+		revoked_at TIMESTAMPTZ,
+		revoked_by_user_id BIGINT,
+		revoked_by TEXT,
+		revocation_reason TEXT
+	);
+	CREATE TABLE IF NOT EXISTS CrawlProposals (
+		request_id CHAR(64) PRIMARY KEY,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		run_id TEXT NOT NULL,
+		tool_call_id TEXT NOT NULL,
+		agent_id TEXT NOT NULL,
+		owner TEXT NOT NULL,
+		principal_user_id BIGINT NOT NULL,
+		source_id BIGINT NOT NULL,
+		operation_type TEXT NOT NULL,
+		proposal_sha256 CHAR(64) NOT NULL,
+		trace_id TEXT NOT NULL DEFAULT '',
+		max_requests INTEGER NOT NULL,
+		budget_window_seconds BIGINT NOT NULL,
+		policy_json TEXT NOT NULL,
+		state TEXT NOT NULL DEFAULT 'pending',
+		expires_at TIMESTAMPTZ NOT NULL,
+		submitted_at TIMESTAMPTZ,
+		operation_id TEXT
+	);`); err != nil {
+		t.Fatalf("create disposable crawl observation tables: %v", err)
+	}
 	const begin = "-- BEGIN AGENT GOAL PERSISTENCE (schema 1.17)"
 	const end = "-- END AGENT GOAL PERSISTENCE (schema 1.17)"
 	text := string(setup)
@@ -355,5 +419,141 @@ func TestPostgresGoalAsyncStoreEvidenceAndVerification(t *testing.T) {
 	if loaded.State != goalAsyncCriteriaMet || loaded.Verification == nil ||
 		len(loaded.Evidence) != 1 || len(loaded.Verification.EvidenceIDs) != 1 {
 		t.Fatalf("PostgreSQL evidence/verification not reconstructed: %+v", loaded)
+	}
+}
+
+func TestPostgresGoalAsyncStoreCancellationBlocksTransitions(t *testing.T) {
+	store, handler, _ := openGoalAsyncPostgresStore(t)
+	cp := testAsyncGoalBaseCheckpoint(t)
+	if err := store.CreateCheckpoint(context.Background(), cp); err != nil {
+		t.Fatalf("create PostgreSQL checkpoint: %v", err)
+	}
+	cp = applyAndStoreGoalAsyncTransition(t, store, cp, goalAsyncTestStartRequest(cp, "op-pg-cancel-start"))
+	cancelAt := cp.UpdatedAt.Add(time.Second)
+	if _, err := handler.Exec(`UPDATE AgentGoalRuns
+		SET cancel_requested_at=$1, cancel_requested_by_user_id=7
+		WHERE goal_run_id=$2`, cancelAt, cp.RunID); err != nil {
+		t.Fatalf("set PostgreSQL cancellation marker: %v", err)
+	}
+	loaded, err := store.LoadCheckpoint(context.Background(), cp.RunID)
+	if err != nil {
+		t.Fatalf("load PostgreSQL pending-cancellation checkpoint: %v", err)
+	}
+	if !reflect.DeepEqual(cp, loaded) {
+		t.Fatalf("audit load changed PostgreSQL checkpoint")
+	}
+	request := goalAsyncTestAwaitApprovalRequest(cp, "op-pg-cancel-blocked")
+	if _, _, err := store.TransitionCheckpoint(context.Background(), cp.RunID, request); !errors.Is(err, ErrGoalAsyncCancellationPending) {
+		t.Fatalf("cancelled PostgreSQL transition error = %v, want cancellation pending", err)
+	}
+	var transitions, work int
+	if err := handler.QueryRow(`SELECT
+		(SELECT COUNT(*) FROM AgentGoalRunTransitions WHERE goal_run_id=$1),
+		(SELECT COUNT(*) FROM AgentGoalRunWork WHERE goal_run_id=$1)`, cp.RunID).Scan(&transitions, &work); err != nil {
+		t.Fatalf("count blocked PostgreSQL transition rows: %v", err)
+	}
+	if transitions != 1 || work != 0 {
+		t.Fatalf("blocked PostgreSQL cancellation wrote transitions=%d work=%d", transitions, work)
+	}
+	var stillCanceled bool
+	if err := handler.QueryRow(`SELECT cancel_requested_at IS NOT NULL FROM AgentGoalRuns WHERE goal_run_id=$1`, cp.RunID).Scan(&stillCanceled); err != nil {
+		t.Fatalf("read PostgreSQL cancellation marker: %v", err)
+	}
+	if !stillCanceled {
+		t.Fatal("blocked PostgreSQL transition erased cancellation marker")
+	}
+}
+
+func TestPostgresGoalAsyncStoreRejectsCorruptTransitionLedger(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(t *testing.T, handler cdb.Handler, cp goalAsyncCheckpoint)
+	}{
+		{
+			name: "last reason mismatch",
+			mutate: func(t *testing.T, handler cdb.Handler, cp goalAsyncCheckpoint) {
+				if _, err := handler.Exec(`UPDATE AgentGoalRunTransitions SET reason_code='wrong_reason' WHERE goal_run_id=$1 AND revision=$2`, cp.RunID, cp.Revision); err != nil {
+					t.Fatalf("corrupt PostgreSQL last reason: %v", err)
+				}
+			},
+		},
+		{
+			name: "last timestamp mismatch",
+			mutate: func(t *testing.T, handler cdb.Handler, cp goalAsyncCheckpoint) {
+				if _, err := handler.Exec(`UPDATE AgentGoalRunTransitions SET created_at=$1 WHERE goal_run_id=$2 AND revision=$3`, cp.UpdatedAt.Add(-time.Microsecond), cp.RunID, cp.Revision); err != nil {
+					t.Fatalf("corrupt PostgreSQL last timestamp: %v", err)
+				}
+			},
+		},
+		{
+			name: "earlier timestamp outside interval",
+			mutate: func(t *testing.T, handler cdb.Handler, cp goalAsyncCheckpoint) {
+				if _, err := handler.Exec(`UPDATE AgentGoalRunTransitions SET created_at=$1 WHERE goal_run_id=$2 AND revision=2`, cp.CreatedAt.Add(-time.Second), cp.RunID); err != nil {
+					t.Fatalf("corrupt PostgreSQL earlier timestamp: %v", err)
+				}
+			},
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			store, handler, _ := openGoalAsyncPostgresStore(t)
+			cp := testAsyncGoalBaseCheckpoint(t)
+			if err := store.CreateCheckpoint(context.Background(), cp); err != nil {
+				t.Fatalf("create PostgreSQL checkpoint: %v", err)
+			}
+			cp = applyAndStoreGoalAsyncTransition(t, store, cp, goalAsyncTestStartRequest(cp, "op-pg-ledger-start"))
+			cp = applyAndStoreGoalAsyncTransition(t, store, cp, goalAsyncTestAwaitApprovalRequest(cp, "op-pg-ledger-approval"))
+			test.mutate(t, handler, cp)
+			if _, err := store.LoadCheckpoint(context.Background(), cp.RunID); !errors.Is(err, errGoalAsyncStoreCorrupt) {
+				t.Fatalf("PostgreSQL corrupt ledger error = %v, want store corrupt", err)
+			}
+		})
+	}
+}
+
+func TestPostgresGoalAsyncObservationValidAndExpired(t *testing.T) {
+	store, handler, _ := openGoalAsyncPostgresStore(t)
+	cp, work := goalAsyncObservationCheckpoint(t)
+	insertGoalAsyncObservationFixture(t, handler, cp, work)
+	original := cloneGoalAsyncCheckpoint(cp)
+
+	observation, err := observeGoalAsyncTestOperation(t, store, cp, work, testAsyncGoalNow.Add(5*time.Minute))
+	if err != nil {
+		t.Fatalf("observe PostgreSQL accepted operation: %v", err)
+	}
+	if observation.Class != goalAsyncObservationPending || observation.OperationState != string(cdb.CrawlOperationAccepted) {
+		t.Fatalf("unexpected PostgreSQL accepted observation: %+v", observation)
+	}
+
+	setGoalAsyncObservationStatus(t, handler, work, string(cdb.CrawlOperationProcessing), cdb.CrawlReasonProcessing, testAsyncGoalNow.Add(6*time.Minute))
+	observation, err = observeGoalAsyncTestOperation(t, store, cp, work, testAsyncGoalNow.Add(6*time.Minute))
+	if err != nil || observation.Class != goalAsyncObservationProcessing {
+		t.Fatalf("observe PostgreSQL processing operation = %+v err=%v", observation, err)
+	}
+
+	setGoalAsyncObservationStatus(t, handler, work, string(cdb.CrawlOperationCompleted), "crawl_completed", testAsyncGoalNow.Add(7*time.Minute))
+	observation, err = observeGoalAsyncTestOperation(t, store, cp, work, work.ApprovalExpiresAt.Add(time.Hour))
+	if err != nil || observation.Class != goalAsyncObservationReportedCompleted || observation.ApprovalState != "expired" {
+		t.Fatalf("observe PostgreSQL completed-after-expiry operation = %+v err=%v", observation, err)
+	}
+	if !reflect.DeepEqual(original, cp) {
+		t.Fatalf("PostgreSQL observation mutated checkpoint")
+	}
+}
+
+func TestPostgresGoalAsyncObservationRejectsConflict(t *testing.T) {
+	store, handler, _ := openGoalAsyncPostgresStore(t)
+	cp, work := goalAsyncObservationCheckpoint(t)
+	insertGoalAsyncObservationFixture(t, handler, cp, work)
+	mutateGoalAsyncObservationDetails(t, handler, work, func(details *goalAsyncOperationDetails) {
+		details.RunID = "wrong-run"
+	})
+	observation, err := observeGoalAsyncTestOperation(t, store, cp, work, testAsyncGoalNow.Add(5*time.Minute))
+	if !errors.Is(err, errGoalAsyncObservationConflict) {
+		t.Fatalf("PostgreSQL conflicting observation error = %v, want conflict", err)
+	}
+	if observation.Class != goalAsyncObservationConflict {
+		t.Fatalf("PostgreSQL conflicting observation class = %q", observation.Class)
 	}
 }

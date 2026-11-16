@@ -2,12 +2,13 @@
 
 ## Current state
 
-The internal async goal lifecycle/checkpoint kernel and an internal,
-unexported transactional store are implemented and tested. The store is not
-wired to production execution, Events, the scheduler, the crawler or MCP. The
-schema-1.17 goal tables and same-version development addon are prepared. No
-worker, claim, lease, event consumer, resume engine or public contract was
-added.
+The internal async goal lifecycle/checkpoint kernel, an internal unexported
+transactional store, durable cancellation fencing, stricter transition-ledger
+validation and a read-only crawl-operation observer are implemented and tested.
+None of this is wired to production execution, Events, the scheduler, the
+crawler or MCP. The schema-1.17 goal tables and same-version development addon
+are prepared. No worker, claim, lease, event consumer, resume engine or public
+contract was added.
 
 ## Decision 0: schema and writer version freeze
 
@@ -42,6 +43,29 @@ Approval is still required before:
 The DDL and internal store are prepared in
 `ASYNC_GOAL_PERSISTENCE_CONTRACT.md`. Prepared DDL and the internal store are
 not approval of production activation or deployment.
+
+## Decision 1a: cancellation fencing and read-only observation
+
+**Status: IMPLEMENTED internally; activation semantics PENDING.**
+
+`TransitionCheckpoint` now observes `cancel_requested_at` inside the transition
+transaction, blocks every new transition with
+`ErrGoalAsyncCancellationPending`, and includes `cancel_requested_at IS NULL` in
+the root compare-and-swap. Exact replays of stored operations remain idempotent,
+and loading for audit still succeeds. There is deliberately no cancellation
+finalization API: the actor semantics and a safe terminal transition require a
+separate reviewed decision.
+
+`ObserveCrawlOperation` correlates one checkpoint `Work` operation through
+`CrawlProposals`, `CrawlApprovals` and a strictly decoded `Status.details` in a
+read-only snapshot. It returns `not_found`, `pending`, `processing`,
+`reported_completed`, `terminal_non_success`, `uncertain`, `conflict` or
+`unavailable`. It does not call `ReconcileCrawlProposalOperation`, schedule
+work, create a resume grant, construct a verifier decision or execute anything.
+`reported_completed` is never proof that the goal's acceptance criteria are met.
+
+Approval of this internal observation layer does not authorize resumption,
+current-authority refresh or a claim/lease worker.
 
 ## Decision 2: resume phase
 
@@ -86,6 +110,8 @@ No public schema or example was changed.
 - Internal unexported transactional store for checkpoint create, load and
   optimistic transition, with SQLite/PostgreSQL concurrency, replay and
   corruption tests.
+- Durable cancellation fencing, last-transition reason/timestamp ledger checks,
+  and a read-only one-operation crawl observer for PostgreSQL and SQLite.
 - Pure-Go internal checkpoint and lifecycle model.
 - Closed transition table and terminal predicate.
 - Verifier-backed completion binding to `EvaluateGoal`.
@@ -122,7 +148,8 @@ No public schema or example was changed.
 
 ## Next action
 
-Independent review of WP-05B2B2, followed by a separate maintainer decision on
-production store activation, resume/event correlation and the public-contract
+Independent review of WP-05B3A, followed by a separate maintainer decision on
+current-authority refresh and guarded resume admission (WP-05B3B), cancellation
+finalization semantics, production store activation and the public-contract
 phases. Do not apply the addon to a persistent database or begin those phases
 automatically.
