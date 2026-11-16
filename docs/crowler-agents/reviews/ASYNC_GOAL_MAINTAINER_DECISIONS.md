@@ -4,11 +4,12 @@
 
 The internal async goal lifecycle/checkpoint kernel, an internal unexported
 transactional store, durable cancellation fencing, stricter transition-ledger
-validation, a read-only crawl-operation observer and a hardened read-only
-resume eligibility service are implemented and tested. None of this is wired to
-production execution, Events, the scheduler, the crawler or MCP. The schema-1.17
-goal tables and same-version development addon are prepared. No worker, claim,
-lease, event consumer, resume engine or public contract was added.
+validation, a read-only crawl-operation observer, a hardened read-only resume
+eligibility service and a pure source-crawl-attempt claim contract are
+implemented and tested. None of this is wired to production execution, Events,
+the scheduler, the crawler or MCP. The schema-1.17 goal tables and same-version
+development addon are prepared. No worker, claim, lease, event consumer, resume
+engine or public contract was added.
 
 ## Decision 0: schema and writer version freeze
 
@@ -128,6 +129,26 @@ with normal TLS/signature verification were added, but no hosted rerun was
 possible in this environment. Local disposable PostgreSQL 17.12 integration
 tests passed.
 
+## Decision 1d: durable crawl-attempt storage
+
+**Status: STAGE A COMPLETE; ADDITIVE 1.17 ATTEMPT STORAGE PENDING APPROVAL.**
+
+The Stage A design in `ASYNC_GOAL_B3C2_ATTEMPT_CLAIM_DESIGN.md` traces the real
+source claim and crawler handoff. Today `update_sources` claims a source and
+returns source columns; no operation ID, attempt ID or fence reaches the
+crawler. A pure, non-persistent attempt contract and negative tests exist in
+`pkg/database/source_crawl_attempt_contract.go`.
+
+No DDL was changed and no claim API was implemented. Stage B is **BLOCKED**
+until the maintainer explicitly approves the additive 1.17
+`SourceCrawlClaims`, `SourceCrawlAttempts`, `SourceCrawlClaimPolicy` objects,
+the `source-crawl-attempt-v1` capability, and the legacy/fenced cutover that
+makes `update_sources` return no rows while fenced mode is active.
+
+Approval of the design is not approval of production activation. No worker,
+crawler caller, terminal completion reporting, resume worker, public
+configuration or schema-1.18 release is authorized by this entry.
+
 ## Decision 2: resume phase
 
 **Status: PENDING.**
@@ -179,6 +200,8 @@ No public schema or example was changed.
 - Disabled-source rejection, strict auth availability/identity classification,
   final deadline recheck, and source-level-completion negative tests.
 - A real scheduler-to-observer acceptance test using authentic persisted rows.
+- A pure source-crawl-attempt identity, binding and fence contract with
+  structural negative tests; no persistence or caller.
 - Pure-Go internal checkpoint and lifecycle model.
 - Closed transition table and terminal predicate.
 - Verifier-backed completion binding to `EvaluateGoal`.
@@ -215,9 +238,9 @@ No public schema or example was changed.
 
 ## Next action
 
-Independent review of WP-05B3C1, followed by a separate design decision for an
-operation-aware crawler claim and attempt fence, then durable execution
+Maintainer decision required on the WP-05B3C2 Stage A attempt-storage design.
+Only after explicit approval may Stage B implement additive 1.17 attempt objects
+and the opt-in fenced claim API. Terminal completion reporting, execution
 ownership, claim/lease coordination, cancellation finalization, production store
-activation and the public-contract phases. Hosted PostgreSQL CI must be rerun
-successfully before this package is described as fully green. Do not apply the
-addon to a persistent database or begin those phases automatically.
+activation and public contracts remain later separately reviewed phases. Do not
+apply any addon to a persistent database or begin those phases automatically.
