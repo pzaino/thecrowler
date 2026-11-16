@@ -277,6 +277,12 @@ func TestGoalAsyncObservationSQLiteValidStates(t *testing.T) {
 		t.Fatalf("observe failed operation = %+v err=%v", observation, err)
 	}
 
+	setGoalAsyncObservationStatus(t, handler, work, string(cdb.CrawlOperationCancelled), "crawl_cancelled", testAsyncGoalNow.Add(9*time.Minute))
+	observation, err = observeGoalAsyncTestOperation(t, store, cp, work, testAsyncGoalNow.Add(9*time.Minute))
+	if err != nil || observation.Class != goalAsyncObservationTerminalNonSuccess {
+		t.Fatalf("observe cancelled operation = %+v err=%v", observation, err)
+	}
+
 	if !reflect.DeepEqual(original, cp) {
 		t.Fatal("observation mutated checkpoint")
 	}

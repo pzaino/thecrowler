@@ -110,6 +110,11 @@ func ensureGoalAsyncEligibilityAuthTables(t *testing.T, db cdb.Handler) {
 		user_id INTEGER NOT NULL,
 		scope_id INTEGER NOT NULL,
 		PRIMARY KEY (user_id, scope_id)
+	);
+	CREATE TABLE IF NOT EXISTS RoleScopes (
+		role_id INTEGER NOT NULL,
+		scope_id INTEGER NOT NULL,
+		PRIMARY KEY (role_id, scope_id)
 	);`); err != nil {
 		t.Fatalf("create eligibility auth tables: %v", err)
 	}
@@ -140,7 +145,7 @@ func insertGoalAsyncEligibilitySource(t *testing.T, db cdb.Handler, sourceID, ow
 	p := func(n int) string { return goalAsyncObservationPlaceholder(db, n) }
 	query := `INSERT INTO Sources(source_id, source_uid, url, name, status, disabled, usr_id)
 		VALUES (` + p(1) + `, ` + p(2) + `, ` + p(3) + `, 'eligibility fixture', 'completed', FALSE, ` + p(4) + `)`
-	if _, err := db.Exec(query, sourceID, fmt.Sprintf("source-uid-%d", sourceID), "https://fixture.example/", ownerID); err != nil {
+	if _, err := db.Exec(query, sourceID, fmt.Sprintf("source-uid-%d", sourceID), fmt.Sprintf("https://fixture-%d.example/", sourceID), ownerID); err != nil {
 		t.Fatalf("insert eligibility source %d: %v", sourceID, err)
 	}
 	if _, err := db.Exec(`INSERT INTO SourceOwnership
@@ -153,11 +158,27 @@ func insertGoalAsyncEligibilitySource(t *testing.T, db cdb.Handler, sourceID, ow
 
 func buildGoalAsyncEligibilityFixture(t *testing.T, store *goalAsyncStore, handler cdb.Handler) (goalAsyncCheckpoint, goalAsyncWorkRef) {
 	t.Helper()
+	return buildGoalAsyncEligibilityFixtureForSpec(t, store, handler, testAsyncGoalSpec())
+}
+
+func buildGoalAsyncEligibilityFixtureForSpec(t *testing.T, store *goalAsyncStore, handler cdb.Handler, spec *AgentGoalSpec) (goalAsyncCheckpoint, goalAsyncWorkRef) {
+	t.Helper()
 	ensureGoalAsyncEligibilityDataTables(t, handler)
 	insertGoalAsyncEligibilityUser(t, handler, 7, "owner")
-	insertGoalAsyncEligibilitySource(t, handler, 42, 7)
+	for _, sourceID := range spec.AllowedSources {
+		insertGoalAsyncEligibilitySource(t, handler, sourceID, 7)
+	}
 
-	cp := testAsyncGoalBaseCheckpoint(t)
+	cp, err := newGoalAsyncCheckpoint(
+		spec, testAsyncGoalIdentity(), testAsyncGoalPrincipal(),
+		"run-async-test", "trace-async-test", "corr-async-test",
+		"ledger-async-test", strings.Repeat("b", 64),
+		testAsyncGoalNow, testAsyncGoalNow.Add(10*time.Minute),
+		goalAsyncLimits{MaxSlices: 8, MaxRetries: 2, MaxScheduledWorkRequests: 4, LogicalLifetime: 10 * time.Minute},
+	)
+	if err != nil {
+		t.Fatalf("new eligibility checkpoint: %v", err)
+	}
 	if err := store.CreateCheckpoint(context.Background(), cp); err != nil {
 		t.Fatalf("create eligibility checkpoint: %v", err)
 	}
@@ -556,7 +577,7 @@ func goalAsyncEligibilityHex(parts ...string) string {
 // runGoalAsyncRealSchedulerObservationScenario exercises the real durable
 // scheduling repository and then the read-only observer/eligibility path using
 // the authoritative rows, including the database-generated Status.created_at.
-func runGoalAsyncRealSchedulerObservationScenario(t *testing.T, store *goalAsyncStore, handler cdb.Handler) {
+func prepareGoalAsyncRealSchedulerOperation(t *testing.T, store *goalAsyncStore, handler cdb.Handler) (goalAsyncCheckpoint, goalAsyncWorkRef, time.Time) {
 	t.Helper()
 	ctx := context.Background()
 	ensureGoalAsyncEligibilityDataTables(t, handler)
@@ -747,10 +768,15 @@ func runGoalAsyncRealSchedulerObservationScenario(t *testing.T, store *goalAsync
 	if observation.Class != goalAsyncObservationPending {
 		t.Fatalf("real scheduled operation class = %q", observation.Class)
 	}
+	return cp, work, acceptedAt
+}
 
+func runGoalAsyncRealSchedulerObservationScenario(t *testing.T, store *goalAsyncStore, handler cdb.Handler) {
+	t.Helper()
+	cp, work, acceptedAt := prepareGoalAsyncRealSchedulerOperation(t, store, handler)
 	setGoalAsyncObservationCompleted(t, handler, work)
 	eligibility, _ := newGoalAsyncEligibilityForTest(store, cp)
-	decision, err := eligibility.evaluateAt(ctx, cp.RunID, work.OperationID, acceptedAt.Add(2*time.Minute))
+	decision, err := eligibility.evaluateAt(context.Background(), cp.RunID, work.OperationID, acceptedAt.Add(2*time.Minute))
 	if err != nil || decision.Outcome != goalAsyncResumeEligible {
 		t.Fatalf("real scheduler eligibility = %+v err=%v", decision, err)
 	}
@@ -964,4 +990,206 @@ func TestGoalAsyncResumeEligibilitySQLiteRaces(t *testing.T) {
 			t.Fatalf("cancelled context decision = %+v err=%v", decision, err)
 		}
 	})
+}
+
+func TestGoalAsyncResumeEligibilitySQLiteDisabledSource(t *testing.T) {
+	t.Run("single source disabled", func(t *testing.T) {
+		store, handler, cp, work := openGoalAsyncEligibilitySQLiteFixture(t)
+		setGoalAsyncObservationCompleted(t, handler, work)
+		if _, err := handler.Exec(`UPDATE Sources SET disabled=TRUE WHERE source_id=42`); err != nil {
+			t.Fatalf("disable source: %v", err)
+		}
+		eligibility, _ := newGoalAsyncEligibilityForTest(store, cp)
+		decision, err := eligibility.evaluateAt(context.Background(), cp.RunID, work.OperationID, work.AcceptedAt.Add(time.Minute))
+		if err != nil || decision.Outcome != goalAsyncResumeDenied ||
+			decision.ReasonCode != goalAsyncResumeReasonDeniedSourceDisabled {
+			t.Fatalf("disabled source decision = %+v err=%v", decision, err)
+		}
+	})
+	t.Run("one of several sources disabled", func(t *testing.T) {
+		spec := *testAsyncGoalSpec()
+		spec.AllowedSources = []uint64{42, 43}
+		spec.SpecHash = computeGoalSpecHash(&spec)
+		store, handler, _ := openGoalAsyncSQLiteStore(t)
+		cp, work := buildGoalAsyncEligibilityFixtureForSpec(t, store, handler, &spec)
+		setGoalAsyncObservationCompleted(t, handler, work)
+		if _, err := handler.Exec(`UPDATE Sources SET disabled=TRUE WHERE source_id=43`); err != nil {
+			t.Fatalf("disable second source: %v", err)
+		}
+		eligibility, _ := newGoalAsyncEligibilityForTest(store, cp)
+		decision, err := eligibility.evaluateAt(context.Background(), cp.RunID, work.OperationID, work.AcceptedAt.Add(time.Minute))
+		if err != nil || decision.Outcome != goalAsyncResumeDenied ||
+			decision.ReasonCode != goalAsyncResumeReasonDeniedSourceDisabled {
+			t.Fatalf("disabled second source decision = %+v err=%v", decision, err)
+		}
+	})
+	t.Run("source state read failure", func(t *testing.T) {
+		store, handler, cp, work := openGoalAsyncEligibilitySQLiteFixture(t)
+		setGoalAsyncObservationCompleted(t, handler, work)
+		if _, err := handler.Exec(`DROP TABLE Sources`); err != nil {
+			t.Fatalf("drop sources: %v", err)
+		}
+		eligibility, _ := newGoalAsyncEligibilityForTest(store, cp)
+		decision, err := eligibility.evaluateAt(context.Background(), cp.RunID, work.OperationID, work.AcceptedAt.Add(time.Minute))
+		if err != nil || decision.Outcome != goalAsyncResumeUnavailable {
+			t.Fatalf("source read failure decision = %+v err=%v", decision, err)
+		}
+	})
+}
+
+func TestGoalAsyncResumeEligibilitySQLiteStrictPrincipalAuthority(t *testing.T) {
+	t.Run("auth schema unavailable", func(t *testing.T) {
+		store, handler, cp, work := openGoalAsyncEligibilitySQLiteFixture(t)
+		setGoalAsyncObservationCompleted(t, handler, work)
+		if _, err := handler.Exec(`DROP TABLE Users`); err != nil {
+			t.Fatalf("drop users: %v", err)
+		}
+		eligibility, _ := newGoalAsyncEligibilityForTest(store, cp)
+		decision, err := eligibility.evaluateAt(context.Background(), cp.RunID, work.OperationID, work.AcceptedAt.Add(time.Minute))
+		if err != nil || decision.Outcome != goalAsyncResumeUnavailable ||
+			decision.ReasonCode != goalAsyncResumeReasonUnavailablePrincipal {
+			t.Fatalf("auth schema decision = %+v err=%v", decision, err)
+		}
+	})
+	t.Run("grant store unavailable", func(t *testing.T) {
+		store, handler, cp, work := openGoalAsyncEligibilitySQLiteFixture(t)
+		setGoalAsyncObservationCompleted(t, handler, work)
+		if _, err := handler.Exec(`DROP TABLE AuthRoles`); err != nil {
+			t.Fatalf("drop roles: %v", err)
+		}
+		eligibility, _ := newGoalAsyncEligibilityForTest(store, cp)
+		decision, err := eligibility.evaluateAt(context.Background(), cp.RunID, work.OperationID, work.AcceptedAt.Add(time.Minute))
+		if err != nil || decision.Outcome != goalAsyncResumeUnavailable ||
+			decision.ReasonCode != goalAsyncResumeReasonUnavailablePrincipal {
+			t.Fatalf("grant store decision = %+v err=%v", decision, err)
+		}
+	})
+	t.Run("external issuer mapping", func(t *testing.T) {
+		store, handler, cp, work := openGoalAsyncEligibilitySQLiteFixture(t)
+		setGoalAsyncObservationCompleted(t, handler, work)
+		if _, err := handler.Exec(`UPDATE Users SET external_subject='ext-sub', external_issuer='https://issuer.example/' WHERE user_id=7`); err != nil {
+			t.Fatalf("map external identity: %v", err)
+		}
+		eligibility, _ := newGoalAsyncEligibilityForTest(store, cp)
+		decision, err := eligibility.evaluateAt(context.Background(), cp.RunID, work.OperationID, work.AcceptedAt.Add(time.Minute))
+		if err != nil || decision.Outcome != goalAsyncResumeDenied ||
+			decision.ReasonCode != goalAsyncResumeReasonDeniedPrincipalExternal {
+			t.Fatalf("external identity decision = %+v err=%v", decision, err)
+		}
+	})
+}
+
+func TestGoalAsyncResumeEligibilitySQLiteDeadlineDuringEvaluation(t *testing.T) {
+	store, handler, cp, work := openGoalAsyncEligibilitySQLiteFixture(t)
+	setGoalAsyncObservationCompleted(t, handler, work)
+	eligibility, provider := newGoalAsyncEligibilityForTest(store, cp)
+	clockValue := work.AcceptedAt.Add(time.Minute)
+	eligibility.clock = func() time.Time { return clockValue }
+	var once sync.Once
+	provider.onCall = func() {
+		once.Do(func() {
+			clockValue = cp.Deadline.Add(time.Second)
+		})
+	}
+	decision, err := eligibility.Evaluate(context.Background(), cp.RunID, work.OperationID)
+	if err != nil || decision.Outcome != goalAsyncResumeDenied ||
+		decision.ReasonCode != goalAsyncResumeReasonDeniedDeadline {
+		t.Fatalf("deadline-during-evaluation decision = %+v err=%v", decision, err)
+	}
+	if decision.CheckedAt.Before(cp.Deadline) {
+		t.Fatalf("checked_at = %s did not reflect the final deadline check", decision.CheckedAt)
+	}
+}
+
+func TestGoalAsyncResumeEligibilitySQLiteSourceCompletionIsNotOperationCompletion(t *testing.T) {
+	store, handler, _ := openGoalAsyncSQLiteStore(t)
+	cp, work, acceptedAt := prepareGoalAsyncRealSchedulerOperation(t, store, handler)
+	ctx := context.Background()
+
+	if _, err := handler.Exec(`UPDATE Sources SET status='completed', last_updated_at=CURRENT_TIMESTAMP WHERE source_id=42`); err != nil {
+		t.Fatalf("mark source completed: %v", err)
+	}
+	eventID := goalAsyncEligibilityHex("source-level-crawl-completed")
+	if _, err := handler.Exec(`INSERT INTO Events(event_sha256, source_id, event_type, event_severity, details)
+		VALUES (`+goalAsyncObservationPlaceholder(handler, 1)+`, `+goalAsyncObservationPlaceholder(handler, 2)+`,
+		'crawl_completed', 'info', '{}')`, eventID, 42); err != nil {
+		t.Fatalf("insert source-level event: %v", err)
+	}
+	otherOperationID := goalAsyncEligibilityHex("other-operation")
+	if _, err := handler.Exec(`INSERT INTO Status(status_sha256, agent_id, source_id, operation_type, status, details, created_at, last_updated_at)
+		VALUES (`+goalAsyncObservationPlaceholder(handler, 1)+`, `+goalAsyncObservationPlaceholder(handler, 2)+`,
+		`+goalAsyncObservationPlaceholder(handler, 3)+`, 'crawl', 'completed', '{}', `+
+		goalAsyncObservationPlaceholder(handler, 4)+`, `+goalAsyncObservationPlaceholder(handler, 5)+`)`,
+		otherOperationID, cp.AgentID, 42, acceptedAt, acceptedAt); err != nil {
+		t.Fatalf("insert unrelated completed operation: %v", err)
+	}
+
+	observation, err := store.observeCrawlOperationAt(ctx, cp, work.OperationID, acceptedAt.Add(time.Second))
+	if err != nil || observation.Class != goalAsyncObservationPending {
+		t.Fatalf("source-level activity changed operation observation = %+v err=%v", observation, err)
+	}
+	var status string
+	if err := handler.QueryRow(`SELECT status FROM Status WHERE status_sha256=?`, work.OperationID).Scan(&status); err != nil {
+		t.Fatalf("read target operation status: %v", err)
+	}
+	if status != string(cdb.CrawlOperationAccepted) {
+		t.Fatalf("target operation status = %q, want accepted", status)
+	}
+	eligibility, _ := newGoalAsyncEligibilityForTest(store, cp)
+	decision, err := eligibility.evaluateAt(ctx, cp.RunID, work.OperationID, acceptedAt.Add(2*time.Minute))
+	if err != nil || decision.Outcome != goalAsyncResumeWaiting {
+		t.Fatalf("source-level activity produced eligibility = %+v err=%v", decision, err)
+	}
+	if decision.OperationClass != goalAsyncObservationPending {
+		t.Fatalf("eligibility operation class = %q", decision.OperationClass)
+	}
+}
+
+type goalAsyncDisableOnSecondCheckAuthorizer struct {
+	inner    CrawlSourceAuthorizer
+	handler  cdb.Handler
+	sourceID uint64
+	calls    int
+}
+
+func (a *goalAsyncDisableOnSecondCheckAuthorizer) AuthorizeCrawlSource(ctx context.Context, principal CrawlPrincipal, sourceID uint64) error {
+	a.calls++
+	if a.calls == 2 {
+		if _, err := a.handler.Exec(`UPDATE Sources SET disabled=TRUE WHERE source_id=?`, a.sourceID); err != nil {
+			return err
+		}
+	}
+	return a.inner.AuthorizeCrawlSource(ctx, principal, sourceID)
+}
+
+func TestGoalAsyncResumeEligibilitySQLiteDisabledBeforeSecondCheck(t *testing.T) {
+	store, handler, cp, work := openGoalAsyncEligibilitySQLiteFixture(t)
+	setGoalAsyncObservationCompleted(t, handler, work)
+	eligibility, _ := newGoalAsyncEligibilityForTest(store, cp)
+	eligibility.sourceAuthority = &goalAsyncDisableOnSecondCheckAuthorizer{
+		inner: DatabaseCrawlSourceAuthorizer{
+			Lookup: DatabaseSourceOwnerLookup{DB: store.db},
+		},
+		handler:  handler,
+		sourceID: 42,
+	}
+	decision, err := eligibility.evaluateAt(context.Background(), cp.RunID, work.OperationID, work.AcceptedAt.Add(time.Minute))
+	if err != nil || decision.Outcome != goalAsyncResumeDenied ||
+		decision.ReasonCode != goalAsyncResumeReasonDeniedSourceDisabled {
+		t.Fatalf("second-check disabled source decision = %+v err=%v", decision, err)
+	}
+}
+
+func TestGoalAsyncResumeEligibilitySQLiteRejectsNonLocalIssuer(t *testing.T) {
+	store, handler, cp, work := openGoalAsyncEligibilitySQLiteFixture(t)
+	setGoalAsyncObservationCompleted(t, handler, work)
+	if _, err := handler.Exec(`UPDATE AgentGoalRuns SET principal_issuer='https://issuer.example/' WHERE goal_run_id=?`, cp.RunID); err != nil {
+		t.Fatalf("change stored issuer: %v", err)
+	}
+	eligibility, _ := newGoalAsyncEligibilityForTest(store, cp)
+	decision, err := eligibility.evaluateAt(context.Background(), cp.RunID, work.OperationID, work.AcceptedAt.Add(time.Minute))
+	if err != nil || decision.Outcome != goalAsyncResumeDenied ||
+		decision.ReasonCode != goalAsyncResumeReasonDeniedPrincipalExternal {
+		t.Fatalf("non-local issuer decision = %+v err=%v", decision, err)
+	}
 }

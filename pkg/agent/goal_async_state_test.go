@@ -79,7 +79,7 @@ func testAsyncGoalPrincipal() goalAsyncPrincipal {
 		Kind:     goalAsyncPrincipalUser,
 		UserID:   7,
 		Username: "owner",
-		Issuer:   "local",
+		Issuer:   "crowler",
 	}
 }
 

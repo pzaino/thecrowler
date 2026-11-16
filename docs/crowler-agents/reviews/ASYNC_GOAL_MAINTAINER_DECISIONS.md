@@ -4,8 +4,8 @@
 
 The internal async goal lifecycle/checkpoint kernel, an internal unexported
 transactional store, durable cancellation fencing, stricter transition-ledger
-validation, a read-only crawl-operation observer and a read-only resume
-eligibility service are implemented and tested. None of this is wired to
+validation, a read-only crawl-operation observer and a hardened read-only
+resume eligibility service are implemented and tested. None of this is wired to
 production execution, Events, the scheduler, the crawler or MCP. The schema-1.17
 goal tables and same-version development addon are prepared. No worker, claim,
 lease, event consumer, resume engine or public contract was added.
@@ -96,6 +96,38 @@ blocked until the exact durable operation is advanced or a separately approved
 authenticated correlation mechanism exists. Do not infer completion from source
 status, events or model text.
 
+## Decision 1c: eligibility hardening and completion-provenance boundary
+
+**Status: HARDENING IMPLEMENTED; completion integration BLOCKED.**
+
+Eligibility now rejects a source whose current `Sources.disabled` flag is true
+for every frozen allowed source, using a resume-specific read-only helper. It
+uses a strict typed current-identity resolver that separates inactive accounts
+from unavailable Users/grant storage without changing login or middleware
+behavior. The supported principal policy is local: the numeric local user ID
+and current username are authoritative, only the canonical `crowler` issuer
+proceeds, and external issuer mappings fail closed.
+The service also rechecks its clock immediately before returning a decision, so
+a deadline that expires during a slow provider cannot produce `eligible`.
+
+No operation-completion helper was implemented. The crawler claims sources only
+by `source_id`; `update_sources` does not return an operation ID or fence,
+`ProcessContext` carries no attempt identity, and `closeSession` updates
+`Sources.status` plus an optional source-level `crawl_completed` event. There is
+no authenticated binding from a durable `operationID` to a crawler attempt.
+Source status, source events and model text are not operation proof.
+
+The proposed next design is an operation-aware source claim carrying an
+operation ID and monotonically increasing attempt fence into the worker, with a
+compare-and-set terminal result on the exact `Status` operation. This requires a
+separately reviewed schema change and is not part of 1.17.
+
+Hosted PostgreSQL CI is **not verified** for this package. The reviewed job
+failed transiently while installing the PostgreSQL 17 client; bounded retries
+with normal TLS/signature verification were added, but no hosted rerun was
+possible in this environment. Local disposable PostgreSQL 17.12 integration
+tests passed.
+
 ## Decision 2: resume phase
 
 **Status: PENDING.**
@@ -144,6 +176,8 @@ No public schema or example was changed.
 - Historical approval-chronology and operation-timestamp validation.
 - Read-only resume eligibility with current user, verified source ownership and
   explicit agent/policy authority for PostgreSQL and SQLite.
+- Disabled-source rejection, strict auth availability/identity classification,
+  final deadline recheck, and source-level-completion negative tests.
 - A real scheduler-to-observer acceptance test using authentic persisted rows.
 - Pure-Go internal checkpoint and lifecycle model.
 - Closed transition table and terminal predicate.
@@ -181,8 +215,9 @@ No public schema or example was changed.
 
 ## Next action
 
-Independent review of WP-05B3B, followed by a separate maintainer decision on
-durable execution ownership, claim/lease coordination, operation-completion
-correlation, cancellation finalization, production store activation and the
-public-contract phases. Do not apply the addon to a persistent database or begin
-those phases automatically.
+Independent review of WP-05B3C1, followed by a separate design decision for an
+operation-aware crawler claim and attempt fence, then durable execution
+ownership, claim/lease coordination, cancellation finalization, production store
+activation and the public-contract phases. Hosted PostgreSQL CI must be rerun
+successfully before this package is described as fully green. Do not apply the
+addon to a persistent database or begin those phases automatically.

@@ -175,6 +175,21 @@ func applyGoalAsyncPostgresSchema(t *testing.T, db *sql.DB) {
 		revocation_reason TEXT,
 		UNIQUE (request_id, run_id, principal_user_id, source_id, operation_type)
 	);
+	CREATE TABLE IF NOT EXISTS Events (
+		created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		deleted_at TIMESTAMPTZ,
+		last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		source_id BIGINT,
+		event_sha256 CHAR(64) PRIMARY KEY,
+		event_counter INTEGER DEFAULT 1,
+		event_name VARCHAR(128),
+		event_type VARCHAR(255) NOT NULL,
+		event_severity VARCHAR(50) NOT NULL,
+		event_timestamp TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		event_recurrence VARCHAR(64),
+		expires_at TIMESTAMPTZ,
+		details JSONB NOT NULL
+	);
 	CREATE TABLE IF NOT EXISTS CrawlProposals (
 		request_id CHAR(64) PRIMARY KEY,
 		created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -670,4 +685,92 @@ func TestPostgresGoalAsyncResumeEligibility(t *testing.T) {
 func TestPostgresGoalAsyncEligibilityRealScheduler(t *testing.T) {
 	store, handler, _ := openGoalAsyncPostgresStore(t)
 	runGoalAsyncRealSchedulerObservationScenario(t, store, handler)
+}
+
+func TestPostgresGoalAsyncResumeEligibilityHardening(t *testing.T) {
+	t.Run("disabled source", func(t *testing.T) {
+		store, handler, cp, work := openGoalAsyncEligibilityPostgresFixture(t)
+		setGoalAsyncObservationCompleted(t, handler, work)
+		if _, err := handler.Exec(`UPDATE Sources SET disabled=TRUE WHERE source_id=42`); err != nil {
+			t.Fatalf("disable PostgreSQL source: %v", err)
+		}
+		eligibility, _ := newGoalAsyncEligibilityForTest(store, cp)
+		decision, err := eligibility.evaluateAt(context.Background(), cp.RunID, work.OperationID, work.AcceptedAt.Add(time.Minute))
+		if err != nil || decision.Outcome != goalAsyncResumeDenied ||
+			decision.ReasonCode != goalAsyncResumeReasonDeniedSourceDisabled {
+			t.Fatalf("PostgreSQL disabled source decision = %+v err=%v", decision, err)
+		}
+	})
+	t.Run("auth schema unavailable", func(t *testing.T) {
+		store, handler, cp, work := openGoalAsyncEligibilityPostgresFixture(t)
+		setGoalAsyncObservationCompleted(t, handler, work)
+		if _, err := handler.Exec(`DROP TABLE Users`); err != nil {
+			t.Fatalf("drop PostgreSQL users: %v", err)
+		}
+		eligibility, _ := newGoalAsyncEligibilityForTest(store, cp)
+		decision, err := eligibility.evaluateAt(context.Background(), cp.RunID, work.OperationID, work.AcceptedAt.Add(time.Minute))
+		if err != nil || decision.Outcome != goalAsyncResumeUnavailable ||
+			decision.ReasonCode != goalAsyncResumeReasonUnavailablePrincipal {
+			t.Fatalf("PostgreSQL auth schema decision = %+v err=%v", decision, err)
+		}
+	})
+	t.Run("external issuer mapping", func(t *testing.T) {
+		store, handler, cp, work := openGoalAsyncEligibilityPostgresFixture(t)
+		setGoalAsyncObservationCompleted(t, handler, work)
+		if _, err := handler.Exec(`UPDATE Users SET external_subject='ext-sub', external_issuer='https://issuer.example/' WHERE user_id=7`); err != nil {
+			t.Fatalf("map PostgreSQL external identity: %v", err)
+		}
+		eligibility, _ := newGoalAsyncEligibilityForTest(store, cp)
+		decision, err := eligibility.evaluateAt(context.Background(), cp.RunID, work.OperationID, work.AcceptedAt.Add(time.Minute))
+		if err != nil || decision.Outcome != goalAsyncResumeDenied ||
+			decision.ReasonCode != goalAsyncResumeReasonDeniedPrincipalExternal {
+			t.Fatalf("PostgreSQL external identity decision = %+v err=%v", decision, err)
+		}
+	})
+	t.Run("deadline during evaluation", func(t *testing.T) {
+		store, handler, cp, work := openGoalAsyncEligibilityPostgresFixture(t)
+		setGoalAsyncObservationCompleted(t, handler, work)
+		eligibility, provider := newGoalAsyncEligibilityForTest(store, cp)
+		clockValue := work.AcceptedAt.Add(time.Minute)
+		eligibility.clock = func() time.Time { return clockValue }
+		var once sync.Once
+		provider.onCall = func() {
+			once.Do(func() { clockValue = cp.Deadline.Add(time.Second) })
+		}
+		decision, err := eligibility.Evaluate(context.Background(), cp.RunID, work.OperationID)
+		if err != nil || decision.Outcome != goalAsyncResumeDenied ||
+			decision.ReasonCode != goalAsyncResumeReasonDeniedDeadline {
+			t.Fatalf("PostgreSQL deadline decision = %+v err=%v", decision, err)
+		}
+	})
+}
+
+func TestPostgresGoalAsyncSourceCompletionIsNotOperationCompletion(t *testing.T) {
+	store, handler, _ := openGoalAsyncPostgresStore(t)
+	cp, work, acceptedAt := prepareGoalAsyncRealSchedulerOperation(t, store, handler)
+	ctx := context.Background()
+	if _, err := handler.Exec(`UPDATE Sources SET status='completed', last_updated_at=CURRENT_TIMESTAMP WHERE source_id=42`); err != nil {
+		t.Fatalf("mark PostgreSQL source completed: %v", err)
+	}
+	eventID := goalAsyncEligibilityHex("pg-source-level-crawl-completed")
+	eventQuery := `INSERT INTO Events(event_sha256, source_id, event_type, event_severity, details)
+		VALUES ($1, $2, 'crawl_completed', 'info', $3::jsonb)`
+	if _, err := handler.Exec(eventQuery, eventID, 42, "{}"); err != nil {
+		t.Fatalf("insert PostgreSQL source-level event: %v", err)
+	}
+	otherOperationID := goalAsyncEligibilityHex("pg-other-operation")
+	otherQuery := `INSERT INTO Status(status_sha256, agent_id, source_id, operation_type, status, details, created_at, last_updated_at)
+		VALUES ($1, $2, $3, 'crawl', 'completed', '{}'::jsonb, $4, $5)`
+	if _, err := handler.Exec(otherQuery, otherOperationID, cp.AgentID, 42, acceptedAt, acceptedAt); err != nil {
+		t.Fatalf("insert PostgreSQL unrelated completed operation: %v", err)
+	}
+	observation, err := store.observeCrawlOperationAt(ctx, cp, work.OperationID, acceptedAt.Add(time.Second))
+	if err != nil || observation.Class != goalAsyncObservationPending {
+		t.Fatalf("PostgreSQL source-level activity changed observation = %+v err=%v", observation, err)
+	}
+	eligibility, _ := newGoalAsyncEligibilityForTest(store, cp)
+	decision, err := eligibility.evaluateAt(ctx, cp.RunID, work.OperationID, acceptedAt.Add(2*time.Minute))
+	if err != nil || decision.Outcome != goalAsyncResumeWaiting {
+		t.Fatalf("PostgreSQL source-level activity produced eligibility = %+v err=%v", decision, err)
+	}
 }

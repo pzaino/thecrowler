@@ -97,12 +97,46 @@ jobs:
         run: |
           set -euo pipefail
           sudo install -d /usr/share/postgresql-common/pgdg
-          sudo curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
-            -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+          # The hosted runner occasionally sees a transient TLS EOF while
+          # fetching the signed PGDG key. Retry the download and package
+          # metadata a few times, but keep normal TLS and signature
+          # verification. Never use --insecure or ignore repository errors.
+          for attempt in 1 2 3; do
+            if sudo curl -fsSL \
+              --retry 3 --retry-delay 2 --retry-all-errors \
+              --connect-timeout 15 --max-time 60 \
+              https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+              -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc; then
+              break
+            fi
+            if [ "$attempt" = 3 ]; then
+              echo "failed to download the PostgreSQL signing key" >&2
+              exit 1
+            fi
+            sleep $((attempt * 2))
+          done
           echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
             | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
-          sudo apt-get update
-          sudo apt-get install --yes postgresql-client-17
+          for attempt in 1 2 3; do
+            if sudo apt-get update; then
+              break
+            fi
+            if [ "$attempt" = 3 ]; then
+              echo "failed to refresh PostgreSQL package metadata" >&2
+              exit 1
+            fi
+            sleep $((attempt * 2))
+          done
+          for attempt in 1 2 3; do
+            if sudo apt-get install --yes postgresql-client-17; then
+              break
+            fi
+            if [ "$attempt" = 3 ]; then
+              echo "failed to install the PostgreSQL 17 client" >&2
+              exit 1
+            fi
+            sleep $((attempt * 2))
+          done
 
           # Ubuntu runners may already have a newer PostgreSQL client earlier
           # in PATH (the observed failure was 18.6). Resolve the versioned

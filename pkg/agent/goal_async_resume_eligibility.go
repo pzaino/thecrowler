@@ -32,6 +32,7 @@ import (
 	"time"
 
 	auth "github.com/pzaino/thecrowler/pkg/auth"
+	cdb "github.com/pzaino/thecrowler/pkg/database"
 )
 
 // goalAsyncResumeEligibilityOutcome is the closed result vocabulary.
@@ -69,7 +70,9 @@ const (
 	goalAsyncResumeReasonDeniedSystemPrincipal       = "goal_resume_denied_system_principal_unsupported"
 	goalAsyncResumeReasonDeniedPrincipalInactive     = "goal_resume_denied_principal_inactive"
 	goalAsyncResumeReasonDeniedPrincipalMismatch     = "goal_resume_denied_principal_mismatch"
+	goalAsyncResumeReasonDeniedPrincipalExternal     = "goal_resume_denied_principal_external_unsupported"
 	goalAsyncResumeReasonDeniedSourceOwnership       = "goal_resume_denied_source_ownership"
+	goalAsyncResumeReasonDeniedSourceDisabled        = "goal_resume_denied_source_disabled"
 	goalAsyncResumeReasonDeniedAgentUnavailable      = "goal_resume_denied_agent_unavailable"
 	goalAsyncResumeReasonDeniedAgentIdentity         = "goal_resume_denied_agent_identity_changed"
 	goalAsyncResumeReasonDeniedAgentCapability       = "goal_resume_denied_agent_capability_missing"
@@ -89,6 +92,7 @@ const (
 	goalAsyncResumeReasonUncertainClock              = "goal_resume_uncertain_clock_regression"
 	goalAsyncResumeReasonUnavailableDatabase         = "goal_resume_unavailable_database"
 	goalAsyncResumeReasonUnavailableContext          = "goal_resume_unavailable_context"
+	goalAsyncResumeReasonUnavailablePrincipal        = "goal_resume_unavailable_principal_authority"
 	goalAsyncResumeReasonUnavailableAgentAuthority   = "goal_resume_unavailable_agent_authority"
 	goalAsyncResumeReasonUnavailableSourceAuthority  = "goal_resume_unavailable_source_authority"
 	goalAsyncResumeReasonUnavailableOperation        = "goal_resume_unavailable_operation"
@@ -196,26 +200,46 @@ type goalAsyncResumeEligibility struct {
 	store           *goalAsyncStore
 	agentAuthority  goalAsyncAgentAuthorityProvider
 	sourceAuthority CrawlSourceAuthorizer
+	clock           func() time.Time
 }
 
 // newGoalAsyncResumeEligibility constructs the service. A nil store or nil
 // agent-authority provider fails closed at evaluation time; there is no
 // default provider and no in-memory fallback.
 func newGoalAsyncResumeEligibility(store *goalAsyncStore, agentAuthority goalAsyncAgentAuthorityProvider) *goalAsyncResumeEligibility {
-	return &goalAsyncResumeEligibility{store: store, agentAuthority: agentAuthority}
+	return &goalAsyncResumeEligibility{
+		store:          store,
+		agentAuthority: agentAuthority,
+		clock:          func() time.Time { return time.Now().UTC() },
+	}
+}
+
+func (e *goalAsyncResumeEligibility) now() time.Time {
+	if e != nil && e.clock != nil {
+		return e.clock()
+	}
+	return time.Now().UTC()
 }
 
 // Evaluate reads the current persisted checkpoint and returns a read-only
 // eligibility decision. It accepts only a run ID and an operation ID; it never
 // accepts a caller-supplied checkpoint.
 func (e *goalAsyncResumeEligibility) Evaluate(ctx context.Context, runID, operationID string) (goalAsyncResumeEligibilityDecision, error) {
-	return e.evaluateAt(ctx, runID, operationID, time.Now().UTC())
+	return e.evaluateWithClock(ctx, runID, operationID, e.now)
 }
 
 func (e *goalAsyncResumeEligibility) evaluateAt(ctx context.Context, runID, operationID string, now time.Time) (goalAsyncResumeEligibilityDecision, error) {
+	return e.evaluateWithClock(ctx, runID, operationID, func() time.Time { return now })
+}
+
+func (e *goalAsyncResumeEligibility) evaluateWithClock(ctx context.Context, runID, operationID string, clock func() time.Time) (goalAsyncResumeEligibilityDecision, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if clock == nil {
+		clock = func() time.Time { return time.Now().UTC() }
+	}
+	now := normalizeGoalAsyncTime(clock())
 	decision := goalAsyncResumeEligibilityDecision{
 		Outcome:     goalAsyncResumeUnavailable,
 		ReasonCode:  goalAsyncResumeReasonUnavailableDatabase,
@@ -233,7 +257,6 @@ func (e *goalAsyncResumeEligibility) evaluateAt(ctx context.Context, runID, oper
 		decision.ReasonCode = goalAsyncResumeReasonDeniedInvalidRequest
 		return decision, nil
 	}
-	now = normalizeGoalAsyncTime(now)
 	if now.IsZero() {
 		decision.Outcome = goalAsyncResumeEligibilityUncertain
 		decision.ReasonCode = goalAsyncResumeReasonUncertainClock
@@ -334,6 +357,23 @@ func (e *goalAsyncResumeEligibility) evaluateAt(ctx context.Context, runID, oper
 		return decision, nil
 	}
 
+	// Re-read the clock after every authority and correlation read. A slow
+	// provider must not leave a stale "eligible" decision based on an earlier
+	// timestamp, and the returned CheckedAt must describe the final check.
+	finalNow := normalizeGoalAsyncTime(clock())
+	if finalNow.IsZero() || finalNow.Before(cp.UpdatedAt) {
+		decision.Outcome = goalAsyncResumeEligibilityUncertain
+		decision.ReasonCode = goalAsyncResumeReasonUncertainClock
+		return decision, nil
+	}
+	if !finalNow.Before(cp.Deadline) {
+		decision.Outcome = goalAsyncResumeDenied
+		decision.ReasonCode = goalAsyncResumeReasonDeniedDeadline
+		decision.CheckedAt = finalNow
+		return decision, nil
+	}
+	decision.CheckedAt = finalNow
+
 	switch observation.Class {
 	case goalAsyncObservationPending:
 		decision.Outcome = goalAsyncResumeWaiting
@@ -408,21 +448,36 @@ func (e *goalAsyncResumeEligibility) currentPrincipal(ctx context.Context, cp go
 	if cp.PrincipalUserID == 0 || strings.TrimSpace(cp.PrincipalUsername) == "" {
 		return CrawlPrincipal{}, goalAsyncResumeDenied, goalAsyncResumeReasonDeniedPrincipalMismatch
 	}
+	// This phase supports only the canonical local issuer. An external issuer
+	// string cannot be verified without a trusted external-issuer mapping, and
+	// the checkpoint value is not proof merely because it was stored.
+	if !strings.EqualFold(strings.TrimSpace(cp.PrincipalIssuer), auth.LocalIssuerName) {
+		return CrawlPrincipal{}, goalAsyncResumeDenied, goalAsyncResumeReasonDeniedPrincipalExternal
+	}
 	identity := auth.Identity{
 		Subject:  strconv.FormatUint(cp.PrincipalUserID, 10),
 		Username: cp.PrincipalUsername,
-		Issuer:   cp.PrincipalIssuer,
 	}
-	resolved, err := auth.ResolveActiveIdentity(ctx, *e.store.db, identity)
+	resolved, err := auth.ResolveActiveIdentityStrict(ctx, *e.store.db, identity)
 	if err != nil {
 		if ctx != nil && ctx.Err() != nil {
 			return CrawlPrincipal{}, goalAsyncResumeUnavailable, goalAsyncResumeReasonUnavailableContext
 		}
-		return CrawlPrincipal{}, goalAsyncResumeDenied, goalAsyncResumeReasonDeniedPrincipalInactive
+		switch {
+		case errors.Is(err, auth.ErrIdentityInactive):
+			return CrawlPrincipal{}, goalAsyncResumeDenied, goalAsyncResumeReasonDeniedPrincipalInactive
+		case errors.Is(err, auth.ErrIdentityMismatch):
+			return CrawlPrincipal{}, goalAsyncResumeDenied, goalAsyncResumeReasonDeniedPrincipalMismatch
+		case errors.Is(err, auth.ErrIdentityExternalUnsupported):
+			return CrawlPrincipal{}, goalAsyncResumeDenied, goalAsyncResumeReasonDeniedPrincipalExternal
+		case errors.Is(err, auth.ErrIdentityInvalid):
+			return CrawlPrincipal{}, goalAsyncResumeDenied, goalAsyncResumeReasonDeniedPrincipalMismatch
+		default:
+			return CrawlPrincipal{}, goalAsyncResumeUnavailable, goalAsyncResumeReasonUnavailablePrincipal
+		}
 	}
 	if strings.TrimSpace(resolved.Subject) != identity.Subject ||
-		strings.TrimSpace(resolved.Username) != cp.PrincipalUsername ||
-		strings.TrimSpace(resolved.Issuer) != strings.TrimSpace(cp.PrincipalIssuer) {
+		strings.TrimSpace(resolved.Username) != cp.PrincipalUsername {
 		return CrawlPrincipal{}, goalAsyncResumeDenied, goalAsyncResumeReasonDeniedPrincipalMismatch
 	}
 	principal := CrawlPrincipal{
@@ -505,6 +560,16 @@ func (e *goalAsyncResumeEligibility) verifySourceAuthority(ctx context.Context, 
 			default:
 				return goalAsyncResumeUnavailable, goalAsyncResumeReasonUnavailableSourceAuthority
 			}
+		}
+		enabled, err := cdb.SourceEnabledForResume(ctx, e.store.db, sourceID)
+		if err != nil {
+			if ctx != nil && ctx.Err() != nil {
+				return goalAsyncResumeUnavailable, goalAsyncResumeReasonUnavailableContext
+			}
+			return goalAsyncResumeUnavailable, goalAsyncResumeReasonUnavailableSourceAuthority
+		}
+		if !enabled {
+			return goalAsyncResumeDenied, goalAsyncResumeReasonDeniedSourceDisabled
 		}
 	}
 	return "", ""
