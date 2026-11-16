@@ -336,6 +336,31 @@ jobs:
             exit 1
           fi
 
+      - name: Run asynchronous goal store PostgreSQL integration
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          export THECROWLER_POSTGRES_INTEGRATION=1
+          export CROWLER_ASYNC_GOAL_POSTGRES_TEST_DISPOSABLE=1
+          export CROWLER_ASYNC_GOAL_POSTGRES_DSN="postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:5432/${POSTGRES_DB}?sslmode=disable"
+          log="$(mktemp)"
+          trap 'rm -f "$log"' EXIT
+          go test -tags=integration ./pkg/agent -run '^TestPostgresGoalAsyncStore' -count=1 -v 2>&1 | tee "$log"
+          for test in \
+            TestPostgresGoalAsyncStoreRoundTripAfterRestart \
+            TestPostgresGoalAsyncStoreLifecycleAndConcurrency \
+            TestPostgresGoalAsyncStoreReplayOlderTransition \
+            TestPostgresGoalAsyncStoreRejectsCorruptLedger \
+            TestPostgresGoalAsyncStorePreservesAcceptanceAndLateCompletion \
+            TestPostgresGoalAsyncStoreEvidenceAndVerification; do
+            grep -F -- "=== RUN   ${test}" "$log"
+            grep -F -- "--- PASS: ${test}" "$log"
+          done
+          if grep -Fq -- '--- SKIP' "$log"; then
+            echo "Asynchronous goal store PostgreSQL integration was skipped" >&2
+            exit 1
+          fi
+
       - name: Run PostgreSQL integration suite
         env:
           THECROWLER_POSTGRES_INTEGRATION: "1"

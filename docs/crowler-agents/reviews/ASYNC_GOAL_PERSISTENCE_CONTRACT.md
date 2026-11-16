@@ -2,16 +2,17 @@
 
 ## Status
 
-**The schema objects for this contract are now part of the unreleased schema
-1.17. The transactional Go store, resume engine and runtime wiring remain
-unimplemented.**
+**The schema objects for this contract are part of the unreleased schema 1.17.
+An internal, unexported transactional Go store now implements checkpoint
+create, load and optimistic transition. The resume engine, live authorization
+refresh, production wiring and public contracts remain unimplemented.**
 
-The pure kernel is in `pkg/agent/goal_async_state.go`. This document specifies
-what a separately approved durable store and resume engine would need. It is
-grounded in the current schema and runtime, not in assumed tables. The database
-release stays 1.17 and the writer generation stays `verified-ownership-v1.17`;
-this document does not authorize a new release version or a production
-migration.
+The pure kernel is in `pkg/agent/goal_async_state.go`; the internal store is in
+`pkg/agent/goal_async_store.go`. This document specifies the durable and resume
+contract. It is grounded in the current schema and runtime, not in assumed
+tables. The database release stays 1.17 and the writer generation stays
+`verified-ownership-v1.17`; this document does not authorize a new release
+version or a production migration.
 
 ## Existing storage evaluated
 
@@ -28,8 +29,8 @@ migration.
 
 The names below are the schema-1.17 tables prepared by WP-05B2B1. The database
 release remains 1.17 and the writer generation remains
-`verified-ownership-v1.17`. The Go store that will use these tables remains
-unimplemented.
+`verified-ownership-v1.17`. The internal unexported store now uses these
+tables; no production service constructs it.
 
 ### 1. `AgentGoalRuns`
 
@@ -215,8 +216,8 @@ different hash is a conflict; a stale expected revision is a conflict.
 
 ## Canonical checkpoint wire v2
 
-The durable adapter must store and validate the canonical v2 checkpoint
-representation:
+The internal store and any future durable adapter must store and validate the
+canonical v2 checkpoint representation:
 
 - `checkpoint_version = 2`, `contract_version = goal-async-v2`;
 - deterministic field ordering and sorted unique identity lists;
@@ -250,12 +251,44 @@ timestamps, slice ceiling and canonical strictness changed.
 - `AgentGoalRunEvidence(goal_run_id, observed_at)`;
 - `AgentGoalRunTransitions(goal_run_id, created_at)`.
 
+## Internal store boundary (WP-05B2B2)
+
+The internal store exposes three unexported operations:
+
+- `CreateCheckpoint` writes the revision-1 root, frozen tools and frozen
+  sources in one transaction. An existing run ID with the same validated
+  checkpoint is an idempotent success; different contents are a typed conflict.
+- `LoadCheckpoint` reads the root and all children from one consistent
+  snapshot, reconstructs a `goal-async-v2` checkpoint, validates it and verifies
+  that the transition ledger is complete, contiguous and consistent with the
+  root's last transition. It does not create a resume grant or authorize
+  execution.
+- `TransitionCheckpoint` locks the root, consults the unique operation ledger,
+  applies the existing pure transition function, updates the root and children,
+  appends the transition row and commits atomically. An exact replay of any
+  stored operation returns the current validated checkpoint and a `replayed`
+  outcome without writing. A different hash for the same operation is a replay
+  conflict; a stale expected revision is a revision conflict.
+
+SQLite writer transactions are serialized by a no-op update on the goal root
+before the first read. This acquires the SQLite writer lock without issuing a
+nested `BEGIN IMMEDIATE` inside an active `sql.Tx`. PostgreSQL uses row locks
+and compare-and-swap conditions. A commit error is reconciled by reading the
+persisted operation identity before a retry is considered.
+
+The store does not reconstruct current account, agent, source ownership or
+policy authority from stored fields. Those checks remain the responsibility of
+the future resume/activation adapter. Intermediate transition hashes are
+historical audit data; only the last transition hash is bound to the root, so
+the store does not promise historical whole-checkpoint reconstruction.
+
 ## Transaction and CAS contract
 
 Use one transaction per checkpoint revision:
 
-1. PostgreSQL: `READ COMMITTED` plus explicit row locks; SQLite:
-   `BEGIN IMMEDIATE` and `PRAGMA foreign_keys=ON`.
+1. PostgreSQL: `READ COMMITTED` plus explicit row locks; SQLite: a
+   write-acquiring transaction (the internal store performs a no-op root update
+   before its first read) and `PRAGMA foreign_keys=ON`.
 2. Lock current-authority rows in the established global order:
    source rows ascending `source_id`, user rows ascending `user_id`,
    administrative grant rows, then the goal-run row. This preserves the
@@ -445,10 +478,10 @@ MySQL keeps its existing 1.17 startup contract. Asynchronous goal persistence is
 explicitly unsupported on MySQL in this phase; no MySQL goal tables are added.
 `CheckAsyncGoalPersistenceSchema` returns the typed unsupported result there.
 
-The future store must call the read-only `CheckAsyncGoalPersistenceSchema`
-before opening a write path. That check is deliberately not wired into ordinary
-agent, crawler or Events startup, because development databases already stamped
-1.17 may not have the addon yet.
+The internal store calls the read-only `CheckAsyncGoalPersistenceSchema` during
+explicit construction, before permitting create, load or transition. That check
+is deliberately not wired into ordinary agent, crawler or Events startup,
+because development databases already stamped 1.17 may not have the addon yet.
 
 The new tables are additive. No existing column, index or row is changed.
 Rollback requires stopping writers and dropping only the new tables, or
@@ -474,9 +507,10 @@ transition split in code or tests.
 
 ## Exact approvals still required
 
-1. **Persistence store phase:** approve or reject the transactional Go store,
-   CAS/lock/transaction contract, logical-lifetime policy and retention. The
-   1.17 DDL and same-version addon are prepared; they do not authorize a
+1. **Persistence activation phase:** the internal transactional store is
+   implemented and tested, but approval is still required before production
+   wiring, live authorization refresh, logical-lifetime policy, retention or
+   deployment. The 1.17 DDL and same-version addon do not authorize a
    production migration or runtime execution.
 2. **Resume phase:** approve or reject the claim/lease, event or bounded-poll
    trigger, current-authority refresh, cancellation/shutdown and recovery

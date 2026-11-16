@@ -123,25 +123,12 @@ func newMCPPostgresDisposableDB(t *testing.T, target *url.URL) (*sql.DB, *sql.DB
 	return testDB, admin, testURL
 }
 
-func stripMCPPostgresSQLComments(statement string) string {
-	lines := strings.Split(statement, "\n")
-	kept := make([]string, 0, len(lines))
-	for _, line := range lines {
-		if strings.HasPrefix(strings.TrimSpace(line), "--") {
-			continue
-		}
-		kept = append(kept, line)
-	}
-	return strings.TrimSpace(strings.Join(kept, "\n"))
-}
-
 func applyMCPMutationPostgresSQL(t *testing.T, db *sql.DB, script, user string) {
 	t.Helper()
 	scriptText := strings.ReplaceAll(script, ":CROWLER_DB_USER", pq.QuoteIdentifier(user))
-	for _, statement := range strings.Split(scriptText, ";") {
-		statement = stripMCPPostgresSQLComments(statement)
+	for _, statement := range splitPostgresSQLStatements(scriptText) {
 		upper := strings.ToUpper(statement)
-		if statement == "" || upper == "BEGIN" || upper == "COMMIT" ||
+		if upper == "BEGIN" || upper == "COMMIT" ||
 			strings.HasPrefix(upper, "SELECT PG_ADVISORY_XACT_LOCK") {
 			continue
 		}

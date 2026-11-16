@@ -2,11 +2,12 @@
 
 ## Current state
 
-The internal async goal lifecycle/checkpoint kernel is implemented and tested.
-It is not wired to production execution, persistence, Events, the scheduler,
-the crawler or MCP. The schema-1.17 goal tables and same-version development
-addon are prepared. No Go store, worker, claim, lease, event consumer or public
-contract was added.
+The internal async goal lifecycle/checkpoint kernel and an internal,
+unexported transactional store are implemented and tested. The store is not
+wired to production execution, Events, the scheduler, the crawler or MCP. The
+schema-1.17 goal tables and same-version development addon are prepared. No
+worker, claim, lease, event consumer, resume engine or public contract was
+added.
 
 ## Decision 0: schema and writer version freeze
 
@@ -21,23 +22,26 @@ same-version addon.
 No named approver or approval date is asserted. The decision is recorded in the
 work-package direction, not in a separate signed approval record.
 
-## Decision 1: transactional store and runtime phase
+## Decision 1: persistence activation phase
 
-**Status: PENDING.**
+**Status: PARTIALLY COMPLETE — internal store only; activation PENDING.**
 
-Approval is required before adding:
+The internal unexported store now implements create, load, optimistic transition,
+replay-ledger checks, SQLite/PostgreSQL writer serialization, corruption
+validation and commit-outcome reconciliation. It is not constructed by any
+production service.
 
-- the Go durable goal-run/checkpoint store and CAS adapter;
+Approval is still required before:
+
+- production wiring and live account/agent/source ownership/policy refresh;
 - the internal logical-lifetime default/maximum and any public/deployed TTL;
-- the strict canonical checkpoint wire and duplicate-key rejection contract;
-- the compare-and-swap transaction, full replay ledger, lock order and conflict
-  semantics;
-- runtime record hydration and load/save operations;
+- a production goal-store readiness gate;
 - retention and pruning ownership;
 - production deployment and backup/rollback scheduling.
 
-The DDL is prepared in `ASYNC_GOAL_PERSISTENCE_CONTRACT.md`. Prepared DDL is not
-approval of the store, runtime or deployment.
+The DDL and internal store are prepared in
+`ASYNC_GOAL_PERSISTENCE_CONTRACT.md`. Prepared DDL and the internal store are
+not approval of production activation or deployment.
 
 ## Decision 2: resume phase
 
@@ -79,6 +83,9 @@ No public schema or example was changed.
 - Manual same-version addons for development databases already stamped 1.17.
 - Read-only `CheckAsyncGoalPersistenceSchema`, deliberately not wired to normal
   startup.
+- Internal unexported transactional store for checkpoint create, load and
+  optimistic transition, with SQLite/PostgreSQL concurrency, replay and
+  corruption tests.
 - Pure-Go internal checkpoint and lifecycle model.
 - Closed transition table and terminal predicate.
 - Verifier-backed completion binding to `EvaluateGoal`.
@@ -89,11 +96,13 @@ No public schema or example was changed.
 - Cumulative budget/deadline/replay validation.
 - Defensive copying, strict serialization, bounded references.
 - Adversarial unit and race tests.
-- No production wiring, DB, network, MCP, crawler or model calls.
+- Internal store database access is explicit-construction only; no production
+  wiring, network, MCP, crawler, scheduler, worker or model calls.
 
 ## Explicit non-approvals
 
-- Prepared 1.17 DDL is not approval of the Go store or a production migration.
+- Prepared 1.17 DDL and the internal store are not approval of production
+  activation or a production migration.
 - The resume design is not approval.
 - The public-contract discussion is not approval.
 - A chat request, a new engineering task or an inferred intention is not
@@ -113,6 +122,7 @@ No public schema or example was changed.
 
 ## Next action
 
-Independent review of WP-05B2B1, followed by a separate maintainer decision on
-the transactional store, resume and public-contract phases. Do not apply the
-addon to a persistent database or begin those phases automatically.
+Independent review of WP-05B2B2, followed by a separate maintainer decision on
+production store activation, resume/event correlation and the public-contract
+phases. Do not apply the addon to a persistent database or begin those phases
+automatically.
