@@ -10,6 +10,13 @@ code added here is an unexported, pure-Go validator set in
 `pkg/database/source_crawl_handoff.go`; nothing constructs or calls it, and
 nothing writes a terminal result.
 
+WP-05B3C3B1 corrected the authority and replay model: the authoritative claim
+and history timestamps, fresh post-lock database clock, complete unbound input
+sanitization and the narrower Option A persisted-replay equality are recorded in
+[`ASYNC_GOAL_B3C3B1_DESIGN_REVIEW.md`](ASYNC_GOAL_B3C3B1_DESIGN_REVIEW.md). Where
+this document and that review differ, the review is authoritative for the
+current implementation.
+
 Schema remains **1.17** and writer generation remains
 **`verified-ownership-v1.17`**. The `source-crawl-attempt-v1` capability marker
 and checksum are unchanged by this package.
@@ -90,7 +97,9 @@ The legacy path stays unchanged: when no fenced handoff exists, the crawler
 behaves exactly as it does today and the reporter is never invoked.
 
 A handoff is an identity, not authority. A future worker may carry it, but the
-database must re-establish current state at the privileged mutation.
+database must re-establish current state at the privileged mutation. The
+authoritative snapshot must include the joined current/history claim and lease
+times; the worker's copy is never used to extend authority.
 
 ## 4. Attempt and operation lifecycle
 
@@ -116,7 +125,9 @@ accepted by the scheduler.
 
 ### Heartbeat and lease renewal
 
-- Uses database time, never only the worker's wall clock.
+- Uses fresh database time after the relevant locks, never only the worker's
+  wall clock. PostgreSQL `clock_timestamp()` is required where a deliberate lock
+  wait can cross an expiry; `CURRENT_TIMESTAMP` is transaction-start time.
 - Must match the exact `source_id`, `attempt_id`, `generation`,
   `claim_request_id` and `engine_id`.
 - Extends by a bounded amount. The proposed maximum is one hour per renewal and
@@ -190,10 +201,17 @@ goal evaluator.
 
 ### Replay and commit uncertainty
 
-- The same attempt, outcome, reason and operation result is
-  `idempotent_replay`.
-- A different outcome, reason, operation, generation or result is `conflict`.
-- A changed observation time for the same result is still an idempotent retry.
+- The same persisted attempt identity, outcome, reason and operation result is
+  `idempotent_replay`, including after lease expiry or supersession. This is a
+  separate read-only path and never renews a lease or writes again.
+- A different engine, claim request, source, generation, claim time, lease,
+  binding, outcome, reason or operation result is `conflict`.
+- A changed observation time for the same result is an explicitly ignored
+  retry field; the stored `terminal_at` remains authoritative.
+- `ExpectedState` is a first-write precondition, not a persisted replay-identity
+  field. The original unbound class is normalized to `unbound`.
+- Where exact equality cannot be reconstructed from 1.17 tables, the limitation
+  is documented rather than invented. See the B3C3B1 decision table.
 - If a commit reply is lost, the worker re-reads the exact attempt/operation
   identity and returns `idempotent_replay` if the stored result matches.
   Otherwise it returns `conflict`, never invented success.

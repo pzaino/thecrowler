@@ -120,10 +120,24 @@ type SourceCrawlClaim struct {
 // unbound attempt replays as SourceCrawlUnattributed rather than a fabricated
 // bound success.
 func ClaimSourceCrawlAttempts(ctx context.Context, db *Handler, req SourceCrawlClaimRequest) ([]SourceCrawlClaim, error) {
-	return claimSourceCrawlAttemptsAt(ctx, db, req, time.Now().UTC())
+	return claimSourceCrawlAttemptsWithClock(ctx, db, req, sourceCrawlClaimDatabaseClock)
 }
 
+// claimSourceCrawlAttemptsAt is the deterministic test seam. The fixed clock is
+// still read only after the policy and writer locks have been acquired.
 func claimSourceCrawlAttemptsAt(ctx context.Context, db *Handler, req SourceCrawlClaimRequest, now time.Time) ([]SourceCrawlClaim, error) {
+	return claimSourceCrawlAttemptsWithClock(ctx, db, req,
+		func(context.Context, *sql.Tx, Handler) (time.Time, error) { return now, nil })
+}
+
+type sourceCrawlClaimClock func(context.Context, *sql.Tx, Handler) (time.Time, error)
+
+func sourceCrawlClaimDatabaseClock(ctx context.Context, tx *sql.Tx, db Handler) (time.Time, error) {
+	return sourceCrawlClaimDatabaseNow(ctx, tx, db)
+}
+
+func claimSourceCrawlAttemptsWithClock(ctx context.Context, db *Handler, req SourceCrawlClaimRequest,
+	clock sourceCrawlClaimClock) ([]SourceCrawlClaim, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -138,10 +152,6 @@ func claimSourceCrawlAttemptsAt(ctx context.Context, db *Handler, req SourceCraw
 	}
 	if err := CheckSourceCrawlAttemptSchema(ctx, db); err != nil {
 		return nil, err
-	}
-	now = now.UTC().Truncate(time.Microsecond)
-	if now.IsZero() {
-		return nil, fmt.Errorf("%w: trusted clock is zero", ErrSourceCrawlClaimInvalidRequest)
 	}
 	txCtx, cancel := TransactionContextForHandler(ctx, db)
 	defer cancel()
@@ -168,6 +178,14 @@ func claimSourceCrawlAttemptsAt(ctx context.Context, db *Handler, req SourceCraw
 	}
 	if mode != "fenced" {
 		return nil, ErrSourceCrawlClaimLegacyMode
+	}
+	now, err := clock(txCtx, tx, *db)
+	if err != nil {
+		return nil, NormalizeTransactionError(txCtx, err)
+	}
+	now = now.UTC().Truncate(time.Microsecond)
+	if now.IsZero() {
+		return nil, fmt.Errorf("%w: trusted clock is zero", ErrSourceCrawlClaimInvalidRequest)
 	}
 
 	if existing, found, err := loadSourceCrawlClaimRequestTx(txCtx, tx, *db, req.ClaimRequestID, now); err != nil {
@@ -921,10 +939,16 @@ type sourceCrawlClaimQueryer interface {
 // sourceCrawlClaimDatabaseNow returns the authoritative clock used to decide
 // whether a persisted attempt may still execute. Workers must not substitute
 // their own wall clock for this decision before a privileged mutation.
+//
+// PostgreSQL CURRENT_TIMESTAMP is transaction-start time. Claim allocation and
+// replay decisions need a fresh value after deliberate lock waits, so this uses
+// clock_timestamp(). SQLite's julianday('now') is evaluated by the statement,
+// not at transaction start. Both results are truncated to microseconds and the
+// expiry boundary is exclusive: now == lease_expires_at is expired.
 func sourceCrawlClaimDatabaseNow(ctx context.Context, q sourceCrawlClaimQueryer, db Handler) (time.Time, error) {
 	if normalizeDBMS(db.DBMS()) == "postgres" {
 		var now time.Time
-		if err := q.QueryRowContext(ctx, `SELECT CURRENT_TIMESTAMP`).Scan(&now); err != nil {
+		if err := q.QueryRowContext(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
 			return time.Time{}, fmt.Errorf("%w: database clock", ErrSourceCrawlClaimUnavailable)
 		}
 		if now.IsZero() {

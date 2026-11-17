@@ -115,10 +115,31 @@ func TestSourceCrawlHandoffFromClaim(t *testing.T) {
 		}
 	}
 
-	unboundWithOperation := base
-	unboundWithOperation.Outcome = SourceCrawlUnattributed
-	if _, err := newSourceCrawlCrawlerHandoff(unboundWithOperation); !errors.Is(err, errSourceCrawlAttemptInvalid) {
-		t.Fatalf("unbound claim with operation error = %v", err)
+	for _, field := range []struct {
+		name   string
+		mutate func(*SourceCrawlClaim)
+	}{
+		{"operation id", func(c *SourceCrawlClaim) { c.OperationID = sourceCrawlClaimTestID("leak-operation") }},
+		{"request id", func(c *SourceCrawlClaim) { c.RequestID = sourceCrawlClaimTestID("leak-request") }},
+		{"run id", func(c *SourceCrawlClaim) { c.RunID = "leak-run" }},
+		{"agent id", func(c *SourceCrawlClaim) { c.AgentID = "leak-agent" }},
+		{"owner", func(c *SourceCrawlClaim) { c.Owner = "leak-owner" }},
+		{"principal", func(c *SourceCrawlClaim) { c.PrincipalUserID = 99 }},
+		{"approval id", func(c *SourceCrawlClaim) { c.ApprovalID = sourceCrawlClaimTestID("leak-approval") }},
+		{"approval hash", func(c *SourceCrawlClaim) { c.ApprovalSHA256 = sourceCrawlClaimTestID("leak-approval-sha") }},
+	} {
+		t.Run("unbound "+field.name, func(t *testing.T) {
+			unboundWithOperation := base
+			unboundWithOperation.Outcome = SourceCrawlUnattributed
+			unboundWithOperation.OperationID, unboundWithOperation.RequestID = "", ""
+			unboundWithOperation.RunID, unboundWithOperation.AgentID, unboundWithOperation.Owner = "", "", ""
+			unboundWithOperation.PrincipalUserID = 0
+			unboundWithOperation.ApprovalID, unboundWithOperation.ApprovalSHA256 = "", ""
+			field.mutate(&unboundWithOperation)
+			if _, err := newSourceCrawlCrawlerHandoff(unboundWithOperation); !errors.Is(err, errSourceCrawlAttemptInvalid) {
+				t.Fatalf("unbound claim with %s error = %v", field.name, err)
+			}
+		})
 	}
 
 	for _, outcome := range []SourceCrawlClaimOutcome{SourceCrawlClaimStaleFence, SourceCrawlClaimConflict} {
@@ -288,20 +309,83 @@ func TestSourceCrawlTerminalReceiptValidation(t *testing.T) {
 	}
 }
 
+func sourceCrawlTerminalAuthorityFixture(receipt sourceCrawlTerminalReceipt) sourceCrawlTerminalAuthority {
+	return sourceCrawlTerminalAuthority{
+		Available: true, Fenced: true, Found: true,
+		SourceID:                 receipt.Attempt.SourceID,
+		AttemptID:                receipt.Attempt.AttemptID,
+		Generation:               receipt.Attempt.Generation,
+		ClaimRequestID:           receipt.Attempt.ClaimRequestID,
+		EngineID:                 receipt.Attempt.EngineID,
+		ClaimedAt:                receipt.Attempt.ClaimedAt,
+		CurrentLeaseExpiresAt:    receipt.Attempt.LeaseExpiresAt,
+		HistoryLeaseExpiresAt:    receipt.Attempt.LeaseExpiresAt,
+		AttemptState:             sourceCrawlAttemptClaimed,
+		Binding:                  receipt.Attempt.Binding,
+		SourceOwnershipVerified:  true,
+		CurrentSourceOwnerUserID: receipt.Attempt.Binding.PrincipalUserID,
+		ApprovalHistory:          sourceCrawlApprovalValidAtAcceptance,
+	}
+}
+
+func TestSourceCrawlTerminalAuthorityClassification(t *testing.T) {
+	_, receipt := sourceCrawlHandoffTestFixture(t)
+	live := sourceCrawlTerminalAuthorityFixture(receipt)
+	cases := []struct {
+		name     string
+		mutate   func(*sourceCrawlTerminalAuthority)
+		now      time.Time
+		expected sourceCrawlTerminalAuthorityState
+	}{
+		{"current live", func(*sourceCrawlTerminalAuthority) {}, sourceCrawlHandoffTestNow, sourceCrawlTerminalAuthorityCurrentLive},
+		{"current expired at boundary", func(*sourceCrawlTerminalAuthority) {}, sourceCrawlHandoffTestNow.Add(9 * time.Minute), sourceCrawlTerminalAuthorityCurrentExpired},
+		{"superseded", func(a *sourceCrawlTerminalAuthority) { a.AttemptState = sourceCrawlAttemptSuperseded }, sourceCrawlHandoffTestNow, sourceCrawlTerminalAuthoritySuperseded},
+		{"terminal", func(a *sourceCrawlTerminalAuthority) { a.AttemptState = sourceCrawlAttemptCompleted }, sourceCrawlHandoffTestNow, sourceCrawlTerminalAuthorityTerminal},
+		{"missing", func(a *sourceCrawlTerminalAuthority) { a.Found = false }, sourceCrawlHandoffTestNow, sourceCrawlTerminalAuthorityMissing},
+		{"corrupt lease disagreement", func(a *sourceCrawlTerminalAuthority) {
+			a.CurrentLeaseExpiresAt = a.HistoryLeaseExpiresAt.Add(time.Second)
+		}, sourceCrawlHandoffTestNow, sourceCrawlTerminalAuthorityCorrupt},
+		{"corrupt zero attempt", func(a *sourceCrawlTerminalAuthority) { a.AttemptID = "" }, sourceCrawlHandoffTestNow, sourceCrawlTerminalAuthorityCorrupt},
+		{"corrupt deterministic binding", func(a *sourceCrawlTerminalAuthority) {
+			binding := *a.Binding
+			binding.OperationID = sourceCrawlClaimTestID("wrong-operation")
+			a.Binding = &binding
+		}, sourceCrawlHandoffTestNow, sourceCrawlTerminalAuthorityCorrupt},
+		{"unavailable", func(a *sourceCrawlTerminalAuthority) { a.Available = false }, sourceCrawlHandoffTestNow, sourceCrawlTerminalAuthorityUnavailable},
+		{"legacy mode", func(a *sourceCrawlTerminalAuthority) { a.Fenced = false }, sourceCrawlHandoffTestNow, sourceCrawlTerminalAuthorityLegacyMode},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			subject := live
+			tc.mutate(&subject)
+			if got := subject.classify(tc.now); got != tc.expected {
+				t.Fatalf("classify = %q, want %q", got, tc.expected)
+			}
+		})
+	}
+	nilNow := live
+	if got := nilNow.classify(time.Time{}); got != sourceCrawlTerminalAuthorityCorrupt {
+		t.Fatalf("zero clock classify = %q", got)
+	}
+	var emptyAuthority sourceCrawlTerminalAuthority
+	if got := emptyAuthority.classify(sourceCrawlHandoffTestNow); got != sourceCrawlTerminalAuthorityUnavailable {
+		t.Fatalf("empty authority classify = %q", got)
+	}
+	if err := emptyAuthority.validate(receipt, sourceCrawlHandoffTestNow); !errors.Is(err, errSourceCrawlTerminalUnavailable) {
+		t.Fatalf("empty authority validate = %v", err)
+	}
+	if emptyAuthority.sourceCrawlTerminalSourceStatusEligible(receipt, sourceCrawlHandoffTestNow) {
+		t.Fatal("empty authority was eligible for a source status update")
+	}
+}
+
 func TestSourceCrawlTerminalAuthority(t *testing.T) {
 	_, receipt := sourceCrawlHandoffTestFixture(t)
-	authority := sourceCrawlTerminalAuthority{
-		Fenced: true, CurrentAttemptID: receipt.Attempt.AttemptID,
-		CurrentGeneration:        receipt.Attempt.Generation,
-		CurrentClaimRequestID:    receipt.Attempt.ClaimRequestID,
-		CurrentEngineID:          receipt.Attempt.EngineID,
-		AttemptState:             sourceCrawlAttemptClaimed,
-		CurrentSourceOwnerUserID: receipt.Attempt.Binding.PrincipalUserID,
-	}
+	authority := sourceCrawlTerminalAuthorityFixture(receipt)
 	if err := authority.validate(receipt, sourceCrawlHandoffTestNow); err != nil {
 		t.Fatalf("valid authority: %v", err)
 	}
-	if !authority.sourceCrawlTerminalSourceStatusEligible(receipt) {
+	if !authority.sourceCrawlTerminalSourceStatusEligible(receipt, sourceCrawlHandoffTestNow) {
 		t.Fatal("valid authority is not eligible for source status")
 	}
 
@@ -310,20 +394,72 @@ func TestSourceCrawlTerminalAuthority(t *testing.T) {
 		mutate  func(*sourceCrawlTerminalAuthority)
 		wantErr error
 	}{
+		{"unavailable", func(a *sourceCrawlTerminalAuthority) { a.Available = false }, errSourceCrawlTerminalUnavailable},
 		{"not fenced", func(a *sourceCrawlTerminalAuthority) { a.Fenced = false }, errSourceCrawlTerminalUnsupported},
-		{"not current attempt", func(a *sourceCrawlTerminalAuthority) { a.CurrentAttemptID = sourceCrawlClaimTestID("other") }, errSourceCrawlAttemptStale},
-		{"wrong generation", func(a *sourceCrawlTerminalAuthority) { a.CurrentGeneration++ }, errSourceCrawlAttemptStale},
-		{"wrong claim request", func(a *sourceCrawlTerminalAuthority) { a.CurrentClaimRequestID = sourceCrawlClaimTestID("other") }, errSourceCrawlAttemptStale},
-		{"wrong engine", func(a *sourceCrawlTerminalAuthority) { a.CurrentEngineID = "other-engine" }, errSourceCrawlAttemptStale},
+		{"missing", func(a *sourceCrawlTerminalAuthority) { a.Found = false }, errSourceCrawlAttemptStale},
+		{"corrupt lease", func(a *sourceCrawlTerminalAuthority) {
+			a.CurrentLeaseExpiresAt = a.HistoryLeaseExpiresAt.Add(time.Second)
+		}, errSourceCrawlTerminalCorrupt},
+		{"expired", func(a *sourceCrawlTerminalAuthority) {}, errSourceCrawlAttemptStale},
+		{"not current attempt", func(a *sourceCrawlTerminalAuthority) { a.AttemptID = sourceCrawlClaimTestID("other") }, errSourceCrawlAttemptStale},
+		{"wrong generation", func(a *sourceCrawlTerminalAuthority) { a.Generation++ }, errSourceCrawlAttemptStale},
+		{"wrong claim request", func(a *sourceCrawlTerminalAuthority) { a.ClaimRequestID = sourceCrawlClaimTestID("other") }, errSourceCrawlAttemptStale},
+		{"wrong engine", func(a *sourceCrawlTerminalAuthority) { a.EngineID = "other-engine" }, errSourceCrawlAttemptStale},
 		{"terminal attempt", func(a *sourceCrawlTerminalAuthority) { a.AttemptState = sourceCrawlAttemptCompleted }, errSourceCrawlAttemptStale},
 		{"deleted source", func(a *sourceCrawlTerminalAuthority) { a.SourceDeleted = true }, errSourceCrawlAttemptStale},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			subject := authority
+			now := sourceCrawlHandoffTestNow
+			if tc.name == "expired" {
+				now = sourceCrawlHandoffTestNow.Add(9 * time.Minute)
+			}
 			tc.mutate(&subject)
-			if err := subject.validate(receipt, sourceCrawlHandoffTestNow); !errors.Is(err, tc.wantErr) {
+			if err := subject.validate(receipt, now); !errors.Is(err, tc.wantErr) {
 				t.Fatalf("authority error = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+
+	expiredAuthority := authority
+	expiredReceipt := copySourceCrawlTerminalReceipt(receipt)
+	expiredReceipt.Attempt.LeaseExpiresAt = expiredReceipt.Attempt.LeaseExpiresAt.Add(time.Hour)
+	if err := expiredAuthority.validate(expiredReceipt, sourceCrawlHandoffTestNow.Add(9*time.Minute)); !errors.Is(err, errSourceCrawlAttemptStale) {
+		t.Fatalf("expired authority with forged later lease error = %v, want stale", err)
+	}
+
+	receiptCases := []struct {
+		name   string
+		mutate func(*sourceCrawlTerminalReceipt)
+	}{
+		{"forged later lease", func(r *sourceCrawlTerminalReceipt) {
+			r.Attempt.LeaseExpiresAt = r.Attempt.LeaseExpiresAt.Add(time.Minute)
+		}},
+		{"forged claim time", func(r *sourceCrawlTerminalReceipt) { r.Attempt.ClaimedAt = r.Attempt.ClaimedAt.Add(-time.Minute) }},
+		{"wrong receipt source", func(r *sourceCrawlTerminalReceipt) { r.Attempt.SourceID++ }},
+		{"wrong receipt attempt", func(r *sourceCrawlTerminalReceipt) { r.Attempt.AttemptID = sourceCrawlClaimTestID("other") }},
+		{"wrong receipt generation", func(r *sourceCrawlTerminalReceipt) { r.Attempt.Generation++ }},
+		{"wrong receipt claim request", func(r *sourceCrawlTerminalReceipt) { r.Attempt.ClaimRequestID = sourceCrawlClaimTestID("other") }},
+		{"wrong receipt engine", func(r *sourceCrawlTerminalReceipt) { r.Attempt.EngineID = "other-engine" }},
+		{"wrong receipt binding", func(r *sourceCrawlTerminalReceipt) {
+			binding := *r.Attempt.Binding
+			binding.OperationID = sourceCrawlClaimTestID("other-operation")
+			r.Attempt.Binding = &binding
+		}},
+	}
+	for _, tc := range receiptCases {
+		t.Run(tc.name, func(t *testing.T) {
+			subject := copySourceCrawlTerminalReceipt(receipt)
+			tc.mutate(&subject)
+			want := errSourceCrawlTerminalConflict
+			switch tc.name {
+			case "wrong receipt source", "wrong receipt attempt", "wrong receipt generation",
+				"wrong receipt claim request", "wrong receipt engine":
+				want = errSourceCrawlAttemptStale
+			}
+			if err := authority.validate(subject, sourceCrawlHandoffTestNow); !errors.Is(err, want) {
+				t.Fatalf("authority receipt error = %v, want %v", err, want)
 			}
 		})
 	}
@@ -333,14 +469,20 @@ func TestSourceCrawlTerminalAuthority(t *testing.T) {
 	if err := disabled.validate(receipt, sourceCrawlHandoffTestNow); err != nil {
 		t.Fatalf("disabled source operation result should still be recordable: %v", err)
 	}
-	if disabled.sourceCrawlTerminalSourceStatusEligible(receipt) {
+	if disabled.sourceCrawlTerminalSourceStatusEligible(receipt, sourceCrawlHandoffTestNow) {
 		t.Fatal("disabled source must not receive a source-level status update")
 	}
 
 	unknownOwner := authority
 	unknownOwner.CurrentSourceOwnerUserID = 0
-	if unknownOwner.sourceCrawlTerminalSourceStatusEligible(receipt) {
+	if unknownOwner.sourceCrawlTerminalSourceStatusEligible(receipt, sourceCrawlHandoffTestNow) {
 		t.Fatal("unknown source ownership must not receive a source-level status update")
+	}
+
+	unverified := authority
+	unverified.SourceOwnershipVerified = false
+	if unverified.sourceCrawlTerminalSourceStatusEligible(receipt, sourceCrawlHandoffTestNow) {
+		t.Fatal("unverified source ownership must not receive a source-level status update")
 	}
 
 	transferred := authority
@@ -348,14 +490,23 @@ func TestSourceCrawlTerminalAuthority(t *testing.T) {
 	if err := transferred.validate(receipt, sourceCrawlHandoffTestNow); err != nil {
 		t.Fatalf("ownership transfer should not rewrite historical operation identity: %v", err)
 	}
-	if transferred.sourceCrawlTerminalSourceStatusEligible(receipt) {
+	if transferred.sourceCrawlTerminalSourceStatusEligible(receipt, sourceCrawlHandoffTestNow) {
 		t.Fatal("transferred source must not receive the old worker's source-level status")
 	}
 
 	revoked := authority
-	revoked.ApprovalRevokedBeforeAcceptance = true
+	revoked.ApprovalHistory = sourceCrawlApprovalRevokedBeforeAcceptance
 	if err := revoked.validate(receipt, sourceCrawlHandoffTestNow); !errors.Is(err, errSourceCrawlTerminalConflict) {
 		t.Fatalf("approval revoked before acceptance error = %v", err)
+	}
+	for _, history := range []sourceCrawlApprovalHistoryState{
+		sourceCrawlApprovalRevokedAfterAcceptance, sourceCrawlApprovalExpiredAfterAcceptance,
+	} {
+		after := authority
+		after.ApprovalHistory = history
+		if err := after.validate(receipt, sourceCrawlHandoffTestNow); err != nil {
+			t.Fatalf("historical acceptance should survive %s: %v", history, err)
+		}
 	}
 }
 
@@ -364,35 +515,121 @@ func copySourceCrawlTerminalReceipt(receipt sourceCrawlTerminalReceipt) sourceCr
 		resultCopy := *receipt.OperationResult
 		receipt.OperationResult = &resultCopy
 	}
+	if receipt.Attempt.Binding != nil {
+		binding := *receipt.Attempt.Binding
+		receipt.Attempt.Binding = &binding
+	}
 	return receipt
+}
+
+func sourceCrawlStoredTerminalFromReceipt(t *testing.T, receipt sourceCrawlTerminalReceipt,
+	state sourceCrawlAttemptState, reason string, result CrawlOperationState) sourceCrawlPersistedTerminal {
+	t.Helper()
+	attempt := receipt.Attempt
+	attempt.State = state
+	attempt.TerminalAt = receipt.ObservedAt
+	attempt.ReasonCode = reason
+	stored, err := newSourceCrawlPersistedTerminal(attempt, result)
+	if err != nil {
+		t.Fatalf("construct persisted terminal: %v", err)
+	}
+	return stored
 }
 
 func TestSourceCrawlTerminalReplayClassification(t *testing.T) {
 	_, receipt := sourceCrawlHandoffTestFixture(t)
-	if got := classifySourceCrawlTerminalReplay(nil, receipt); got != sourceCrawlTerminalConflict {
+	stored := sourceCrawlStoredTerminalFromReceipt(t, receipt,
+		sourceCrawlAttemptCompleted, "crawl_completed", CrawlOperationCompleted)
+	if got := classifySourceCrawlPersistedTerminalReplay(nil, receipt); got != sourceCrawlTerminalConflict {
 		t.Fatalf("missing stored receipt = %q", got)
 	}
 	retry := copySourceCrawlTerminalReceipt(receipt)
 	retry.ObservedAt = sourceCrawlHandoffTestNow.Add(30 * time.Second)
-	if got := classifySourceCrawlTerminalReplay(&receipt, retry); got != sourceCrawlTerminalIdempotentReplay {
-		t.Fatalf("identical retry = %q", got)
+	if got := classifySourceCrawlPersistedTerminalReplay(&stored, retry); got != sourceCrawlTerminalIdempotentReplay {
+		t.Fatalf("identical retry with changed observation time = %q", got)
 	}
-	changedOutcome := copySourceCrawlTerminalReceipt(receipt)
-	changedOutcome.Outcome = sourceCrawlTerminalFailedOutcome
-	changedOutcome.ReasonCode = "crawl_failed"
-	changedOutcome.OperationResult.ResultState = CrawlOperationFailed
-	if got := classifySourceCrawlTerminalReplay(&receipt, changedOutcome); got != sourceCrawlTerminalConflict {
-		t.Fatalf("changed outcome = %q", got)
+	changedExpected := copySourceCrawlTerminalReceipt(receipt)
+	changedExpected.OperationResult.ExpectedState = CrawlOperationProcessing
+	if got := classifySourceCrawlPersistedTerminalReplay(&stored, changedExpected); got != sourceCrawlTerminalIdempotentReplay {
+		t.Fatalf("changed ExpectedState should be a precondition only = %q", got)
 	}
-	changedResult := copySourceCrawlTerminalReceipt(receipt)
-	changedResult.OperationResult.ResultState = CrawlOperationFailed
-	if got := classifySourceCrawlTerminalReplay(&receipt, changedResult); got != sourceCrawlTerminalConflict {
-		t.Fatalf("changed result = %q", got)
+
+	conflicts := []struct {
+		name   string
+		mutate func(*sourceCrawlTerminalReceipt)
+	}{
+		{"engine", func(r *sourceCrawlTerminalReceipt) { r.Attempt.EngineID = "other-engine" }},
+		{"claim request", func(r *sourceCrawlTerminalReceipt) { r.Attempt.ClaimRequestID = sourceCrawlClaimTestID("other") }},
+		{"source", func(r *sourceCrawlTerminalReceipt) { r.Attempt.SourceID++ }},
+		{"generation", func(r *sourceCrawlTerminalReceipt) { r.Attempt.Generation++ }},
+		{"attempt", func(r *sourceCrawlTerminalReceipt) { r.Attempt.AttemptID = sourceCrawlClaimTestID("other") }},
+		{"claim time", func(r *sourceCrawlTerminalReceipt) { r.Attempt.ClaimedAt = r.Attempt.ClaimedAt.Add(-time.Minute) }},
+		{"lease", func(r *sourceCrawlTerminalReceipt) {
+			r.Attempt.LeaseExpiresAt = r.Attempt.LeaseExpiresAt.Add(time.Minute)
+		}},
+		{"binding", func(r *sourceCrawlTerminalReceipt) {
+			r.Attempt.Binding.OperationID = sourceCrawlClaimTestID("other-operation")
+			r.OperationResult.Binding = *r.Attempt.Binding
+		}},
+		{"outcome", func(r *sourceCrawlTerminalReceipt) {
+			r.Outcome = sourceCrawlTerminalFailedOutcome
+			r.ReasonCode = "crawl_failed"
+			r.OperationResult.ResultState = CrawlOperationFailed
+		}},
+		{"reason", func(r *sourceCrawlTerminalReceipt) { r.ReasonCode = "crawl_failed" }},
+		{"operation result", func(r *sourceCrawlTerminalReceipt) { r.OperationResult.ResultState = CrawlOperationFailed }},
+		{"ineligible expected state", func(r *sourceCrawlTerminalReceipt) {
+			r.OperationResult.ExpectedState = CrawlOperationAlreadyPending
+		}},
 	}
-	changedGeneration := copySourceCrawlTerminalReceipt(receipt)
-	changedGeneration.Attempt.Generation++
-	if got := classifySourceCrawlTerminalReplay(&receipt, changedGeneration); got != sourceCrawlTerminalConflict {
-		t.Fatalf("changed generation = %q", got)
+	for _, tc := range conflicts {
+		t.Run(tc.name, func(t *testing.T) {
+			subject := copySourceCrawlTerminalReceipt(receipt)
+			tc.mutate(&subject)
+			if got := classifySourceCrawlPersistedTerminalReplay(&stored, subject); got != sourceCrawlTerminalConflict {
+				t.Fatalf("changed %s = %q, want conflict", tc.name, got)
+			}
+		})
+	}
+
+	expiredStored := stored
+	expiredStored.Attempt.ClaimedAt = sourceCrawlHandoffTestNow.Add(-2 * time.Hour)
+	expiredStored.Attempt.LeaseExpiresAt = sourceCrawlHandoffTestNow.Add(-time.Hour)
+	expiredStored.Attempt.TerminalAt = sourceCrawlHandoffTestNow.Add(-90 * time.Minute)
+	expiredIncoming := copySourceCrawlTerminalReceipt(receipt)
+	expiredIncoming.Attempt.ClaimedAt = expiredStored.Attempt.ClaimedAt
+	expiredIncoming.Attempt.LeaseExpiresAt = expiredStored.Attempt.LeaseExpiresAt
+	if got := classifySourceCrawlPersistedTerminalReplay(&expiredStored, expiredIncoming); got != sourceCrawlTerminalIdempotentReplay {
+		t.Fatalf("post-expiry exact replay = %q", got)
+	}
+
+	unboundAttempt := receipt.Attempt
+	unboundAttempt.Binding = nil
+	unboundAttempt.State = sourceCrawlAttemptCancelled
+	unboundAttempt.TerminalAt = receipt.ObservedAt
+	unboundAttempt.ReasonCode = "crawl_cancelled"
+	unboundStored, err := newSourceCrawlPersistedTerminal(unboundAttempt, "")
+	if err != nil {
+		t.Fatalf("construct unbound persisted terminal: %v", err)
+	}
+	for _, class := range []sourceCrawlHandoffAttribution{
+		sourceCrawlHandoffUnattributed, sourceCrawlHandoffAmbiguous, sourceCrawlHandoffNotAttributable,
+	} {
+		incoming := sourceCrawlTerminalReceipt{
+			Attempt: unboundAttempt, Attribution: class,
+			Outcome: sourceCrawlTerminalCancelledOutcome, ReasonCode: "crawl_cancelled",
+			ObservedAt: receipt.ObservedAt,
+		}
+		incoming.Attempt.State = sourceCrawlAttemptClaimed
+		incoming.Attempt.TerminalAt = time.Time{}
+		incoming.Attempt.ReasonCode = ""
+		if got := classifySourceCrawlPersistedTerminalReplay(&unboundStored, incoming); got != sourceCrawlTerminalIdempotentReplay {
+			t.Fatalf("unbound %s replay = %q", class, got)
+		}
+	}
+	boundIncoming := copySourceCrawlTerminalReceipt(receipt)
+	if got := classifySourceCrawlPersistedTerminalReplay(&unboundStored, boundIncoming); got != sourceCrawlTerminalConflict {
+		t.Fatalf("bound receipt against unbound history = %q", got)
 	}
 }
 

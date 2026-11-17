@@ -75,6 +75,10 @@ func TestPostgresFullProposalApprovalSchedulerClaimAndObservation(t *testing.T) 
 	adminDB := openHandoffPostgresAdminDB(t)
 	ownerID, _ := setupCrawlApprovalPostgresUsers(t, db)
 	sourceID := createCrawlApprovalPostgresSource(t, db, ownerID)
+	priority := fmt.Sprintf("wp05b3c3b1-handoff-%d", time.Now().UnixNano())
+	if _, err := (*db).Exec(`UPDATE Sources SET priority=$1 WHERE source_id=$2`, priority, sourceID); err != nil {
+		t.Fatalf("isolate handoff source priority: %v", err)
+	}
 	ownerName := fmt.Sprintf("wp03b2b-owner-%d", ownerID)
 	now := time.Now().UTC()
 
@@ -151,19 +155,23 @@ func TestPostgresFullProposalApprovalSchedulerClaimAndObservation(t *testing.T) 
 		t.Fatalf("parse scheduled submit-by: %v", err)
 	}
 
+	var priorMode string
+	if err := adminDB.QueryRow(`SELECT mode FROM SourceCrawlClaimPolicy WHERE policy_id=1`).Scan(&priorMode); err != nil {
+		t.Fatalf("read prior claim mode: %v", err)
+	}
 	if _, err := adminDB.Exec(`SELECT set_source_crawl_claim_mode('fenced')`); err != nil {
 		t.Fatalf("enable fenced mode: %v", err)
 	}
 	t.Cleanup(func() {
 		_, _ = adminDB.Exec(`DELETE FROM SourceCrawlClaims WHERE source_id=$1`, sourceID)
 		_, _ = adminDB.Exec(`DELETE FROM SourceCrawlAttempts WHERE source_id=$1`, sourceID)
-		_, _ = adminDB.Exec(`SELECT set_source_crawl_claim_mode('legacy')`)
+		_, _ = adminDB.Exec(`SELECT set_source_crawl_claim_mode($1)`, priorMode)
 	})
 
 	claims, err := cdb.ClaimSourceCrawlAttempts(context.Background(), db, cdb.SourceCrawlClaimRequest{
 		ClaimRequestID: handoffClaimRequestID(t),
 		Limit:          5,
-		Priority:       "high",
+		Priority:       priority,
 		EngineID:       "wp05b3c3a-engine",
 		Lease:          10 * time.Minute,
 	})

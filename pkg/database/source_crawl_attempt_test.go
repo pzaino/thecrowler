@@ -934,3 +934,45 @@ func TestSourceCrawlAttemptSQLiteConcurrentReplay(t *testing.T) {
 		t.Fatalf("reset source: %v", err)
 	}
 }
+
+func TestSourceCrawlAttemptSQLiteClaimAtLeaseBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		replayAt   time.Time
+		wantSecond bool
+	}{
+		{"one microsecond before expiry", sourceCrawlClaimTestNow.Add(5*time.Minute - time.Microsecond), false},
+		{"exactly at expiry", sourceCrawlClaimTestNow.Add(5 * time.Minute), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, handler := openAsyncGoalSQLite(t)
+			seedSourceCrawlClaimSource(t, raw, 42, 7, "new", false)
+			enableSourceCrawlClaimMode(t, raw)
+			first, err := claimSourceCrawlAttemptsAt(context.Background(), &handler,
+				sourceCrawlClaimRequest("lease-boundary-first"), sourceCrawlClaimTestNow)
+			if err != nil || len(first) != 1 || first[0].Generation != 1 {
+				t.Fatalf("first claim = %+v err=%v", first, err)
+			}
+			second, err := claimSourceCrawlAttemptsAt(context.Background(), &handler,
+				sourceCrawlClaimRequest("lease-boundary-second"), tc.replayAt)
+			if err != nil {
+				t.Fatalf("boundary claim: %v", err)
+			}
+			if tc.wantSecond {
+				if len(second) != 1 || second[0].Generation != 2 {
+					t.Fatalf("at-expiry claim = %+v, want generation 2", second)
+				}
+				if count := sourceCrawlAttemptHistoryCount(t, raw, 42); count != 2 {
+					t.Fatalf("history at expiry = %d, want 2", count)
+				}
+			} else {
+				if len(second) != 0 {
+					t.Fatalf("pre-expiry claim = %+v, want no new claim", second)
+				}
+				if count := sourceCrawlAttemptHistoryCount(t, raw, 42); count != 1 {
+					t.Fatalf("history before expiry = %d, want 1", count)
+				}
+			}
+		})
+	}
+}

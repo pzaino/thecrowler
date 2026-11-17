@@ -755,3 +755,102 @@ func TestPostgresSourceCrawlAttemptDatabaseClockReconciliation(t *testing.T) {
 		t.Fatalf("expired database-clock reconciliation = %+v found=%v err=%v", expired, found, err)
 	}
 }
+
+func TestPostgresSourceCrawlAttemptPostLockClock(t *testing.T) {
+	db, _ := openPostgresIntegrationTestDB(t)
+	adminDB := openAsyncGoalPostgresAdminDB(t)
+	priority := fmt.Sprintf("wp05b3c3b1-clock-%d", time.Now().UnixNano())
+	sourceID := createCrawlSchedulingSource(t, db, priority)
+	t.Cleanup(func() { cleanupSourceCrawlAttemptRows(t, adminDB, sourceID) })
+	setSourceCrawlAttemptMode(t, adminDB, "fenced")
+
+	firstRequest := sourceCrawlAttemptRequestFor("pg-clock-first", priority)
+	firstRequest.Lease = 2 * time.Second
+	first, err := ClaimSourceCrawlAttempts(context.Background(), db, firstRequest)
+	if err != nil || len(first) != 1 || first[0].SourceID != sourceID {
+		t.Fatalf("short-lease base claim = %+v err=%v", first, err)
+	}
+	var liveBeforeWait bool
+	if err := adminDB.QueryRow(`SELECT clock_timestamp() < lease_expires_at
+		FROM SourceCrawlClaims WHERE source_id=$1`, sourceID).Scan(&liveBeforeWait); err != nil {
+		t.Fatalf("read first lease: %v", err)
+	}
+	if !liveBeforeWait {
+		t.Fatalf("fixture lease expired before lock wait: %+v", first[0])
+	}
+
+	lockTx, err := adminDB.Begin()
+	if err != nil {
+		t.Fatalf("begin exclusive policy transaction: %v", err)
+	}
+	if _, err := lockTx.Exec(`SELECT pg_advisory_xact_lock(hashtext('crowler:source-crawl-claim-policy'))`); err != nil {
+		_ = lockTx.Rollback()
+		t.Fatalf("acquire exclusive policy lock: %v", err)
+	}
+	if err := lockTx.QueryRow(`SELECT clock_timestamp() < lease_expires_at
+		FROM SourceCrawlClaims WHERE source_id=$1`, sourceID).Scan(&liveBeforeWait); err != nil {
+		_ = lockTx.Rollback()
+		t.Fatalf("re-read first lease before lock wait: %v", err)
+	}
+	if !liveBeforeWait {
+		_ = lockTx.Rollback()
+		t.Fatal("fixture lease expired before the waiting claim started")
+	}
+
+	type claimResult struct {
+		claims []SourceCrawlClaim
+		err    error
+	}
+	done := make(chan claimResult, 1)
+	go func() {
+		claims, err := ClaimSourceCrawlAttempts(context.Background(), db,
+			sourceCrawlAttemptRequestFor("pg-clock-second", priority))
+		done <- claimResult{claims: claims, err: err}
+	}()
+
+	barrierDeadline := time.Now().Add(5 * time.Second)
+	for {
+		var waiters int
+		if err := adminDB.QueryRow(`SELECT COUNT(*) FROM pg_locks
+			WHERE locktype='advisory' AND NOT granted`).Scan(&waiters); err != nil {
+			_ = lockTx.Rollback()
+			t.Fatalf("inspect advisory lock waiters: %v", err)
+		}
+		if waiters > 0 {
+			break
+		}
+		if time.Now().After(barrierDeadline) {
+			_ = lockTx.Rollback()
+			t.Fatal("claim transaction did not block on the policy lock")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	// Hold the exclusive lock beyond the first lease. The waiting claim must
+	// evaluate a fresh database clock after it acquires the shared lock; a
+	// pre-lock timestamp would still see the old lease as live.
+	if _, err := lockTx.Exec(`SELECT pg_sleep(2.3)`); err != nil {
+		_ = lockTx.Rollback()
+		t.Fatalf("hold policy lock: %v", err)
+	}
+	if err := lockTx.Commit(); err != nil {
+		t.Fatalf("release policy lock: %v", err)
+	}
+	result := <-done
+	if result.err != nil || len(result.claims) != 1 ||
+		result.claims[0].SourceID != sourceID || result.claims[0].Generation != 2 {
+		t.Fatalf("post-lock clock claim = %+v err=%v", result.claims, result.err)
+	}
+	var firstState, secondState string
+	if err := adminDB.QueryRow(`SELECT state FROM SourceCrawlAttempts WHERE attempt_id=$1`,
+		first[0].AttemptID).Scan(&firstState); err != nil {
+		t.Fatalf("read superseded attempt state: %v", err)
+	}
+	if err := adminDB.QueryRow(`SELECT state FROM SourceCrawlAttempts WHERE attempt_id=$1`,
+		result.claims[0].AttemptID).Scan(&secondState); err != nil {
+		t.Fatalf("read new attempt state: %v", err)
+	}
+	if firstState != "superseded" || secondState != "claimed" {
+		t.Fatalf("attempt states after lock wait = first=%q second=%q", firstState, secondState)
+	}
+}

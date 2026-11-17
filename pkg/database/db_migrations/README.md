@@ -109,3 +109,11 @@ fingerprint, an empty-batch acknowledgement or a terminal-receipt ledger, that
 must be an additive migration or same-version addon approved separately. Keep
 `RequiredSchemaVersion='1.17'` and
 `WriterGeneration='verified-ownership-v1.17'`.
+
+WP-05B3C3B1 adds no DDL. Its authority, clock and replay corrections use the
+existing 1.17 objects. An optional canonical receipt digest, persisted
+`ExpectedState`, original unbound class, request fingerprint or empty-batch
+acknowledgement is a separately requested additive 1.17 extension and is **not
+approved or implemented**. Keep `RequiredSchemaVersion='1.17'`,
+`WriterGeneration='verified-ownership-v1.17'` and the current
+`source-crawl-attempt-v1` checksum.

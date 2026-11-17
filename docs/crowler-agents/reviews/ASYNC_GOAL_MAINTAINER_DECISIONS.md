@@ -220,6 +220,39 @@ Those require the explicit approval record requested in
 `ASYNC_GOAL_B3C3_STAGE_B_APPROVAL_REQUEST.md` and the contract in
 `ASYNC_GOAL_B3C3A_HANDOFF_AND_FENCED_RESULTS.md`.
 
+## Decision 1g: fenced receipt authority and Phase A boundary
+
+**Status: PURE HARDENING IMPLEMENTED; STAGE B REMAINS UNAPPROVED.**
+
+WP-05B3C3B1 corrects the pure contract without adding a mutating repository:
+
+- The terminal authority snapshot now carries the joined current/history claim
+  identity and both lease values, requires them to agree, and compares the
+  worker receipt against the authoritative claim time and lease.
+- The pure classifier distinguishes `current_live`, `current_expired`,
+  `superseded`, `terminal`, `missing`, `corrupt`, `unavailable` and
+  `legacy_mode`.
+- Claim allocation and reconciliation use fresh database time after locks:
+  PostgreSQL `clock_timestamp()`, SQLite statement time. The expiry boundary is
+  exclusive.
+- Unbound handoffs reject every operation-identity field.
+- Persisted terminal replay uses Option A: exact attempt identity, binding,
+  outcome, reason and operation result; `ObservedAt` is ignored and
+  `ExpectedState` is a precondition only. The original unbound class normalizes
+  to `unbound`. Fields that 1.17 cannot prove are documented, not invented.
+- A crawler side-effect audit records which writes and external effects remain
+  unfenced. A terminal CAS alone is explicitly not claimed to protect them.
+
+The separate B1 (internal repository), B2 (live crawler caller) and B3 (optional
+additive schema) decisions are still pending. See
+`ASYNC_GOAL_B3C3B1_DESIGN_REVIEW.md`,
+`ASYNC_GOAL_B3C3_STAGE_B_APPROVAL_REQUEST.md` and
+`ASYNC_GOAL_B3C3B1_TEST_REPORT.md`.
+
+**Not approved by this decision:** heartbeat writer, terminal repository, live
+handoff, any schema/migration/checksum change, worker activation, automatic goal
+resume or production execution.
+
 ## Decision 2: resume phase
 
 **Status: PENDING.**
@@ -309,11 +342,11 @@ No public schema or example was changed.
 
 ## Next action
 
-WP-05B3C3A repairs and the handoff/terminal design are implemented and locally
-tested. Hosted PostgreSQL CI must be green on the exact submitted commit before
-the package is reported as fully verified. Production activation, a
-crawler/worker caller, terminal completion reporting, execution ownership,
-cancellation finalization and public configuration remain pending. WP-05B3C3
-Stage B (live handoff, heartbeat writer, terminal repository and any required
-migration) requires a separate explicit maintainer approval. Do not apply any
-addon to a persistent database or begin those phases automatically.
+WP-05B3C3B1 Phase A repairs and the corrected design review are implemented and
+locally tested. Hosted PostgreSQL CI must be green on the exact submitted commit
+before the package is reported as fully verified. Phase B remains blocked: the
+internal repository/heartbeat (B1), live crawler caller (B2) and optional DDL
+(B3) each require a separate explicit maintainer approval. No production
+activation, terminal write, heartbeat, crawler caller, schema change or
+automatic goal resume is authorized. Do not apply any addon to a persistent
+database or begin those phases automatically.
