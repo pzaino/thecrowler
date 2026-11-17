@@ -3127,13 +3127,16 @@ $$
 DECLARE
     priority_list TEXT[];
     use_priority_filter BOOLEAN := FALSE;
+    policy_mode TEXT;
 BEGIN
-    -- Fenced mode belongs to the operator-owned attempt cutover. Old workers
-    -- call this same function, so returning no rows prevents an unfenced claim.
-    IF EXISTS (
-        SELECT 1 FROM SourceCrawlClaimPolicy
-        WHERE policy_id = 1 AND mode = 'fenced'
-    ) THEN
+    -- Fenced mode belongs to the operator-owned attempt cutover. Take the
+    -- shared advisory lock so an operator mode change waits for in-flight
+    -- legacy claims, while legacy claimers do not serialize each other.
+    PERFORM pg_advisory_xact_lock_shared(hashtext('crowler:source-crawl-claim-policy'));
+    SELECT mode INTO policy_mode
+      FROM SourceCrawlClaimPolicy
+     WHERE policy_id = 1;
+    IF policy_mode = 'fenced' THEN
         RETURN;
     END IF;
 
@@ -4079,6 +4082,7 @@ CREATE TABLE IF NOT EXISTS SourceCrawlAttempts (
     created_at       TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_updated_at  TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT uq_source_crawl_attempt_generation UNIQUE (source_id, generation),
+    CONSTRAINT uq_source_crawl_attempt_exact_identity UNIQUE (source_id, generation, attempt_id),
     CONSTRAINT uq_source_crawl_attempt_request_source UNIQUE (claim_request_id, source_id),
     CONSTRAINT chk_source_crawl_attempt_request CHECK (claim_request_id ~ '^[a-f0-9]{64}$'),
     CONSTRAINT chk_source_crawl_attempt_id CHECK (attempt_id ~ '^[a-f0-9]{64}$'),
@@ -4124,12 +4128,9 @@ CREATE TABLE IF NOT EXISTS SourceCrawlClaims (
     CONSTRAINT uq_source_crawl_claim_generation UNIQUE (source_id, generation),
     CONSTRAINT fk_source_crawl_claim_source
         FOREIGN KEY (source_id) REFERENCES Sources(source_id) ON DELETE CASCADE,
-    CONSTRAINT fk_source_crawl_claim_attempt_id
-        FOREIGN KEY (attempt_id) REFERENCES SourceCrawlAttempts(attempt_id)
-        DEFERRABLE INITIALLY DEFERRED,
-    CONSTRAINT fk_source_crawl_claim_attempt
-        FOREIGN KEY (source_id, generation)
-        REFERENCES SourceCrawlAttempts(source_id, generation)
+    CONSTRAINT fk_source_crawl_claim_exact_attempt
+        FOREIGN KEY (source_id, generation, attempt_id)
+        REFERENCES SourceCrawlAttempts(source_id, generation, attempt_id)
         DEFERRABLE INITIALLY DEFERRED,
     CONSTRAINT chk_source_crawl_claim_request CHECK (claim_request_id ~ '^[a-f0-9]{64}$'),
     CONSTRAINT chk_source_crawl_claim_lease CHECK (lease_expires_at > claimed_at)
@@ -4147,9 +4148,30 @@ CREATE TABLE IF NOT EXISTS SourceCrawlClaimPolicy (
 INSERT INTO SourceCrawlClaimPolicy(policy_id, mode)
 VALUES (1, 'legacy') ON CONFLICT (policy_id) DO NOTHING;
 
+-- Operator-only mode switch. Runtime claimers take the shared advisory lock;
+-- this function takes the exclusive lock and therefore waits for in-flight
+-- legacy or fenced claims. Use this function instead of a direct table UPDATE.
+CREATE OR REPLACE FUNCTION set_source_crawl_claim_mode(new_mode TEXT)
+RETURNS TEXT AS $$
+BEGIN
+    IF new_mode NOT IN ('legacy', 'fenced') THEN
+        RAISE EXCEPTION 'source crawl claim mode must be legacy or fenced';
+    END IF;
+    PERFORM pg_advisory_xact_lock(hashtext('crowler:source-crawl-claim-policy'));
+    UPDATE SourceCrawlClaimPolicy
+       SET mode = new_mode, updated_at = CURRENT_TIMESTAMP
+     WHERE policy_id = 1;
+    RETURN new_mode;
+END;
+$$ LANGUAGE plpgsql;
+ALTER FUNCTION set_source_crawl_claim_mode(TEXT) OWNER TO CURRENT_USER;
+REVOKE ALL ON FUNCTION set_source_crawl_claim_mode(TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION set_source_crawl_claim_mode(TEXT) FROM :CROWLER_DB_USER;
+
+
 INSERT INTO SchemaCapabilities (capability, applied_at, applied_by, checksum, details)
 VALUES ('source-crawl-attempt-v1', CURRENT_TIMESTAMP, 'migration',
-        'abb79c543a11ed355c6e76d42c235261b024bef01a9b507a5bf0263db89248bd',
+        'f545b987f0d77fcaac8219deefb70a9c00a354cf90ceef3aca4d3949c830206e',
         '{"schema_version":"1.17"}'::jsonb)
 ON CONFLICT (capability) DO UPDATE
     SET applied_at = EXCLUDED.applied_at,
@@ -4157,12 +4179,11 @@ ON CONFLICT (capability) DO UPDATE
         checksum = EXCLUDED.checksum,
         details = EXCLUDED.details;
 -- END SOURCE CRAWL ATTEMPT (schema 1.17)
-ALTER TABLE SourceCrawlAttempts OWNER TO :CROWLER_DB_USER;
-ALTER TABLE SourceCrawlClaims OWNER TO :CROWLER_DB_USER;
-ALTER TABLE SourceCrawlClaimPolicy OWNER TO :CROWLER_DB_USER;
 GRANT SELECT, INSERT, UPDATE ON SourceCrawlAttempts TO :CROWLER_DB_USER;
 GRANT SELECT, INSERT, UPDATE ON SourceCrawlClaims TO :CROWLER_DB_USER;
-GRANT SELECT, INSERT, UPDATE ON SourceCrawlClaimPolicy TO :CROWLER_DB_USER;
+GRANT SELECT ON SourceCrawlClaimPolicy TO :CROWLER_DB_USER;
+REVOKE INSERT, UPDATE, DELETE ON SourceCrawlClaimPolicy FROM :CROWLER_DB_USER;
+REVOKE DELETE ON SourceCrawlAttempts, SourceCrawlClaims FROM :CROWLER_DB_USER;
 
 
 -- WP-04C2-B additive MCP mutation persistence capability (schema 1.17).

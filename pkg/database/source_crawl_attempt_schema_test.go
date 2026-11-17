@@ -133,7 +133,7 @@ func TestSourceCrawlAttemptFencedUpdateSourcesIsPresent(t *testing.T) {
 			t.Errorf("%s does not define update_sources", file)
 		}
 		if !strings.Contains(text, "SourceCrawlClaimPolicy") ||
-			!strings.Contains(text, "mode = 'fenced'") {
+			!strings.Contains(text, "policy_mode = 'fenced'") {
 			t.Errorf("%s update_sources is not fenced-mode aware", file)
 		}
 	}

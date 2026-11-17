@@ -1581,6 +1581,7 @@ CREATE TABLE IF NOT EXISTS SourceCrawlAttempts (
     created_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (source_id, generation),
+    UNIQUE (source_id, generation, attempt_id),
     UNIQUE (claim_request_id, source_id),
     CHECK (length(claim_request_id) = 64 AND claim_request_id NOT GLOB '*[^0-9a-f]*'),
     CHECK (length(attempt_id) = 64 AND attempt_id NOT GLOB '*[^0-9a-f]*'),
@@ -1619,9 +1620,8 @@ CREATE TABLE IF NOT EXISTS SourceCrawlClaims (
     last_updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (source_id, generation),
     FOREIGN KEY (source_id) REFERENCES Sources(source_id) ON DELETE CASCADE,
-    FOREIGN KEY (attempt_id) REFERENCES SourceCrawlAttempts(attempt_id)
-        DEFERRABLE INITIALLY DEFERRED,
-    FOREIGN KEY (source_id, generation) REFERENCES SourceCrawlAttempts(source_id, generation)
+    FOREIGN KEY (source_id, generation, attempt_id)
+        REFERENCES SourceCrawlAttempts(source_id, generation, attempt_id)
         DEFERRABLE INITIALLY DEFERRED,
     CHECK (length(claim_request_id) = 64 AND claim_request_id NOT GLOB '*[^0-9a-f]*'),
     CHECK (julianday(lease_expires_at) > julianday(claimed_at))
@@ -1641,7 +1641,7 @@ VALUES (1, 'legacy') ON CONFLICT (policy_id) DO NOTHING;
 
 INSERT INTO SchemaCapabilities (capability, applied_at, applied_by, checksum, details)
 VALUES ('source-crawl-attempt-v1', CURRENT_TIMESTAMP, 'migration',
-        'abb79c543a11ed355c6e76d42c235261b024bef01a9b507a5bf0263db89248bd',
+        'f545b987f0d77fcaac8219deefb70a9c00a354cf90ceef3aca4d3949c830206e',
         '{"schema_version":"1.17"}')
 ON CONFLICT (capability) DO UPDATE
     SET applied_at = excluded.applied_at,

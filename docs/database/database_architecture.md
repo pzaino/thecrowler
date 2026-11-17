@@ -136,6 +136,12 @@ development addon manually or use a fresh v1.17 install/v1.16 -> v1.17
 migration. The capability marker is `source-crawl-attempt-v1`; no crawler or
 agent caller uses the claim API in this phase.
 
+A current claim references exactly one history row through the composite
+`(source_id, generation, attempt_id)` foreign key. `SourceCrawlClaimPolicy` is
+administrator-owned; the runtime role may read it but not update it. Operators
+switch modes with `set_source_crawl_claim_mode('legacy'|'fenced')`, which takes
+the exclusive advisory lock while claim paths take the shared lock.
+
 ## Verified source ownership
 
 `Sources.usr_id` is the stored owner identifier, but only a matching

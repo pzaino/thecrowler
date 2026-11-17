@@ -28,7 +28,7 @@ const (
 	SourceCrawlAttemptCapability = "source-crawl-attempt-v1"
 	// SourceCrawlAttemptCapabilityChecksum is the canonical capability
 	// descriptor checksum stored in SchemaCapabilities.
-	SourceCrawlAttemptCapabilityChecksum = "abb79c543a11ed355c6e76d42c235261b024bef01a9b507a5bf0263db89248bd"
+	SourceCrawlAttemptCapabilityChecksum = "f545b987f0d77fcaac8219deefb70a9c00a354cf90ceef3aca4d3949c830206e"
 )
 
 var (
@@ -88,6 +88,7 @@ var sourceCrawlAttemptUniqueColumns = []struct {
 	columns []string
 }{
 	{"SourceCrawlAttempts", []string{"source_id", "generation"}},
+	{"SourceCrawlAttempts", []string{"source_id", "generation", "attempt_id"}},
 	{"SourceCrawlAttempts", []string{"claim_request_id", "source_id"}},
 	{"SourceCrawlClaims", []string{"source_id", "generation"}},
 	{"SourceCrawlClaims", []string{"attempt_id"}},
@@ -105,10 +106,9 @@ type sourceCrawlForeignKeySpec struct {
 var sourceCrawlAttemptForeignKeySpecs = []sourceCrawlForeignKeySpec{
 	{"SourceCrawlClaims", "fk_source_crawl_claim_source", "Sources",
 		[]string{"source_id"}, []string{"source_id"}, "CASCADE"},
-	{"SourceCrawlClaims", "fk_source_crawl_claim_attempt_id", "SourceCrawlAttempts",
-		[]string{"attempt_id"}, []string{"attempt_id"}, ""},
-	{"SourceCrawlClaims", "fk_source_crawl_claim_attempt", "SourceCrawlAttempts",
-		[]string{"source_id", "generation"}, []string{"source_id", "generation"}, ""},
+	{"SourceCrawlClaims", "fk_source_crawl_claim_exact_attempt", "SourceCrawlAttempts",
+		[]string{"source_id", "generation", "attempt_id"},
+		[]string{"source_id", "generation", "attempt_id"}, ""},
 }
 
 var sourceCrawlAttemptRequiredChecks = map[string][]string{
@@ -175,7 +175,13 @@ func CheckSourceCrawlAttemptSchema(ctx context.Context, db *Handler) error {
 		}
 	}
 	for table := range sourceCrawlAttemptRequiredColumns {
-		if !tableConstraintExists(ctx, *db, table, "PRIMARY KEY") {
+		ok := false
+		if normalizeDBMS((*db).DBMS()) == "postgres" {
+			ok = sourceCrawlPostgresPrimaryKeyExists(ctx, *db, table)
+		} else {
+			ok = tableConstraintExists(ctx, *db, table, "PRIMARY KEY")
+		}
+		if !ok {
 			missing = append(missing, "primary key on "+table)
 		}
 	}
@@ -197,6 +203,11 @@ func CheckSourceCrawlAttemptSchema(ctx context.Context, db *Handler) error {
 			(policyMode != "legacy" && policyMode != "fenced") {
 			missing = append(missing, "SourceCrawlClaimPolicy mode")
 		}
+		var modeFunction bool
+		if err := (*db).QueryRowContext(ctx,
+			`SELECT to_regprocedure('set_source_crawl_claim_mode(text)') IS NOT NULL`).Scan(&modeFunction); err != nil || !modeFunction {
+			missing = append(missing, "set_source_crawl_claim_mode function")
+		}
 		var fencedAware bool
 		if err := (*db).QueryRowContext(ctx,
 			`SELECT EXISTS (
@@ -210,7 +221,7 @@ func CheckSourceCrawlAttemptSchema(ctx context.Context, db *Handler) error {
 		for table, privileges := range map[string]string{
 			"SourceCrawlAttempts":    "SELECT,INSERT,UPDATE",
 			"SourceCrawlClaims":      "SELECT,INSERT,UPDATE",
-			"SourceCrawlClaimPolicy": "SELECT,INSERT,UPDATE",
+			"SourceCrawlClaimPolicy": "SELECT",
 			"SchemaCapabilities":     "SELECT,INSERT",
 		} {
 			var allowed bool
@@ -249,6 +260,21 @@ func CheckSourceCrawlAttemptSchema(ctx context.Context, db *Handler) error {
 		return fmt.Errorf("%w: missing or invalid: %s", ErrSourceCrawlAttemptSchemaUnavailable, strings.Join(missing, ", "))
 	}
 	return nil
+}
+
+func sourceCrawlPostgresPrimaryKeyExists(ctx context.Context, db Handler, table string) bool {
+	var exists bool
+	err := db.QueryRowContext(ctx,
+		`SELECT EXISTS (
+			SELECT 1
+			  FROM pg_constraint c
+			  JOIN pg_class t ON t.oid = c.conrelid
+			  JOIN pg_namespace n ON n.oid = t.relnamespace
+			 WHERE n.nspname = current_schema()
+			   AND lower(t.relname) = lower($1)
+			   AND c.contype = 'p'
+		)`, table).Scan(&exists)
+	return err == nil && exists
 }
 
 func sourceCrawlPostgresForeignKeyMatches(ctx context.Context, db Handler, spec sourceCrawlForeignKeySpec) bool {

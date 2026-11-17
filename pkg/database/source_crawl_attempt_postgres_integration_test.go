@@ -28,11 +28,23 @@ import (
 	"time"
 )
 
-func setSourceCrawlAttemptMode(t *testing.T, db *Handler, mode string) {
+func setSourceCrawlAttemptMode(t *testing.T, admin *sql.DB, mode string) {
 	t.Helper()
-	if _, err := (*db).Exec(`UPDATE SourceCrawlClaimPolicy SET mode=$1, updated_at=CURRENT_TIMESTAMP WHERE policy_id=1`, mode); err != nil {
+	if _, err := admin.Exec(`SELECT set_source_crawl_claim_mode($1)`, mode); err != nil {
 		t.Fatalf("set claim mode %q: %v", mode, err)
 	}
+}
+
+func sourceCrawlAttemptRuntimeRole(t *testing.T) string {
+	t.Helper()
+	role := os.Getenv("CROWLER_DB_USER")
+	if role == "" {
+		role = os.Getenv("DOCKER_POSTGRES_DB_USER")
+	}
+	if role == "" {
+		t.Fatal("CROWLER_DB_USER or DOCKER_POSTGRES_DB_USER is required")
+	}
+	return role
 }
 
 func resetSourceCrawlAttemptSource(t *testing.T, db *Handler, sourceID uint64, status string) {
@@ -52,10 +64,13 @@ func expireSourceCrawlAttemptClaim(t *testing.T, db *Handler, sourceID uint64) {
 	}
 }
 
-func cleanupSourceCrawlAttemptRows(t *testing.T, db *Handler, sourceID uint64) {
+func cleanupSourceCrawlAttemptRows(t *testing.T, admin *sql.DB, sourceID uint64) {
 	t.Helper()
-	if _, err := (*db).Exec(`UPDATE SourceCrawlClaimPolicy SET mode='legacy', updated_at=CURRENT_TIMESTAMP WHERE policy_id=1`); err != nil {
+	if _, err := admin.Exec(`SELECT set_source_crawl_claim_mode('legacy')`); err != nil {
 		t.Errorf("reset claim mode: %v", err)
+	}
+	if _, err := admin.Exec(`UPDATE Sources SET status='new', engine='', last_updated_at=CURRENT_TIMESTAMP WHERE source_id=$1`, sourceID); err != nil {
+		t.Errorf("reset source after attempt cleanup: %v", err)
 	}
 	for _, statement := range []string{
 		`DELETE FROM SourceCrawlClaims WHERE source_id=$1`,
@@ -64,26 +79,34 @@ func cleanupSourceCrawlAttemptRows(t *testing.T, db *Handler, sourceID uint64) {
 		`DELETE FROM CrawlProposals WHERE source_id=$1`,
 		`DELETE FROM CrawlApprovals WHERE source_id=$1`,
 	} {
-		if _, err := (*db).Exec(statement, sourceID); err != nil {
+		if _, err := admin.Exec(statement, sourceID); err != nil {
 			t.Errorf("cleanup attempt rows for %d: %v", sourceID, err)
 		}
 	}
 }
 
+var sourceCrawlAttemptTestNonce = fmt.Sprintf("%d", time.Now().UnixNano())
+
 func sourceCrawlAttemptRequest(label string) SourceCrawlClaimRequest {
 	return SourceCrawlClaimRequest{
-		ClaimRequestID: sourceCrawlClaimTestID(label),
+		ClaimRequestID: sourceCrawlClaimTestID(label + "-" + sourceCrawlAttemptTestNonce),
 		Limit:          5,
 		EngineID:       "wp05b3c2-engine",
 		Lease:          10 * time.Minute,
 	}
 }
 
+func sourceCrawlAttemptRequestFor(label, priority string) SourceCrawlClaimRequest {
+	req := sourceCrawlAttemptRequest(label)
+	req.Priority = priority
+	return req
+}
+
 func sourceCrawlAttemptInsertOperation(t *testing.T, db *Handler, sourceID, ownerID uint64, label, operationState string, approvedAt, acceptedAt time.Time) string {
 	t.Helper()
 	unique := fmt.Sprintf("%s-%d", label, time.Now().UnixNano())
-	operationID := sourceCrawlClaimTestID("pg-op-" + unique)
 	requestID := sourceCrawlClaimTestID("pg-request-" + unique)
+	operationID := CrawlOperationKey("wp03b1-owner", "wp05b3c2-agent", sourceID, string(CrawlOperationType), requestID)
 	proposalSHA := sourceCrawlClaimTestID("pg-proposal-" + unique)
 	approvalID := sourceCrawlClaimTestID("pg-approval-" + unique)
 	approvalSHA := sourceCrawlClaimTestID("pg-approval-sha-" + unique)
@@ -117,6 +140,7 @@ func sourceCrawlAttemptInsertOperation(t *testing.T, db *Handler, sourceID, owne
 		AgentID: "wp05b3c2-agent", Owner: "wp03b1-owner", SourceID: sourceID,
 		OperationType: "crawl", ParametersSHA256: proposalSHA,
 		ApprovalID: approvalID, ApprovalSHA256: approvalSHA,
+		ApprovedBy: "wp03b1-operator", ApprovedByUserID: 9,
 		ApprovedAt: approvedAt.Format(time.RFC3339Nano),
 		ExpiresAt:  approvalExpires.Format(time.RFC3339Nano),
 	})
@@ -153,24 +177,25 @@ func openSourceCrawlAttemptPostgresSecondHandler(t *testing.T, db *Handler) *Han
 
 func TestPostgresSourceCrawlAttemptRollback(t *testing.T) {
 	db, sqlDB := openPostgresIntegrationTestDB(t)
+	adminDB := openAsyncGoalPostgresAdminDB(t)
 	ctx := context.Background()
 	priority := fmt.Sprintf("wp05b3c2-rollback-%d", time.Now().UnixNano())
 	sourceID := createCrawlSchedulingSource(t, db, priority)
 	t.Cleanup(func() {
-		_, _ = sqlDB.Exec(`DROP TRIGGER IF EXISTS wp05b3c2_fail_claim ON SourceCrawlAttempts`)
-		_, _ = sqlDB.Exec(`DROP FUNCTION IF EXISTS wp05b3c2_fail_claim()`)
-		cleanupSourceCrawlAttemptRows(t, db, sourceID)
+		_, _ = adminDB.Exec(`DROP TRIGGER IF EXISTS wp05b3c2_fail_claim ON SourceCrawlAttempts`)
+		_, _ = adminDB.Exec(`DROP FUNCTION IF EXISTS wp05b3c2_fail_claim()`)
+		cleanupSourceCrawlAttemptRows(t, adminDB, sourceID)
 	})
-	setSourceCrawlAttemptMode(t, db, "fenced")
-	if _, err := sqlDB.Exec(`CREATE FUNCTION wp05b3c2_fail_claim() RETURNS trigger AS $$
+	setSourceCrawlAttemptMode(t, adminDB, "fenced")
+	if _, err := adminDB.Exec(`CREATE FUNCTION wp05b3c2_fail_claim() RETURNS trigger AS $$
 		BEGIN RAISE EXCEPTION 'injected claim failure'; END; $$ LANGUAGE plpgsql`); err != nil {
 		t.Fatalf("create failing claim function: %v", err)
 	}
-	if _, err := sqlDB.Exec(`CREATE TRIGGER wp05b3c2_fail_claim BEFORE INSERT ON SourceCrawlAttempts
+	if _, err := adminDB.Exec(`CREATE TRIGGER wp05b3c2_fail_claim BEFORE INSERT ON SourceCrawlAttempts
 		FOR EACH ROW EXECUTE FUNCTION wp05b3c2_fail_claim()`); err != nil {
 		t.Fatalf("create failing claim trigger: %v", err)
 	}
-	if _, err := ClaimSourceCrawlAttempts(ctx, db, sourceCrawlAttemptRequest("pg-rollback")); err == nil {
+	if _, err := ClaimSourceCrawlAttempts(ctx, db, sourceCrawlAttemptRequestFor("pg-rollback", priority)); err == nil {
 		t.Fatal("PostgreSQL claim unexpectedly succeeded")
 	}
 	var status string
@@ -193,6 +218,7 @@ func TestPostgresSourceCrawlAttemptRollback(t *testing.T) {
 
 func TestPostgresSourceCrawlAttemptSchemaAndFencedCutover(t *testing.T) {
 	db, sqlDB := openPostgresIntegrationTestDB(t)
+	adminDB := openAsyncGoalPostgresAdminDB(t)
 	ctx := context.Background()
 	if err := CheckSourceCrawlAttemptSchema(ctx, db); err != nil {
 		t.Fatalf("PostgreSQL attempt readiness: %v", err)
@@ -200,9 +226,9 @@ func TestPostgresSourceCrawlAttemptSchemaAndFencedCutover(t *testing.T) {
 	priority := fmt.Sprintf("wp05b3c2-%d", time.Now().UnixNano())
 	sourceID := createCrawlSchedulingSource(t, db, priority)
 	t.Cleanup(func() {
-		cleanupSourceCrawlAttemptRows(t, db, sourceID)
+		cleanupSourceCrawlAttemptRows(t, adminDB, sourceID)
 	})
-	setSourceCrawlAttemptMode(t, db, "legacy")
+	setSourceCrawlAttemptMode(t, adminDB, "legacy")
 
 	rows, err := sqlDB.QueryContext(ctx,
 		`SELECT source_id, source_uid, url, restricted, flags, config, last_updated_at, sub_priority
@@ -239,7 +265,7 @@ func TestPostgresSourceCrawlAttemptSchemaAndFencedCutover(t *testing.T) {
 	}
 
 	resetSourceCrawlAttemptSource(t, db, sourceID, "new")
-	setSourceCrawlAttemptMode(t, db, "fenced")
+	setSourceCrawlAttemptMode(t, adminDB, "fenced")
 	rows, err = sqlDB.QueryContext(ctx,
 		`SELECT source_id FROM update_sources($1,$2,$3,$4,$5,$6,$7)`,
 		10, priority, "wp05b3c2-old-worker", "", "", "", "1 day")
@@ -255,7 +281,7 @@ func TestPostgresSourceCrawlAttemptSchemaAndFencedCutover(t *testing.T) {
 		t.Fatalf("fenced update_sources returned %d rows", count)
 	}
 
-	claims, err := ClaimSourceCrawlAttempts(ctx, db, sourceCrawlAttemptRequest("pg-first"))
+	claims, err := ClaimSourceCrawlAttempts(ctx, db, sourceCrawlAttemptRequestFor("pg-first", priority))
 	if err != nil {
 		t.Fatalf("first PostgreSQL claim: %v", err)
 	}
@@ -264,18 +290,18 @@ func TestPostgresSourceCrawlAttemptSchemaAndFencedCutover(t *testing.T) {
 		t.Fatalf("first PostgreSQL claim = %+v", claims)
 	}
 	firstAttempt := claims[0].AttemptID
-	replay, err := ClaimSourceCrawlAttempts(ctx, db, sourceCrawlAttemptRequest("pg-first"))
+	replay, err := ClaimSourceCrawlAttempts(ctx, db, sourceCrawlAttemptRequestFor("pg-first", priority))
 	if err != nil || len(replay) != 1 || !replay[0].Reused ||
 		replay[0].AttemptID != firstAttempt || replay[0].Generation != 1 {
 		t.Fatalf("PostgreSQL idempotent replay = %+v err=%v", replay, err)
 	}
 	resetSourceCrawlAttemptSource(t, db, sourceID, "pending")
-	blocked, err := ClaimSourceCrawlAttempts(ctx, db, sourceCrawlAttemptRequest("pg-blocked"))
+	blocked, err := ClaimSourceCrawlAttempts(ctx, db, sourceCrawlAttemptRequestFor("pg-blocked", priority))
 	if err != nil || len(blocked) != 0 {
 		t.Fatalf("active PostgreSQL lease did not fence a second claim: %+v err=%v", blocked, err)
 	}
 	expireSourceCrawlAttemptClaim(t, db, sourceID)
-	second, err := ClaimSourceCrawlAttempts(ctx, db, sourceCrawlAttemptRequest("pg-second"))
+	second, err := ClaimSourceCrawlAttempts(ctx, db, sourceCrawlAttemptRequestFor("pg-second", priority))
 	if err != nil || len(second) != 1 || second[0].Generation != 2 ||
 		second[0].AttemptID == firstAttempt {
 		t.Fatalf("second PostgreSQL claim = %+v err=%v", second, err)
@@ -292,17 +318,18 @@ func TestPostgresSourceCrawlAttemptSchemaAndFencedCutover(t *testing.T) {
 
 func TestPostgresSourceCrawlAttemptBindingAndRejections(t *testing.T) {
 	db, sqlDB := openPostgresIntegrationTestDB(t)
+	adminDB := openAsyncGoalPostgresAdminDB(t)
 	ctx := context.Background()
 	priority := fmt.Sprintf("wp05b3c2-bind-%d", time.Now().UnixNano())
 	sourceID := createCrawlSchedulingSource(t, db, priority)
 	t.Cleanup(func() {
-		cleanupSourceCrawlAttemptRows(t, db, sourceID)
+		cleanupSourceCrawlAttemptRows(t, adminDB, sourceID)
 	})
-	setSourceCrawlAttemptMode(t, db, "fenced")
+	setSourceCrawlAttemptMode(t, adminDB, "fenced")
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	operationID := sourceCrawlAttemptInsertOperation(t, db, sourceID, 7, "bound", "accepted", now.Add(-time.Minute), now)
 
-	claims, err := ClaimSourceCrawlAttempts(ctx, db, sourceCrawlAttemptRequest("pg-bound"))
+	claims, err := ClaimSourceCrawlAttempts(ctx, db, sourceCrawlAttemptRequestFor("pg-bound", priority))
 	if err != nil || len(claims) != 1 {
 		t.Fatalf("bound PostgreSQL claim = %+v err=%v", claims, err)
 	}
@@ -322,7 +349,7 @@ func TestPostgresSourceCrawlAttemptBindingAndRejections(t *testing.T) {
 	// attempt is superseded; the partial unique index must permit that.
 	resetSourceCrawlAttemptSource(t, db, sourceID, "pending")
 	expireSourceCrawlAttemptClaim(t, db, sourceID)
-	rebound, err := ClaimSourceCrawlAttempts(ctx, db, sourceCrawlAttemptRequest("pg-rebound"))
+	rebound, err := ClaimSourceCrawlAttempts(ctx, db, sourceCrawlAttemptRequestFor("pg-rebound", priority))
 	if err != nil || len(rebound) != 1 || rebound[0].Outcome != SourceCrawlClaimed ||
 		rebound[0].Generation != 2 || rebound[0].OperationID != operationID {
 		t.Fatalf("rebound PostgreSQL claim = %+v err=%v", rebound, err)
@@ -344,7 +371,7 @@ func TestPostgresSourceCrawlAttemptBindingAndRejections(t *testing.T) {
 	}
 	resetSourceCrawlAttemptSource(t, db, sourceID, "new")
 	expireSourceCrawlAttemptClaim(t, db, sourceID)
-	transferred, err := ClaimSourceCrawlAttempts(ctx, db, sourceCrawlAttemptRequest("pg-transferred"))
+	transferred, err := ClaimSourceCrawlAttempts(ctx, db, sourceCrawlAttemptRequestFor("pg-transferred", priority))
 	if err != nil || len(transferred) != 1 || transferred[0].Outcome != SourceCrawlNotAttributable ||
 		transferred[0].OperationID != "" {
 		t.Fatalf("transferred PostgreSQL claim = %+v err=%v", transferred, err)
@@ -360,7 +387,7 @@ func TestPostgresSourceCrawlAttemptBindingAndRejections(t *testing.T) {
 	sourceCrawlAttemptInsertOperation(t, db, sourceID, 7, "second", "accepted", now.Add(-time.Minute), now)
 	resetSourceCrawlAttemptSource(t, db, sourceID, "new")
 	expireSourceCrawlAttemptClaim(t, db, sourceID)
-	ambiguous, err := ClaimSourceCrawlAttempts(ctx, db, sourceCrawlAttemptRequest("pg-ambiguous"))
+	ambiguous, err := ClaimSourceCrawlAttempts(ctx, db, sourceCrawlAttemptRequestFor("pg-ambiguous", priority))
 	if err != nil || len(ambiguous) != 1 || ambiguous[0].Outcome != SourceCrawlAmbiguous ||
 		ambiguous[0].OperationID != "" {
 		t.Fatalf("ambiguous PostgreSQL claim = %+v err=%v", ambiguous, err)
@@ -369,13 +396,14 @@ func TestPostgresSourceCrawlAttemptBindingAndRejections(t *testing.T) {
 
 func TestPostgresSourceCrawlAttemptConcurrentClaimers(t *testing.T) {
 	db, sqlDB := openPostgresIntegrationTestDB(t)
+	adminDB := openAsyncGoalPostgresAdminDB(t)
 	ctx := context.Background()
 	priority := fmt.Sprintf("wp05b3c2-concurrent-%d", time.Now().UnixNano())
 	sourceID := createCrawlSchedulingSource(t, db, priority)
 	t.Cleanup(func() {
-		cleanupSourceCrawlAttemptRows(t, db, sourceID)
+		cleanupSourceCrawlAttemptRows(t, adminDB, sourceID)
 	})
-	setSourceCrawlAttemptMode(t, db, "fenced")
+	setSourceCrawlAttemptMode(t, adminDB, "fenced")
 	resetSourceCrawlAttemptSource(t, db, sourceID, "new")
 
 	secondHandler := openSourceCrawlAttemptPostgresSecondHandler(t, db)
@@ -431,15 +459,16 @@ func TestPostgresSourceCrawlAttemptConcurrentClaimers(t *testing.T) {
 }
 
 func TestPostgresSourceCrawlAttemptAddonRepeatable(t *testing.T) {
-	db, sqlDB := openPostgresIntegrationTestDB(t)
+	db, _ := openPostgresIntegrationTestDB(t)
+	adminDB := openAsyncGoalPostgresAdminDB(t)
 	ctx := context.Background()
 	priority := fmt.Sprintf("wp05b3c2-addon-%d", time.Now().UnixNano())
 	sourceID := createCrawlSchedulingSource(t, db, priority)
 	t.Cleanup(func() {
-		cleanupSourceCrawlAttemptRows(t, db, sourceID)
+		cleanupSourceCrawlAttemptRows(t, adminDB, sourceID)
 	})
-	setSourceCrawlAttemptMode(t, db, "fenced")
-	claims, err := ClaimSourceCrawlAttempts(ctx, db, sourceCrawlAttemptRequest("pg-addon"))
+	setSourceCrawlAttemptMode(t, adminDB, "fenced")
+	claims, err := ClaimSourceCrawlAttempts(ctx, db, sourceCrawlAttemptRequestFor("pg-addon", priority))
 	if err != nil || len(claims) != 1 {
 		t.Fatalf("seed PostgreSQL attempt = %+v err=%v", claims, err)
 	}
@@ -448,7 +477,7 @@ func TestPostgresSourceCrawlAttemptAddonRepeatable(t *testing.T) {
 		t.Fatalf("read PostgreSQL attempt addon: %v", err)
 	}
 	for i := 0; i < 2; i++ {
-		if err := applyAsyncGoalPostgresScript(sqlDB, string(addon), currentPostgresUser(t, sqlDB)); err != nil {
+		if err := applyAsyncGoalPostgresScript(adminDB, string(addon), sourceCrawlAttemptRuntimeRole(t)); err != nil {
 			t.Fatalf("apply PostgreSQL attempt addon pass %d: %v", i+1, err)
 		}
 	}
@@ -456,27 +485,27 @@ func TestPostgresSourceCrawlAttemptAddonRepeatable(t *testing.T) {
 		t.Fatalf("PostgreSQL readiness after addon: %v", err)
 	}
 	var mode string
-	if err := sqlDB.QueryRow(`SELECT mode FROM SourceCrawlClaimPolicy WHERE policy_id=1`).Scan(&mode); err != nil {
+	if err := adminDB.QueryRow(`SELECT mode FROM SourceCrawlClaimPolicy WHERE policy_id=1`).Scan(&mode); err != nil {
 		t.Fatalf("read PostgreSQL policy mode: %v", err)
 	}
 	if mode != "fenced" {
 		t.Fatalf("PostgreSQL addon reset policy mode to %q", mode)
 	}
 	var attempts, current int
-	if err := sqlDB.QueryRow(`SELECT
+	if err := adminDB.QueryRow(`SELECT
 		(SELECT COUNT(*) FROM SourceCrawlAttempts WHERE claim_request_id=$1),
 		(SELECT COUNT(*) FROM SourceCrawlClaims WHERE source_id=$2)`,
-		sourceCrawlAttemptRequest("pg-addon").ClaimRequestID, sourceID).Scan(&attempts, &current); err != nil {
+		sourceCrawlAttemptRequestFor("pg-addon", priority).ClaimRequestID, sourceID).Scan(&attempts, &current); err != nil {
 		t.Fatalf("count PostgreSQL attempt rows: %v", err)
 	}
 	if attempts != 1 || current != 1 {
 		t.Fatalf("PostgreSQL addon changed rows attempts=%d current=%d", attempts, current)
 	}
 	var version, generation string
-	if err := sqlDB.QueryRow(`SELECT version FROM DBSchemaVersion WHERE is_current`).Scan(&version); err != nil {
+	if err := adminDB.QueryRow(`SELECT version FROM DBSchemaVersion WHERE is_current`).Scan(&version); err != nil {
 		t.Fatalf("read PostgreSQL version: %v", err)
 	}
-	if err := sqlDB.QueryRow(`SELECT writer_generation FROM DatabaseWriterCompatibility WHERE lock_id=1`).Scan(&generation); err != nil {
+	if err := adminDB.QueryRow(`SELECT writer_generation FROM DatabaseWriterCompatibility WHERE lock_id=1`).Scan(&generation); err != nil {
 		t.Fatalf("read PostgreSQL writer generation: %v", err)
 	}
 	if version != "1.17" || generation != WriterGeneration {

@@ -157,6 +157,41 @@ is recorded, no public configuration is added, and schema 1.18 is not
 authorized. WP-05B3C3 must design and review the crawler handoff and fenced
 terminal result separately.
 
+## Decision 1e: attempt-foundation hardening
+
+**Status: IMPLEMENTED INTERNALLY; HOSTED CI AND PRODUCTION ACTIVATION PENDING.**
+
+WP-05B3C2C hardens the approved attempt capability without changing schema or
+writer generation:
+
+- `SourceCrawlClaims` now references one exact `SourceCrawlAttempts` row through
+  `(source_id, generation, attempt_id)`; the capability checksum and readiness
+  check were updated accordingly.
+- Claim transactions and the legacy `update_sources` share an advisory policy
+  lock. The operator-only `set_source_crawl_claim_mode` function takes the
+  exclusive lock. The runtime role has SELECT only on the policy table and
+  cannot execute the operator function.
+- Attribution counts all submitted operation candidates before validation, so a
+  malformed or missing-approval competitor blocks a partial binding.
+- Binding verifies `CrawlOperationKey`, strict `Status.details` (including
+  duplicate keys and trailing data), approval identity and acceptance
+  chronology.
+- Missing current claims recover the next generation from retained history;
+  corrupt or exhausted history fails closed.
+- Replay verifies engine and lease duration. Limit, priority and interval fields
+  are not persisted, so complete request-hash replay equality would require a
+  schema extension and remains a documented limitation.
+
+The PostgreSQL addon is an administrator operation and repairs earlier
+development tables without deleting rows. The SQLite addon rebuilds the attempt
+tables transactionally and aborts on inconsistent current-to-history data.
+Hosted PostgreSQL CI for this exact patch has not run. The existing agent
+submission-chain failure was not reproduced in the local exact broad suite; it
+remains a hosted-CI gate to verify, not a claimed pass.
+
+Production activation, crawler/worker callers, terminal result reporting,
+resume workers and public configuration remain unapproved.
+
 ## Decision 2: resume phase
 
 **Status: PENDING.**
@@ -246,9 +281,10 @@ No public schema or example was changed.
 
 ## Next action
 
-WP-05B3C2 Stage B is implemented and locally tested. A maintainer decision is
-still required before production activation, a crawler/worker caller, terminal
-completion reporting, execution ownership, cancellation finalization or public
-configuration. WP-05B3C3 must design the authenticated attempt handoff and the
-fenced terminal result with separate review. Do not apply any addon to a
-persistent database or begin those phases automatically.
+WP-05B3C2C is implemented and locally tested. Hosted PostgreSQL CI must be
+green on the exact submitted commit before the package is reported as fully
+verified. Production activation, a crawler/worker caller, terminal completion
+reporting, execution ownership, cancellation finalization and public
+configuration remain pending. WP-05B3C3 must design the authenticated attempt
+handoff and fenced terminal result with separate review. Do not apply any addon
+to a persistent database or begin those phases automatically.

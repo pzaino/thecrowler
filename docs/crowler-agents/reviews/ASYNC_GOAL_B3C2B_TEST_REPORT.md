@@ -1,3 +1,7 @@
+> **Superseded by WP-05B3C2C.** The capability checksum, exact history
+> reference, policy locking and PostgreSQL test harness described here were
+> hardened later; see `ASYNC_GOAL_B3C2C_TEST_REPORT.md`.
+
 # WP-05B3C2 Stage B Test Report
 
 ## Environment

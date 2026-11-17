@@ -159,8 +159,8 @@ func TestSourceCrawlAttemptSQLiteClaimAndIdempotency(t *testing.T) {
 
 func sourceCrawlInsertBoundOperation(t *testing.T, raw *sql.DB, sourceID, ownerID uint64, label string, operationStatus string) string {
 	t.Helper()
-	operationID := sourceCrawlClaimTestID("op-" + label)
 	requestID := sourceCrawlClaimTestID("req-" + label)
+	operationID := CrawlOperationKey("owner-claim", "agent-claim", sourceID, string(CrawlOperationType), requestID)
 	proposalSHA := sourceCrawlClaimTestID("proposal-" + label)
 	approvalID := sourceCrawlClaimTestID("approval-" + label)
 	approvalSHA := sourceCrawlClaimTestID("approval-sha-" + label)
@@ -192,6 +192,7 @@ func sourceCrawlInsertBoundOperation(t *testing.T, raw *sql.DB, sourceID, ownerI
 		AgentID: "agent-claim", Owner: "owner-claim", SourceID: sourceID,
 		OperationType: "crawl", ParametersSHA256: proposalSHA,
 		ApprovalID: approvalID, ApprovalSHA256: approvalSHA,
+		ApprovedBy: "operator", ApprovedByUserID: 9,
 		ApprovedAt: now.Add(-time.Minute).Format(time.RFC3339Nano),
 		ExpiresAt:  now.Add(time.Hour).Format(time.RFC3339Nano),
 	})
@@ -306,5 +307,180 @@ func TestSourceCrawlAttemptSQLiteRollback(t *testing.T) {
 	}
 	if claims != 0 || attempts != 0 {
 		t.Fatalf("rollback left claims=%d attempts=%d", claims, attempts)
+	}
+}
+
+func TestSourceCrawlAttemptSQLiteExactHistoryFK(t *testing.T) {
+	raw, _ := openAsyncGoalSQLite(t)
+	seedSourceCrawlClaimSource(t, raw, 42, 7, "new", false)
+	enableSourceCrawlClaimMode(t, raw)
+	now := sourceCrawlClaimTestNow
+	for _, attempt := range []struct {
+		id  string
+		gen int64
+	}{
+		{sourceCrawlClaimTestID("fk-a"), 1},
+		{sourceCrawlClaimTestID("fk-b"), 2},
+	} {
+		if _, err := raw.Exec(`INSERT INTO SourceCrawlAttempts
+			(attempt_id, claim_request_id, source_id, generation, engine_id, state,
+			 claimed_at, lease_expires_at, created_at, last_updated_at)
+			VALUES (?,?,?,?, 'fixture-engine', 'claimed', ?, ?, ?, ?)`,
+			attempt.id, sourceCrawlClaimTestID("fk-req-"+attempt.id), 42, attempt.gen,
+			now, now.Add(time.Hour), now, now); err != nil {
+			t.Fatalf("insert history attempt: %v", err)
+		}
+	}
+	tx, err := raw.Begin()
+	if err != nil {
+		t.Fatalf("begin mixed claim: %v", err)
+	}
+	_, err = tx.Exec(`INSERT INTO SourceCrawlClaims
+		(source_id, attempt_id, claim_request_id, generation, engine_id,
+		 claimed_at, lease_expires_at, last_updated_at)
+		VALUES (42, ?, ?, 2, 'fixture-engine', ?, ?, ?)`,
+		sourceCrawlClaimTestID("fk-a"), sourceCrawlClaimTestID("fk-mixed"), now, now.Add(time.Hour), now)
+	if err == nil {
+		err = tx.Commit()
+	} else {
+		_ = tx.Rollback()
+	}
+	if err == nil {
+		t.Fatal("SQLite accepted a current claim mixing attempt and generation")
+	}
+	var count int
+	if err := raw.QueryRow(`SELECT COUNT(*) FROM SourceCrawlClaims WHERE source_id=42`).Scan(&count); err != nil {
+		t.Fatalf("count mixed claims: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("mixed claim persisted: %d", count)
+	}
+	if _, err := raw.Exec(`INSERT INTO SourceCrawlClaims
+		(source_id, attempt_id, claim_request_id, generation, engine_id,
+		 claimed_at, lease_expires_at, last_updated_at)
+		VALUES (42, ?, ?, 1, 'fixture-engine', ?, ?, ?)`,
+		sourceCrawlClaimTestID("fk-a"), sourceCrawlClaimTestID("fk-valid"), now, now.Add(time.Hour), now); err != nil {
+		t.Fatalf("exact SQLite claim rejected: %v", err)
+	}
+	if _, err := raw.Exec(`UPDATE SourceCrawlClaims SET generation=2 WHERE source_id=42`); err == nil {
+		t.Fatal("SQLite current claim update mixed attempt and generation")
+	}
+}
+
+func TestSourceCrawlAttemptSQLiteGenerationRecovery(t *testing.T) {
+	raw, handler := openAsyncGoalSQLite(t)
+	seedSourceCrawlClaimSource(t, raw, 42, 7, "new", false)
+	enableSourceCrawlClaimMode(t, raw)
+	first, err := claimSourceCrawlAttemptsAt(context.Background(), &handler, sourceCrawlClaimRequest("gen-first"), sourceCrawlClaimTestNow)
+	if err != nil || len(first) != 1 || first[0].Generation != 1 {
+		t.Fatalf("first generation = %+v err=%v", first, err)
+	}
+	if _, err := raw.Exec(`DELETE FROM SourceCrawlClaims WHERE source_id=42`); err != nil {
+		t.Fatalf("remove current claim: %v", err)
+	}
+	if _, err := raw.Exec(`UPDATE Sources SET status='pending' WHERE source_id=42`); err != nil {
+		t.Fatalf("reset source: %v", err)
+	}
+	second, err := claimSourceCrawlAttemptsAt(context.Background(), &handler, sourceCrawlClaimRequest("gen-second"), sourceCrawlClaimTestNow.Add(time.Minute))
+	if err != nil || len(second) != 1 || second[0].Generation != 2 {
+		t.Fatalf("recovered generation = %+v err=%v", second, err)
+	}
+	now := sourceCrawlClaimTestNow
+	if _, err := raw.Exec(`INSERT INTO SourceCrawlAttempts
+		(attempt_id, claim_request_id, source_id, generation, engine_id, state,
+		 claimed_at, lease_expires_at, created_at, last_updated_at)
+		VALUES (?, ?, 42, 9223372036854775807, 'fixture-engine', 'claimed', ?, ?, ?, ?)`,
+		sourceCrawlClaimTestID("gen-max"), sourceCrawlClaimTestID("gen-max-req"), now, now.Add(time.Hour), now, now); err != nil {
+		t.Fatalf("insert maximum generation: %v", err)
+	}
+	if _, err := raw.Exec(`DELETE FROM SourceCrawlClaims WHERE source_id=42`); err != nil {
+		t.Fatalf("remove recovered claim: %v", err)
+	}
+	if _, err := raw.Exec(`UPDATE Sources SET status='pending' WHERE source_id=42`); err != nil {
+		t.Fatalf("reset source for overflow: %v", err)
+	}
+	if _, err := claimSourceCrawlAttemptsAt(context.Background(), &handler, sourceCrawlClaimRequest("gen-overflow"), sourceCrawlClaimTestNow.Add(2*time.Minute)); !errors.Is(err, ErrSourceCrawlClaimGenerationDone) {
+		t.Fatalf("overflow error = %v", err)
+	}
+}
+
+func TestSourceCrawlAttemptSQLiteReplayValidation(t *testing.T) {
+	raw, handler := openAsyncGoalSQLite(t)
+	seedSourceCrawlClaimSource(t, raw, 42, 7, "new", false)
+	enableSourceCrawlClaimMode(t, raw)
+	request := sourceCrawlClaimRequest("replay")
+	if _, err := claimSourceCrawlAttemptsAt(context.Background(), &handler, request, sourceCrawlClaimTestNow); err != nil {
+		t.Fatalf("base replay claim: %v", err)
+	}
+	changedEngine := request
+	changedEngine.EngineID = "other-engine"
+	if _, err := claimSourceCrawlAttemptsAt(context.Background(), &handler, changedEngine, sourceCrawlClaimTestNow.Add(time.Minute)); !errors.Is(err, ErrSourceCrawlClaimConflict) {
+		t.Fatalf("changed engine error = %v", err)
+	}
+	changedLease := request
+	changedLease.Lease += time.Minute
+	if _, err := claimSourceCrawlAttemptsAt(context.Background(), &handler, changedLease, sourceCrawlClaimTestNow.Add(time.Minute)); !errors.Is(err, ErrSourceCrawlClaimConflict) {
+		t.Fatalf("changed lease error = %v", err)
+	}
+}
+
+func TestSourceCrawlAttemptSQLiteDuplicateDetailsKey(t *testing.T) {
+	raw, handler := openAsyncGoalSQLite(t)
+	seedSourceCrawlClaimSource(t, raw, 42, 7, "new", false)
+	enableSourceCrawlClaimMode(t, raw)
+	operationID := sourceCrawlInsertBoundOperation(t, raw, 42, 7, "duplicate", "accepted")
+	var details string
+	if err := raw.QueryRow(`SELECT details FROM Status WHERE status_sha256=?`, operationID).Scan(&details); err != nil {
+		t.Fatalf("read details: %v", err)
+	}
+	duplicate := strings.TrimSuffix(details, "}") + `,"request_id":"duplicate"}`
+	if _, err := raw.Exec(`UPDATE Status SET details=? WHERE status_sha256=?`, duplicate, operationID); err != nil {
+		t.Fatalf("write duplicate details: %v", err)
+	}
+	claims, err := claimSourceCrawlAttemptsAt(context.Background(), &handler, sourceCrawlClaimRequest("duplicate"), sourceCrawlClaimTestNow)
+	if err != nil || len(claims) != 1 || claims[0].Outcome != SourceCrawlNotAttributable || claims[0].OperationID != "" {
+		t.Fatalf("duplicate details claim = %+v err=%v", claims, err)
+	}
+}
+
+func TestSourceCrawlAttemptSQLiteGenuineSchedulerBinding(t *testing.T) {
+	raw, handler := openAsyncGoalSQLite(t)
+	seedSourceCrawlClaimSource(t, raw, 42, 7, "completed", false)
+	if _, err := raw.Exec(`CREATE TABLE IF NOT EXISTS Users (
+		user_id INTEGER PRIMARY KEY,
+		username TEXT NOT NULL,
+		disabled BOOLEAN NOT NULL DEFAULT FALSE,
+		deleted_at TIMESTAMP
+	);
+	INSERT INTO Users(user_id, username, disabled) VALUES (7, 'owner-claim', FALSE)
+		ON CONFLICT(user_id) DO UPDATE SET username=EXCLUDED.username, disabled=FALSE`); err != nil {
+		t.Fatalf("insert genuine scheduler user: %v", err)
+	}
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	req := crawlOperationRequest(42)
+	req.RequestID = sourceCrawlClaimTestID("genuine-request")
+	req.ApprovedAt = now.Add(-time.Minute)
+	req.ExpiresAt = now.Add(time.Hour)
+	req.RunID = "run-genuine-scheduler"
+	req.AgentID = "agent-genuine-scheduler"
+	req.Owner = "owner-claim"
+	req.ParametersSHA256 = sourceCrawlClaimTestID("genuine-proposal")
+	req.ApprovalID = sourceCrawlClaimTestID("genuine-approval")
+	req.ApprovalSHA256 = sourceCrawlClaimTestID("genuine-approval-sha")
+	req.ApprovedBy = "owner-claim"
+	req.ApprovedByUserID = 7
+	ensureCrawlApprovalFixture(t, raw, req)
+	proposal := insertScheduleProposal(t, &handler, req, now.Add(time.Hour))
+	result, err := scheduleSourceCrawlRequestForProposal(context.Background(), &handler, req,
+		proposal.RequestID, proposal.ProposalSHA256, now)
+	if err != nil || result.State != CrawlOperationAccepted {
+		t.Fatalf("schedule genuine operation = %+v err=%v", result, err)
+	}
+	enableSourceCrawlClaimMode(t, raw)
+	claims, err := claimSourceCrawlAttemptsAt(context.Background(), &handler,
+		sourceCrawlClaimRequest("genuine-scheduler"), sourceCrawlClaimTestNow)
+	if err != nil || len(claims) != 1 || claims[0].Outcome != SourceCrawlClaimed ||
+		claims[0].OperationID != result.OperationID || claims[0].PrincipalUserID != 7 {
+		t.Fatalf("genuine scheduler binding = %+v err=%v", claims, err)
 	}
 }

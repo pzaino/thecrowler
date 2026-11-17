@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 	"time"
 )
@@ -53,6 +54,8 @@ var (
 	ErrSourceCrawlClaimInvalidRequest = errors.New("source crawl claim request is invalid")
 	ErrSourceCrawlClaimConflict       = errors.New("source crawl claim conflict")
 	ErrSourceCrawlClaimUnavailable    = errors.New("source crawl claim store is unavailable")
+	ErrSourceCrawlClaimCorrupt        = errors.New("source crawl claim history is corrupt")
+	ErrSourceCrawlClaimGenerationDone = errors.New("source crawl claim generation is exhausted")
 )
 
 // SourceCrawlClaimRequest is trusted internal input. ClaimRequestID and
@@ -76,6 +79,7 @@ type SourceCrawlClaim struct {
 	SourceID        uint64
 	AttemptID       string
 	Generation      uint64
+	EngineID        string
 	OperationID     string
 	RequestID       string
 	RunID           string
@@ -132,7 +136,7 @@ func claimSourceCrawlAttemptsAt(ctx context.Context, db *Handler, req SourceCraw
 	if normalizeDBMS((*db).DBMS()) != "postgres" {
 		// Acquire SQLite's writer lock before the first read without nesting
 		// BEGIN IMMEDIATE inside the active sql.Tx.
-		if _, err := tx.ExecContext(txCtx, `UPDATE SourceCrawlClaimPolicy SET updated_at = updated_at WHERE policy_id = 1`); err != nil {
+		if _, err := tx.ExecContext(txCtx, `UPDATE SourceCrawlClaims SET last_updated_at = last_updated_at WHERE 0`); err != nil {
 			return nil, fmt.Errorf("%w: acquire claim writer lock", ErrSourceCrawlClaimUnavailable)
 		}
 	}
@@ -147,6 +151,9 @@ func claimSourceCrawlAttemptsAt(ctx context.Context, db *Handler, req SourceCraw
 	if existing, found, err := loadSourceCrawlClaimRequestTx(txCtx, tx, *db, req.ClaimRequestID); err != nil {
 		return nil, NormalizeTransactionError(txCtx, err)
 	} else if found {
+		if err := validateSourceCrawlClaimReplay(existing, req); err != nil {
+			return nil, err
+		}
 		if err := tx.Commit(); err != nil {
 			return nil, NormalizeTransactionError(txCtx, err)
 		}
@@ -198,11 +205,26 @@ func sameSourceCrawlClaims(existing, expected []SourceCrawlClaim) bool {
 	}
 	for _, claim := range existing {
 		want, ok := bySource[claim.SourceID]
-		if !ok || want.AttemptID != claim.AttemptID || want.Generation != claim.Generation {
+		if !ok || want.AttemptID != claim.AttemptID ||
+			want.Generation != claim.Generation || want.EngineID != claim.EngineID ||
+			!want.LeaseExpiresAt.Equal(claim.LeaseExpiresAt) {
 			return false
 		}
 	}
 	return true
+}
+
+func validateSourceCrawlClaimReplay(existing []SourceCrawlClaim, req SourceCrawlClaimRequest) error {
+	lease := req.Lease.Truncate(time.Microsecond)
+	for _, claim := range existing {
+		if claim.EngineID != req.EngineID {
+			return fmt.Errorf("%w: claim request engine changed", ErrSourceCrawlClaimConflict)
+		}
+		if claim.LeaseExpiresAt.Sub(claim.ClaimedAt) != lease {
+			return fmt.Errorf("%w: claim request lease changed", ErrSourceCrawlClaimConflict)
+		}
+	}
+	return nil
 }
 
 func validateSourceCrawlClaimRequest(req SourceCrawlClaimRequest) error {
@@ -238,12 +260,14 @@ func sourceCrawlClaimMode(ctx context.Context, db Handler) (string, error) {
 }
 
 func sourceCrawlClaimModeTx(ctx context.Context, tx *sql.Tx, db Handler) (string, error) {
-	lock := ""
 	if normalizeDBMS(db.DBMS()) == "postgres" {
-		lock = " FOR UPDATE"
+		if _, err := tx.ExecContext(ctx,
+			`SELECT pg_advisory_xact_lock_shared(hashtext('crowler:source-crawl-claim-policy'))`); err != nil {
+			return "", fmt.Errorf("%w: policy lock", ErrSourceCrawlClaimUnavailable)
+		}
 	}
 	var mode string
-	err := tx.QueryRowContext(ctx, `SELECT mode FROM SourceCrawlClaimPolicy WHERE policy_id = 1`+lock).Scan(&mode)
+	err := tx.QueryRowContext(ctx, `SELECT mode FROM SourceCrawlClaimPolicy WHERE policy_id = 1`).Scan(&mode)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", fmt.Errorf("%w: policy row", ErrSourceCrawlAttemptSchemaUnavailable)
 	}
@@ -342,6 +366,50 @@ func splitSourceCrawlPriorities(raw string) []string {
 	return out
 }
 
+func sourceCrawlNextGenerationTx(ctx context.Context, tx *sql.Tx, db Handler, sourceID uint64, previousAttempt string, previousGeneration int64) (uint64, error) {
+	p := func(n int) string { return sourceCrawlPlaceholder(db, n) }
+	var maxGeneration sql.NullInt64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT MAX(generation) FROM SourceCrawlAttempts WHERE source_id=`+p(1),
+		sourceID).Scan(&maxGeneration); err != nil {
+		return 0, err
+	}
+	if previousGeneration < 0 || (previousAttempt != "" && previousGeneration == 0) ||
+		(previousAttempt == "" && previousGeneration > 0) {
+		return 0, fmt.Errorf("%w: invalid current generation", ErrSourceCrawlClaimCorrupt)
+	}
+	if previousGeneration > 0 {
+		if strings.TrimSpace(previousAttempt) == "" || !maxGeneration.Valid ||
+			maxGeneration.Int64 != previousGeneration {
+			return 0, fmt.Errorf("%w: current claim does not match the latest history row", ErrSourceCrawlClaimCorrupt)
+		}
+		var matches int
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM SourceCrawlAttempts
+			 WHERE source_id=`+p(1)+` AND generation=`+p(2)+` AND attempt_id=`+p(3),
+			sourceID, previousGeneration, previousAttempt).Scan(&matches); err != nil {
+			return 0, err
+		}
+		if matches != 1 {
+			return 0, fmt.Errorf("%w: current claim has no exact history row", ErrSourceCrawlClaimCorrupt)
+		}
+	}
+	next := int64(1)
+	if maxGeneration.Valid {
+		if maxGeneration.Int64 <= 0 {
+			return 0, fmt.Errorf("%w: invalid history generation", ErrSourceCrawlClaimCorrupt)
+		}
+		if maxGeneration.Int64 == math.MaxInt64 {
+			return 0, ErrSourceCrawlClaimGenerationDone
+		}
+		next = maxGeneration.Int64 + 1
+	}
+	if next <= 0 {
+		return 0, ErrSourceCrawlClaimGenerationDone
+	}
+	return uint64(next), nil
+}
+
 func claimOneSourceCrawlAttemptTx(ctx context.Context, tx *sql.Tx, db Handler, req SourceCrawlClaimRequest, now time.Time, source sourceCrawlSourceRow) (SourceCrawlClaim, error) {
 	p := func(n int) string { return sourceCrawlPlaceholder(db, n) }
 	var previousAttempt string
@@ -356,9 +424,9 @@ func claimOneSourceCrawlAttemptTx(ctx context.Context, tx *sql.Tx, db Handler, r
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return SourceCrawlClaim{}, err
 	}
-	generation := uint64(1)
-	if previousGeneration > 0 {
-		generation = uint64(previousGeneration) + 1
+	generation, err := sourceCrawlNextGenerationTx(ctx, tx, db, source.SourceID, previousAttempt, previousGeneration)
+	if err != nil {
+		return SourceCrawlClaim{}, err
 	}
 	attemptID, err := newSourceCrawlAttemptID(nil)
 	if err != nil {
@@ -419,7 +487,7 @@ func claimOneSourceCrawlAttemptTx(ctx context.Context, tx *sql.Tx, db Handler, r
 
 	claim := SourceCrawlClaim{
 		Outcome: SourceCrawlUnattributed, SourceID: source.SourceID,
-		AttemptID: attemptID, Generation: generation,
+		AttemptID: attemptID, Generation: generation, EngineID: req.EngineID,
 		ClaimedAt: now, LeaseExpiresAt: leaseExpires,
 	}
 	candidate, outcome, err := resolveSourceCrawlCandidateTx(ctx, tx, db, source, claim)
@@ -463,145 +531,345 @@ type sourceCrawlCandidate struct {
 	ApprovalSHA256  string
 }
 
-func resolveSourceCrawlCandidateTx(ctx context.Context, tx *sql.Tx, db Handler, source sourceCrawlSourceRow, claim SourceCrawlClaim) (*sourceCrawlCandidate, SourceCrawlClaimOutcome, error) {
+type sourceCrawlStatusRow struct {
+	Status        string
+	AgentID       string
+	SourceID      uint64
+	OperationType string
+	Details       []byte
+	CreatedAt     time.Time
+	DeletedAt     sql.NullTime
+}
+
+func sourceCrawlSubmittedProposalsTx(ctx context.Context, tx *sql.Tx, db Handler, sourceID uint64) ([]CrawlProposalRow, error) {
 	p := func(n int) string { return sourceCrawlPlaceholder(db, n) }
-	query := `SELECT p.request_id, p.operation_id, p.proposal_sha256, p.run_id, p.agent_id,
-		p.owner, p.principal_user_id, a.approval_id, a.approval_sha256,
-		a.approved_at, a.proposal_expires_at, a.expires_at, a.revoked_at, s.created_at, s.details
-		FROM CrawlProposals p
-		JOIN Status s ON s.status_sha256 = p.operation_id
-		JOIN CrawlApprovals a ON a.request_id=p.request_id AND a.run_id=p.run_id
-		 AND a.principal_user_id=p.principal_user_id AND a.source_id=p.source_id
-		 AND a.operation_type=p.operation_type AND a.owner=p.owner
-		 AND a.agent_id=p.agent_id AND a.proposal_sha256=p.proposal_sha256
-		WHERE p.source_id=` + p(1) + ` AND p.state='submitted' AND p.operation_id IS NOT NULL
-		  AND s.deleted_at IS NULL AND s.operation_type='crawl' AND s.status='accepted'
-		  AND s.agent_id=p.agent_id AND s.source_id=p.source_id
-		  AND s.created_at >= a.approved_at AND s.created_at < a.expires_at
-		  AND s.created_at < a.proposal_expires_at AND s.created_at < p.expires_at
-		  AND (a.revoked_at IS NULL OR a.revoked_at > s.created_at)`
-	rows, err := tx.QueryContext(ctx, query, source.SourceID)
+	rows, err := tx.QueryContext(ctx,
+		`SELECT `+crawlProposalColumns()+` FROM CrawlProposals
+		 WHERE source_id=`+p(1)+` AND state='submitted'
+		   AND operation_id IS NOT NULL AND operation_id <> ''
+		 ORDER BY request_id`, sourceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close() //nolint:errcheck
+	var out []CrawlProposalRow
+	for rows.Next() {
+		row, err := scanCrawlProposalRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func sourceCrawlOperationStatusTx(ctx context.Context, tx *sql.Tx, db Handler, operationID string) (sourceCrawlStatusRow, bool, error) {
+	p := func(n int) string { return sourceCrawlPlaceholder(db, n) }
+	var row sourceCrawlStatusRow
+	err := tx.QueryRowContext(ctx,
+		`SELECT status, COALESCE(agent_id,''), COALESCE(source_id,0),
+		        COALESCE(operation_type,''), details, created_at, deleted_at
+		 FROM Status WHERE status_sha256=`+p(1), operationID).Scan(
+		&row.Status, &row.AgentID, &row.SourceID, &row.OperationType,
+		&row.Details, &row.CreatedAt, &row.DeletedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return sourceCrawlStatusRow{}, false, nil
+	}
+	if err != nil {
+		return sourceCrawlStatusRow{}, false, err
+	}
+	return row, true, nil
+}
+
+func resolveSourceCrawlCandidateTx(ctx context.Context, tx *sql.Tx, db Handler, source sourceCrawlSourceRow, claim SourceCrawlClaim) (*sourceCrawlCandidate, SourceCrawlClaimOutcome, error) {
+	proposals, err := sourceCrawlSubmittedProposalsTx(ctx, tx, db, source.SourceID)
 	if err != nil {
 		return nil, "", err
 	}
-	defer rows.Close() //nolint:errcheck
-	type row struct {
-		candidate sourceCrawlCandidate
-		createdAt time.Time
-		details   []byte
-	}
-	var candidates []row
-	for rows.Next() {
-		var r row
-		var proposalSHA string
-		var approvedAt, proposalExpires, approvalExpires time.Time
-		var revokedAt sql.NullTime
-		var createdAt time.Time
-		if err := rows.Scan(&r.candidate.RequestID, &r.candidate.OperationID, &proposalSHA,
-			&r.candidate.RunID, &r.candidate.AgentID, &r.candidate.Owner,
-			&r.candidate.PrincipalUserID, &r.candidate.ApprovalID,
-			&r.candidate.ApprovalSHA256, &approvedAt, &proposalExpires,
-			&approvalExpires, &revokedAt, &createdAt, &r.details); err != nil {
-			return nil, "", err
-		}
-		if !sourceCrawlCandidateColumnsValid(r.candidate, proposalSHA, approvedAt, proposalExpires, approvalExpires, revokedAt, createdAt) {
-			continue
-		}
-		if !sourceCrawlOperationDetailsValid(r.details, r.candidate, proposalSHA, source.SourceID) {
-			continue
-		}
-		candidates = append(candidates, r)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, "", err
-	}
-	if err := rows.Close(); err != nil {
-		return nil, "", err
-	}
-	for _, candidate := range candidates {
-		// An operation already owned by another active attempt is a conflict,
-		// not a candidate for a second binding.
-		var active int
-		if err := tx.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM SourceCrawlAttempts WHERE operation_id=`+p(1)+` AND state='claimed' AND attempt_id<>`+p(2),
-			candidate.candidate.OperationID, claim.AttemptID).Scan(&active); err != nil {
-			return nil, "", err
-		}
-		if active > 0 {
-			return nil, SourceCrawlClaimConflict, nil
-		}
-	}
-	if len(candidates) == 0 {
+	if len(proposals) == 0 {
 		return nil, SourceCrawlUnattributed, nil
 	}
-	if len(candidates) > 1 {
+	if len(proposals) > 1 {
+		// Every submitted operation competes for this source. A malformed
+		// competing row is still competition and must block attribution.
 		return nil, SourceCrawlAmbiguous, nil
 	}
-	if source.UserID == 0 || source.UserID != candidates[0].candidate.PrincipalUserID ||
-		!sourceCrawlVerifiedOwnerTx(ctx, tx, db, source.SourceID, candidates[0].candidate.PrincipalUserID) {
+	proposal := proposals[0]
+	if !sourceCrawlProposalValid(proposal) {
 		return nil, SourceCrawlNotAttributable, nil
 	}
-	return &candidates[0].candidate, SourceCrawlClaimed, nil
+	operationID := proposal.OperationID.String
+	if CrawlOperationKey(proposal.Owner, proposal.AgentID, proposal.SourceID,
+		proposal.OperationType, proposal.RequestID) != operationID {
+		return nil, SourceCrawlNotAttributable, nil
+	}
+	status, found, err := sourceCrawlOperationStatusTx(ctx, tx, db, operationID)
+	if err != nil {
+		return nil, "", err
+	}
+	if !found || status.DeletedAt.Valid {
+		return nil, SourceCrawlNotAttributable, nil
+	}
+	if status.SourceID != proposal.SourceID ||
+		status.AgentID != proposal.AgentID ||
+		status.OperationType != proposal.OperationType {
+		return nil, SourceCrawlNotAttributable, nil
+	}
+	details, err := decodeSourceCrawlOperationDetails(status.Details)
+	if err != nil {
+		return nil, SourceCrawlNotAttributable, nil
+	}
+	approval, found, err := getCrawlApprovalByIDTx(ctx, tx, db, details.ApprovalID)
+	if err != nil {
+		return nil, "", err
+	}
+	if !found || !sourceCrawlApprovalMatchesProposal(approval, proposal, details) {
+		return nil, SourceCrawlNotAttributable, nil
+	}
+	if !sourceCrawlDetailsMatchProposal(details, proposal) ||
+		!sourceCrawlDetailsMatchApproval(details, approval) {
+		return nil, SourceCrawlNotAttributable, nil
+	}
+	if !sourceCrawlAcceptanceChronology(status, proposal, approval, details) {
+		return nil, SourceCrawlNotAttributable, nil
+	}
+	if status.Status != string(CrawlOperationAccepted) {
+		if status.Status == string(CrawlOperationAlreadyPending) {
+			// already_pending is a scheduling acknowledgement, not ownership
+			// of the crawler attempt that is actually running.
+			return nil, SourceCrawlUnattributed, nil
+		}
+		return nil, SourceCrawlNotAttributable, nil
+	}
+	var active int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM SourceCrawlAttempts
+		 WHERE operation_id=`+sourceCrawlPlaceholder(db, 1)+`
+		   AND state='claimed' AND attempt_id<>`+sourceCrawlPlaceholder(db, 2),
+		operationID, claim.AttemptID).Scan(&active); err != nil {
+		return nil, "", err
+	}
+	if active > 0 {
+		return nil, SourceCrawlClaimConflict, nil
+	}
+	verified, err := sourceCrawlVerifiedOwnerTx(ctx, tx, db, source.SourceID, proposal.PrincipalUserID)
+	if err != nil {
+		return nil, "", err
+	}
+	if source.UserID == 0 || source.UserID != proposal.PrincipalUserID || !verified {
+		return nil, SourceCrawlNotAttributable, nil
+	}
+	return &sourceCrawlCandidate{
+		OperationID: operationID, RequestID: proposal.RequestID,
+		RunID: proposal.RunID, AgentID: proposal.AgentID, Owner: proposal.Owner,
+		PrincipalUserID: proposal.PrincipalUserID,
+		ApprovalID:      approval.ApprovalID, ApprovalSHA256: approval.ApprovalSHA256,
+	}, SourceCrawlClaimed, nil
 }
 
-func sourceCrawlOperationDetailsValid(raw []byte, c sourceCrawlCandidate, proposalSHA string, sourceID uint64) bool {
-	if len(raw) == 0 || len(raw) > 64<<10 {
+func sourceCrawlProposalValid(p CrawlProposalRow) bool {
+	if !p.OperationID.Valid || !sourceCrawlHashPattern.MatchString(p.OperationID.String) ||
+		!sourceCrawlHashPattern.MatchString(p.RequestID) ||
+		!sourceCrawlHashPattern.MatchString(p.ProposalSHA256) {
 		return false
 	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	var details crawlOperationDetails
-	if err := decoder.Decode(&details); err != nil {
-		return false
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return false
-	}
-	return details.RequestID == c.RequestID &&
-		details.RunID == c.RunID &&
-		details.PrincipalUserID == c.PrincipalUserID &&
-		details.AgentID == c.AgentID &&
-		details.Owner == c.Owner &&
-		details.SourceID == sourceID &&
-		details.OperationType == "crawl" &&
-		details.ParametersSHA256 == proposalSHA &&
-		details.ApprovalID == c.ApprovalID &&
-		details.ApprovalSHA256 == c.ApprovalSHA256
-}
-
-func sourceCrawlCandidateColumnsValid(c sourceCrawlCandidate, proposalSHA string,
-	approvedAt, proposalExpires, approvalExpires time.Time, revokedAt sql.NullTime, createdAt time.Time) bool {
-	if !sourceCrawlHashPattern.MatchString(c.OperationID) ||
-		!sourceCrawlHashPattern.MatchString(c.RequestID) ||
-		!sourceCrawlHashPattern.MatchString(proposalSHA) ||
-		!sourceCrawlHashPattern.MatchString(c.ApprovalID) ||
-		!sourceCrawlHashPattern.MatchString(c.ApprovalSHA256) {
-		return false
-	}
-	if c.RunID == "" || len(c.RunID) > 256 ||
-		c.AgentID == "" || len(c.AgentID) > 256 ||
-		c.Owner == "" || len(c.Owner) > 256 ||
-		c.PrincipalUserID == 0 {
-		return false
-	}
-	if c.PrincipalUserID == 0 {
-		return false
-	}
-	if createdAt.Before(approvedAt) || !createdAt.Before(proposalExpires) || !createdAt.Before(approvalExpires) {
-		return false
-	}
-	if revokedAt.Valid && !revokedAt.Time.After(createdAt) {
+	if strings.TrimSpace(p.RunID) == "" || len(p.RunID) > 256 ||
+		strings.TrimSpace(p.AgentID) == "" || len(p.AgentID) > 256 ||
+		strings.TrimSpace(p.Owner) == "" || len(p.Owner) > 256 ||
+		p.PrincipalUserID == 0 || p.SourceID == 0 ||
+		p.OperationType != CrawlOperationType || p.ExpiresAt.IsZero() {
 		return false
 	}
 	return true
 }
 
-func sourceCrawlVerifiedOwnerTx(ctx context.Context, tx *sql.Tx, db Handler, sourceID, principalUserID uint64) bool {
+func sourceCrawlApprovalMatchesProposal(approval CrawlApprovalRow, proposal CrawlProposalRow, details crawlOperationDetails) bool {
+	return approval.ProposalSHA256 == proposal.ProposalSHA256 &&
+		approval.RequestID == proposal.RequestID &&
+		approval.RunID == proposal.RunID &&
+		approval.AgentID == proposal.AgentID &&
+		approval.Owner == proposal.Owner &&
+		approval.PrincipalUserID == proposal.PrincipalUserID &&
+		approval.SourceID == proposal.SourceID &&
+		approval.OperationType == proposal.OperationType &&
+		approval.ApprovalID == details.ApprovalID &&
+		approval.ApprovalSHA256 == details.ApprovalSHA256 &&
+		approval.ApprovedBy == details.ApprovedBy &&
+		approval.ApprovedByUserID == details.ApprovedByUserID
+}
+
+func sourceCrawlDetailsMatchProposal(details crawlOperationDetails, proposal CrawlProposalRow) bool {
+	return details.RequestID == proposal.RequestID &&
+		details.RunID == proposal.RunID &&
+		details.PrincipalUserID == proposal.PrincipalUserID &&
+		details.AgentID == proposal.AgentID &&
+		details.Owner == proposal.Owner &&
+		details.SourceID == proposal.SourceID &&
+		details.OperationType == proposal.OperationType &&
+		details.ParametersSHA256 == proposal.ProposalSHA256
+}
+
+func sourceCrawlDetailsMatchApproval(details crawlOperationDetails, approval CrawlApprovalRow) bool {
+	return details.ApprovalID == approval.ApprovalID &&
+		details.ApprovalSHA256 == approval.ApprovalSHA256 &&
+		details.ApprovedBy == approval.ApprovedBy &&
+		details.ApprovedByUserID == approval.ApprovedByUserID
+}
+
+func sourceCrawlTimeNear(left, right time.Time) bool {
+	delta := left.Sub(right)
+	if delta < 0 {
+		delta = -delta
+	}
+	return delta <= 2*time.Microsecond
+}
+
+func sourceCrawlAcceptanceChronology(status sourceCrawlStatusRow, proposal CrawlProposalRow,
+	approval CrawlApprovalRow, details crawlOperationDetails) bool {
+	approvedAt, err := time.Parse(time.RFC3339Nano, details.ApprovedAt)
+	if err != nil || approvedAt.IsZero() ||
+		!sourceCrawlTimeNear(approvedAt, approval.ApprovedAt) {
+		return false
+	}
+	expiresAt, err := time.Parse(time.RFC3339Nano, details.ExpiresAt)
+	if err != nil || expiresAt.IsZero() {
+		return false
+	}
+	expectedExpiry := proposal.ExpiresAt.UTC()
+	if approval.ExpiresAt.Before(expectedExpiry) {
+		expectedExpiry = approval.ExpiresAt.UTC()
+	}
+	if !sourceCrawlTimeNear(expiresAt, expectedExpiry) {
+		return false
+	}
+	if status.CreatedAt.Before(approval.ApprovedAt) ||
+		!status.CreatedAt.Before(expiresAt) ||
+		!status.CreatedAt.Before(proposal.ExpiresAt) ||
+		!status.CreatedAt.Before(approval.ExpiresAt) ||
+		!status.CreatedAt.Before(approval.ProposalExpiresAt) {
+		return false
+	}
+	if approval.RevokedAt.Valid && !approval.RevokedAt.Time.After(status.CreatedAt) {
+		return false
+	}
+	return true
+}
+
+const (
+	maxSourceCrawlDetailsBytes = 64 << 10
+	maxSourceCrawlJSONDepth    = 64
+)
+
+var errSourceCrawlJSONDuplicateKey = errors.New("duplicate JSON key")
+
+func decodeSourceCrawlOperationDetails(raw []byte) (crawlOperationDetails, error) {
+	if len(raw) == 0 || len(raw) > maxSourceCrawlDetailsBytes {
+		return crawlOperationDetails{}, ErrSourceCrawlClaimCorrupt
+	}
+	if err := validateSourceCrawlJSONShape(raw); err != nil {
+		return crawlOperationDetails{}, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	var details crawlOperationDetails
+	if err := decoder.Decode(&details); err != nil {
+		return crawlOperationDetails{}, err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return crawlOperationDetails{}, ErrSourceCrawlClaimCorrupt
+	}
+	if strings.TrimSpace(details.RequestID) == "" ||
+		strings.TrimSpace(details.RunID) == "" ||
+		strings.TrimSpace(details.AgentID) == "" ||
+		strings.TrimSpace(details.Owner) == "" ||
+		details.PrincipalUserID == 0 || details.SourceID == 0 ||
+		details.OperationType != string(CrawlOperationType) ||
+		!sourceCrawlHashPattern.MatchString(details.ParametersSHA256) ||
+		!sourceCrawlHashPattern.MatchString(details.ApprovalID) ||
+		!sourceCrawlHashPattern.MatchString(details.ApprovalSHA256) ||
+		strings.TrimSpace(details.ApprovedBy) == "" || details.ApprovedByUserID == 0 ||
+		strings.TrimSpace(details.ApprovedAt) == "" || strings.TrimSpace(details.ExpiresAt) == "" {
+		return crawlOperationDetails{}, ErrSourceCrawlClaimCorrupt
+	}
+	if details.ReasonCode != "" && !sourceCrawlReasonPattern.MatchString(details.ReasonCode) {
+		return crawlOperationDetails{}, ErrSourceCrawlClaimCorrupt
+	}
+	return details, nil
+}
+
+func validateSourceCrawlJSONShape(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	if err := scanSourceCrawlJSONValue(decoder, 0); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return ErrSourceCrawlClaimCorrupt
+	}
+	return nil
+}
+
+func scanSourceCrawlJSONValue(decoder *json.Decoder, depth int) error {
+	if depth > maxSourceCrawlJSONDepth {
+		return ErrSourceCrawlClaimCorrupt
+	}
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delim, ok := token.(json.Delim)
+	if !ok {
+		return nil
+	}
+	switch delim {
+	case '{':
+		seen := map[string]bool{}
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return ErrSourceCrawlClaimCorrupt
+			}
+			if seen[key] {
+				return errSourceCrawlJSONDuplicateKey
+			}
+			seen[key] = true
+			if err := scanSourceCrawlJSONValue(decoder, depth+1); err != nil {
+				return err
+			}
+		}
+		_, err := decoder.Token()
+		return err
+	case '[':
+		for decoder.More() {
+			if err := scanSourceCrawlJSONValue(decoder, depth+1); err != nil {
+				return err
+			}
+		}
+		_, err := decoder.Token()
+		return err
+	default:
+		return ErrSourceCrawlClaimCorrupt
+	}
+}
+
+func sourceCrawlVerifiedOwnerTx(ctx context.Context, tx *sql.Tx, db Handler, sourceID, principalUserID uint64) (bool, error) {
 	p := func(n int) string { return sourceCrawlPlaceholder(db, n) }
 	var provenanceUser uint64
 	err := tx.QueryRowContext(ctx,
 		`SELECT user_id FROM SourceOwnership WHERE source_id=`+p(1), sourceID).Scan(&provenanceUser)
-	return err == nil && provenanceUser == principalUserID
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return provenanceUser == principalUserID, nil
 }
 
 func loadSourceCrawlClaimRequestTx(ctx context.Context, tx *sql.Tx, db Handler, claimRequestID string) ([]SourceCrawlClaim, bool, error) {
@@ -620,7 +888,7 @@ type sourceCrawlClaimQueryer interface {
 func loadSourceCrawlClaimRequestWith(ctx context.Context, q sourceCrawlClaimQueryer, db Handler, claimRequestID string) ([]SourceCrawlClaim, bool, error) {
 	p := func(n int) string { return sourceCrawlPlaceholder(db, n) }
 	rows, err := q.QueryContext(ctx,
-		`SELECT attempt_id, source_id, generation, state, claimed_at, lease_expires_at,
+		`SELECT attempt_id, source_id, generation, engine_id, state, claimed_at, lease_expires_at,
 		 operation_id, request_id, run_id, agent_id, owner, principal_user_id,
 		 approval_id, approval_sha256
 		 FROM SourceCrawlAttempts WHERE claim_request_id=`+p(1)+` ORDER BY source_id`, claimRequestID)
@@ -639,7 +907,7 @@ func loadSourceCrawlClaimRequestWith(ctx context.Context, q sourceCrawlClaimQuer
 		var state string
 		var operation, request, run, agent, owner, approval, approvalSHA sql.NullString
 		var principal sql.NullInt64
-		if err := rows.Scan(&c.AttemptID, &c.SourceID, &c.Generation, &state,
+		if err := rows.Scan(&c.AttemptID, &c.SourceID, &c.Generation, &c.EngineID, &state,
 			&c.ClaimedAt, &c.LeaseExpiresAt, &operation, &request, &run, &agent,
 			&owner, &principal, &approval, &approvalSHA); err != nil {
 			return nil, false, err

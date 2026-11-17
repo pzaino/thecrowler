@@ -346,6 +346,39 @@ jobs:
             --dbname "$POSTGRES_DB" \
             --command "DROP DATABASE crowler_v117 WITH (FORCE)"
 
+      - name: Run fenced source-crawl attempt PostgreSQL integration
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          export THECROWLER_POSTGRES_INTEGRATION=1
+          log="$(mktemp)"
+          trap 'rm -f "$log"' EXIT
+          go test -tags=integration ./pkg/database -run '^TestPostgresSourceCrawlAttempt' -count=1 -v 2>&1 | tee "$log"
+          for test in \
+            TestPostgresSourceCrawlAttemptExactHistoryFK \
+            TestPostgresSourceCrawlAttemptRuntimeCannotChangeMode \
+            TestPostgresSourceCrawlAttemptPolicyLock \
+            TestPostgresSourceCrawlAttemptLegacyModeCutoverLock \
+            TestPostgresSourceCrawlAttemptGenerationRecovery \
+            TestPostgresSourceCrawlAttemptReplayValidation \
+            TestPostgresSourceCrawlAttemptAttributionFailClosed \
+            TestPostgresSourceCrawlAttemptForgedAndDuplicateDetails \
+            TestPostgresSourceCrawlAttemptWrongChronology \
+            TestPostgresSourceCrawlAttemptGenuineSchedulerBinding \
+            TestPostgresSourceCrawlAttemptRollback \
+            TestPostgresSourceCrawlAttemptSchemaAndFencedCutover \
+            TestPostgresSourceCrawlAttemptBindingAndRejections \
+            TestPostgresSourceCrawlAttemptConcurrentClaimers \
+            TestPostgresSourceCrawlAttemptAddonRepeatable \
+            TestPostgresSourceCrawlAttemptMySQLAndLegacyStartupCompatibility; do
+            grep -F -- "=== RUN   ${test}" "$log"
+            grep -F -- "--- PASS: ${test}" "$log"
+          done
+          if grep -Fq -- '--- SKIP' "$log"; then
+            echo "Source-crawl attempt PostgreSQL integration was skipped" >&2
+            exit 1
+          fi
+
       - name: Run MCP mutation PostgreSQL integration
         timeout-minutes: 10
         run: |

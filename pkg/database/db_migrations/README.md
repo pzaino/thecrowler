@@ -70,6 +70,27 @@ an existing `fenced` policy mode, and fail closed on incompatible same-named
 objects. They do not change `DBSchemaVersion` or
 `DatabaseWriterCompatibility` and are not applied automatically at startup.
 
+The current claim references exactly one history row through the composite
+`(source_id, generation, attempt_id)` foreign key; the split attempt-ID and
+source/generation references from the first Stage B draft are upgraded away.
+The PostgreSQL addon drops only those old foreign keys, adds the exact unique
+key and reference, and fails the transaction if existing rows are inconsistent.
+The SQLite addon performs a transactional, data-preserving rebuild of the two
+attempt tables and aborts if a current claim does not match its history row.
+
+`SourceCrawlClaimPolicy` is owned by the deploying administrator and the runtime
+claim role receives SELECT only. Operators change `legacy`/`fenced` with:
+
+```sql
+SELECT set_source_crawl_claim_mode('fenced');
+SELECT set_source_crawl_claim_mode('legacy');
+```
+
+That function takes the exclusive advisory lock; claim transactions and
+`update_sources` take the shared lock. A direct table UPDATE bypasses the
+protocol and is not a supported cutover operation. The runtime role cannot
+execute the operator function or update the policy table directly.
+
 The claim API remains internal and opt-in. Ordinary startup does not require the
 optional attempt objects, and MySQL remains legacy-only with no attempt tables.
 

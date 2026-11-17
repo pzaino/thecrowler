@@ -1,7 +1,12 @@
 -- Additive fenced crawl-attempt ownership for development databases already
 -- stamped 1.17. Manual and opt-in; not applied automatically at startup.
 -- Run with: sqlite3 <database> < sqlite-source-crawl-attempt-v1.17.sqlite3
-PRAGMA foreign_keys = ON;
+--
+-- This upgrade keeps existing attempt and claim rows. It rebuilds the two
+-- attempt tables transactionally to add the exact (source_id, generation,
+-- attempt_id) history key and composite current-claim reference. It aborts on
+-- incompatible existing data instead of deleting or repairing it.
+PRAGMA foreign_keys = OFF;
 BEGIN IMMEDIATE;
 
 -- BEGIN SOURCE CRAWL ATTEMPT (schema 1.17)
@@ -43,6 +48,7 @@ CREATE TABLE IF NOT EXISTS SourceCrawlAttempts (
     created_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (source_id, generation),
+    UNIQUE (source_id, generation, attempt_id),
     UNIQUE (claim_request_id, source_id),
     CHECK (length(claim_request_id) = 64 AND claim_request_id NOT GLOB '*[^0-9a-f]*'),
     CHECK (length(attempt_id) = 64 AND attempt_id NOT GLOB '*[^0-9a-f]*'),
@@ -81,9 +87,8 @@ CREATE TABLE IF NOT EXISTS SourceCrawlClaims (
     last_updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (source_id, generation),
     FOREIGN KEY (source_id) REFERENCES Sources(source_id) ON DELETE CASCADE,
-    FOREIGN KEY (attempt_id) REFERENCES SourceCrawlAttempts(attempt_id)
-        DEFERRABLE INITIALLY DEFERRED,
-    FOREIGN KEY (source_id, generation) REFERENCES SourceCrawlAttempts(source_id, generation)
+    FOREIGN KEY (source_id, generation, attempt_id)
+        REFERENCES SourceCrawlAttempts(source_id, generation, attempt_id)
         DEFERRABLE INITIALLY DEFERRED,
     CHECK (length(claim_request_id) = 64 AND claim_request_id NOT GLOB '*[^0-9a-f]*'),
     CHECK (julianday(lease_expires_at) > julianday(claimed_at))
@@ -103,7 +108,7 @@ VALUES (1, 'legacy') ON CONFLICT (policy_id) DO NOTHING;
 
 INSERT INTO SchemaCapabilities (capability, applied_at, applied_by, checksum, details)
 VALUES ('source-crawl-attempt-v1', CURRENT_TIMESTAMP, 'migration',
-        'abb79c543a11ed355c6e76d42c235261b024bef01a9b507a5bf0263db89248bd',
+        'f545b987f0d77fcaac8219deefb70a9c00a354cf90ceef3aca4d3949c830206e',
         '{"schema_version":"1.17"}')
 ON CONFLICT (capability) DO UPDATE
     SET applied_at = excluded.applied_at,
@@ -112,74 +117,158 @@ ON CONFLICT (capability) DO UPDATE
         details = excluded.details;
 -- END SOURCE CRAWL ATTEMPT (schema 1.17)
 
-CREATE TEMP TABLE _source_crawl_attempt_guard (
+-- Reject a current claim that does not match exactly one history row before
+-- rebuilding. The transaction rolls back if this check fails.
+CREATE TEMP TABLE IF NOT EXISTS _source_crawl_attempt_upgrade_guard (
     ok INTEGER NOT NULL CHECK (ok = 1)
 );
-CREATE TEMP TRIGGER _source_crawl_attempt_guard_check
-BEFORE INSERT ON _source_crawl_attempt_guard
+DROP TRIGGER IF EXISTS _source_crawl_attempt_upgrade_guard_trg;
+CREATE TEMP TRIGGER _source_crawl_attempt_upgrade_guard_trg
+BEFORE INSERT ON _source_crawl_attempt_upgrade_guard
 WHEN (
-(SELECT count(*) FROM pragma_table_info('SourceCrawlAttempts') WHERE lower(name)=lower('attempt_id')) = 0
-       OR (SELECT count(*) FROM pragma_table_info('SourceCrawlAttempts') WHERE lower(name)=lower('claim_request_id')) = 0
-       OR (SELECT count(*) FROM pragma_table_info('SourceCrawlAttempts') WHERE lower(name)=lower('source_id')) = 0
-       OR (SELECT count(*) FROM pragma_table_info('SourceCrawlAttempts') WHERE lower(name)=lower('generation')) = 0
-       OR (SELECT count(*) FROM pragma_table_info('SourceCrawlAttempts') WHERE lower(name)=lower('engine_id')) = 0
-       OR (SELECT count(*) FROM pragma_table_info('SourceCrawlAttempts') WHERE lower(name)=lower('state')) = 0
-       OR (SELECT count(*) FROM pragma_table_info('SourceCrawlAttempts') WHERE lower(name)=lower('claimed_at')) = 0
-       OR (SELECT count(*) FROM pragma_table_info('SourceCrawlAttempts') WHERE lower(name)=lower('lease_expires_at')) = 0
-       OR (SELECT count(*) FROM pragma_table_info('SourceCrawlAttempts') WHERE lower(name)=lower('superseded_by_generation')) = 0
-       OR (SELECT count(*) FROM pragma_table_info('SourceCrawlAttempts') WHERE lower(name)=lower('terminal_at')) = 0
-       OR (SELECT count(*) FROM pragma_table_info('SourceCrawlAttempts') WHERE lower(name)=lower('reason_code')) = 0
-       OR (SELECT count(*) FROM pragma_table_info('SourceCrawlAttempts') WHERE lower(name)=lower('operation_id')) = 0
-       OR (SELECT count(*) FROM pragma_table_info('SourceCrawlAttempts') WHERE lower(name)=lower('request_id')) = 0
-       OR (SELECT count(*) FROM pragma_table_info('SourceCrawlAttempts') WHERE lower(name)=lower('run_id')) = 0
-       OR (SELECT count(*) FROM pragma_table_info('SourceCrawlAttempts') WHERE lower(name)=lower('agent_id')) = 0
-       OR (SELECT count(*) FROM pragma_table_info('SourceCrawlAttempts') WHERE lower(name)=lower('owner')) = 0
-       OR (SELECT count(*) FROM pragma_table_info('SourceCrawlAttempts') WHERE lower(name)=lower('principal_user_id')) = 0
-       OR (SELECT count(*) FROM pragma_table_info('SourceCrawlAttempts') WHERE lower(name)=lower('approval_id')) = 0
-       OR (SELECT count(*) FROM pragma_table_info('SourceCrawlAttempts') WHERE lower(name)=lower('approval_sha256')) = 0
-       OR (SELECT count(*) FROM pragma_table_info('SourceCrawlAttempts') WHERE lower(name)=lower('created_at')) = 0
-       OR (SELECT count(*) FROM pragma_table_info('SourceCrawlAttempts') WHERE lower(name)=lower('last_updated_at')) = 0
-       OR (SELECT count(*) FROM pragma_table_info('SourceCrawlClaims') WHERE lower(name)=lower('source_id')) = 0
-       OR (SELECT count(*) FROM pragma_table_info('SourceCrawlClaims') WHERE lower(name)=lower('attempt_id')) = 0
-       OR (SELECT count(*) FROM pragma_table_info('SourceCrawlClaims') WHERE lower(name)=lower('claim_request_id')) = 0
-       OR (SELECT count(*) FROM pragma_table_info('SourceCrawlClaims') WHERE lower(name)=lower('generation')) = 0
-       OR (SELECT count(*) FROM pragma_table_info('SourceCrawlClaims') WHERE lower(name)=lower('engine_id')) = 0
-       OR (SELECT count(*) FROM pragma_table_info('SourceCrawlClaims') WHERE lower(name)=lower('claimed_at')) = 0
-       OR (SELECT count(*) FROM pragma_table_info('SourceCrawlClaims') WHERE lower(name)=lower('lease_expires_at')) = 0
-       OR (SELECT count(*) FROM pragma_table_info('SourceCrawlClaims') WHERE lower(name)=lower('last_updated_at')) = 0
-       OR (SELECT count(*) FROM pragma_table_info('SourceCrawlClaimPolicy') WHERE lower(name)=lower('policy_id')) = 0
-       OR (SELECT count(*) FROM pragma_table_info('SourceCrawlClaimPolicy') WHERE lower(name)=lower('mode')) = 0
-       OR (SELECT count(*) FROM pragma_table_info('SourceCrawlClaimPolicy') WHERE lower(name)=lower('updated_at')) = 0
-       OR (SELECT count(*) FROM pragma_table_info('SchemaCapabilities') WHERE lower(name)=lower('capability')) = 0
-       OR (SELECT count(*) FROM pragma_table_info('SchemaCapabilities') WHERE lower(name)=lower('applied_at')) = 0
-       OR (SELECT count(*) FROM pragma_table_info('SchemaCapabilities') WHERE lower(name)=lower('applied_by')) = 0
-       OR (SELECT count(*) FROM pragma_table_info('SchemaCapabilities') WHERE lower(name)=lower('checksum')) = 0
-       OR (SELECT count(*) FROM pragma_table_info('SchemaCapabilities') WHERE lower(name)=lower('details')) = 0
-       OR EXISTS (SELECT 1 FROM pragma_table_info('SourceCrawlAttempts') WHERE lower(name) IN ('payload','raw_payload','prompt','prompts','messages','tool_arguments','arguments','raw_result','result','token','password','secret','dsn','cookie','cookies','request_body','response_body','model_text','html'))
-       OR EXISTS (SELECT 1 FROM pragma_table_info('SourceCrawlClaims') WHERE lower(name) IN ('payload','raw_payload','prompt','prompts','messages','tool_arguments','arguments','raw_result','result','token','password','secret','dsn','cookie','cookies','request_body','response_body','model_text','html'))
-       OR (SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_source_crawl_attempts_source') = 0
-       OR (SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_source_crawl_attempts_request') = 0
-       OR (SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_source_crawl_attempts_lease') = 0
-       OR (SELECT count(*) FROM sqlite_master WHERE type='index' AND name='uq_source_crawl_attempts_active_operation') = 0
-       OR (SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_source_crawl_claims_attempt') = 0
-       OR (SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_source_crawl_claims_request') = 0
-       OR (SELECT count(*) FROM sqlite_master WHERE type='index' AND name='uq_source_crawl_attempts_active_operation' AND instr(lower(sql),'where') > 0) = 0
-       OR (SELECT count(*) FROM sqlite_master WHERE type='table' AND lower(tbl_name)='sourcecrawlattempts' AND instr(lower(sql),'unique (source_id, generation)') = 0) > 0
-       OR (SELECT count(*) FROM sqlite_master WHERE type='table' AND lower(tbl_name)='sourcecrawlattempts' AND instr(lower(sql),'unique (claim_request_id, source_id)') = 0) > 0
-       OR (SELECT count(*) FROM sqlite_master WHERE type='table' AND lower(tbl_name)='sourcecrawlclaims' AND instr(lower(sql),'unique (source_id, generation)') = 0) > 0
-       OR (SELECT count(*) FROM pragma_foreign_key_list('SourceCrawlClaims')) <> 4
-       OR (SELECT count(*) FROM pragma_foreign_key_list('SourceCrawlClaims') WHERE lower("table")=lower('Sources') AND lower("from")=lower('source_id') AND lower(on_delete)='cascade') = 0
-       OR (SELECT count(*) FROM pragma_foreign_key_list('SourceCrawlClaims') WHERE lower("table")=lower('SourceCrawlAttempts') AND lower("from")=lower('attempt_id')) = 0
-       OR (SELECT count(*) FROM pragma_foreign_key_list('SourceCrawlClaims') WHERE lower("table")=lower('SourceCrawlAttempts') AND lower("from")=lower('source_id')) = 0
-       OR (SELECT count(*) FROM SourceCrawlClaimPolicy WHERE policy_id=1 AND mode IN ('legacy','fenced')) = 0
-       OR (SELECT count(*) FROM SchemaCapabilities WHERE capability='source-crawl-attempt-v1' AND checksum='abb79c543a11ed355c6e76d42c235261b024bef01a9b507a5bf0263db89248bd') = 0
-       OR (SELECT version FROM DBSchemaVersion WHERE is_current=1) IS NOT '1.17'
-       OR (SELECT writer_generation FROM DatabaseWriterCompatibility WHERE lock_id=1) IS NOT 'verified-ownership-v1.17'
+    EXISTS (
+        SELECT 1
+          FROM SourceCrawlClaims c
+          LEFT JOIN SourceCrawlAttempts a
+            ON a.source_id = c.source_id
+           AND a.generation = c.generation
+           AND a.attempt_id = c.attempt_id
+         WHERE a.attempt_id IS NULL
+    )
+)
+BEGIN
+    SELECT RAISE(ABORT, 'source crawl attempt history is incompatible');
+END;
+INSERT INTO _source_crawl_attempt_upgrade_guard(ok) VALUES (1);
+DROP TABLE _source_crawl_attempt_upgrade_guard;
+
+CREATE TABLE _SourceCrawlAttempts_new (
+    attempt_id       CHAR(64) PRIMARY KEY,
+    claim_request_id CHAR(64) NOT NULL,
+    source_id        BIGINT NOT NULL,
+    generation       BIGINT NOT NULL CHECK (generation > 0),
+    engine_id        TEXT NOT NULL CHECK (length(engine_id) BETWEEN 1 AND 256),
+    state            TEXT NOT NULL CHECK (state IN (
+                         'claimed','superseded','expired','abandoned',
+                         'completed','failed','cancelled')),
+    claimed_at       TIMESTAMP NOT NULL,
+    lease_expires_at TIMESTAMP NOT NULL,
+    superseded_by_generation BIGINT,
+    terminal_at      TIMESTAMP,
+    reason_code      VARCHAR(64),
+    operation_id     CHAR(64),
+    request_id       CHAR(64),
+    run_id           TEXT,
+    agent_id         TEXT,
+    owner            TEXT,
+    principal_user_id BIGINT,
+    approval_id      CHAR(64),
+    approval_sha256  CHAR(64),
+    created_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (source_id, generation),
+    UNIQUE (source_id, generation, attempt_id),
+    UNIQUE (claim_request_id, source_id),
+    CHECK (length(claim_request_id) = 64 AND claim_request_id NOT GLOB '*[^0-9a-f]*'),
+    CHECK (length(attempt_id) = 64 AND attempt_id NOT GLOB '*[^0-9a-f]*'),
+    CHECK (julianday(lease_expires_at) > julianday(claimed_at)),
+    CHECK ((operation_id IS NULL AND request_id IS NULL AND run_id IS NULL AND
+            agent_id IS NULL AND owner IS NULL AND principal_user_id IS NULL AND
+            approval_id IS NULL AND approval_sha256 IS NULL) OR
+           (operation_id IS NOT NULL AND request_id IS NOT NULL AND run_id IS NOT NULL AND
+            agent_id IS NOT NULL AND owner IS NOT NULL AND principal_user_id > 0 AND
+            approval_id IS NOT NULL AND approval_sha256 IS NOT NULL)),
+    CHECK ((state = 'claimed' AND superseded_by_generation IS NULL AND terminal_at IS NULL) OR
+           (state = 'superseded' AND superseded_by_generation IS NOT NULL AND
+            superseded_by_generation > generation AND terminal_at IS NOT NULL) OR
+           (state IN ('expired','abandoned','completed','failed','cancelled') AND terminal_at IS NOT NULL)),
+    CHECK (reason_code IS NULL OR (length(reason_code) BETWEEN 1 AND 64 AND
+           substr(reason_code,1,1) GLOB '[a-z]' AND reason_code NOT GLOB '*[^a-z0-9_]*'))
+);
+
+CREATE TABLE _SourceCrawlClaims_new (
+    source_id        INTEGER PRIMARY KEY,
+    attempt_id       CHAR(64) NOT NULL UNIQUE,
+    claim_request_id CHAR(64) NOT NULL,
+    generation       BIGINT NOT NULL CHECK (generation > 0),
+    engine_id        TEXT NOT NULL CHECK (length(engine_id) BETWEEN 1 AND 256),
+    claimed_at       TIMESTAMP NOT NULL,
+    lease_expires_at TIMESTAMP NOT NULL,
+    last_updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (source_id, generation),
+    FOREIGN KEY (source_id) REFERENCES Sources(source_id) ON DELETE CASCADE,
+    FOREIGN KEY (source_id, generation, attempt_id)
+        REFERENCES SourceCrawlAttempts(source_id, generation, attempt_id)
+        DEFERRABLE INITIALLY DEFERRED,
+    CHECK (length(claim_request_id) = 64 AND claim_request_id NOT GLOB '*[^0-9a-f]*'),
+    CHECK (julianday(lease_expires_at) > julianday(claimed_at))
+);
+
+INSERT INTO _SourceCrawlAttempts_new (attempt_id, claim_request_id, source_id, generation, engine_id, state, claimed_at, lease_expires_at, superseded_by_generation, terminal_at, reason_code, operation_id, request_id, run_id, agent_id, owner, principal_user_id, approval_id, approval_sha256, created_at, last_updated_at)
+SELECT attempt_id, claim_request_id, source_id, generation, engine_id, state, claimed_at, lease_expires_at, superseded_by_generation, terminal_at, reason_code, operation_id, request_id, run_id, agent_id, owner, principal_user_id, approval_id, approval_sha256, created_at, last_updated_at FROM SourceCrawlAttempts;
+INSERT INTO _SourceCrawlClaims_new (source_id, attempt_id, claim_request_id, generation, engine_id, claimed_at, lease_expires_at, last_updated_at)
+SELECT source_id, attempt_id, claim_request_id, generation, engine_id, claimed_at, lease_expires_at, last_updated_at FROM SourceCrawlClaims;
+
+DROP TABLE SourceCrawlClaims;
+DROP TABLE SourceCrawlAttempts;
+ALTER TABLE _SourceCrawlAttempts_new RENAME TO SourceCrawlAttempts;
+ALTER TABLE _SourceCrawlClaims_new RENAME TO SourceCrawlClaims;
+
+CREATE INDEX IF NOT EXISTS idx_source_crawl_attempts_source
+    ON SourceCrawlAttempts (source_id, generation DESC);
+CREATE INDEX IF NOT EXISTS idx_source_crawl_attempts_request
+    ON SourceCrawlAttempts (claim_request_id, source_id);
+CREATE INDEX IF NOT EXISTS idx_source_crawl_attempts_lease
+    ON SourceCrawlAttempts (state, lease_expires_at);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_source_crawl_attempts_active_operation
+    ON SourceCrawlAttempts (operation_id)
+    WHERE operation_id IS NOT NULL AND state = 'claimed';
+CREATE INDEX IF NOT EXISTS idx_source_crawl_claims_attempt
+    ON SourceCrawlClaims (attempt_id);
+CREATE INDEX IF NOT EXISTS idx_source_crawl_claims_request
+    ON SourceCrawlClaims (claim_request_id);
+
+-- Final structural and data guard. Any mismatch aborts the transaction.
+CREATE TEMP TABLE IF NOT EXISTS _source_crawl_attempt_final_guard (
+    ok INTEGER NOT NULL CHECK (ok = 1)
+);
+DROP TRIGGER IF EXISTS _source_crawl_attempt_final_guard_trg;
+CREATE TEMP TRIGGER _source_crawl_attempt_final_guard_trg
+BEFORE INSERT ON _source_crawl_attempt_final_guard
+WHEN (
+    (SELECT count(*) FROM pragma_table_info('SourceCrawlAttempts') WHERE pk > 0) = 0
+    OR (SELECT count(*) FROM pragma_table_info('SourceCrawlClaims') WHERE pk > 0) = 0
+    OR (SELECT count(*) FROM pragma_table_info('SourceCrawlClaimPolicy') WHERE pk > 0) = 0
+    OR (SELECT count(*) FROM sqlite_master WHERE type='table' AND lower(tbl_name)=lower('SourceCrawlAttempts')
+        AND instr(lower(sql), 'unique (source_id, generation, attempt_id)') = 0) > 0
+    OR (SELECT count(*) FROM sqlite_master WHERE type='table' AND lower(tbl_name)=lower('SourceCrawlClaims')
+        AND instr(lower(sql), 'foreign key (source_id, generation, attempt_id)') = 0) > 0
+    OR (SELECT count(*) FROM pragma_foreign_key_list('SourceCrawlClaims')
+        WHERE lower("table")=lower('Sources') AND lower("from")=lower('source_id') AND lower(on_delete)='cascade') = 0
+    OR (SELECT count(*) FROM pragma_foreign_key_list('SourceCrawlClaims')
+        WHERE lower("table")=lower('SourceCrawlAttempts') AND lower("from")=lower('attempt_id')) = 0
+    OR (SELECT count(*) FROM pragma_foreign_key_list('SourceCrawlClaims')
+        WHERE lower("table")=lower('SourceCrawlAttempts') AND lower("from")=lower('generation')) = 0
+    OR (SELECT count(*) FROM pragma_foreign_key_list('SourceCrawlClaims')
+        WHERE lower("table")=lower('SourceCrawlAttempts') AND lower("from")=lower('source_id')) = 0
+    OR (SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_source_crawl_attempts_source') = 0
+    OR (SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_source_crawl_attempts_request') = 0
+    OR (SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_source_crawl_attempts_lease') = 0
+    OR (SELECT count(*) FROM sqlite_master WHERE type='index' AND name='uq_source_crawl_attempts_active_operation') = 0
+    OR (SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_source_crawl_claims_attempt') = 0
+    OR (SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_source_crawl_claims_request') = 0
+    OR (SELECT count(*) FROM SourceCrawlClaimPolicy WHERE policy_id=1 AND mode IN ('legacy','fenced')) = 0
+    OR (SELECT count(*) FROM SchemaCapabilities WHERE capability='source-crawl-attempt-v1' AND checksum='f545b987f0d77fcaac8219deefb70a9c00a354cf90ceef3aca4d3949c830206e') = 0
+    OR (SELECT version FROM DBSchemaVersion WHERE is_current=1) IS NOT '1.17'
+    OR (SELECT writer_generation FROM DatabaseWriterCompatibility WHERE lock_id=1) IS NOT 'verified-ownership-v1.17'
+    OR EXISTS (SELECT 1 FROM pragma_foreign_key_check)
 )
 BEGIN
     SELECT RAISE(ABORT, 'source crawl attempt schema is incompatible');
 END;
-INSERT INTO _source_crawl_attempt_guard(ok) VALUES (1);
-DROP TABLE _source_crawl_attempt_guard;
+INSERT INTO _source_crawl_attempt_final_guard(ok) VALUES (1);
+DROP TABLE _source_crawl_attempt_final_guard;
 
 COMMIT;
+PRAGMA foreign_keys = ON;
+PRAGMA foreign_key_check;
