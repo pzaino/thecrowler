@@ -405,9 +405,10 @@ new generation.
 
 ## 11. Attribution, generation and replay rules
 
-- All submitted proposals with an operation ID are counted before validation.
-  A second malformed or missing-approval proposal makes attribution ambiguous;
-  it never allows the remaining valid proposal to bind.
+- All `submitted` proposals for the source are counted before validation,
+  including rows whose `operation_id` is null or blank. A second malformed or
+  missing-approval proposal makes attribution ambiguous; it never allows the
+  remaining valid proposal to bind.
 - A single proposal is bound only after matching the deterministic
   `CrawlOperationKey`, the authoritative `Status` identity, strict
   `Status.details`, the approval identity and the acceptance chronology.
@@ -417,10 +418,20 @@ new generation.
 - A missing current claim uses `MAX(generation)` from retained history. A
   current claim must match the latest history row exactly. Invalid or
   exhausted generation state fails closed.
-- Replay verifies the engine and lease duration from persisted attempt data.
-  Limit, priority and interval fields are not persisted, so an exact full
+- Replay never allocates a new generation. It verifies the persisted engine and
+  lease duration, then classifies execution eligibility with a trusted clock
+  (database time outside tests). A replay at or after lease expiry returns
+  `stale_fence`; a superseded, terminal, failed or abandoned attempt also
+  returns `stale_fence`.
+- An unbound attempt replays as `unattributed`, not as a fabricated bound
+  `claimed` result. The original `ambiguous`/`not_attributable` distinction is
+  not persisted, so it is not reconstructed after restart.
+- Limit, priority and interval fields are not persisted, so an exact full
   request-hash replay check would require a schema extension and remains a
-  documented limitation.
+  documented limitation. `sourceCrawlClaimRequestFingerprint` is a pure digest
+  for a future approved extension; it is not stored.
+- The handoff and terminal-result contract is defined in
+  [`ASYNC_GOAL_B3C3A_HANDOFF_AND_FENCED_RESULTS.md`](ASYNC_GOAL_B3C3A_HANDOFF_AND_FENCED_RESULTS.md).
 
 ## 12. Tests
 

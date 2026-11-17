@@ -192,6 +192,34 @@ remains a hosted-CI gate to verify, not a claimed pass.
 Production activation, crawler/worker callers, terminal result reporting,
 resume workers and public configuration remain unapproved.
 
+## Decision 1f: pre-handoff replay repair and terminal-result design
+
+**Status: REPAIRS IMPLEMENTED; LIVE HANDOFF/TERMINAL WRITES EXPLICITLY NOT
+APPROVED.**
+
+WP-05B3C3A changes only internal claim/replay behaviour and documentation:
+
+- Every `submitted` proposal is counted before attribution, including null or
+  blank operation IDs. A malformed competitor blocks binding.
+- Replay uses an explicit trusted clock and database time for reconciliation.
+  Expired, superseded and terminal attempts classify as `stale_fence`; unbound
+  attempts replay as `unattributed` and never as a fabricated bound `claimed`
+  success. No replay allocates a new generation.
+- The full proposal/approval/scheduler-to-claim path is tested on disposable
+  PostgreSQL, including a real observation that remains `pending`/`accepted`.
+- A pure, unexported handoff and terminal-receipt validator set is added with no
+  production caller or database write.
+- The known request-idempotency limits (no durable request digest, no durable
+  empty-batch acknowledgement) are documented. A future schema extension
+  requires separate approval.
+
+**Not approved by this decision:** a terminal-result repository, heartbeat
+writer, live crawler handoff, attempt-result migration, worker activation,
+automatic async goal resume, or any change to schema 1.17 / writer generation.
+Those require the explicit approval record requested in
+`ASYNC_GOAL_B3C3_STAGE_B_APPROVAL_REQUEST.md` and the contract in
+`ASYNC_GOAL_B3C3A_HANDOFF_AND_FENCED_RESULTS.md`.
+
 ## Decision 2: resume phase
 
 **Status: PENDING.**
@@ -281,10 +309,11 @@ No public schema or example was changed.
 
 ## Next action
 
-WP-05B3C2C is implemented and locally tested. Hosted PostgreSQL CI must be
-green on the exact submitted commit before the package is reported as fully
-verified. Production activation, a crawler/worker caller, terminal completion
-reporting, execution ownership, cancellation finalization and public
-configuration remain pending. WP-05B3C3 must design the authenticated attempt
-handoff and fenced terminal result with separate review. Do not apply any addon
-to a persistent database or begin those phases automatically.
+WP-05B3C3A repairs and the handoff/terminal design are implemented and locally
+tested. Hosted PostgreSQL CI must be green on the exact submitted commit before
+the package is reported as fully verified. Production activation, a
+crawler/worker caller, terminal completion reporting, execution ownership,
+cancellation finalization and public configuration remain pending. WP-05B3C3
+Stage B (live handoff, heartbeat writer, terminal repository and any required
+migration) requires a separate explicit maintainer approval. Do not apply any
+addon to a persistent database or begin those phases automatically.

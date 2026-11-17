@@ -478,9 +478,459 @@ func TestSourceCrawlAttemptSQLiteGenuineSchedulerBinding(t *testing.T) {
 	}
 	enableSourceCrawlClaimMode(t, raw)
 	claims, err := claimSourceCrawlAttemptsAt(context.Background(), &handler,
-		sourceCrawlClaimRequest("genuine-scheduler"), sourceCrawlClaimTestNow)
+		sourceCrawlClaimRequest("genuine-scheduler"), now)
 	if err != nil || len(claims) != 1 || claims[0].Outcome != SourceCrawlClaimed ||
 		claims[0].OperationID != result.OperationID || claims[0].PrincipalUserID != 7 {
 		t.Fatalf("genuine scheduler binding = %+v err=%v", claims, err)
+	}
+
+	var storedOperation, storedRequest, storedRun, storedAgent, storedOwner sql.NullString
+	var storedPrincipal sql.NullInt64
+	var storedApproval, storedApprovalSHA sql.NullString
+	if err := raw.QueryRow(`SELECT operation_id, request_id, run_id, agent_id, owner,
+		principal_user_id, approval_id, approval_sha256 FROM SourceCrawlAttempts WHERE source_id=42`).
+		Scan(&storedOperation, &storedRequest, &storedRun, &storedAgent, &storedOwner,
+			&storedPrincipal, &storedApproval, &storedApprovalSHA); err != nil {
+		t.Fatalf("read persisted attempt binding: %v", err)
+	}
+	if storedOperation.String != result.OperationID ||
+		storedRequest.String != proposal.RequestID ||
+		storedRun.String != proposal.RunID ||
+		storedAgent.String != proposal.AgentID ||
+		storedOwner.String != proposal.Owner ||
+		uint64(storedPrincipal.Int64) != proposal.PrincipalUserID ||
+		storedApproval.String != req.ApprovalID ||
+		storedApprovalSHA.String != req.ApprovalSHA256 {
+		t.Fatalf("persisted attempt binding does not match proposal/approval: op=%q request=%q run=%q agent=%q owner=%q principal=%d approval=%q approval_sha=%q",
+			storedOperation.String, storedRequest.String, storedRun.String, storedAgent.String,
+			storedOwner.String, storedPrincipal.Int64, storedApproval.String, storedApprovalSHA.String)
+	}
+	var proposalState, proposalOperation string
+	if err := raw.QueryRow(`SELECT state, operation_id FROM CrawlProposals WHERE request_id=?`,
+		proposal.RequestID).Scan(&proposalState, &proposalOperation); err != nil {
+		t.Fatalf("read scheduled proposal: %v", err)
+	}
+	if proposalState != CrawlProposalStateSubmitted || proposalOperation != result.OperationID {
+		t.Fatalf("proposal identity after scheduling = state=%q operation=%q", proposalState, proposalOperation)
+	}
+	var operationState, sourceStatus string
+	if err := raw.QueryRow(`SELECT status FROM Status WHERE status_sha256=?`, result.OperationID).Scan(&operationState); err != nil {
+		t.Fatalf("read scheduled operation: %v", err)
+	}
+	if operationState != string(CrawlOperationAccepted) {
+		t.Fatalf("scheduled operation state = %q, want accepted", operationState)
+	}
+	if err := raw.QueryRow(`SELECT status FROM Sources WHERE source_id=42`).Scan(&sourceStatus); err != nil {
+		t.Fatalf("read claimed source status: %v", err)
+	}
+	if sourceStatus != "processing" {
+		t.Fatalf("claimed source status = %q, want processing", sourceStatus)
+	}
+}
+
+func TestSourceCrawlAttemptSQLiteDatabaseClockReconciliation(t *testing.T) {
+	raw, handler := openAsyncGoalSQLite(t)
+	seedSourceCrawlClaimSource(t, raw, 42, 7, "new", false)
+	enableSourceCrawlClaimMode(t, raw)
+	sourceCrawlInsertBoundOperation(t, raw, 42, 7, "db-clock", "accepted")
+	request := sourceCrawlClaimRequest("db-clock")
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	claims, err := claimSourceCrawlAttemptsAt(context.Background(), &handler, request, now)
+	if err != nil || len(claims) != 1 || claims[0].Outcome != SourceCrawlClaimed {
+		t.Fatalf("base database-clock claim = %+v err=%v", claims, err)
+	}
+	loaded, found, err := loadSourceCrawlClaimRequest(context.Background(), handler, request.ClaimRequestID)
+	if err != nil || !found || len(loaded) != 1 || !loaded[0].Reused ||
+		loaded[0].Outcome != SourceCrawlClaimed || loaded[0].AttemptID != claims[0].AttemptID {
+		t.Fatalf("database-clock reconciliation = %+v found=%v err=%v", loaded, found, err)
+	}
+	if !sameSourceCrawlClaims(loaded, claims) {
+		t.Fatalf("database-clock reconciliation identity differs: loaded=%+v claims=%+v", loaded, claims)
+	}
+	if _, err := raw.Exec(`UPDATE SourceCrawlAttempts SET claimed_at=?, lease_expires_at=? WHERE source_id=42`,
+		now.Add(-2*time.Minute), now.Add(-time.Minute)); err != nil {
+		t.Fatalf("expire attempt lease: %v", err)
+	}
+	expired, found, err := loadSourceCrawlClaimRequest(context.Background(), handler, request.ClaimRequestID)
+	if err != nil || !found || len(expired) != 1 || expired[0].Outcome != SourceCrawlClaimStaleFence {
+		t.Fatalf("expired database-clock reconciliation = %+v found=%v err=%v", expired, found, err)
+	}
+}
+
+func sourceCrawlSubmittedProposalFixture(t *testing.T, raw *sql.DB, sourceID, ownerID uint64,
+	label string, operationID any, state string) string {
+	t.Helper()
+	requestID := sourceCrawlClaimTestID("submitted-request-" + label)
+	proposalSHA := sourceCrawlClaimTestID("submitted-proposal-" + label)
+	now := sourceCrawlClaimTestNow
+	if _, err := raw.Exec(`INSERT INTO CrawlProposals
+		(request_id, run_id, tool_call_id, agent_id, owner, principal_user_id, source_id,
+		 operation_type, proposal_sha256, trace_id, max_requests, budget_window_seconds,
+		 policy_json, state, expires_at, submitted_at, operation_id, created_at, last_updated_at)
+		VALUES (?, ?, ?, 'agent-claim', 'owner-claim', ?, ?, 'crawl', ?, 'trace-submitted',
+		 1, 3600, '{}', ?, ?, ?, ?, ?, ?)`,
+		requestID, "run-submitted-"+label, "tool-submitted-"+label, ownerID, sourceID,
+		proposalSHA, state, now.Add(2*time.Hour), now, operationID, now, now); err != nil {
+		t.Fatalf("insert %s submitted proposal: %v", label, err)
+	}
+	return requestID
+}
+
+func sourceCrawlAttemptHistoryCount(t *testing.T, raw *sql.DB, sourceID uint64) int {
+	t.Helper()
+	var count int
+	if err := raw.QueryRow(`SELECT COUNT(*) FROM SourceCrawlAttempts WHERE source_id=?`, sourceID).Scan(&count); err != nil {
+		t.Fatalf("count attempt history: %v", err)
+	}
+	return count
+}
+
+func TestSourceCrawlAttemptSQLiteSubmittedProposalCompetition(t *testing.T) {
+	t.Run("valid plus null operation id is ambiguous", func(t *testing.T) {
+		raw, handler := openAsyncGoalSQLite(t)
+		seedSourceCrawlClaimSource(t, raw, 42, 7, "new", false)
+		enableSourceCrawlClaimMode(t, raw)
+		sourceCrawlInsertBoundOperation(t, raw, 42, 7, "competition-null", "accepted")
+		sourceCrawlSubmittedProposalFixture(t, raw, 42, 7, "null", nil, "submitted")
+
+		request := sourceCrawlClaimRequest("competition-null")
+		claims, err := claimSourceCrawlAttemptsAt(context.Background(), &handler, request, sourceCrawlClaimTestNow)
+		if err != nil || len(claims) != 1 {
+			t.Fatalf("claim with null competitor = %+v err=%v", claims, err)
+		}
+		if claims[0].Outcome != SourceCrawlAmbiguous || claims[0].OperationID != "" {
+			t.Fatalf("valid plus null operation = %+v", claims[0])
+		}
+		replay, err := claimSourceCrawlAttemptsAt(context.Background(), &handler, request, sourceCrawlClaimTestNow.Add(time.Minute))
+		if err != nil || len(replay) != 1 || !replay[0].Reused ||
+			replay[0].Outcome != SourceCrawlUnattributed || replay[0].OperationID != "" ||
+			replay[0].AttemptID != claims[0].AttemptID || replay[0].Generation != claims[0].Generation {
+			t.Fatalf("ambiguous replay = %+v err=%v", replay, err)
+		}
+		if count := sourceCrawlAttemptHistoryCount(t, raw, 42); count != 1 {
+			t.Fatalf("history after replay = %d, want 1", count)
+		}
+	})
+
+	t.Run("valid plus blank operation id is ambiguous", func(t *testing.T) {
+		raw, handler := openAsyncGoalSQLite(t)
+		seedSourceCrawlClaimSource(t, raw, 42, 7, "new", false)
+		enableSourceCrawlClaimMode(t, raw)
+		sourceCrawlInsertBoundOperation(t, raw, 42, 7, "competition-blank", "accepted")
+		sourceCrawlSubmittedProposalFixture(t, raw, 42, 7, "blank", "", "submitted")
+
+		claims, err := claimSourceCrawlAttemptsAt(context.Background(), &handler,
+			sourceCrawlClaimRequest("competition-blank"), sourceCrawlClaimTestNow)
+		if err != nil || len(claims) != 1 || claims[0].Outcome != SourceCrawlAmbiguous || claims[0].OperationID != "" {
+			t.Fatalf("valid plus blank operation = %+v err=%v", claims, err)
+		}
+	})
+
+	t.Run("valid plus forged operation id is ambiguous", func(t *testing.T) {
+		raw, handler := openAsyncGoalSQLite(t)
+		seedSourceCrawlClaimSource(t, raw, 42, 7, "new", false)
+		enableSourceCrawlClaimMode(t, raw)
+		sourceCrawlInsertBoundOperation(t, raw, 42, 7, "competition-forged", "accepted")
+		sourceCrawlSubmittedProposalFixture(t, raw, 42, 7, "forged-competitor",
+			sourceCrawlClaimTestID("forged-competitor-operation"), "submitted")
+		claims, err := claimSourceCrawlAttemptsAt(context.Background(), &handler,
+			sourceCrawlClaimRequest("competition-forged"), sourceCrawlClaimTestNow)
+		if err != nil || len(claims) != 1 || claims[0].Outcome != SourceCrawlAmbiguous || claims[0].OperationID != "" {
+			t.Fatalf("valid plus forged operation = %+v err=%v", claims, err)
+		}
+	})
+
+	t.Run("single malformed submitted proposal is not attributable", func(t *testing.T) {
+		raw, handler := openAsyncGoalSQLite(t)
+		seedSourceCrawlClaimSource(t, raw, 42, 7, "new", false)
+		enableSourceCrawlClaimMode(t, raw)
+		sourceCrawlSubmittedProposalFixture(t, raw, 42, 7, "single-null", nil, "submitted")
+
+		request := sourceCrawlClaimRequest("single-malformed")
+		claims, err := claimSourceCrawlAttemptsAt(context.Background(), &handler, request, sourceCrawlClaimTestNow)
+		if err != nil || len(claims) != 1 || claims[0].Outcome != SourceCrawlNotAttributable || claims[0].OperationID != "" {
+			t.Fatalf("single malformed proposal = %+v err=%v", claims, err)
+		}
+		replay, err := claimSourceCrawlAttemptsAt(context.Background(), &handler, request, sourceCrawlClaimTestNow.Add(time.Minute))
+		if err != nil || len(replay) != 1 || !replay[0].Reused || replay[0].Outcome != SourceCrawlUnattributed {
+			t.Fatalf("single malformed replay = %+v err=%v", replay, err)
+		}
+	})
+
+	t.Run("pending proposal is not a submitted competitor", func(t *testing.T) {
+		raw, handler := openAsyncGoalSQLite(t)
+		seedSourceCrawlClaimSource(t, raw, 42, 7, "new", false)
+		enableSourceCrawlClaimMode(t, raw)
+		operationID := sourceCrawlInsertBoundOperation(t, raw, 42, 7, "competition-pending", "accepted")
+		now := sourceCrawlClaimTestNow
+		inserted, err := InsertCrawlProposal(context.Background(), &handler, CrawlProposalRow{
+			RequestID: sourceCrawlClaimTestID("pending-request"), RunID: "run-pending",
+			ToolCallID: "tool-pending", AgentID: "agent-claim", Owner: "owner-claim",
+			PrincipalUserID: 7, SourceID: 42, OperationType: CrawlOperationType,
+			ProposalSHA256: sourceCrawlClaimTestID("pending-proposal"), TraceID: "trace-pending",
+			MaxRequests: 1, BudgetWindowSeconds: 3600, PolicyJSON: "{}",
+			State: CrawlProposalStatePending, ExpiresAt: now.Add(2 * time.Hour),
+		})
+		if err != nil || !inserted {
+			t.Fatalf("insert pending proposal: inserted=%v err=%v", inserted, err)
+		}
+		claims, err := claimSourceCrawlAttemptsAt(context.Background(), &handler,
+			sourceCrawlClaimRequest("competition-pending"), now)
+		if err != nil || len(claims) != 1 || claims[0].Outcome != SourceCrawlClaimed ||
+			claims[0].OperationID != operationID {
+			t.Fatalf("pending competitor claim = %+v err=%v", claims, err)
+		}
+	})
+
+	t.Run("single forged operation id is not attributable", func(t *testing.T) {
+		raw, handler := openAsyncGoalSQLite(t)
+		seedSourceCrawlClaimSource(t, raw, 42, 7, "new", false)
+		enableSourceCrawlClaimMode(t, raw)
+		sourceCrawlSubmittedProposalFixture(t, raw, 42, 7, "forged", sourceCrawlClaimTestID("forged-operation"), "submitted")
+		claims, err := claimSourceCrawlAttemptsAt(context.Background(), &handler,
+			sourceCrawlClaimRequest("single-forged"), sourceCrawlClaimTestNow)
+		if err != nil || len(claims) != 1 || claims[0].Outcome != SourceCrawlNotAttributable || claims[0].OperationID != "" {
+			t.Fatalf("single forged operation = %+v err=%v", claims, err)
+		}
+	})
+
+	t.Run("candidate load failure fails closed", func(t *testing.T) {
+		raw, handler := openAsyncGoalSQLite(t)
+		seedSourceCrawlClaimSource(t, raw, 42, 7, "new", false)
+		enableSourceCrawlClaimMode(t, raw)
+		if _, err := raw.Exec(`DROP TABLE CrawlProposals`); err != nil {
+			t.Fatalf("drop proposals: %v", err)
+		}
+		claims, err := claimSourceCrawlAttemptsAt(context.Background(), &handler,
+			sourceCrawlClaimRequest("candidate-load-failure"), sourceCrawlClaimTestNow)
+		if err == nil || len(claims) != 0 {
+			t.Fatalf("candidate load failure = %+v err=%v", claims, err)
+		}
+		if count := sourceCrawlAttemptHistoryCount(t, raw, 42); count != 0 {
+			t.Fatalf("history after failed candidate load = %d, want 0", count)
+		}
+		var status string
+		if err := raw.QueryRow(`SELECT status FROM Sources WHERE source_id=42`).Scan(&status); err != nil {
+			t.Fatalf("read source status: %v", err)
+		}
+		if status != "new" {
+			t.Fatalf("source status after failed claim = %q, want new", status)
+		}
+	})
+}
+
+func TestSourceCrawlAttemptSQLiteReplayLeaseBoundary(t *testing.T) {
+	const lease = 5 * time.Minute
+	cases := []struct {
+		name    string
+		replay  time.Duration
+		outcome SourceCrawlClaimOutcome
+	}{
+		{"before expiry", lease - time.Microsecond, SourceCrawlClaimed},
+		{"at expiry", lease, SourceCrawlClaimStaleFence},
+		{"after expiry", lease + time.Microsecond, SourceCrawlClaimStaleFence},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, handler := openAsyncGoalSQLite(t)
+			seedSourceCrawlClaimSource(t, raw, 42, 7, "new", false)
+			enableSourceCrawlClaimMode(t, raw)
+			sourceCrawlInsertBoundOperation(t, raw, 42, 7, "lease-"+tc.name, "accepted")
+			request := sourceCrawlClaimRequest("lease-" + tc.name)
+			claims, err := claimSourceCrawlAttemptsAt(context.Background(), &handler, request, sourceCrawlClaimTestNow)
+			if err != nil || len(claims) != 1 || claims[0].Outcome != SourceCrawlClaimed {
+				t.Fatalf("base claim = %+v err=%v", claims, err)
+			}
+			replay, err := claimSourceCrawlAttemptsAt(context.Background(), &handler, request,
+				sourceCrawlClaimTestNow.Add(tc.replay))
+			if err != nil || len(replay) != 1 || !replay[0].Reused ||
+				replay[0].Outcome != tc.outcome ||
+				replay[0].AttemptID != claims[0].AttemptID || replay[0].Generation != claims[0].Generation {
+				t.Fatalf("replay at %s = %+v err=%v", tc.name, replay, err)
+			}
+			if count := sourceCrawlAttemptHistoryCount(t, raw, 42); count != 1 {
+				t.Fatalf("history after replay = %d, want 1", count)
+			}
+		})
+	}
+}
+
+func TestSourceCrawlAttemptSQLiteReplayAttributionClasses(t *testing.T) {
+	type fixture func(*testing.T, *sql.DB)
+	cases := []struct {
+		name         string
+		fixture      fixture
+		initial      SourceCrawlClaimOutcome
+		replay       SourceCrawlClaimOutcome
+		bound        bool
+		transferSide bool
+	}{
+		{
+			name: "bound",
+			fixture: func(t *testing.T, raw *sql.DB) {
+				sourceCrawlInsertBoundOperation(t, raw, 42, 7, "class-bound", "accepted")
+			},
+			initial: SourceCrawlClaimed, replay: SourceCrawlClaimed, bound: true,
+		},
+		{
+			name:    "unattributed",
+			fixture: func(*testing.T, *sql.DB) {},
+			initial: SourceCrawlUnattributed, replay: SourceCrawlUnattributed,
+		},
+		{
+			name: "ambiguous",
+			fixture: func(t *testing.T, raw *sql.DB) {
+				sourceCrawlInsertBoundOperation(t, raw, 42, 7, "class-ambiguous-a", "accepted")
+				sourceCrawlInsertBoundOperation(t, raw, 42, 7, "class-ambiguous-b", "accepted")
+			},
+			initial: SourceCrawlAmbiguous, replay: SourceCrawlUnattributed,
+		},
+		{
+			name: "not attributable after transfer",
+			fixture: func(t *testing.T, raw *sql.DB) {
+				sourceCrawlInsertBoundOperation(t, raw, 42, 7, "class-transfer", "accepted")
+				if _, err := raw.Exec(`UPDATE Sources SET usr_id=8 WHERE source_id=42`); err != nil {
+					t.Fatalf("transfer source: %v", err)
+				}
+				if _, err := raw.Exec(`UPDATE SourceOwnership SET user_id=8 WHERE source_id=42`); err != nil {
+					t.Fatalf("transfer ownership: %v", err)
+				}
+			},
+			initial: SourceCrawlNotAttributable, replay: SourceCrawlUnattributed, transferSide: true,
+		},
+		{
+			name: "already pending",
+			fixture: func(t *testing.T, raw *sql.DB) {
+				sourceCrawlInsertBoundOperation(t, raw, 42, 7, "class-already-pending", string(CrawlOperationAlreadyPending))
+			},
+			initial: SourceCrawlUnattributed, replay: SourceCrawlUnattributed,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, handler := openAsyncGoalSQLite(t)
+			seedSourceCrawlClaimSource(t, raw, 42, 7, "new", false)
+			enableSourceCrawlClaimMode(t, raw)
+			tc.fixture(t, raw)
+			request := sourceCrawlClaimRequest("class-" + tc.name)
+			claims, err := claimSourceCrawlAttemptsAt(context.Background(), &handler, request, sourceCrawlClaimTestNow)
+			if err != nil || len(claims) != 1 || claims[0].Outcome != tc.initial {
+				t.Fatalf("initial claim = %+v err=%v", claims, err)
+			}
+			replay, err := claimSourceCrawlAttemptsAt(context.Background(), &handler, request,
+				sourceCrawlClaimTestNow.Add(time.Minute))
+			if err != nil || len(replay) != 1 || !replay[0].Reused ||
+				replay[0].Outcome != tc.replay ||
+				replay[0].AttemptID != claims[0].AttemptID || replay[0].Generation != claims[0].Generation {
+				t.Fatalf("replay = %+v err=%v", replay, err)
+			}
+			if tc.bound {
+				if replay[0].OperationID == "" || replay[0].OperationID != claims[0].OperationID ||
+					replay[0].ApprovalID != claims[0].ApprovalID ||
+					replay[0].PrincipalUserID != claims[0].PrincipalUserID {
+					t.Fatalf("bound replay lost binding: initial=%+v replay=%+v", claims[0], replay[0])
+				}
+			} else if replay[0].OperationID != "" || replay[0].PrincipalUserID != 0 ||
+				replay[0].ApprovalID != "" {
+				t.Fatalf("unbound replay fabricated binding: %+v", replay[0])
+			}
+			if count := sourceCrawlAttemptHistoryCount(t, raw, 42); count != 1 {
+				t.Fatalf("history after replay = %d, want 1", count)
+			}
+		})
+	}
+}
+
+func TestSourceCrawlAttemptSQLiteReplayTerminalStates(t *testing.T) {
+	for _, state := range []string{"completed", "failed", "cancelled", "expired", "abandoned"} {
+		t.Run(state, func(t *testing.T) {
+			raw, handler := openAsyncGoalSQLite(t)
+			seedSourceCrawlClaimSource(t, raw, 42, 7, "new", false)
+			enableSourceCrawlClaimMode(t, raw)
+			sourceCrawlInsertBoundOperation(t, raw, 42, 7, "terminal-"+state, "accepted")
+			request := sourceCrawlClaimRequest("terminal-" + state)
+			if _, err := claimSourceCrawlAttemptsAt(context.Background(), &handler, request, sourceCrawlClaimTestNow); err != nil {
+				t.Fatalf("base claim: %v", err)
+			}
+			if _, err := raw.Exec(`UPDATE SourceCrawlAttempts SET state=?, terminal_at=? WHERE source_id=42`,
+				state, sourceCrawlClaimTestNow.Add(time.Second)); err != nil {
+				t.Fatalf("set terminal state: %v", err)
+			}
+			replay, err := claimSourceCrawlAttemptsAt(context.Background(), &handler, request,
+				sourceCrawlClaimTestNow.Add(time.Minute))
+			if err != nil || len(replay) != 1 || !replay[0].Reused || replay[0].Outcome != SourceCrawlClaimStaleFence {
+				t.Fatalf("terminal replay = %+v err=%v", replay, err)
+			}
+			if count := sourceCrawlAttemptHistoryCount(t, raw, 42); count != 1 {
+				t.Fatalf("history after terminal replay = %d, want 1", count)
+			}
+		})
+	}
+}
+
+func TestSourceCrawlAttemptSQLiteReplaySuperseded(t *testing.T) {
+	raw, handler := openAsyncGoalSQLite(t)
+	seedSourceCrawlClaimSource(t, raw, 42, 7, "new", false)
+	enableSourceCrawlClaimMode(t, raw)
+	firstRequest := sourceCrawlClaimRequest("superseded-first")
+	first, err := claimSourceCrawlAttemptsAt(context.Background(), &handler, firstRequest, sourceCrawlClaimTestNow)
+	if err != nil || len(first) != 1 {
+		t.Fatalf("first claim = %+v err=%v", first, err)
+	}
+	if _, err := raw.Exec(`UPDATE Sources SET status='pending' WHERE source_id=42`); err != nil {
+		t.Fatalf("reset source: %v", err)
+	}
+	second, err := claimSourceCrawlAttemptsAt(context.Background(), &handler,
+		sourceCrawlClaimRequest("superseded-second"), sourceCrawlClaimTestNow.Add(6*time.Minute))
+	if err != nil || len(second) != 1 || second[0].Generation != 2 {
+		t.Fatalf("second claim = %+v err=%v", second, err)
+	}
+	replay, err := claimSourceCrawlAttemptsAt(context.Background(), &handler, firstRequest,
+		sourceCrawlClaimTestNow.Add(7*time.Minute))
+	if err != nil || len(replay) != 1 || !replay[0].Reused ||
+		replay[0].Outcome != SourceCrawlClaimStaleFence ||
+		replay[0].AttemptID != first[0].AttemptID || replay[0].Generation != first[0].Generation {
+		t.Fatalf("superseded replay = %+v err=%v", replay, err)
+	}
+	if count := sourceCrawlAttemptHistoryCount(t, raw, 42); count != 2 {
+		t.Fatalf("history after superseded replay = %d, want 2", count)
+	}
+}
+
+func TestSourceCrawlAttemptSQLiteConcurrentReplay(t *testing.T) {
+	raw, handler := openAsyncGoalSQLite(t)
+	seedSourceCrawlClaimSource(t, raw, 42, 7, "new", false)
+	enableSourceCrawlClaimMode(t, raw)
+	sourceCrawlInsertBoundOperation(t, raw, 42, 7, "concurrent-replay", "accepted")
+	request := sourceCrawlClaimRequest("concurrent-replay")
+	first, err := claimSourceCrawlAttemptsAt(context.Background(), &handler, request, sourceCrawlClaimTestNow)
+	if err != nil || len(first) != 1 {
+		t.Fatalf("base claim = %+v err=%v", first, err)
+	}
+	type result struct {
+		claims []SourceCrawlClaim
+		err    error
+	}
+	results := make(chan result, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			claims, err := claimSourceCrawlAttemptsAt(context.Background(), &handler, request,
+				sourceCrawlClaimTestNow.Add(time.Minute))
+			results <- result{claims: claims, err: err}
+		}()
+	}
+	for i := 0; i < 2; i++ {
+		res := <-results
+		if res.err != nil || len(res.claims) != 1 || !res.claims[0].Reused ||
+			res.claims[0].Outcome != SourceCrawlClaimed ||
+			res.claims[0].AttemptID != first[0].AttemptID {
+			t.Fatalf("concurrent replay = %+v err=%v", res.claims, res.err)
+		}
+	}
+	if count := sourceCrawlAttemptHistoryCount(t, raw, 42); count != 1 {
+		t.Fatalf("history after concurrent replay = %d, want 1", count)
+	}
+	if _, err := raw.Exec(`UPDATE Sources SET status='pending' WHERE source_id=42`); err != nil {
+		t.Fatalf("reset source: %v", err)
 	}
 }

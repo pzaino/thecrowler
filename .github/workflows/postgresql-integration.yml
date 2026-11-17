@@ -361,6 +361,10 @@ jobs:
             TestPostgresSourceCrawlAttemptLegacyModeCutoverLock \
             TestPostgresSourceCrawlAttemptGenerationRecovery \
             TestPostgresSourceCrawlAttemptReplayValidation \
+            TestPostgresSourceCrawlAttemptSubmittedProposalCompetition \
+            TestPostgresSourceCrawlAttemptReplayClassification \
+            TestPostgresSourceCrawlAttemptCandidateLoadFailure \
+            TestPostgresSourceCrawlAttemptDatabaseClockReconciliation \
             TestPostgresSourceCrawlAttemptAttributionFailClosed \
             TestPostgresSourceCrawlAttemptForgedAndDuplicateDetails \
             TestPostgresSourceCrawlAttemptWrongChronology \
@@ -432,6 +436,24 @@ jobs:
           done
           if grep -Fq -- '--- SKIP' "$log"; then
             echo "Asynchronous goal store or crawl observation PostgreSQL integration was skipped" >&2
+            exit 1
+          fi
+
+      - name: Run fenced crawler handoff PostgreSQL integration
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          export THECROWLER_POSTGRES_INTEGRATION=1
+          log="$(mktemp)"
+          trap 'rm -f "$log"' EXIT
+          go test -tags=integration ./pkg/agent -run '^TestPostgresFullProposalApprovalSchedulerClaimAndObservation$' -count=1 -v 2>&1 | tee "$log"
+          for test in \
+            TestPostgresFullProposalApprovalSchedulerClaimAndObservation; do
+            grep -F -- "=== RUN   ${test}" "$log"
+            grep -F -- "--- PASS: ${test}" "$log"
+          done
+          if grep -Fq -- '--- SKIP' "$log"; then
+            echo "Fenced crawler handoff PostgreSQL integration was skipped" >&2
             exit 1
           fi
 

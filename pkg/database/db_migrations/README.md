@@ -101,3 +101,11 @@ scripts contain no goal tables.
 The migration files are source artifacts. They are not approval to apply DDL to
 a persistent, shared, staging or production database. Take a backup, rehearse on
 a disposable database, and obtain separate deployment authorization first.
+
+WP-05B3C3A changes no schema object. The replay fix uses the existing attempt
+and policy columns. The authenticated crawler handoff and fenced terminal-result
+protocol is design-only; if a future implementation needs a durable request
+fingerprint, an empty-batch acknowledgement or a terminal-receipt ledger, that
+must be an additive migration or same-version addon approved separately. Keep
+`RequiredSchemaVersion='1.17'` and
+`WriterGeneration='verified-ownership-v1.17'`.

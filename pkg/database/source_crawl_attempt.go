@@ -61,6 +61,20 @@ var (
 // SourceCrawlClaimRequest is trusted internal input. ClaimRequestID and
 // EngineID must come from trusted runtime code, never from a model, event, web
 // page or agent manifest.
+//
+// ClaimRequestID is an idempotency key for attempts that were actually
+// persisted. It is not an exactly-once batch token:
+//   - A request that selected no eligible sources leaves no durable
+//     acknowledgement, so replaying the same ID later can claim new work.
+//   - Replay verifies the persisted engine and lease duration, but priority,
+//     limits and the other timing intervals are not stored and cannot be
+//     compared. See sourceCrawlClaimRequestFingerprint for a pure digest that a
+//     future, separately approved schema extension could persist.
+//   - A live worker must allocate one fresh 256-bit claim request ID for every
+//     new batch and must not treat an empty or failed batch as committed.
+//
+// Commit-outcome reconciliation reads the durable attempt by this ID and
+// classifies it with database time; it never allocates a second generation.
 type SourceCrawlClaimRequest struct {
 	ClaimRequestID    string
 	Limit             int
@@ -77,6 +91,7 @@ type SourceCrawlClaimRequest struct {
 type SourceCrawlClaim struct {
 	Outcome         SourceCrawlClaimOutcome
 	SourceID        uint64
+	ClaimRequestID  string
 	AttemptID       string
 	Generation      uint64
 	EngineID        string
@@ -97,6 +112,13 @@ type SourceCrawlClaim struct {
 // source. It is read-only for operation/proposal rows and writes only source
 // status/engine plus the optional attempt tables. No crawler caller exists in
 // this package.
+//
+// A returned SourceCrawlClaim is an identity, not execution authority: the
+// current claim, lease, policy and operation binding must be revalidated in the
+// database transaction that performs a privileged mutation. Replaying an
+// expired or superseded request returns SourceCrawlClaimStaleFence, and an
+// unbound attempt replays as SourceCrawlUnattributed rather than a fabricated
+// bound success.
 func ClaimSourceCrawlAttempts(ctx context.Context, db *Handler, req SourceCrawlClaimRequest) ([]SourceCrawlClaim, error) {
 	return claimSourceCrawlAttemptsAt(ctx, db, req, time.Now().UTC())
 }
@@ -148,7 +170,7 @@ func claimSourceCrawlAttemptsAt(ctx context.Context, db *Handler, req SourceCraw
 		return nil, ErrSourceCrawlClaimLegacyMode
 	}
 
-	if existing, found, err := loadSourceCrawlClaimRequestTx(txCtx, tx, *db, req.ClaimRequestID); err != nil {
+	if existing, found, err := loadSourceCrawlClaimRequestTx(txCtx, tx, *db, req.ClaimRequestID, now); err != nil {
 		return nil, NormalizeTransactionError(txCtx, err)
 	} else if found {
 		if err := validateSourceCrawlClaimReplay(existing, req); err != nil {
@@ -206,7 +228,11 @@ func sameSourceCrawlClaims(existing, expected []SourceCrawlClaim) bool {
 	for _, claim := range existing {
 		want, ok := bySource[claim.SourceID]
 		if !ok || want.AttemptID != claim.AttemptID ||
+			want.ClaimRequestID != claim.ClaimRequestID ||
 			want.Generation != claim.Generation || want.EngineID != claim.EngineID ||
+			want.OperationID != claim.OperationID || want.RequestID != claim.RequestID ||
+			want.ApprovalID != claim.ApprovalID || want.ApprovalSHA256 != claim.ApprovalSHA256 ||
+			want.PrincipalUserID != claim.PrincipalUserID ||
 			!want.LeaseExpiresAt.Equal(claim.LeaseExpiresAt) {
 			return false
 		}
@@ -487,7 +513,8 @@ func claimOneSourceCrawlAttemptTx(ctx context.Context, tx *sql.Tx, db Handler, r
 
 	claim := SourceCrawlClaim{
 		Outcome: SourceCrawlUnattributed, SourceID: source.SourceID,
-		AttemptID: attemptID, Generation: generation, EngineID: req.EngineID,
+		ClaimRequestID: req.ClaimRequestID,
+		AttemptID:      attemptID, Generation: generation, EngineID: req.EngineID,
 		ClaimedAt: now, LeaseExpiresAt: leaseExpires,
 	}
 	candidate, outcome, err := resolveSourceCrawlCandidateTx(ctx, tx, db, source, claim)
@@ -546,7 +573,6 @@ func sourceCrawlSubmittedProposalsTx(ctx context.Context, tx *sql.Tx, db Handler
 	rows, err := tx.QueryContext(ctx,
 		`SELECT `+crawlProposalColumns()+` FROM CrawlProposals
 		 WHERE source_id=`+p(1)+` AND state='submitted'
-		   AND operation_id IS NOT NULL AND operation_id <> ''
 		 ORDER BY request_id`, sourceID)
 	if err != nil {
 		return nil, err
@@ -872,12 +898,19 @@ func sourceCrawlVerifiedOwnerTx(ctx context.Context, tx *sql.Tx, db Handler, sou
 	return provenanceUser == principalUserID, nil
 }
 
-func loadSourceCrawlClaimRequestTx(ctx context.Context, tx *sql.Tx, db Handler, claimRequestID string) ([]SourceCrawlClaim, bool, error) {
-	return loadSourceCrawlClaimRequestWith(ctx, tx, db, claimRequestID)
+func loadSourceCrawlClaimRequestTx(ctx context.Context, tx *sql.Tx, db Handler, claimRequestID string, now time.Time) ([]SourceCrawlClaim, bool, error) {
+	return loadSourceCrawlClaimRequestWithAt(ctx, tx, db, claimRequestID, now)
 }
 
+// loadSourceCrawlClaimRequest reads a persisted claim request for commit-outcome
+// reconciliation. It classifies execution eligibility with the database clock,
+// not the reconnecting worker's wall clock.
 func loadSourceCrawlClaimRequest(ctx context.Context, db Handler, claimRequestID string) ([]SourceCrawlClaim, bool, error) {
-	return loadSourceCrawlClaimRequestWith(ctx, db, db, claimRequestID)
+	now, err := sourceCrawlClaimDatabaseNow(ctx, db, db)
+	if err != nil {
+		return nil, false, err
+	}
+	return loadSourceCrawlClaimRequestWithAt(ctx, db, db, claimRequestID, now)
 }
 
 type sourceCrawlClaimQueryer interface {
@@ -885,7 +918,108 @@ type sourceCrawlClaimQueryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
-func loadSourceCrawlClaimRequestWith(ctx context.Context, q sourceCrawlClaimQueryer, db Handler, claimRequestID string) ([]SourceCrawlClaim, bool, error) {
+// sourceCrawlClaimDatabaseNow returns the authoritative clock used to decide
+// whether a persisted attempt may still execute. Workers must not substitute
+// their own wall clock for this decision before a privileged mutation.
+func sourceCrawlClaimDatabaseNow(ctx context.Context, q sourceCrawlClaimQueryer, db Handler) (time.Time, error) {
+	if normalizeDBMS(db.DBMS()) == "postgres" {
+		var now time.Time
+		if err := q.QueryRowContext(ctx, `SELECT CURRENT_TIMESTAMP`).Scan(&now); err != nil {
+			return time.Time{}, fmt.Errorf("%w: database clock", ErrSourceCrawlClaimUnavailable)
+		}
+		if now.IsZero() {
+			return time.Time{}, fmt.Errorf("%w: database clock is zero", ErrSourceCrawlClaimUnavailable)
+		}
+		return now.UTC().Truncate(time.Microsecond), nil
+	}
+	var julian float64
+	if err := q.QueryRowContext(ctx, `SELECT julianday('now')`).Scan(&julian); err != nil {
+		return time.Time{}, fmt.Errorf("%w: database clock", ErrSourceCrawlClaimUnavailable)
+	}
+	const unixEpochJulianDay = 2440587.5
+	seconds := (julian - unixEpochJulianDay) * 86400
+	if math.IsNaN(seconds) || math.IsInf(seconds, 0) {
+		return time.Time{}, fmt.Errorf("%w: database clock is invalid", ErrSourceCrawlClaimUnavailable)
+	}
+	return time.Unix(0, int64(math.Round(seconds*float64(time.Second)))).UTC().Truncate(time.Microsecond), nil
+}
+
+type sourceCrawlPersistedBinding struct {
+	OperationID     string
+	RequestID       string
+	RunID           string
+	AgentID         string
+	Owner           string
+	PrincipalUserID uint64
+	ApprovalID      string
+	ApprovalSHA256  string
+}
+
+func sourceCrawlDecodePersistedBinding(sourceID uint64, operation, request, run, agent, owner,
+	approval, approvalSHA sql.NullString, principal sql.NullInt64) (sourceCrawlPersistedBinding, bool, error) {
+	present := 0
+	for _, value := range []sql.NullString{operation, request, run, agent, owner, approval, approvalSHA} {
+		if value.Valid {
+			present++
+		}
+	}
+	if principal.Valid {
+		present++
+	}
+	if present == 0 {
+		return sourceCrawlPersistedBinding{}, false, nil
+	}
+	if present != 8 {
+		return sourceCrawlPersistedBinding{}, false,
+			fmt.Errorf("%w: partial attempt operation binding", ErrSourceCrawlClaimCorrupt)
+	}
+	binding := sourceCrawlPersistedBinding{
+		OperationID: operation.String, RequestID: request.String,
+		RunID: run.String, AgentID: agent.String, Owner: owner.String,
+		ApprovalID: approval.String, ApprovalSHA256: approvalSHA.String,
+	}
+	if principal.Int64 <= 0 {
+		return sourceCrawlPersistedBinding{}, false,
+			fmt.Errorf("%w: invalid attempt operation principal", ErrSourceCrawlClaimCorrupt)
+	}
+	binding.PrincipalUserID = uint64(principal.Int64)
+	if !sourceCrawlHashPattern.MatchString(binding.OperationID) ||
+		!sourceCrawlHashPattern.MatchString(binding.RequestID) ||
+		!sourceCrawlHashPattern.MatchString(binding.ApprovalID) ||
+		!sourceCrawlHashPattern.MatchString(binding.ApprovalSHA256) ||
+		strings.TrimSpace(binding.RunID) == "" || len(binding.RunID) > 256 ||
+		strings.TrimSpace(binding.AgentID) == "" || len(binding.AgentID) > 256 ||
+		strings.TrimSpace(binding.Owner) == "" || len(binding.Owner) > 256 {
+		return sourceCrawlPersistedBinding{}, false,
+			fmt.Errorf("%w: malformed attempt operation binding", ErrSourceCrawlClaimCorrupt)
+	}
+	if CrawlOperationKey(binding.Owner, binding.AgentID, sourceID, string(CrawlOperationType),
+		binding.RequestID) != binding.OperationID {
+		return sourceCrawlPersistedBinding{}, false,
+			fmt.Errorf("%w: attempt operation identity is inconsistent", ErrSourceCrawlClaimCorrupt)
+	}
+	return binding, true, nil
+}
+
+func sourceCrawlReplayOutcome(now time.Time, claim SourceCrawlClaim, state string, current, bound bool) SourceCrawlClaimOutcome {
+	if state != "claimed" || !current {
+		return SourceCrawlClaimStaleFence
+	}
+	if !now.Before(claim.LeaseExpiresAt) {
+		return SourceCrawlClaimStaleFence
+	}
+	if bound {
+		return SourceCrawlClaimed
+	}
+	return SourceCrawlUnattributed
+}
+
+func loadSourceCrawlClaimRequestWithAt(ctx context.Context, q sourceCrawlClaimQueryer, db Handler,
+	claimRequestID string, now time.Time) ([]SourceCrawlClaim, bool, error) {
+	if now.IsZero() {
+		return nil, false, fmt.Errorf("%w: replay clock is zero", ErrSourceCrawlClaimUnavailable)
+	}
+	now = now.UTC().Truncate(time.Microsecond)
 	p := func(n int) string { return sourceCrawlPlaceholder(db, n) }
 	rows, err := q.QueryContext(ctx,
 		`SELECT attempt_id, source_id, generation, engine_id, state, claimed_at, lease_expires_at,
@@ -898,8 +1032,10 @@ func loadSourceCrawlClaimRequestWith(ctx context.Context, q sourceCrawlClaimQuer
 	defer rows.Close() //nolint:errcheck
 	var out []SourceCrawlClaim
 	type scanned struct {
-		claim SourceCrawlClaim
-		state string
+		claim   SourceCrawlClaim
+		state   string
+		binding sourceCrawlPersistedBinding
+		bound   bool
 	}
 	scannedRows := make([]scanned, 0)
 	for rows.Next() {
@@ -912,14 +1048,24 @@ func loadSourceCrawlClaimRequestWith(ctx context.Context, q sourceCrawlClaimQuer
 			&owner, &principal, &approval, &approvalSHA); err != nil {
 			return nil, false, err
 		}
-		c.Reused = true
-		c.OperationID, c.RequestID, c.RunID = operation.String, request.String, run.String
-		c.AgentID, c.Owner = agent.String, owner.String
-		if principal.Valid && principal.Int64 > 0 {
-			c.PrincipalUserID = uint64(principal.Int64)
+		binding, bound, err := sourceCrawlDecodePersistedBinding(c.SourceID,
+			operation, request, run, agent, owner, approval, approvalSHA, principal)
+		if err != nil {
+			return nil, false, err
 		}
-		c.ApprovalID, c.ApprovalSHA256 = approval.String, approvalSHA.String
-		scannedRows = append(scannedRows, scanned{claim: c, state: state})
+		c.Reused = true
+		c.ClaimRequestID = claimRequestID
+		if bound {
+			c.OperationID = binding.OperationID
+			c.RequestID = binding.RequestID
+			c.RunID = binding.RunID
+			c.AgentID = binding.AgentID
+			c.Owner = binding.Owner
+			c.PrincipalUserID = binding.PrincipalUserID
+			c.ApprovalID = binding.ApprovalID
+			c.ApprovalSHA256 = binding.ApprovalSHA256
+		}
+		scannedRows = append(scannedRows, scanned{claim: c, state: state, binding: binding, bound: bound})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, false, err
@@ -933,11 +1079,7 @@ func loadSourceCrawlClaimRequestWith(ctx context.Context, q sourceCrawlClaimQuer
 		if err != nil {
 			return nil, false, err
 		}
-		if row.state == "claimed" && current {
-			c.Outcome = SourceCrawlClaimed
-		} else {
-			c.Outcome = SourceCrawlClaimStaleFence
-		}
+		c.Outcome = sourceCrawlReplayOutcome(now, c, row.state, current, row.bound)
 		out = append(out, c)
 	}
 	return out, len(out) > 0, nil
