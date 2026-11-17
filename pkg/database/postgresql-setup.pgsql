@@ -3128,6 +3128,15 @@ DECLARE
     priority_list TEXT[];
     use_priority_filter BOOLEAN := FALSE;
 BEGIN
+    -- Fenced mode belongs to the operator-owned attempt cutover. Old workers
+    -- call this same function, so returning no rows prevents an unfenced claim.
+    IF EXISTS (
+        SELECT 1 FROM SourceCrawlClaimPolicy
+        WHERE policy_id = 1 AND mode = 'fenced'
+    ) THEN
+        RETURN;
+    END IF;
+
     -- Handle nulls and defaults
     p_priority := COALESCE(TRIM(p_priority), '');
     p_last_ok_update := COALESCE(TRIM(p_last_ok_update));
@@ -4031,6 +4040,131 @@ ALTER SYSTEM SET max_connections = :'DB_MAX_CONNECTIONS';
 SELECT pg_reload_conf();
 
 --------------------------------------------------------------------------------
+-- BEGIN SOURCE CRAWL ATTEMPT (schema 1.17)
+-- Fenced source-crawl attempt ownership. Internal state only; no prompts,
+-- cookies, secrets, HTML, model text or unbounded errors are stored here.
+
+CREATE TABLE IF NOT EXISTS SchemaCapabilities (
+    capability              TEXT PRIMARY KEY,
+    applied_at              TIMESTAMPTZ NOT NULL,
+    applied_by              TEXT NOT NULL,
+    checksum                CHAR(64) NOT NULL,
+    details                 JSONB NOT NULL DEFAULT '{}',
+    CONSTRAINT chk_schema_capabilities_checksum
+        CHECK (checksum ~ '^[0-9a-f]{64}$')
+);
+
+CREATE TABLE IF NOT EXISTS SourceCrawlAttempts (
+    attempt_id       CHAR(64) PRIMARY KEY,
+    claim_request_id CHAR(64) NOT NULL,
+    source_id        BIGINT NOT NULL,
+    generation       BIGINT NOT NULL CHECK (generation > 0),
+    engine_id        TEXT NOT NULL CHECK (length(engine_id) BETWEEN 1 AND 256),
+    state            TEXT NOT NULL CHECK (state IN (
+                         'claimed','superseded','expired','abandoned',
+                         'completed','failed','cancelled')),
+    claimed_at       TIMESTAMPTZ(6) NOT NULL,
+    lease_expires_at TIMESTAMPTZ(6) NOT NULL,
+    superseded_by_generation BIGINT,
+    terminal_at      TIMESTAMPTZ(6),
+    reason_code      VARCHAR(64),
+    operation_id     CHAR(64),
+    request_id       CHAR(64),
+    run_id           TEXT,
+    agent_id         TEXT,
+    owner            TEXT,
+    principal_user_id BIGINT,
+    approval_id      CHAR(64),
+    approval_sha256  CHAR(64),
+    created_at       TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_updated_at  TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_source_crawl_attempt_generation UNIQUE (source_id, generation),
+    CONSTRAINT uq_source_crawl_attempt_request_source UNIQUE (claim_request_id, source_id),
+    CONSTRAINT chk_source_crawl_attempt_request CHECK (claim_request_id ~ '^[a-f0-9]{64}$'),
+    CONSTRAINT chk_source_crawl_attempt_id CHECK (attempt_id ~ '^[a-f0-9]{64}$'),
+    CONSTRAINT chk_source_crawl_attempt_lease CHECK (lease_expires_at > claimed_at),
+    CONSTRAINT chk_source_crawl_attempt_binding CHECK (
+        (operation_id IS NULL AND request_id IS NULL AND run_id IS NULL AND
+         agent_id IS NULL AND owner IS NULL AND principal_user_id IS NULL AND
+         approval_id IS NULL AND approval_sha256 IS NULL)
+        OR
+        (operation_id IS NOT NULL AND request_id IS NOT NULL AND run_id IS NOT NULL AND
+         agent_id IS NOT NULL AND owner IS NOT NULL AND principal_user_id > 0 AND
+         approval_id IS NOT NULL AND approval_sha256 IS NOT NULL)
+    ),
+    CONSTRAINT chk_source_crawl_attempt_state CHECK (
+        (state = 'claimed' AND superseded_by_generation IS NULL AND terminal_at IS NULL)
+        OR (state = 'superseded' AND superseded_by_generation IS NOT NULL AND
+            superseded_by_generation > generation AND terminal_at IS NOT NULL)
+        OR (state IN ('expired','abandoned','completed','failed','cancelled') AND terminal_at IS NOT NULL)
+    ),
+    CONSTRAINT chk_source_crawl_attempt_reason CHECK (
+        reason_code IS NULL OR reason_code ~ '^[a-z][a-z0-9_]{0,63}$'
+    )
+);
+CREATE INDEX IF NOT EXISTS idx_source_crawl_attempts_source
+    ON SourceCrawlAttempts (source_id, generation DESC);
+CREATE INDEX IF NOT EXISTS idx_source_crawl_attempts_request
+    ON SourceCrawlAttempts (claim_request_id, source_id);
+CREATE INDEX IF NOT EXISTS idx_source_crawl_attempts_lease
+    ON SourceCrawlAttempts (state, lease_expires_at);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_source_crawl_attempts_active_operation
+    ON SourceCrawlAttempts (operation_id)
+    WHERE operation_id IS NOT NULL AND state = 'claimed';
+
+CREATE TABLE IF NOT EXISTS SourceCrawlClaims (
+    source_id        BIGINT PRIMARY KEY,
+    attempt_id       CHAR(64) NOT NULL UNIQUE,
+    claim_request_id CHAR(64) NOT NULL,
+    generation       BIGINT NOT NULL CHECK (generation > 0),
+    engine_id        TEXT NOT NULL CHECK (length(engine_id) BETWEEN 1 AND 256),
+    claimed_at       TIMESTAMPTZ(6) NOT NULL,
+    lease_expires_at TIMESTAMPTZ(6) NOT NULL,
+    last_updated_at  TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_source_crawl_claim_generation UNIQUE (source_id, generation),
+    CONSTRAINT fk_source_crawl_claim_source
+        FOREIGN KEY (source_id) REFERENCES Sources(source_id) ON DELETE CASCADE,
+    CONSTRAINT fk_source_crawl_claim_attempt_id
+        FOREIGN KEY (attempt_id) REFERENCES SourceCrawlAttempts(attempt_id)
+        DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT fk_source_crawl_claim_attempt
+        FOREIGN KEY (source_id, generation)
+        REFERENCES SourceCrawlAttempts(source_id, generation)
+        DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT chk_source_crawl_claim_request CHECK (claim_request_id ~ '^[a-f0-9]{64}$'),
+    CONSTRAINT chk_source_crawl_claim_lease CHECK (lease_expires_at > claimed_at)
+);
+CREATE INDEX IF NOT EXISTS idx_source_crawl_claims_attempt
+    ON SourceCrawlClaims (attempt_id);
+CREATE INDEX IF NOT EXISTS idx_source_crawl_claims_request
+    ON SourceCrawlClaims (claim_request_id);
+
+CREATE TABLE IF NOT EXISTS SourceCrawlClaimPolicy (
+    policy_id  SMALLINT PRIMARY KEY CHECK (policy_id = 1),
+    mode       TEXT NOT NULL CHECK (mode IN ('legacy','fenced')),
+    updated_at TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+INSERT INTO SourceCrawlClaimPolicy(policy_id, mode)
+VALUES (1, 'legacy') ON CONFLICT (policy_id) DO NOTHING;
+
+INSERT INTO SchemaCapabilities (capability, applied_at, applied_by, checksum, details)
+VALUES ('source-crawl-attempt-v1', CURRENT_TIMESTAMP, 'migration',
+        'abb79c543a11ed355c6e76d42c235261b024bef01a9b507a5bf0263db89248bd',
+        '{"schema_version":"1.17"}'::jsonb)
+ON CONFLICT (capability) DO UPDATE
+    SET applied_at = EXCLUDED.applied_at,
+        applied_by = EXCLUDED.applied_by,
+        checksum = EXCLUDED.checksum,
+        details = EXCLUDED.details;
+-- END SOURCE CRAWL ATTEMPT (schema 1.17)
+ALTER TABLE SourceCrawlAttempts OWNER TO :CROWLER_DB_USER;
+ALTER TABLE SourceCrawlClaims OWNER TO :CROWLER_DB_USER;
+ALTER TABLE SourceCrawlClaimPolicy OWNER TO :CROWLER_DB_USER;
+GRANT SELECT, INSERT, UPDATE ON SourceCrawlAttempts TO :CROWLER_DB_USER;
+GRANT SELECT, INSERT, UPDATE ON SourceCrawlClaims TO :CROWLER_DB_USER;
+GRANT SELECT, INSERT, UPDATE ON SourceCrawlClaimPolicy TO :CROWLER_DB_USER;
+
+
 -- WP-04C2-B additive MCP mutation persistence capability (schema 1.17).
 -- This block is idempotent and does not change the schema version.
 --------------------------------------------------------------------------------

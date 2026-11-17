@@ -131,23 +131,31 @@ tests passed.
 
 ## Decision 1d: durable crawl-attempt storage
 
-**Status: STAGE A COMPLETE; ADDITIVE 1.17 ATTEMPT STORAGE PENDING APPROVAL.**
+**Status: STAGE B IMPLEMENTED; PRODUCTION ACTIVATION PENDING.**
 
-The Stage A design in `ASYNC_GOAL_B3C2_ATTEMPT_CLAIM_DESIGN.md` traces the real
-source claim and crawler handoff. Today `update_sources` claims a source and
-returns source columns; no operation ID, attempt ID or fence reaches the
-crawler. A pure, non-persistent attempt contract and negative tests exist in
-`pkg/database/source_crawl_attempt_contract.go`.
+The maintainer approved the Stage A design and authorized Stage B for the
+additive schema-1.17 attempt objects, the `legacy`/`fenced` cutover in
+`update_sources`, the internal opt-in claim API and disposable PostgreSQL/SQLite
+tests only.
 
-No DDL was changed and no claim API was implemented. Stage B is **BLOCKED**
-until the maintainer explicitly approves the additive 1.17
-`SourceCrawlClaims`, `SourceCrawlAttempts`, `SourceCrawlClaimPolicy` objects,
-the `source-crawl-attempt-v1` capability, and the legacy/fenced cutover that
-makes `update_sources` return no rows while fenced mode is active.
+Implemented:
 
-Approval of the design is not approval of production activation. No worker,
-crawler caller, terminal completion reporting, resume worker, public
-configuration or schema-1.18 release is authorized by this entry.
+- `SourceCrawlClaims`, `SourceCrawlAttempts` and `SourceCrawlClaimPolicy` in the
+  unreleased 1.17 PostgreSQL and SQLite fresh installs and v1.16 -> v1.17
+  migrations;
+- repeatable same-version development addons with fail-closed structural
+  guards;
+- the `source-crawl-attempt-v1` capability marker and read-only readiness check;
+- PostgreSQL fenced `update_sources` returning no rows to old workers;
+- the atomic claim repository with idempotent claim-request identity, monotonic
+  per-source generations, append-only history and optional operation binding;
+- SQLite and disposable PostgreSQL integration tests.
+
+Production activation is **not approved**. No crawler, worker, event consumer,
+agent, MCP client or production service calls the claim API. No terminal result
+is recorded, no public configuration is added, and schema 1.18 is not
+authorized. WP-05B3C3 must design and review the crawler handoff and fenced
+terminal result separately.
 
 ## Decision 2: resume phase
 
@@ -238,9 +246,9 @@ No public schema or example was changed.
 
 ## Next action
 
-Maintainer decision required on the WP-05B3C2 Stage A attempt-storage design.
-Only after explicit approval may Stage B implement additive 1.17 attempt objects
-and the opt-in fenced claim API. Terminal completion reporting, execution
-ownership, claim/lease coordination, cancellation finalization, production store
-activation and public contracts remain later separately reviewed phases. Do not
-apply any addon to a persistent database or begin those phases automatically.
+WP-05B3C2 Stage B is implemented and locally tested. A maintainer decision is
+still required before production activation, a crawler/worker caller, terminal
+completion reporting, execution ownership, cancellation finalization or public
+configuration. WP-05B3C3 must design the authenticated attempt handoff and the
+fenced terminal result with separate review. Do not apply any addon to a
+persistent database or begin those phases automatically.

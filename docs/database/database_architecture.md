@@ -119,6 +119,23 @@ still be running.
 Do not apply schema migrations to an existing persistent deployment database
 without maintainer authorization.
 
+## Fenced source-crawl attempts
+
+Schema 1.17 also carries the optional `SourceCrawlClaims`,
+`SourceCrawlAttempts` and `SourceCrawlClaimPolicy` objects used by the internal
+fenced claim API. A current claim stores one source's latest attempt ID,
+claim-request ID, monotonic generation, engine and lease; the append-only
+attempt table stores the immutable operation/approval binding when one
+unambiguous scheduled operation exists. `SourceCrawlClaimPolicy.mode` defaults
+to `legacy`; while it is `fenced`, the PostgreSQL `update_sources(...)` function
+returns no rows so old workers cannot create an unfenced claim.
+
+The optional objects are absent from MySQL. They are not required by ordinary
+startup and are not applied automatically. Operators apply the same-version
+development addon manually or use a fresh v1.17 install/v1.16 -> v1.17
+migration. The capability marker is `source-crawl-attempt-v1`; no crawler or
+agent caller uses the claim API in this phase.
+
 ## Verified source ownership
 
 `Sources.usr_id` is the stored owner identifier, but only a matching

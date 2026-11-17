@@ -169,6 +169,7 @@ func TestSourceCrawlAttemptRejectsPartialBinding(t *testing.T) {
 		{"missing approval", func(b *sourceCrawlOperationBinding) { b.ApprovalID = "" }},
 		{"missing approval hash", func(b *sourceCrawlOperationBinding) { b.ApprovalSHA256 = "" }},
 		{"missing run", func(b *sourceCrawlOperationBinding) { b.RunID = "" }},
+		{"overlong run", func(b *sourceCrawlOperationBinding) { b.RunID = strings.Repeat("r", 257) }},
 		{"missing agent", func(b *sourceCrawlOperationBinding) { b.AgentID = "" }},
 		{"missing owner", func(b *sourceCrawlOperationBinding) { b.Owner = "" }},
 		{"zero principal", func(b *sourceCrawlOperationBinding) { b.PrincipalUserID = 0 }},

@@ -47,6 +47,32 @@ fail closed when a same-named table, column, index, foreign key or check
 constraint is structurally incompatible. They are not applied automatically at
 startup.
 
+The unreleased 1.17 baseline also contains the optional fenced source-crawl
+attempt objects (`SourceCrawlClaims`, `SourceCrawlAttempts` and
+`SourceCrawlClaimPolicy`) and the `source-crawl-attempt-v1` capability marker.
+Fresh installs and the v1.16 -> v1.17 migration create them. The default policy
+mode is `legacy`; while `fenced`, the PostgreSQL `update_sources(...)` function
+returns no rows to old workers. Its seven-argument signature and eight-column
+result are unchanged.
+
+Development databases already stamped 1.17 can add the missing attempt objects
+with:
+
+- `postgresql-source-crawl-attempt-v1.17.pgsql`
+- `sqlite-source-crawl-attempt-v1.17.sqlite3`
+
+These addons are manual, opt-in, administrator scripts. Run the PostgreSQL addon
+with the `postgres` account and `-v CROWLER_DB_USER=<runtime role>`; it creates
+the objects, installs the fenced-mode-aware `update_sources` function and
+transfers ownership/grants. Run the SQLite addon with `sqlite3` while no service
+is writing. Both scripts are safe to re-run, preserve existing attempt rows and
+an existing `fenced` policy mode, and fail closed on incompatible same-named
+objects. They do not change `DBSchemaVersion` or
+`DatabaseWriterCompatibility` and are not applied automatically at startup.
+
+The claim API remains internal and opt-in. Ordinary startup does not require the
+optional attempt objects, and MySQL remains legacy-only with no attempt tables.
+
 MySQL keeps its existing 1.17 startup and migration behavior. Asynchronous goal
 persistence is deliberately unsupported on MySQL in this phase; the MySQL
 scripts contain no goal tables.

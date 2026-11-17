@@ -1,15 +1,25 @@
-# WP-05B3C2 Stage A: Durable Crawl-Attempt Claim Design
+# WP-05B3C2: Durable Crawl-Attempt Claim Design
 
 ## Status
 
-**Stage A only. No DDL changed. Attempt storage is PENDING MAINTAINER APPROVAL.**
+**Stage B implemented; production activation is NOT approved.**
 
-Schema remains 1.17 and writer generation remains
-`verified-ownership-v1.17`. The claim API is not implemented, no crawler or
-event path uses it, and no database was migrated.
+The maintainer approved the additive schema-1.17 attempt objects, the
+`legacy`/`fenced` cutover in `update_sources`, and the internal opt-in claim API
+for disposable tests only. Schema remains 1.17 and writer generation remains
+`verified-ownership-v1.17`.
 
-A pure, non-persistent claim contract and negative tests are implemented in
-`pkg/database/source_crawl_attempt_contract.go` and its test file.
+Implemented in this package:
+
+- PostgreSQL and SQLite fresh-install and v1.16 -> v1.17 attempt objects;
+- repeatable same-version development addons with fail-closed guards;
+- the `source-crawl-attempt-v1` capability marker and read-only readiness check;
+- the atomic claim repository in `pkg/database/source_crawl_attempt.go`;
+- fenced `update_sources` behavior for PostgreSQL;
+- SQLite and disposable PostgreSQL integration tests.
+
+No crawler, worker, event consumer, agent, MCP client or production service
+constructs or calls the claim API. No terminal result is recorded.
 
 ## 1. Verified baseline facts
 
@@ -52,8 +62,9 @@ place until an explicit fenced-mode cutover.
    request, return those stored attempts without allocating new generations.
 4. Select eligible sources with the same priority, status, disabled and stale
    processing rules as `update_sources`, ordered by
-   `sub_priority DESC, source_id ASC`, with `FOR UPDATE SKIP LOCKED` on
-   PostgreSQL. SQLite serializes writers at database level.
+   `sub_priority DESC, source_id ASC`, with `FOR UPDATE OF s SKIP LOCKED` on
+   PostgreSQL. A source with an unexpired current claim is excluded; an expired
+   claim permits a new generation. SQLite serializes writers at database level.
 5. For each locked source:
    1. Recheck the source is live and enabled.
    2. Recheck current verified source ownership against
@@ -76,10 +87,10 @@ place until an explicit fenced-mode cutover.
    atomically.
 9. Return the attempt ID, generation, source IDs and a closed attribution result.
 
-`update_sources` is not changed in Stage A. Under the proposed Stage B fenced
-mode, its body returns zero rows while `SourceCrawlClaimPolicy.mode='fenced'`,
-so an old worker cannot create an unfenced claim after cutover. Its signature
-and result columns are unchanged.
+`update_sources` keeps its seven-argument signature and eight-column result.
+While `SourceCrawlClaimPolicy.mode='fenced'`, its body returns zero rows, so an
+old worker cannot create an unfenced claim after cutover. The function is not
+changed in a database that has not applied the optional attempt addon.
 
 ## 3. Operation-binding policy
 
@@ -90,6 +101,9 @@ A candidate operation must satisfy all of:
   `Status.status_sha256`;
 - `Status.operation_type='crawl'` and `Status.status='accepted'`;
 - `Status.agent_id`, `source_id` agree with the proposal;
+- `Status.details` is strict JSON (unknown fields and trailing data rejected)
+  whose request, run, principal, agent, owner, source, operation type, parameter
+  hash and approval identity match the proposal and approval rows;
 - `CrawlApprovals` exists with exact request/run/agent/owner/principal/source,
   proposal hash and approval hash;
 - the operation was accepted at or after `approved_at` and before proposal and
@@ -117,9 +131,9 @@ an explicit result code. They are never silently bound and never complete an
 operation. `already_pending` is explicitly not ownership of the current attempt.
 A source-only completion or `crawl_completed` event never creates a binding.
 
-## 4. Proposed storage (not applied)
+## 4. Implemented storage
 
-Names are proposals for review.
+The objects below are part of the unreleased 1.17 fresh-install and migration paths.
 
 ### 4.1 `SourceCrawlClaims` — current claim, one row per source
 
@@ -284,7 +298,7 @@ exact attempt/generation.
 
 ## 7. Capability gate
 
-A read-only `CheckSourceCrawlAttemptSchema` (Stage B) must verify:
+The read-only `CheckSourceCrawlAttemptSchema` verifies:
 
 - active schema `1.17` and writer generation `verified-ownership-v1.17`;
 - exact tables, columns, primary/unique/foreign keys, checks and indexes;
@@ -335,10 +349,10 @@ new generation.
 - Owner transfer after a claim does not rewrite the immutable attempt binding;
   new claims revalidate current ownership.
 
-## 10. Migration, rollout and rollback (if approved)
+## 10. Migration, rollout and rollback
 
-- Add the objects to the unreleased 1.17 PostgreSQL and SQLite fresh installs
-  and the v1.16→1.17 migration scripts.
+- The objects are part of the unreleased 1.17 PostgreSQL and SQLite fresh installs
+  and the v1.16 -> 1.17 migration scripts.
 - Add repeatable same-version development addons with fail-closed structural
   guards. Do not reset an existing fenced mode.
 - Update `db_migrations/README.md`; keep `RequiredSchemaVersion='1.17'` and
@@ -351,7 +365,7 @@ new generation.
   tables/history intact; disable the capability marker only if a later reviewed
   procedure requires it. Never drop attempt history as a routine rollback.
 
-## 11. Tests delivered in Stage A
+## 11. Tests
 
 The pure contract tests prove:
 
@@ -364,29 +378,32 @@ The pure contract tests prove:
 - exact-fence ownership and stale/not-owner rejection;
 - rejection of raw-looking payload/secret fields in the contract.
 
-They are structural only. They do not pretend persistence exists.
+They are structural only; the persistence tests below prove the SQL behavior.
 
-## 12. Stage B tests required after approval
+The implemented Stage B tests prove:
 
-- ordinary `update_sources` returns the same columns and selection behavior in
-  legacy mode;
+- ordinary `update_sources` returns the same eight columns and selection
+  behavior in legacy mode;
 - fenced mode returns no rows to the legacy function;
-- new claim increments generation and invalidates the previous attempt;
+- a new claim increments generation and supersedes the previous attempt;
 - concurrent PostgreSQL claimers cannot both own one generation;
-- exact attempt-ID/generation CAS rejects stale and wrong-owner mutations;
+- exact attempt-ID/generation fence checks reject stale and wrong-owner calls;
 - ambiguous, `already_pending`, invalid ownership and multiple operations never
   bind;
-- disabled/deleted/transferred sources are not bound;
+- disabled sources are not selected, and transferred sources are not
+  attributable;
 - transaction rollback leaves no partial source/attempt/binding;
-- commit uncertainty reconciles by stored identity;
-- fresh install, v1.16→1.17 and repeatable addon paths converge and preserve
-  rows; marker/version/writer values stay 1.17/verified-ownership-v1.17;
-- missing storage fails closed for the opt-in API while ordinary startup/MySQL
-  remain usable.
+- idempotent retries return the stored attempt and do not allocate a generation;
+- a bound operation can be rebound only after the prior attempt is superseded;
+- fresh install, v1.16 -> v1.17 migration and repeatable addon paths converge
+  and preserve rows; marker/version/writer values stay
+  `1.17`/`verified-ownership-v1.17`;
+- missing optional storage fails closed for the opt-in API while ordinary
+  SQLite startup still succeeds and MySQL remains unsupported.
 
-## 13. Approval required before Stage B
+## 12. Approval and activation boundary
 
-This package requests explicit approval for:
+Approved Stage B scope was limited to:
 
 1. the additive 1.17 `SourceCrawlClaims`, `SourceCrawlAttempts`,
    `SourceCrawlClaimPolicy` objects and `source-crawl-attempt-v1` capability;
@@ -394,7 +411,7 @@ This package requests explicit approval for:
 3. the internal opt-in claim API and its readiness check;
 4. disposable PostgreSQL/SQLite integration tests only.
 
-It does **not** authorize production activation, a worker/crawler caller,
-terminal completion reporting, a resume worker, public configuration or a
-schema-1.18 release. Until that approval is recorded, Stage B is **BLOCKED** and
-only this design and pure contract exist.
+Production activation remains **not approved**. No worker/crawler caller,
+terminal completion reporting, resume worker, public configuration or
+schema-1.18 release exists. The next package, WP-05B3C3, must design the fenced
+terminal result and the crawler handoff with separate review.
