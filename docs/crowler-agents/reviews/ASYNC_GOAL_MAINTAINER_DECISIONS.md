@@ -253,6 +253,32 @@ additive schema) decisions are still pending. See
 handoff, any schema/migration/checksum change, worker activation, automatic goal
 resume or production execution.
 
+## Decision 1h: receipt authority closure and B1 gate
+
+**Status: PHASE A PURE HARDENING IMPLEMENTED; B1 REMAINS PENDING.**
+
+WP-05B3C3B1R closes the remaining pure-contract gaps:
+
+- Source-status mutation now requires full authority preflight success. A
+  revoked-before-acceptance snapshot, expired fence, missing/corrupt authority,
+  wrong binding or unbound attempt cannot update source status.
+- Current claim and history rows must agree on source, attempt, generation,
+  claim request, engine, claim time and lease. Any disagreement is corrupt.
+- Claim batches read a per-source timestamp after each source row lock and a
+  final freshness timestamp. A short lease that expires during a long batch is
+  returned as `stale_fence`, never executable `claimed`.
+- An original `ClaimRequestID` reused after heartbeat renewal fails closed with
+  `conflict`; the lease is not reset and full request equality is not claimed.
+- Read-only terminal replay now validates incoming receipt structure without
+  requiring a live lease, so malformed receipts cannot be idempotent and exact
+  post-expiry replay remains possible.
+- Unbound source-status mutation is denied because 1.17 stores no unbound
+  operation principal or owner-continuity proof.
+
+No B1 repository, heartbeat, terminal writer, DDL, live caller or production
+activation is approved. The B1 gate remains exactly as requested in
+`ASYNC_GOAL_B3C3_STAGE_B_APPROVAL_REQUEST.md`.
+
 ## Decision 2: resume phase
 
 **Status: PENDING.**
@@ -342,7 +368,7 @@ No public schema or example was changed.
 
 ## Next action
 
-WP-05B3C3B1 Phase A repairs and the corrected design review are implemented and
+WP-05B3C3B1R Phase A repairs and the updated design review are implemented and
 locally tested. Hosted PostgreSQL CI must be green on the exact submitted commit
 before the package is reported as fully verified. Phase B remains blocked: the
 internal repository/heartbeat (B1), live crawler caller (B2) and optional DDL

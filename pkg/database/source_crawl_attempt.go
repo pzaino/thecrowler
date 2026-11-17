@@ -179,13 +179,9 @@ func claimSourceCrawlAttemptsWithClock(ctx context.Context, db *Handler, req Sou
 	if mode != "fenced" {
 		return nil, ErrSourceCrawlClaimLegacyMode
 	}
-	now, err := clock(txCtx, tx, *db)
+	now, err := sourceCrawlReadClaimClock(txCtx, tx, *db, clock)
 	if err != nil {
 		return nil, NormalizeTransactionError(txCtx, err)
-	}
-	now = now.UTC().Truncate(time.Microsecond)
-	if now.IsZero() {
-		return nil, fmt.Errorf("%w: trusted clock is zero", ErrSourceCrawlClaimInvalidRequest)
 	}
 
 	if existing, found, err := loadSourceCrawlClaimRequestTx(txCtx, tx, *db, req.ClaimRequestID, now); err != nil {
@@ -207,11 +203,32 @@ func claimSourceCrawlAttemptsWithClock(ctx context.Context, db *Handler, req Sou
 	}
 	claims := make([]SourceCrawlClaim, 0, len(sources))
 	for _, source := range sources {
-		claim, err := claimOneSourceCrawlAttemptTx(txCtx, tx, *db, req, now, source)
+		// The batch selection timestamp can be stale by the time this source is
+		// persisted. Read fresh time after the source row is locked and before
+		// the claim/lease mutation so the lease starts at persistence time.
+		sourceNow, err := sourceCrawlReadClaimClock(txCtx, tx, *db, clock)
+		if err != nil {
+			return nil, NormalizeTransactionError(txCtx, err)
+		}
+		claim, err := claimOneSourceCrawlAttemptTx(txCtx, tx, *db, req, sourceNow, source)
 		if err != nil {
 			return nil, NormalizeTransactionError(txCtx, err)
 		}
 		claims = append(claims, claim)
+	}
+	if len(claims) > 0 {
+		// A long batch can outlive a short lease. Never return an expired
+		// attempt as executable "claimed" authority.
+		finalNow, err := sourceCrawlReadClaimClock(txCtx, tx, *db, clock)
+		if err != nil {
+			return nil, NormalizeTransactionError(txCtx, err)
+		}
+		for i := range claims {
+			if claims[i].Outcome == SourceCrawlClaimed &&
+				!finalNow.Before(claims[i].LeaseExpiresAt) {
+				claims[i].Outcome = SourceCrawlClaimStaleFence
+			}
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		// Reconcile an uncertain commit by the trusted claim request ID. Never
@@ -228,6 +245,19 @@ func claimSourceCrawlAttemptsWithClock(ctx context.Context, db *Handler, req Sou
 	}
 	committed = true
 	return claims, nil
+}
+
+func sourceCrawlReadClaimClock(ctx context.Context, tx *sql.Tx, db Handler,
+	clock sourceCrawlClaimClock) (time.Time, error) {
+	now, err := clock(ctx, tx, db)
+	if err != nil {
+		return time.Time{}, err
+	}
+	now = now.UTC().Truncate(time.Microsecond)
+	if now.IsZero() {
+		return time.Time{}, fmt.Errorf("%w: trusted clock is zero", ErrSourceCrawlClaimInvalidRequest)
+	}
+	return now, nil
 }
 
 type sourceCrawlSourceRow struct {

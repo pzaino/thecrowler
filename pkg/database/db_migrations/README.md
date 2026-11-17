@@ -117,3 +117,8 @@ acknowledgement is a separately requested additive 1.17 extension and is **not
 approved or implemented**. Keep `RequiredSchemaVersion='1.17'`,
 `WriterGeneration='verified-ownership-v1.17'` and the current
 `source-crawl-attempt-v1` checksum.
+
+WP-05B3C3B1R adds no DDL. Its source-status, duplicate current/history field,
+per-source claim-clock and replay-structure corrections use existing 1.17
+objects. B1 Option A remains unapproved; any stronger request/receipt or
+owner-continuity storage remains a separate B3 design-only request.

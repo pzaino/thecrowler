@@ -287,18 +287,23 @@ func sourceCrawlTerminalOperationTransitionAllowed(expected, result CrawlOperati
 	}
 }
 
-func (r sourceCrawlTerminalReceipt) validate(now time.Time) error {
-	if !validSourceCrawlAttemptTime(now) || !validSourceCrawlAttemptTime(r.ObservedAt) {
-		return fmt.Errorf("%w: terminal receipt timestamps", errSourceCrawlAttemptInvalid)
-	}
-	if r.ObservedAt.Before(r.Attempt.ClaimedAt) || r.ObservedAt.After(now) {
+// validateStructure checks the receipt shape without evaluating current lease
+// eligibility. It is used by first application with live time and by the
+// read-only replay path after expiry.
+func (r sourceCrawlTerminalReceipt) validateStructure() error {
+	if !validSourceCrawlAttemptTime(r.ObservedAt) {
 		return fmt.Errorf("%w: terminal observation time", errSourceCrawlAttemptInvalid)
 	}
-	if err := (sourceCrawlCrawlerHandoff{Attempt: r.Attempt, Attribution: r.Attribution}).validate(now); err != nil {
+	if err := r.Attempt.validate(); err != nil {
 		return err
 	}
-	if !r.ObservedAt.Before(r.Attempt.LeaseExpiresAt) {
-		return fmt.Errorf("%w: terminal receipt after lease expiry", errSourceCrawlAttemptStale)
+	if r.Attempt.State != sourceCrawlAttemptClaimed ||
+		!r.Attempt.TerminalAt.IsZero() || r.Attempt.SupersededBy != 0 {
+		return fmt.Errorf("%w: terminal receipt attempt is not a live claim shape",
+			errSourceCrawlAttemptInvalid)
+	}
+	if r.ObservedAt.Before(r.Attempt.ClaimedAt) {
+		return fmt.Errorf("%w: terminal observation precedes claim", errSourceCrawlAttemptInvalid)
 	}
 	expectedReason, ok := sourceCrawlTerminalReasonCodes[r.Outcome]
 	if !ok || r.ReasonCode != expectedReason {
@@ -306,9 +311,17 @@ func (r sourceCrawlTerminalReceipt) validate(now time.Time) error {
 	}
 	switch r.Attribution {
 	case sourceCrawlHandoffBound:
-		if r.OperationResult == nil {
+		if r.Attempt.Binding == nil || r.OperationResult == nil {
 			return fmt.Errorf("%w: bound terminal receipt lacks an operation result",
 				errSourceCrawlAttemptInvalid)
+		}
+		if err := r.Attempt.Binding.validate(); err != nil {
+			return err
+		}
+		if CrawlOperationKey(r.Attempt.Binding.Owner, r.Attempt.Binding.AgentID,
+			r.Attempt.SourceID, string(CrawlOperationType),
+			r.Attempt.Binding.RequestID) != r.Attempt.Binding.OperationID {
+			return fmt.Errorf("%w: terminal operation identity", errSourceCrawlAttemptInvalid)
 		}
 		if err := r.OperationResult.Binding.validate(); err != nil {
 			return err
@@ -329,12 +342,31 @@ func (r sourceCrawlTerminalReceipt) validate(now time.Time) error {
 		}
 	case sourceCrawlHandoffUnattributed, sourceCrawlHandoffAmbiguous,
 		sourceCrawlHandoffNotAttributable:
-		if r.OperationResult != nil {
-			return fmt.Errorf("%w: unbound terminal receipt claims an operation result",
+		if r.Attempt.Binding != nil || r.OperationResult != nil {
+			return fmt.Errorf("%w: unbound terminal receipt claims operation identity",
 				errSourceCrawlAttemptInvalid)
 		}
 	default:
 		return fmt.Errorf("%w: terminal attribution", errSourceCrawlAttemptInvalid)
+	}
+	return nil
+}
+
+func (r sourceCrawlTerminalReceipt) validate(now time.Time) error {
+	if !validSourceCrawlAttemptTime(now) {
+		return fmt.Errorf("%w: terminal receipt clock", errSourceCrawlAttemptInvalid)
+	}
+	if err := r.validateStructure(); err != nil {
+		return err
+	}
+	if r.ObservedAt.After(now) {
+		return fmt.Errorf("%w: terminal observation is in the future", errSourceCrawlAttemptInvalid)
+	}
+	if !now.Before(r.Attempt.LeaseExpiresAt) {
+		return fmt.Errorf("%w: terminal receipt after lease expiry", errSourceCrawlAttemptStale)
+	}
+	if !r.ObservedAt.Before(r.Attempt.LeaseExpiresAt) {
+		return fmt.Errorf("%w: terminal observation after lease expiry", errSourceCrawlAttemptStale)
 	}
 	return nil
 }
@@ -368,6 +400,13 @@ type sourceCrawlTerminalAuthority struct {
 	ClaimRequestID string
 	EngineID       string
 	ClaimedAt      time.Time
+
+	HistorySourceID       uint64
+	HistoryAttemptID      string
+	HistoryGeneration     uint64
+	HistoryClaimRequestID string
+	HistoryEngineID       string
+	HistoryClaimedAt      time.Time
 
 	CurrentLeaseExpiresAt time.Time
 	HistoryLeaseExpiresAt time.Time
@@ -410,6 +449,17 @@ func (a sourceCrawlTerminalAuthority) validateSnapshot() error {
 	}
 	if strings.TrimSpace(a.EngineID) == "" || len(a.EngineID) > 256 {
 		return fmt.Errorf("%w: engine", errSourceCrawlTerminalCorrupt)
+	}
+	if a.HistorySourceID != a.SourceID || a.HistoryAttemptID != a.AttemptID ||
+		a.HistoryGeneration != a.Generation || a.HistoryClaimRequestID != a.ClaimRequestID ||
+		a.HistoryEngineID != a.EngineID || !a.HistoryClaimedAt.Equal(a.ClaimedAt) {
+		return fmt.Errorf("%w: current and history identity disagree", errSourceCrawlTerminalCorrupt)
+	}
+	if !sourceCrawlAttemptIDPattern.MatchString(a.HistoryAttemptID) ||
+		a.HistoryGeneration == 0 || !sourceCrawlHashPattern.MatchString(a.HistoryClaimRequestID) ||
+		strings.TrimSpace(a.HistoryEngineID) == "" || len(a.HistoryEngineID) > 256 ||
+		!validSourceCrawlAttemptTime(a.HistoryClaimedAt) {
+		return fmt.Errorf("%w: history identity", errSourceCrawlTerminalCorrupt)
 	}
 	if !a.AttemptState.valid() || !a.ApprovalHistory.valid() {
 		return fmt.Errorf("%w: attempt or approval state", errSourceCrawlTerminalCorrupt)
@@ -525,10 +575,7 @@ func (a sourceCrawlTerminalAuthority) validate(receipt sourceCrawlTerminalReceip
 // source row; the operation-specific result may still be recorded separately.
 func (a sourceCrawlTerminalAuthority) sourceCrawlTerminalSourceStatusEligible(
 	receipt sourceCrawlTerminalReceipt, now time.Time) bool {
-	if a.classify(now) != sourceCrawlTerminalAuthorityCurrentLive {
-		return false
-	}
-	if err := receipt.validate(now); err != nil {
+	if err := a.validate(receipt, now); err != nil {
 		return false
 	}
 	if a.SourceDeleted || a.SourceDisabled || !a.SourceOwnershipVerified {
@@ -543,17 +590,20 @@ func (a sourceCrawlTerminalAuthority) sourceCrawlTerminalSourceStatusEligible(
 		!receipt.Attempt.LeaseExpiresAt.Equal(a.HistoryLeaseExpiresAt) {
 		return false
 	}
-	if receipt.Attribution == sourceCrawlHandoffBound {
-		if receipt.Attempt.Binding == nil || a.Binding == nil ||
-			*a.Binding != *receipt.Attempt.Binding || receipt.OperationResult == nil ||
-			!sourceCrawlTerminalOperationTransitionAllowed(receipt.OperationResult.ExpectedState,
-				receipt.OperationResult.ResultState) ||
-			a.CurrentSourceOwnerUserID != receipt.Attempt.Binding.PrincipalUserID {
-			return false
-		}
-		return true
+	if receipt.Attribution != sourceCrawlHandoffBound {
+		// An unbound attempt has no recorded operation principal, so verified
+		// ownership alone is not owner-continuity proof. A future B1 repository
+		// may record its history result but must not overwrite source status.
+		return false
 	}
-	return receipt.Attempt.Binding == nil && receipt.OperationResult == nil
+	if receipt.Attempt.Binding == nil || a.Binding == nil ||
+		*a.Binding != *receipt.Attempt.Binding || receipt.OperationResult == nil ||
+		!sourceCrawlTerminalOperationTransitionAllowed(receipt.OperationResult.ExpectedState,
+			receipt.OperationResult.ResultState) ||
+		a.CurrentSourceOwnerUserID != receipt.Attempt.Binding.PrincipalUserID {
+		return false
+	}
+	return true
 }
 
 type sourceCrawlApprovalHistoryState string
@@ -654,6 +704,9 @@ func newSourceCrawlPersistedTerminal(attempt sourceCrawlAttempt,
 func classifySourceCrawlPersistedTerminalReplay(stored *sourceCrawlPersistedTerminal,
 	incoming sourceCrawlTerminalReceipt) sourceCrawlTerminalReportResult {
 	if stored == nil {
+		return sourceCrawlTerminalConflict
+	}
+	if err := incoming.validateStructure(); err != nil {
 		return sourceCrawlTerminalConflict
 	}
 	reconstructed, err := newSourceCrawlPersistedTerminal(stored.Attempt, stored.OperationResult)

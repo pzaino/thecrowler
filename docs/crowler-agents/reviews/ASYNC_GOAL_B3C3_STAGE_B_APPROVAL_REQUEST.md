@@ -5,10 +5,14 @@
 **Request only. Not approved.**
 
 WP-05B3C3A stopped at claim/replay repairs, a real proposal-to-claim test and a
-pure handoff/terminal contract. WP-05B3C3B1 corrects the pure authority/replay
-model and audits the crawler side effects. No terminal repository, heartbeat
-writer, live crawler handoff, migration, worker or production activation is
-approved.
+pure handoff/terminal contract. WP-05B3C3B1 corrected the pure authority/replay
+model and audited the crawler side effects. WP-05B3C3B1R closed the remaining
+source-status, current/history, unbound-owner and claim-timing gaps. No terminal
+repository, heartbeat writer, live crawler handoff, migration, worker or
+production activation is approved.
+
+B1 remains **pending**. WP-05B3C3B1R is not a B1 approval record and does not
+authorize any repository implementation.
 
 ## Requested decisions (separate approvals)
 
@@ -52,6 +56,9 @@ cannot prove the fields listed as limitations in
 - UTC approval date:
 - Contract version: `WP-05B3C3/Stage-B-2`
 - B1 internal repository (Option A): approved / rejected
+- B1 approval explicitly includes per-source lease timing, final freshness
+  rejection, exact current/history equality, source-status authority preflight
+  and unbound owner-continuity denial: yes / no
 - B2 live crawler caller: approved / rejected
 - B3 additive schema (Option B): approved / rejected / not requested
 - B3 exact DDL/migration/addon/capability/rollback reference:

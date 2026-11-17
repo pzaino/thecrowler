@@ -976,3 +976,91 @@ func TestSourceCrawlAttemptSQLiteClaimAtLeaseBoundary(t *testing.T) {
 		})
 	}
 }
+
+func TestSourceCrawlClaimReplayAfterHeartbeatFailsClosed(t *testing.T) {
+	request := sourceCrawlClaimRequest("heartbeat-replay")
+	original := SourceCrawlClaim{
+		ClaimRequestID: request.ClaimRequestID, SourceID: 42, AttemptID: sourceCrawlClaimTestID("heartbeat"),
+		Generation: 1, EngineID: request.EngineID, ClaimedAt: sourceCrawlClaimTestNow,
+		LeaseExpiresAt: sourceCrawlClaimTestNow.Add(request.Lease),
+	}
+	if err := validateSourceCrawlClaimReplay([]SourceCrawlClaim{original}, request); err != nil {
+		t.Fatalf("original claim replay: %v", err)
+	}
+	renewed := original
+	renewed.LeaseExpiresAt = original.LeaseExpiresAt.Add(time.Hour)
+	if err := validateSourceCrawlClaimReplay([]SourceCrawlClaim{renewed}, request); !errors.Is(err, ErrSourceCrawlClaimConflict) {
+		t.Fatalf("heartbeat-renewed replay error = %v, want conflict", err)
+	}
+	changedEngine := original
+	changedEngine.EngineID = "other-engine"
+	if err := validateSourceCrawlClaimReplay([]SourceCrawlClaim{changedEngine}, request); !errors.Is(err, ErrSourceCrawlClaimConflict) {
+		t.Fatalf("changed engine replay error = %v, want conflict", err)
+	}
+}
+
+func TestSourceCrawlAttemptSQLitePerSourceClaimClock(t *testing.T) {
+	raw, handler := openAsyncGoalSQLite(t)
+	priority := "per-source-clock"
+	for _, sourceID := range []uint64{41, 42} {
+		if _, err := raw.Exec(`INSERT INTO Sources
+			(source_id, source_uid, url, name, status, disabled, usr_id, priority, sub_priority)
+			VALUES (?, ?, ?, 'clock fixture', 'new', FALSE, 7, ?, 0)`,
+			sourceID, "uid-clock-"+string(rune('0'+sourceID)), "https://clock-"+string(rune('0'+sourceID))+".example/", priority); err != nil {
+			t.Fatalf("insert clock source %d: %v", sourceID, err)
+		}
+		if _, err := raw.Exec(`INSERT INTO SourceOwnership
+			(source_id, user_id, verified_at, verified_by_user_id, verified_by, verification_method, verification_reason)
+			VALUES (?, 7, CURRENT_TIMESTAMP, 9, 'operator', 'claim_test', 'clock')`, sourceID); err != nil {
+			t.Fatalf("insert clock ownership %d: %v", sourceID, err)
+		}
+		sourceCrawlInsertBoundOperation(t, raw, sourceID, 7, "clock-"+string(rune('0'+sourceID)), "accepted")
+	}
+	enableSourceCrawlClaimMode(t, raw)
+
+	base := sourceCrawlClaimTestNow
+	times := []time.Time{base, base, base.Add(time.Second), base.Add(time.Second)}
+	calls := 0
+	clock := func(context.Context, *sql.Tx, Handler) (time.Time, error) {
+		if calls >= len(times) {
+			return times[len(times)-1], nil
+		}
+		value := times[calls]
+		calls++
+		return value, nil
+	}
+	request := sourceCrawlClaimRequest("per-source-clock")
+	request.Priority = priority
+	request.Limit = 2
+	request.Lease = 100 * time.Millisecond
+	claims, err := claimSourceCrawlAttemptsWithClock(context.Background(), &handler, request, clock)
+	if err != nil || len(claims) != 2 {
+		t.Fatalf("per-source clock claim = %+v err=%v", claims, err)
+	}
+	if claims[0].SourceID != 41 || claims[0].Outcome != SourceCrawlClaimStaleFence {
+		t.Fatalf("first source claim = %+v, want expired stale fence", claims[0])
+	}
+	if claims[1].SourceID != 42 || claims[1].Outcome != SourceCrawlClaimed {
+		t.Fatalf("second source claim = %+v, want live claimed", claims[1])
+	}
+	for _, claim := range claims {
+		var currentLease, historyLease time.Time
+		if err := raw.QueryRow(`SELECT lease_expires_at FROM SourceCrawlClaims WHERE source_id=?`,
+			claim.SourceID).Scan(&currentLease); err != nil {
+			t.Fatalf("read current lease for %d: %v", claim.SourceID, err)
+		}
+		if err := raw.QueryRow(`SELECT lease_expires_at FROM SourceCrawlAttempts WHERE source_id=?`,
+			claim.SourceID).Scan(&historyLease); err != nil {
+			t.Fatalf("read history lease for %d: %v", claim.SourceID, err)
+		}
+		if !currentLease.Equal(historyLease) {
+			t.Fatalf("lease mismatch for %d: current=%v history=%v", claim.SourceID, currentLease, historyLease)
+		}
+		if count := sourceCrawlAttemptHistoryCount(t, raw, claim.SourceID); count != 1 {
+			t.Fatalf("history count for %d = %d, want 1", claim.SourceID, count)
+		}
+	}
+	if calls != 4 {
+		t.Fatalf("clock calls = %d, want 4", calls)
+	}
+}

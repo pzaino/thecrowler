@@ -2,11 +2,13 @@
 
 ## Status
 
-**Phase A only. Stage B is not approved.**
+**Phase A only. Stage B/B1 is not approved.**
 
 The reviewed Stage B approval request is still marked *Request only. Not
 approved.* No terminal repository, heartbeat writer, live crawler handoff,
-migration, worker or production activation is implemented here.
+migration, worker or production activation is implemented here. WP-05B3C3B1R
+closes the remaining authority and claim-timing gaps without inferring B1
+approval from the task.
 
 This document records the corrected authority model, the persisted replay
 equivalence that schema 1.17 can actually prove, the remaining limitations, the
@@ -47,7 +49,10 @@ history row:
 - explicit approval history: valid at acceptance, revoked before acceptance,
   revoked after acceptance or expired after acceptance. Only revocation before
   acceptance conflicts; later revocation/expiry does not retroactively void an
-  accepted operation.
+  accepted operation;
+- duplicate current-claim and history fields for source, attempt, generation,
+  claim request, engine, claim time and lease. Every pair must agree exactly or
+  the snapshot is corrupt.
 
 The pure classifier returns one closed state:
 
@@ -67,11 +72,24 @@ request, engine, claim time, history lease and immutable binding exactly.
 Mismatched attempt identity is `stale_fence`; a forged later lease or claim time
 is `conflict`. The receipt's own timestamps never increase authority.
 
+For source-level status mutation, eligibility now requires the full authority
+preflight to succeed, not just a live fence and matching shape. A revoked-before
+acceptance, corrupt snapshot, expired fence, missing source, unbound attempt or
+wrong binding denies source-status mutation. An unbound attempt has no stored
+operation principal, so it cannot prove owner continuity; a future B1 repository
+may record its history result but must not overwrite source status.
+
 The decision clock must be fresh database time read **after** locks. PostgreSQL
 `CURRENT_TIMESTAMP` is transaction-start time, so claim allocation and
 reconciliation use `clock_timestamp()`. SQLite uses `julianday('now')`, which is
 evaluated by the statement. The expiry boundary is exclusive:
 `now == lease_expires_at` is expired. Both are truncated to microseconds.
+
+Claim batches read a selection timestamp after the policy lock, then a fresh
+per-source timestamp after each source row is locked and before its claim
+mutation. A final fresh check demotes any bound claim whose short lease expired
+during a long batch to `stale_fence`; it is never returned as executable
+`claimed`.
 
 The pure snapshot is not a lock, a lease or execution authorization. The future
 repository must re-read it and re-evaluate the clock inside its mutation
@@ -103,6 +121,9 @@ Equivalence details:
   receipt against unbound history conflicts.
 - The comparator validates the stored attempt through the same terminal
   constructor, so a corrupt or contradictory persisted result is a conflict.
+- The incoming receipt must also pass the first-write structural validator
+  (without current-lease eligibility). A malformed receipt cannot return
+  `idempotent_replay` merely because its durable identifiers match.
 
 ### What Option A does not prove
 
@@ -147,8 +168,24 @@ No SQL transaction spans browser, VDI, email, plugin, model or network work.
 - Source-level status requires `current_live`, verified ownership, an
   unchanged owner for a bound operation, and a non-disabled/non-deleted source.
 - Unbound work never writes a `Status` operation result.
+- Unbound source-level status is denied by default: there is no persisted
+  operation principal that proves owner continuity. A future B1 repository may
+  record the attempt-history result only; changing source status requires a
+  separately approved owner-continuity mechanism.
 
-## 6. Heartbeat bounds (future repository)
+## 6. Claim-request replay after heartbeat
+
+Once a heartbeat renews a lease, `lease_expires_at - claimed_at` no longer
+equals the original requested lease duration. The existing replay check cannot
+prove full request equality from those fields. The decision is fail-closed:
+reusing the original `ClaimRequestID` after a renewal returns a typed
+`conflict`; the renewed lease is never reset and no success is manufactured.
+
+A future B1 implementation must preserve this decision. Stronger idempotency
+requires the separately requested B3 durable request fingerprint/empty-batch
+record. The pure fingerprint is not stored.
+
+## 7. Heartbeat bounds (future repository)
 
 - Extend by at most one hour per call.
 - Never beyond 24 hours from the immutable original claim time.
@@ -160,7 +197,7 @@ No SQL transaction spans browser, VDI, email, plugin, model or network work.
 - Reconcile an uncertain commit by re-reading the same attempt identity; never
   blindly extend twice.
 
-## 7. Operation-state CAS
+## 8. Operation-state CAS
 
 Bound operation transitions allowed by the pure contract:
 
@@ -170,7 +207,7 @@ Bound operation transitions allowed by the pure contract:
 - the attempt CAS and operation CAS must commit or roll back together;
 - the immutable scheduling identity inside `Status.details` is never rewritten.
 
-## 8. Crawler side-effect audit
+## 9. Crawler side-effect audit
 
 This audit is source-level, based on the reviewed HEAD. It does not claim that a
 final terminal CAS protects these writes.
@@ -196,7 +233,7 @@ side effects. A live handoff package must either fence the destructive/current
 state writes and stop external work on lease loss, or explicitly retain them
 with attempt provenance in a later work package.
 
-## 9. Schema assessment and approval split
+## 10. Schema assessment and approval split
 
 Existing 1.17 is sufficient for the minimal internal heartbeat/terminal
 repository described above, but not for the stronger Option B equality.
@@ -214,7 +251,7 @@ The maintainer must approve separately:
 No option is approved by this document. See
 [`ASYNC_GOAL_B3C3_STAGE_B_APPROVAL_REQUEST.md`](ASYNC_GOAL_B3C3_STAGE_B_APPROVAL_REQUEST.md).
 
-## 10. Rollout and rollback restrictions
+## 11. Rollout and rollback restrictions
 
 - Deploy a handoff-capable worker only after approval, initially in `legacy`
   mode with the legacy path unchanged.
@@ -225,7 +262,7 @@ No option is approved by this document. See
 - MySQL remains legacy-only.
 - No automatic mode flip, migration or startup DDL.
 
-## 11. What is not enabled
+## 12. What is not enabled
 
 - No heartbeat or terminal repository implementation.
 - No live crawler handoff or worker caller.

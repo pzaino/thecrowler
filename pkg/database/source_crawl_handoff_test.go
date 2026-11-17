@@ -310,6 +310,10 @@ func TestSourceCrawlTerminalReceiptValidation(t *testing.T) {
 }
 
 func sourceCrawlTerminalAuthorityFixture(receipt sourceCrawlTerminalReceipt) sourceCrawlTerminalAuthority {
+	var ownerID uint64
+	if receipt.Attempt.Binding != nil {
+		ownerID = receipt.Attempt.Binding.PrincipalUserID
+	}
 	return sourceCrawlTerminalAuthority{
 		Available: true, Fenced: true, Found: true,
 		SourceID:                 receipt.Attempt.SourceID,
@@ -318,12 +322,18 @@ func sourceCrawlTerminalAuthorityFixture(receipt sourceCrawlTerminalReceipt) sou
 		ClaimRequestID:           receipt.Attempt.ClaimRequestID,
 		EngineID:                 receipt.Attempt.EngineID,
 		ClaimedAt:                receipt.Attempt.ClaimedAt,
+		HistorySourceID:          receipt.Attempt.SourceID,
+		HistoryAttemptID:         receipt.Attempt.AttemptID,
+		HistoryGeneration:        receipt.Attempt.Generation,
+		HistoryClaimRequestID:    receipt.Attempt.ClaimRequestID,
+		HistoryEngineID:          receipt.Attempt.EngineID,
+		HistoryClaimedAt:         receipt.Attempt.ClaimedAt,
 		CurrentLeaseExpiresAt:    receipt.Attempt.LeaseExpiresAt,
 		HistoryLeaseExpiresAt:    receipt.Attempt.LeaseExpiresAt,
 		AttemptState:             sourceCrawlAttemptClaimed,
 		Binding:                  receipt.Attempt.Binding,
 		SourceOwnershipVerified:  true,
-		CurrentSourceOwnerUserID: receipt.Attempt.Binding.PrincipalUserID,
+		CurrentSourceOwnerUserID: ownerID,
 		ApprovalHistory:          sourceCrawlApprovalValidAtAcceptance,
 	}
 }
@@ -351,6 +361,12 @@ func TestSourceCrawlTerminalAuthorityClassification(t *testing.T) {
 			binding.OperationID = sourceCrawlClaimTestID("wrong-operation")
 			a.Binding = &binding
 		}, sourceCrawlHandoffTestNow, sourceCrawlTerminalAuthorityCorrupt},
+		{"history source mismatch", func(a *sourceCrawlTerminalAuthority) { a.HistorySourceID++ }, sourceCrawlHandoffTestNow, sourceCrawlTerminalAuthorityCorrupt},
+		{"history attempt mismatch", func(a *sourceCrawlTerminalAuthority) { a.HistoryAttemptID = sourceCrawlClaimTestID("other") }, sourceCrawlHandoffTestNow, sourceCrawlTerminalAuthorityCorrupt},
+		{"history generation mismatch", func(a *sourceCrawlTerminalAuthority) { a.HistoryGeneration++ }, sourceCrawlHandoffTestNow, sourceCrawlTerminalAuthorityCorrupt},
+		{"history claim request mismatch", func(a *sourceCrawlTerminalAuthority) { a.HistoryClaimRequestID = sourceCrawlClaimTestID("other") }, sourceCrawlHandoffTestNow, sourceCrawlTerminalAuthorityCorrupt},
+		{"history engine mismatch", func(a *sourceCrawlTerminalAuthority) { a.HistoryEngineID = "other-engine" }, sourceCrawlHandoffTestNow, sourceCrawlTerminalAuthorityCorrupt},
+		{"history claimed time mismatch", func(a *sourceCrawlTerminalAuthority) { a.HistoryClaimedAt = a.HistoryClaimedAt.Add(time.Microsecond) }, sourceCrawlHandoffTestNow, sourceCrawlTerminalAuthorityCorrupt},
 		{"unavailable", func(a *sourceCrawlTerminalAuthority) { a.Available = false }, sourceCrawlHandoffTestNow, sourceCrawlTerminalAuthorityUnavailable},
 		{"legacy mode", func(a *sourceCrawlTerminalAuthority) { a.Fenced = false }, sourceCrawlHandoffTestNow, sourceCrawlTerminalAuthorityLegacyMode},
 	}
@@ -401,10 +417,22 @@ func TestSourceCrawlTerminalAuthority(t *testing.T) {
 			a.CurrentLeaseExpiresAt = a.HistoryLeaseExpiresAt.Add(time.Second)
 		}, errSourceCrawlTerminalCorrupt},
 		{"expired", func(a *sourceCrawlTerminalAuthority) {}, errSourceCrawlAttemptStale},
-		{"not current attempt", func(a *sourceCrawlTerminalAuthority) { a.AttemptID = sourceCrawlClaimTestID("other") }, errSourceCrawlAttemptStale},
-		{"wrong generation", func(a *sourceCrawlTerminalAuthority) { a.Generation++ }, errSourceCrawlAttemptStale},
-		{"wrong claim request", func(a *sourceCrawlTerminalAuthority) { a.ClaimRequestID = sourceCrawlClaimTestID("other") }, errSourceCrawlAttemptStale},
-		{"wrong engine", func(a *sourceCrawlTerminalAuthority) { a.EngineID = "other-engine" }, errSourceCrawlAttemptStale},
+		{"not current attempt", func(a *sourceCrawlTerminalAuthority) {
+			a.AttemptID = sourceCrawlClaimTestID("other")
+			a.HistoryAttemptID = a.AttemptID
+		}, errSourceCrawlAttemptStale},
+		{"wrong generation", func(a *sourceCrawlTerminalAuthority) {
+			a.Generation++
+			a.HistoryGeneration = a.Generation
+		}, errSourceCrawlAttemptStale},
+		{"wrong claim request", func(a *sourceCrawlTerminalAuthority) {
+			a.ClaimRequestID = sourceCrawlClaimTestID("other")
+			a.HistoryClaimRequestID = a.ClaimRequestID
+		}, errSourceCrawlAttemptStale},
+		{"wrong engine", func(a *sourceCrawlTerminalAuthority) {
+			a.EngineID = "other-engine"
+			a.HistoryEngineID = a.EngineID
+		}, errSourceCrawlAttemptStale},
 		{"terminal attempt", func(a *sourceCrawlTerminalAuthority) { a.AttemptState = sourceCrawlAttemptCompleted }, errSourceCrawlAttemptStale},
 		{"deleted source", func(a *sourceCrawlTerminalAuthority) { a.SourceDeleted = true }, errSourceCrawlAttemptStale},
 	}
@@ -499,6 +527,38 @@ func TestSourceCrawlTerminalAuthority(t *testing.T) {
 	if err := revoked.validate(receipt, sourceCrawlHandoffTestNow); !errors.Is(err, errSourceCrawlTerminalConflict) {
 		t.Fatalf("approval revoked before acceptance error = %v", err)
 	}
+	if revoked.sourceCrawlTerminalSourceStatusEligible(receipt, sourceCrawlHandoffTestNow) {
+		t.Fatal("revoked-before-acceptance authority must not update source status")
+	}
+
+	expired := authority
+	if expired.sourceCrawlTerminalSourceStatusEligible(receipt, sourceCrawlHandoffTestNow.Add(9*time.Minute)) {
+		t.Fatal("expired fence must not update source status")
+	}
+	missing := authority
+	missing.Found = false
+	if missing.sourceCrawlTerminalSourceStatusEligible(receipt, sourceCrawlHandoffTestNow) {
+		t.Fatal("missing authority must not update source status")
+	}
+	corrupt := authority
+	corrupt.HistoryEngineID = "other-engine"
+	if corrupt.sourceCrawlTerminalSourceStatusEligible(receipt, sourceCrawlHandoffTestNow) {
+		t.Fatal("corrupt authority must not update source status")
+	}
+
+	unboundReceipt := copySourceCrawlTerminalReceipt(receipt)
+	unboundReceipt.Attempt.Binding = nil
+	unboundReceipt.Attribution = sourceCrawlHandoffUnattributed
+	unboundReceipt.OperationResult = nil
+	unboundAuthority := sourceCrawlTerminalAuthorityFixture(unboundReceipt)
+	unboundAuthority.SourceOwnershipVerified = true
+	unboundAuthority.CurrentSourceOwnerUserID = 7
+	if err := unboundAuthority.validate(unboundReceipt, sourceCrawlHandoffTestNow); err != nil {
+		t.Fatalf("unbound historical result preflight: %v", err)
+	}
+	if unboundAuthority.sourceCrawlTerminalSourceStatusEligible(unboundReceipt, sourceCrawlHandoffTestNow) {
+		t.Fatal("unbound attempt has no owner-continuity proof and must not update source status")
+	}
 	for _, history := range []sourceCrawlApprovalHistoryState{
 		sourceCrawlApprovalRevokedAfterAcceptance, sourceCrawlApprovalExpiredAfterAcceptance,
 	} {
@@ -581,6 +641,16 @@ func TestSourceCrawlTerminalReplayClassification(t *testing.T) {
 		{"ineligible expected state", func(r *sourceCrawlTerminalReceipt) {
 			r.OperationResult.ExpectedState = CrawlOperationAlreadyPending
 		}},
+		{"terminal attempt shape", func(r *sourceCrawlTerminalReceipt) {
+			r.Attempt.State = sourceCrawlAttemptCompleted
+			r.Attempt.TerminalAt = r.ObservedAt
+		}},
+		{"observation before claim", func(r *sourceCrawlTerminalReceipt) {
+			r.ObservedAt = r.Attempt.ClaimedAt.Add(-time.Second)
+		}},
+		{"bound attribution without binding", func(r *sourceCrawlTerminalReceipt) {
+			r.Attempt.Binding = nil
+		}},
 	}
 	for _, tc := range conflicts {
 		t.Run(tc.name, func(t *testing.T) {
@@ -630,6 +700,12 @@ func TestSourceCrawlTerminalReplayClassification(t *testing.T) {
 	boundIncoming := copySourceCrawlTerminalReceipt(receipt)
 	if got := classifySourceCrawlPersistedTerminalReplay(&unboundStored, boundIncoming); got != sourceCrawlTerminalConflict {
 		t.Fatalf("bound receipt against unbound history = %q", got)
+	}
+
+	corruptStored := stored
+	corruptStored.OperationResult = CrawlOperationAccepted
+	if got := classifySourceCrawlPersistedTerminalReplay(&corruptStored, receipt); got != sourceCrawlTerminalConflict {
+		t.Fatalf("corrupt stored terminal = %q", got)
 	}
 }
 

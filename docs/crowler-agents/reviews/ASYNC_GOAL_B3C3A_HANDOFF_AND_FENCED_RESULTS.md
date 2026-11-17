@@ -128,6 +128,9 @@ accepted by the scheduler.
 - Uses fresh database time after the relevant locks, never only the worker's
   wall clock. PostgreSQL `clock_timestamp()` is required where a deliberate lock
   wait can cross an expiry; `CURRENT_TIMESTAMP` is transaction-start time.
+- Claim batches use a fresh timestamp per source after its row lock. A final
+  freshness check demotes a short lease that expired during a long batch to
+  `stale_fence`; it is never returned as executable `claimed`.
 - Must match the exact `source_id`, `attempt_id`, `generation`,
   `claim_request_id` and `engine_id`.
 - Extends by a bounded amount. The proposed maximum is one hour per renewal and
@@ -192,8 +195,11 @@ One bounded database transaction would:
 9. Commit once. Any failure rolls back the attempt state, the operation state
    and the source update together.
 
-An unbound attempt may record a fenced source-level result. It must never
-fabricate a `Status` operation completion, because it has no operation identity.
+An unbound attempt must never fabricate a `Status` operation completion,
+because it has no operation identity. Its source-level status update is denied
+by default: no persisted operation principal proves owner continuity. A future
+B1 repository may record only its attempt-history result unless a separately
+approved owner-continuity mechanism exists.
 
 `Status='completed'` is reported completion of that crawl only. It is not goal
 acceptance and must not be used as completion evidence without the existing
@@ -210,6 +216,11 @@ goal evaluator.
   retry field; the stored `terminal_at` remains authoritative.
 - `ExpectedState` is a first-write precondition, not a persisted replay-identity
   field. The original unbound class is normalized to `unbound`.
+- The incoming receipt must pass first-write structural validation even on the
+  read-only replay path. Matching durable IDs alone are insufficient.
+- Reusing an original `ClaimRequestID` after a heartbeat renewed its lease
+  returns `conflict`: the original requested duration can no longer be proven
+  from the renewed fields. The lease is never reset.
 - Where exact equality cannot be reconstructed from 1.17 tables, the limitation
   is documented rather than invented. See the B3C3B1 decision table.
 - If a commit reply is lost, the worker re-reads the exact attempt/operation
