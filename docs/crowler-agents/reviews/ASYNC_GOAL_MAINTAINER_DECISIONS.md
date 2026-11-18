@@ -372,6 +372,38 @@ resumption. Those require separate approval. The fenced path is a candidate for
 controlled integration testing only after independent review and a live
 VDI/browser run.
 
+## Decision 1l: B2F1 refresh design and ownership-continuity correction
+
+**Status: DESIGN ONLY. DECISION 2 NOT APPROVED. NO IMPLEMENTATION.**
+
+WP-05B3C3B2F1 audited the proposed atomic fenced `refresh_content` design and
+corrected the Decision 1 ownership proposal. No runtime code, DDL, test
+enabling fenced refresh, or live destructive test was added.
+
+- The proposed "move the delete inside the main indexing transaction" is not
+  sufficient. On a disposable PostgreSQL 17 database, the exact
+  `deleteWebObjects` SQL removed a hash-shared `WebObjects` row still
+  referenced by another page, cascading away that page's link and its
+  `ObjectAttributes`; one `SearchIndex` row was also shown to be linked to two
+  `Sources`. The design now requires a page row lock, a cross-source page
+  refusal, page-scoped link deletion and orphan-only object deletion, with
+  deterministic and PostgreSQL concurrency proof before activation.
+- Decision 1 was corrected: a single `claim_owner_user_id` cannot prove
+  continuous tenure because A -> B -> A restores equality. The request now asks
+  for an explicit ownership semantic (continuous tenure vs reauthorization) and
+  proposes a monotonic `Sources.ownership_epoch` captured on the attempt, or an
+  append-only ownership history.
+
+Documents:
+[`ASYNC_GOAL_B3C3B2F1_REFRESH_DESIGN.md`](ASYNC_GOAL_B3C3B2F1_REFRESH_DESIGN.md)
+and
+[`ASYNC_GOAL_B3C3B2F1_TEST_REPORT.md`](ASYNC_GOAL_B3C3B2F1_TEST_REPORT.md).
+
+**Not approved by this decision:** Decision 2 implementation, Decision 1 DDL,
+Decision 3, Decision 4, Decision 5, fenced refresh activation, production
+activation, automatic mode switching, automatic goal resumption and
+`null:` deletion. The existence of this note is not approval.
+
 ## Decision 2: resume phase
 
 **Status: PENDING.**

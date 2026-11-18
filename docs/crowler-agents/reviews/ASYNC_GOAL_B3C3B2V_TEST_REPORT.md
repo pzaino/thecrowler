@@ -25,11 +25,14 @@ used. The isolated project uses its own volumes (`b2v-e2e_*`), names
 Hosted CI at the reviewed commit: 8/8 success, including
 `postgres-integration`
 (https://github.com/pzaino/thecrowler/actions/runs/44305245883/job/134804995471).
-The patched tree has **not** been pushed, so no hosted run exists for it.
+When this report was written the patch had not been pushed. Post-publication
+status: the B2V change set is commit
+`6a682ea6091fdb0a43b76e57616a2bc8a2c2edaa` on `develop`, and hosted CI on that
+commit is 8/8 successful.
 
 ## 2. Code review and fixes
 
-The full findings are in `ASYNC_GOAL_B3C3B2V_INDEPENDENT_REVIEW.md`. Four
+The full findings are in `ASYNC_GOAL_B3C3B2V_INDEPENDENT_REVIEW.md`. Five
 correctness defects were demonstrated and fixed, all within schema 1.17:
 
 | ID | Severity | Defect | Fix |

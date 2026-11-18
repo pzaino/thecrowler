@@ -55,7 +55,10 @@ Consequence today: unbound source-status mutation is suppressed. The source
 stays `processing` and becomes claimable again only when the 30-minute claim
 lease expires. That is safe but operationally poor and repeats the crawl.
 
-**Decision 1 is required to restore correct unbound source lifecycle.**
+**Decision 1 is required to restore correct unbound source lifecycle.** The
+corrected Decision 1 below also records that a single owner ID does not prove
+continuous tenure (A -> B -> A), and asks for an explicit ownership semantic
+plus a monotonic epoch if continuous tenure is required.
 
 ### 1.2 `refresh_content` is refused in fenced mode
 
@@ -89,120 +92,213 @@ cannot be removed through the normal interface.
 
 These are idempotency/audit limitations, not current authorisation holes.
 
-## 2. Decision 1 — durable claim-time owner (RECOMMENDED)
+## 2. Decision 1 — durable claim-time owner and ownership continuity (RECOMMENDED, corrected)
+
+> **Corrigendum WP-05B3C3B2F1.** The first version of this section proposed a
+> single `claim_owner_user_id` and expected an away-and-back transfer to be
+> suppressed by comparing that ID with `Sources.usr_id`. That expectation is
+> **not established**: A -> B -> A restores equality while ownership was
+> interrupted. The corrected design below separates "who owned the source at
+> claim time" from "was that ownership continuous", and asks the maintainer to
+> choose the ownership semantic explicitly.
 
 ### Problem
 
 Authorise unbound source-status mutation (and exact-fence `null:` deletion)
-using a durable owner captured when the claim is allocated.
+using a durable owner captured when the claim is allocated, without trusting a
+mutable `Sources.usr_id` alone or a transaction-start timestamp.
 
-### Existing-schema workaround
+### What a single owner ID proves, and what it does not
 
-None that is sound. Suppression is the current fail-closed behaviour.
+`claim_owner_user_id = Sources.usr_id` plus a verified `SourceOwnership` row
+for that user proves **only** that the recorded owner at terminal time equals
+the owner at claim time. It does **not** prove continuous tenure:
 
-### Proposed additive change
-
-Add one nullable column to `SourceCrawlAttempts`:
-
-```sql
-claim_owner_user_id BIGINT
-    CHECK (claim_owner_user_id IS NULL OR claim_owner_user_id > 0)
+```text
+claim owner A  ->  transfer to B (commit)  ->  transfer back to A (commit)
+terminal: Sources.usr_id = A, SourceOwnership.user_id = A  ->  equality holds
 ```
 
-- The claim transaction already locks the `Sources` row and reads
-  `SourceOwnership`. When verified ownership exists, persist that `user_id`
-  on the new attempt row before commit.
-- When ownership is not verified, persist `NULL`. Unbound attempts remain
-  suppressed, exactly as today.
-- The column is immutable for the attempt. A replay or terminal report never
-  rewrites it.
-- The terminal transaction, under the source row lock, may update source status
-  for an unbound attempt only when
-  `claim_owner_user_id = Sources.usr_id` and a verified `SourceOwnership` row
-  for that user exists. The current owner may legitimately differ from the
-  claim owner after a transfer; in that case the update is suppressed.
+`SourceOwnership` has one row per source (`source_id` primary key), no history
+and no version:
+`pkg/database/postgresql-setup.pgsql:456`.
+`Sources.usr_id` is mutable and unversioned: `:416`.
+`SourceOwnership.last_updated_at` is written by
+`update_last_updated_at_column()` with `CURRENT_TIMESTAMP`, which PostgreSQL
+evaluates at transaction start, so it cannot order a transfer against a claim
+(`:15`; see also B2V-01).
 
-An alternative separate table
-`SourceCrawlAttemptOwners(attempt_id, source_id, generation, owner_user_id,
-recorded_at)` is functionally equivalent. A single column is smaller and keeps
-the attempt as the authoritative record. **Recommended: the column.**
+Therefore a single owner-ID column cannot satisfy the "away-and-back
+suppresses" expectation. Either continuity must be made provable, or the
+maintainer must explicitly define that reauthorization by the same principal is
+sufficient.
 
-### Why this fixes the race
+### Option 1a (recommended): monotonic ownership epoch
 
-The owner is captured under the source-row lock in the claim transaction and
-never changes. It does not depend on any transaction-start timestamp, on
-`Sources.usr_id` history, or on a mutable provenance row.
+Add the smallest durable fact that distinguishes "same owner, never changed"
+from "same owner again":
 
-### Write/read invariants
+```sql
+-- Sources
+ownership_epoch BIGINT NOT NULL DEFAULT 0
+    CHECK (ownership_epoch >= 0)
 
-- `claim_owner_user_id` is written exactly once, at claim insertion.
-- `NULL` means "owner not proven"; every consumer treats it as unauthorised.
-- Terminal source-status mutation requires the value to equal the current
-  source owner **and** a verified provenance row for that owner.
-- Bound attempts continue to use the immutable operation binding; the new
-  column is informational for them and never replaces the binding checks.
+-- SourceCrawlAttempts
+claim_owner_user_id BIGINT
+    CHECK (claim_owner_user_id IS NULL OR claim_owner_user_id > 0),
+claim_owner_epoch  BIGINT
+    CHECK (claim_owner_epoch IS NULL OR claim_owner_epoch >= 0),
+CONSTRAINT chk_source_crawl_attempt_owner_pair CHECK (
+    (claim_owner_user_id IS NULL AND claim_owner_epoch IS NULL)
+    OR (claim_owner_user_id IS NOT NULL AND claim_owner_epoch IS NOT NULL)
+)
+```
 
-### Lock order
+The epoch is advanced by an ownership-change trigger on `Sources`:
+
+```sql
+CREATE TRIGGER trg_sources_ownership_epoch
+BEFORE UPDATE OF usr_id ON Sources
+FOR EACH ROW
+WHEN (NEW.usr_id IS DISTINCT FROM OLD.usr_id)
+EXECUTE FUNCTION bump_source_ownership_epoch();
+```
+
+`bump_source_ownership_epoch()` sets
+`NEW.ownership_epoch = OLD.ownership_epoch + 1`. The trigger covers
+application paths (`VerifySourceOwnershipContext`) **and** direct `UPDATE`
+statements, so an administrator transfer cannot silently leave the epoch
+unchanged. An `UPDATE` that writes the same `usr_id` is not an ownership change
+and does not advance it.
+
+Claim time, under the existing source row lock:
+
+- read the verified `SourceOwnership` row;
+- persist `claim_owner_user_id = SourceOwnership.user_id` and
+  `claim_owner_epoch = Sources.ownership_epoch`;
+- when ownership is not verified, persist both `NULL`.
+
+Terminal time, under the same source row lock:
+
+- allow an unbound source-status mutation only when
+  `claim_owner_user_id = Sources.usr_id`
+  **and** `claim_owner_epoch = Sources.ownership_epoch`
+  **and** a verified `SourceOwnership` row for that user exists;
+- otherwise suppress (current fail-closed behaviour).
+
+A -> B -> A advances the epoch twice, so the claim epoch differs and the
+mutation is suppressed. An unchanged owner keeps the epoch and is allowed.
+
+SQLite can express the equivalent with an `AFTER UPDATE OF usr_id` trigger
+(`WHEN NEW.usr_id IS NOT OLD.usr_id`) that increments the column, or with an
+application-maintained epoch under SQLite's writer serialization. MySQL keeps
+the columns for parity but remains legacy-only and must never expose fenced
+behaviour.
+
+**Limits of 1a:**
+
+- it proves "no ownership change since claim", not a full ownership audit
+  history;
+- a restore from backup can move the epoch backwards; that is a deployment
+  concern and should be called out in the runbook;
+- a database owner who drops the trigger can bypass it; that is outside the
+  application threat model, as with every other owned-table invariant;
+- it does not by itself authorise exact-fence `null:` deletion; that remains
+  Decision 3 and must still verify the URL marker and terminal state.
+
+### Option 1b (alternative): append-only ownership history
+
+Add `SourceOwnershipHistory` with `(source_id, epoch)` primary key, user,
+verifier, method, reason and timestamps; `SourceOwnership` gains
+`current_epoch`. Claims store the epoch; terminal compares the current epoch.
+This is more auditable and survives investigations ("who owned this source at
+time T"), at the cost of one more table, one more write per transfer and its
+own retention policy.
+
+### Option 1c (semantic alternative): reauthorization is enough
+
+If the platform contract defines that the same principal re-acquiring ownership
+restores authority (no continuous-tenure requirement), then the single
+`claim_owner_user_id` equality is the documented contract and A -> B -> A
+**passes**. That is a legitimate product decision, but it must be explicit and
+recorded; the current proposal text cannot quietly rely on it while claiming
+"continuity". Choosing 1c requires deleting the away-and-back suppression test
+expectation and documenting the ABA tolerance.
+
+### Option 1d: keep suppression
+
+No DDL. Unbound sources stay `processing` until the claim lease expires; safe
+but repeats the crawl.
+
+### Why the current suppression remains correct until a decision
+
+Schema 1.17 contains neither continuous-tenure proof nor an epoch. Any
+implementation before a decision would either repeat the unsound timestamp
+inference or silently adopt option 1c without recording it.
+
+### Lock order (all options)
 
 Unchanged:
 
 ```text
-policy lock -> Sources -> current claim -> attempt history -> Status CAS
+policy lock -> Sources row -> current claim -> attempt history -> Status CAS
 ```
 
-The claim already holds the source row; reading `SourceOwnership` under it is
-the same order used by the existing claim ownership check.
-
-### PostgreSQL and SQLite
-
-- PostgreSQL: `BIGINT NULL` with a named CHECK; no trigger.
-- SQLite: `INTEGER NULL` with the same CHECK; existing writer-transaction
-  serialisation applies.
-- MySQL: add the nullable column for schema parity, or omit it. MySQL remains
-  legacy-only and MUST NOT expose fenced claim/source-status behaviour.
+The claim already holds the source row and reads `SourceOwnership` under it;
+the epoch is read from the same locked `Sources` row.
 
 ### Migration, backfill, rollback
 
-- Additive column, default `NULL`.
-- Existing attempts are **not** backfilled: their claim-time owner is unknown.
-  They remain suppressed. No bulk ownership inference.
+- Additive: columns default `NULL`/`0`, plus one trigger.
+- Existing attempts are **not** backfilled: their claim-time owner and epoch are
+  unknown. They remain suppressed. No bulk ownership inference.
 - Fresh install, v1.16 -> v1.17 migration and the same-version addon all add
-  the column.
-- Rollback drops the column and returns to suppression; no historical record is
-  rewritten.
-- If schema 1.17 has already shipped when this is approved, the same change
-  must become a 1.18 migration instead. The release state at approval time
-  decides.
+  the objects.
+- Rollback drops the trigger and columns and returns to suppression; ownership
+  and historical rows are not rewritten.
+- If schema 1.17 has already shipped when this is approved, the change becomes
+  a later schema migration instead. The release state at approval time decides.
 
 ### Capability and version
 
 Recommended: a named capability within 1.17 (for example
-`source-crawl-claim-owner-v1`) with a checksum, a readiness check that the
-column and CHECK exist, and an explicit fail-closed path when the capability is
-absent. `RequiredSchemaVersion` and `WriterGeneration` stay unchanged while
-1.17 is unreleased; otherwise a new schema version is required.
+`source-crawl-claim-owner-v1`) with a checksum, a readiness check for the
+columns, the pair CHECK and the trigger, and an explicit fail-closed path when
+the capability is absent. `RequiredSchemaVersion` and `WriterGeneration` stay
+unchanged while 1.17 is unreleased.
 
 ### Privileges
 
 The runtime role needs no new table grants: it already inserts attempts and
-selects ownership. The readiness check verifies column visibility.
+selects ownership. It must not be able to change `Sources.ownership_epoch`
+directly except through the trigger; the readiness check verifies column
+visibility and the trigger definition.
 
 ### Tests
 
-- Claim persists the verified owner; unverified claim persists `NULL`.
-- Unbound terminal with unchanged owner updates source status.
-- Transfer before terminal suppresses the update.
-- Transfer away and back (two provenance writes) suppresses the update.
+- Claim persists the verified owner and epoch; unverified claims persist
+  `NULL`/`NULL`.
+- Unbound terminal with unchanged owner and epoch updates source status.
+- Transfer A -> B before terminal suppresses.
+- Transfer A -> B -> A before terminal suppresses (the corrected ABA case).
+- Re-verification of the same owner without a `usr_id` change keeps the epoch
+  and remains allowed.
+- Direct `UPDATE Sources SET usr_id` advances the epoch.
+- A rolled-back transfer leaves the epoch unchanged.
+- Concurrent transfer and claim serialize on the source row; either the claim
+  sees the new epoch or the transfer waits.
 - Bound operations are unchanged.
-- Historical rows with `NULL` remain suppressed.
-- Conservative replay: a terminal retry does not rewrite the owner.
+- Historical attempts with `NULL` remain suppressed.
+- Terminal replay does not rewrite the stored owner/epoch.
 - MySQL reports unsupported.
-- PostgreSQL and SQLite integration, including concurrent transfer and claim.
-- Readiness/version/addon/migration convergence.
+- PostgreSQL and SQLite integration, trigger definition/readiness checks,
+  migration/addon convergence.
 
 ### Activation preconditions
 
-- Independent review of the DDL and the code change.
+- An explicit semantic choice (1a, 1b, 1c or 1d) with approver, UTC date and
+  contract version.
+- Independent review of the DDL and code change.
 - Disposable PostgreSQL and SQLite migration rehearsal.
 - Backup/restore rehearsal on a disposable database.
 - No production activation in the same work package.
@@ -335,18 +431,27 @@ duplicate-claim protections are independent of this gap.
 
 Please record an explicit yes/no for each:
 
-1. **Decision 1:** additive durable claim-time owner (recommended).
-2. **Decision 2:** atomic `refresh_content` code change, no DDL (recommended).
-3. **Decision 3:** exact-fence `null:` deletion after Decision 1
-   (recommended).
-4. **Decision 4:** terminal receipt digest/ledger (optional; recommend defer).
-5. **Decision 5:** claim request fingerprint and empty-batch acknowledgement
+1. **Ownership semantic.** Choose continuous tenure (1a or 1b) or
+   reauthorization-is-sufficient (1c), or keep suppression (1d).
+2. **Decision 1a (recommended if continuous tenure):** additive
+   `Sources.ownership_epoch` + `SourceCrawlAttempts.claim_owner_user_id` and
+   `claim_owner_epoch`, with the ownership-change trigger.
+3. **Decision 1b (alternative):** append-only ownership history.
+4. **Decision 2:** atomic `refresh_content` code change, no DDL
+   (recommended), subject to the corrected shared-object and cross-source page
+   requirements in `ASYNC_GOAL_B3C3B2F1_REFRESH_DESIGN.md`. The naive
+   "move the delete into the main transaction" design is not sufficient.
+5. **Decision 3:** exact-fence `null:` deletion after Decision 1
+   (recommended; requires the chosen continuity proof).
+6. **Decision 4:** terminal receipt digest/ledger (optional; recommend defer).
+7. **Decision 5:** claim request fingerprint and empty-batch acknowledgement
    (optional; recommend defer).
-6. If Decision 1 is approved: confirm the additive change stays within 1.17
-   (unreleased) or must become 1.18.
+8. If Decision 1a/1b is approved: confirm the additive change stays within
+   1.17 (unreleased) or must become a later schema migration.
 
 A chat message or the existence of this request is not approval. The decision
-must be tracked with approver, UTC date and contract version.
+must be tracked with approver, UTC date, contract version and work-package
+identifier.
 
 ## 8. Explicitly not authorised
 
@@ -397,11 +502,14 @@ by a remote MCP server is never authority.
 
 ## 11. Recommended next work packages
 
-1. **B2V follow-up A (Decision 2):** atomic fenced `refresh_content` with
-   rollback and interleaving tests.
-2. **B3 (Decision 1):** durable claim-time owner, DDL + migration + readiness,
-   then unbound source-status and exact-fence `null:` deletion.
-3. **B3.1 (Decision 3):** exact-fence `null:` deletion using the new owner.
+1. **B2F1 follow-up A (Decision 2):** atomic fenced `refresh_content` with
+   cross-source page refusal, orphan-only object deletion, rollback and
+   interleaving tests. See `ASYNC_GOAL_B3C3B2F1_REFRESH_DESIGN.md`.
+2. **B3 (Decision 1):** the chosen ownership semantic, then the monotonic
+   epoch/history DDL + migration + readiness, then unbound source-status and
+   exact-fence `null:` deletion.
+3. **B3.1 (Decision 3):** exact-fence `null:` deletion using the chosen
+   continuity proof.
 4. **WP-05B3C3 C/D:** async goal resume/claim/lease, only after the attempt
    foundation is accepted.
 5. **WP-04/05/06 remaining:** MCP execution/reconciliation and user-facing
