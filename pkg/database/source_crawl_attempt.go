@@ -713,10 +713,14 @@ func resolveSourceCrawlCandidateTx(ctx context.Context, tx *sql.Tx, db Handler, 
 	if !sourceCrawlAcceptanceChronology(status, proposal, approval, details) {
 		return nil, SourceCrawlNotAttributable, nil
 	}
-	if status.Status != string(CrawlOperationAccepted) {
+	// A scheduled operation may be observed as accepted (the scheduler's
+	// initial state) or processing (a prior worker or observation advanced
+	// it). Both are valid ownership states for this attempt; the terminal
+	// repository performs the CAS from the authoritative row. already_pending
+	// remains a scheduling acknowledgement, never ownership.
+	if status.Status != string(CrawlOperationAccepted) &&
+		status.Status != string(CrawlOperationProcessing) {
 		if status.Status == string(CrawlOperationAlreadyPending) {
-			// already_pending is a scheduling acknowledgement, not ownership
-			// of the crawler attempt that is actually running.
 			return nil, SourceCrawlUnattributed, nil
 		}
 		return nil, SourceCrawlNotAttributable, nil

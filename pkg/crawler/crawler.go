@@ -242,6 +242,22 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		}
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-CrawlWebsite] URL %s has no HTTP(S) or FTP(S) protocol, collecting network information only...", args.Src.URL)
 		processCtx.GetNetInfo(args.Src.URL)
+		if networkInfoCollectionFailed(processCtx.Status.NetInfoRunning.Load()) {
+			// The only work of a network-only source is network-information
+			// collection. If the collector recorded a failure, the crawl must
+			// not be reported as completed just because no row insertion was
+			// attempted.
+			crawlErr := errors.New("network information collection failed")
+			processCtx.Status.PipelineRunning.Store(3)
+			processCtx.Status.TotalErrors.Add(1)
+			processCtx.Status.LastError = crawlErr.Error()
+			cmn.DebugMsg(cmn.DbgLvlError,
+				"network information collection failed for %s", args.Src.URL)
+			UpdateSourceStateForCrawl(processCtx, args, crawlErr)
+			processCtx.Status.EndTime = time.Now()
+			err = crawlErr
+			return err
+		}
 		_, indexErr := processCtx.IndexNetInfo(1)
 		if crawlErr := networkOnlyCrawlResult(indexErr, processCtx.crawlAborted()); crawlErr != nil {
 			// A failed network-information index is a failed crawl. Returning
@@ -370,7 +386,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		)
 		pageSource, htmlContent, initialLinks, tErr := processCtx.CrawlInitialURL(sel)
 		if tErr != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "crawling initial URL: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "crawling initial URL: %v", tErr)
 			processCtx.Status.EndTime = time.Now()
 			processCtx.Status.CrawlingRunning.Store(3)
 			processCtx.Status.PipelineRunning.Store(3)
@@ -527,6 +543,21 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 					if workerErr != nil {
 						// Log the error
 						cmn.DebugMsg(cmn.DbgLvlError, "Worker error: %v", workerErr)
+
+						// A fenced crawl must fail when an in-scope page could
+						// not be indexed, even if the failure is not marked
+						// critical for the legacy path.
+						if processCtx.sourceCrawl != nil &&
+							errors.Is(workerErr, errIndexingFailure) {
+							processCtx.Status.EndTime = time.Now()
+							processCtx.Status.CrawlingRunning.Store(3)
+							processCtx.Status.PipelineRunning.Store(3)
+							processCtx.Status.TotalErrors.Add(1)
+							processCtx.Status.LastError = workerErr.Error()
+							cmn.DebugMsg(cmn.DbgLvlError,
+								"fenced crawl failed on page indexing: %v", workerErr)
+							return
+						}
 
 						// Check if the error contains errCriticalError
 						if strings.Contains(workerErr.Error(), errCriticalError) {
@@ -790,7 +821,13 @@ func closeSession(ctx *ProcessContext,
 		ctx.Status.PipelineRunning.Store(3)
 	}
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Pipeline completed for source: %v", ctx.source.ID)
-	ctx.Status.EndTime = time.Now()
+	// A quarantined worker may still be writing Status, maps and session
+	// state. The finalizer must not race it, clear memory it still uses, or
+	// mark the pipeline state it may later update.
+	quarantined := ctx.sessionIsQuarantined()
+	if !quarantined {
+		ctx.Status.EndTime = time.Now()
+	}
 	emitCompletionEvent := false
 	if ctx.sourceCrawl != nil {
 		// A fenced crawl's source/operation status is written only by the
@@ -827,17 +864,26 @@ func closeSession(ctx *ProcessContext,
 		}
 	}
 
-	// Optionally clean up session-specific data
-	cmn.KVStore.CleanSession(ctx.GetContextID())
+	if !quarantined {
+		// Optionally clean up session-specific data
+		cmn.KVStore.CleanSession(ctx.GetContextID())
 
-	// Release other resources in ctx
-	ctx.linksMutex.Lock()
-	defer ctx.linksMutex.Unlock()
-	ctx.newLinks = nil         // Clear the slice to release memory
-	ctx.visitedLinks = nil     // Clear the map to release memory
-	ctx.CollectedCookies = nil // Clear cookies
+		// Release other resources in ctx. A quarantined worker may still append
+		// to or read these structures; clearing them would be a data race and
+		// could make an unconditional map write panic on a nil map.
+		func() {
+			ctx.linksMutex.Lock()
+			defer ctx.linksMutex.Unlock()
+			ctx.newLinks = nil         // Clear the slice to release memory
+			ctx.visitedLinks = nil     // Clear the map to release memory
+			ctx.CollectedCookies = nil // Clear cookies
+		}()
 
-	ctx.pStatus = 10 // Processing completed
+		ctx.pStatus = 10 // Processing completed
+	} else {
+		cmn.DebugMsg(cmn.DbgLvlWarn,
+			"skipping session cleanup for quarantined source %d", ctx.source.ID)
+	}
 	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-closeSession] Returning from crawling a source.")
 }
 
@@ -1123,6 +1169,11 @@ func indexPageContext(
 	url string,
 	pageInfo *PageInfo,
 ) (resultIndexID uint64, retErr error) {
+	defer func() {
+		if retErr != nil && !errors.Is(retErr, errIndexingFailure) {
+			retErr = fmt.Errorf("%w: %w", errIndexingFailure, retErr)
+		}
+	}()
 	if pageInfo == nil {
 		return 0, errors.New("pageInfo cannot be nil")
 	}

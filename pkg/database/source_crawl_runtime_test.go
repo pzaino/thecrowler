@@ -83,7 +83,7 @@ func TestSourceCrawlHandoffSQLiteUnbound(t *testing.T) {
 	}
 	terminal, err := handoff.reportTerminalAt(context.Background(), &handler,
 		SourceCrawlOutcomeCompleted, claim.ClaimedAt.Add(2*time.Second), claim.ClaimedAt.Add(2*time.Second))
-	if err != nil || terminal.Result != SourceCrawlResultApplied || !terminal.SourceStatusChanged {
+	if err != nil || terminal.Result != SourceCrawlResultApplied || terminal.SourceStatusChanged {
 		t.Fatalf("unbound terminal = %+v err=%v", terminal, err)
 	}
 	if operations := sourceCrawlStatusOperationIDs(t, raw, 42); len(operations) != 0 {
@@ -93,8 +93,8 @@ func TestSourceCrawlHandoffSQLiteUnbound(t *testing.T) {
 	if err := raw.QueryRow(`SELECT status FROM Sources WHERE source_id=42`).Scan(&sourceState); err != nil {
 		t.Fatalf("read unbound source status: %v", err)
 	}
-	if sourceState != "completed" {
-		t.Fatalf("unbound source status = %s", sourceState)
+	if sourceState != "processing" {
+		t.Fatalf("unbound source status = %s, want processing (suppressed)", sourceState)
 	}
 	replay, err := handoff.reportTerminalAt(context.Background(), &handler,
 		SourceCrawlOutcomeCompleted, claim.ClaimedAt.Add(2*time.Second),

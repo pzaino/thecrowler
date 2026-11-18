@@ -165,7 +165,7 @@ func TestPostgresSourceCrawlB2RUnboundOwnershipTransfer(t *testing.T) {
 	}
 }
 
-func TestPostgresSourceCrawlB2RContinuityThenTransfer(t *testing.T) {
+func TestPostgresSourceCrawlB2RUnboundSuppressionThenTransfer(t *testing.T) {
 	db, _ := openPostgresIntegrationTestDB(t)
 	adminDB := openAsyncGoalPostgresAdminDB(t)
 	priority := fmt.Sprintf("wp05b3c3b2r-continuity-%d", time.Now().UnixNano())
@@ -173,8 +173,8 @@ func TestPostgresSourceCrawlB2RContinuityThenTransfer(t *testing.T) {
 	result, err := reportSourceCrawlAttemptTerminalAt(context.Background(), db,
 		receipt, claim.ClaimedAt.Add(2*time.Second))
 	if err != nil || result.Result != sourceCrawlTerminalApplied ||
-		!result.SourceStatusChanged {
-		t.Fatalf("continuity terminal = %+v err=%v", result, err)
+		result.SourceStatusChanged {
+		t.Fatalf("unbound terminal = %+v err=%v", result, err)
 	}
 	if _, err := adminDB.Exec(`UPDATE Sources SET usr_id=8 WHERE source_id=$1`,
 		sourceID); err != nil {
@@ -185,8 +185,7 @@ func TestPostgresSourceCrawlB2RContinuityThenTransfer(t *testing.T) {
 		sourceID); err != nil {
 		t.Fatalf("later transfer provenance: %v", err)
 	}
-	// A late retry is a read-only replay and must not rewrite the completed
-	// source status.
+	// A late retry is a read-only replay and must not rewrite source state.
 	replay, err := reportSourceCrawlAttemptTerminalAt(context.Background(), db,
 		receipt, claim.LeaseExpiresAt.Add(time.Hour))
 	if err != nil || replay.Result != sourceCrawlTerminalIdempotentReplay {
@@ -198,7 +197,164 @@ func TestPostgresSourceCrawlB2RContinuityThenTransfer(t *testing.T) {
 		sourceID).Scan(&sourceOwner, &sourceState); err != nil {
 		t.Fatalf("read source: %v", err)
 	}
-	if sourceOwner != 8 || sourceState != "completed" {
+	if sourceOwner != 8 || sourceState != "processing" {
 		t.Fatalf("post-transfer source = owner=%d status=%s", sourceOwner, sourceState)
+	}
+}
+
+// TestPostgresSourceCrawlB2RProvenanceTimestampIsNotContinuity reproduces the
+// reason unbound source-status mutation is suppressed. PostgreSQL evaluates
+// CURRENT_TIMESTAMP at transaction start, so a transfer that begins before the
+// claim and commits after it can leave last_updated_at <= claimed_at while the
+// owner actually changed. A timestamp comparison is therefore not proof of
+// owner continuity, and the terminal transaction must not authorize a source
+// mutation with it.
+func TestPostgresSourceCrawlB2RProvenanceTimestampIsNotContinuity(t *testing.T) {
+	db, _ := openPostgresIntegrationTestDB(t)
+	adminDB := openAsyncGoalPostgresAdminDB(t)
+	priority := fmt.Sprintf("wp05b3c3b2r-tsrace-%d", time.Now().UnixNano())
+	sourceID := createCrawlSchedulingSource(t, db, priority)
+	t.Cleanup(func() { cleanupSourceCrawlAttemptRows(t, adminDB, sourceID) })
+	setSourceCrawlAttemptMode(t, adminDB, "fenced")
+
+	// Start the transfer transaction before the claim, but perform its write
+	// only after the claim commits. This is the interleaving that makes a
+	// transaction-start timestamp stale.
+	raceTx, err := adminDB.Begin()
+	if err != nil {
+		t.Fatalf("begin transfer tx: %v", err)
+	}
+	defer raceTx.Rollback() //nolint:errcheck
+	if _, err := raceTx.Exec(`SELECT 1`); err != nil {
+		t.Fatalf("force tx start: %v", err)
+	}
+	claimNow := time.Now().UTC().Truncate(time.Microsecond)
+	request := sourceCrawlAttemptRequestFor("pg-b2r-tsrace", priority)
+	request.Limit = 1
+	claims, err := claimSourceCrawlAttemptsAt(context.Background(), db, request, claimNow)
+	if err != nil || len(claims) != 1 {
+		t.Fatalf("claim = %+v err=%v", claims, err)
+	}
+	claim := claims[0]
+	if claim.ClaimedAt.Before(claimNow) {
+		// Defensive: the claim clock is not expected to move backwards.
+		t.Fatalf("claim time %v predates request %v", claim.ClaimedAt, claimNow)
+	}
+
+	if _, err := raceTx.Exec(`UPDATE Sources SET usr_id=8 WHERE source_id=$1`, sourceID); err != nil {
+		t.Fatalf("transfer source: %v", err)
+	}
+	if _, err := raceTx.Exec(`UPDATE SourceOwnership
+		SET user_id=8, verified_at=CURRENT_TIMESTAMP, verified_by_user_id=9,
+		    verification_method='transfer', last_updated_at=CURRENT_TIMESTAMP
+		WHERE source_id=$1`, sourceID); err != nil {
+		t.Fatalf("transfer provenance: %v", err)
+	}
+	if err := raceTx.Commit(); err != nil {
+		t.Fatalf("commit transfer: %v", err)
+	}
+
+	var provenanceUpdated time.Time
+	var provenanceOwner uint64
+	if err := adminDB.QueryRow(`SELECT last_updated_at, user_id FROM SourceOwnership
+		WHERE source_id=$1`, sourceID).Scan(&provenanceUpdated, &provenanceOwner); err != nil {
+		t.Fatalf("read provenance: %v", err)
+	}
+	if provenanceOwner != 8 {
+		t.Fatalf("provenance owner = %d, want 8", provenanceOwner)
+	}
+	if provenanceUpdated.After(claim.ClaimedAt) {
+		t.Fatalf("expected a stale transaction-start timestamp; last_updated_at=%v claimed_at=%v",
+			provenanceUpdated, claim.ClaimedAt)
+	}
+
+	receipt := sourceCrawlTerminalReceipt{
+		Attempt: sourceCrawlAttempt{
+			AttemptID: claim.AttemptID, ClaimRequestID: claim.ClaimRequestID,
+			SourceID: claim.SourceID, Generation: claim.Generation, EngineID: claim.EngineID,
+			State: sourceCrawlAttemptClaimed, ClaimedAt: claim.ClaimedAt,
+			LeaseExpiresAt: claim.LeaseExpiresAt,
+		},
+		Attribution: sourceCrawlHandoffUnattributed,
+		Outcome:     sourceCrawlTerminalCompletedOutcome,
+		ReasonCode:  "crawl_completed",
+		ObservedAt:  claim.ClaimedAt.Add(time.Second),
+	}
+	result, err := reportSourceCrawlAttemptTerminalAt(context.Background(), db,
+		receipt, claim.ClaimedAt.Add(2*time.Second))
+	if err != nil || result.Result != sourceCrawlTerminalApplied ||
+		result.SourceStatusChanged {
+		t.Fatalf("terminal after stale transfer = %+v err=%v", result, err)
+	}
+	var sourceState string
+	if err := adminDB.QueryRow(`SELECT status FROM Sources WHERE source_id=$1`,
+		sourceID).Scan(&sourceState); err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	if sourceState != "processing" {
+		t.Fatalf("source status = %s, want processing", sourceState)
+	}
+}
+
+func TestPostgresSourceCrawlB2RClaimBindsProcessingOperation(t *testing.T) {
+	db, _ := openPostgresIntegrationTestDB(t)
+	adminDB := openAsyncGoalPostgresAdminDB(t)
+	priority := fmt.Sprintf("wp05b3c3b2r-processing-%d", time.Now().UnixNano())
+	sourceID := createCrawlSchedulingSource(t, db, priority)
+	t.Cleanup(func() { cleanupSourceCrawlAttemptRows(t, adminDB, sourceID) })
+	setSourceCrawlAttemptMode(t, adminDB, "fenced")
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	operationID := sourceCrawlAttemptInsertOperation(t, db, sourceID, 7,
+		"b2r-processing", "processing", now.Add(-time.Minute), now)
+	request := sourceCrawlAttemptRequestFor("pg-b2r-processing", priority)
+	request.Limit = 1
+	claims, err := claimSourceCrawlAttemptsAt(context.Background(), db, request, now)
+	if err != nil || len(claims) != 1 || claims[0].Outcome != SourceCrawlClaimed ||
+		claims[0].OperationID != operationID {
+		t.Fatalf("processing claim = %+v err=%v", claims, err)
+	}
+	claim := claims[0]
+	binding := &sourceCrawlOperationBinding{
+		OperationID: claim.OperationID, RequestID: claim.RequestID,
+		RunID: claim.RunID, AgentID: claim.AgentID, Owner: claim.Owner,
+		PrincipalUserID: claim.PrincipalUserID, ApprovalID: claim.ApprovalID,
+		ApprovalSHA256: claim.ApprovalSHA256,
+	}
+	receipt := sourceCrawlTerminalReceipt{
+		Attempt: sourceCrawlAttempt{
+			AttemptID: claim.AttemptID, ClaimRequestID: claim.ClaimRequestID,
+			SourceID: claim.SourceID, Generation: claim.Generation, EngineID: claim.EngineID,
+			State: sourceCrawlAttemptClaimed, ClaimedAt: claim.ClaimedAt,
+			LeaseExpiresAt: claim.LeaseExpiresAt, Binding: binding,
+		},
+		Attribution: sourceCrawlHandoffBound,
+		Outcome:     sourceCrawlTerminalCompletedOutcome,
+		ReasonCode:  "crawl_completed",
+		ObservedAt:  claim.ClaimedAt.Add(time.Second),
+		OperationResult: &sourceCrawlTerminalOperationResult{
+			Binding: *binding, ResultState: CrawlOperationCompleted,
+		},
+	}
+	result, err := reportSourceCrawlAttemptTerminalAt(context.Background(), db,
+		receipt, claim.ClaimedAt.Add(2*time.Second))
+	if err != nil || result.Result != sourceCrawlTerminalApplied ||
+		!result.SourceStatusChanged {
+		t.Fatalf("processing terminal = %+v err=%v", result, err)
+	}
+	var attemptState, operationState, sourceState string
+	if err := adminDB.QueryRow(`SELECT state FROM SourceCrawlAttempts WHERE source_id=$1`,
+		sourceID).Scan(&attemptState); err != nil {
+		t.Fatalf("read attempt: %v", err)
+	}
+	if err := adminDB.QueryRow(`SELECT status FROM Status WHERE source_id=$1`,
+		sourceID).Scan(&operationState); err != nil {
+		t.Fatalf("read operation: %v", err)
+	}
+	if err := adminDB.QueryRow(`SELECT status FROM Sources WHERE source_id=$1`,
+		sourceID).Scan(&sourceState); err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	if attemptState != "completed" || operationState != "completed" || sourceState != "completed" {
+		t.Fatalf("processing states = %s/%s/%s", attemptState, operationState, sourceState)
 	}
 }

@@ -176,18 +176,18 @@ func TestSourceCrawlB2RFenceValidationSQLite(t *testing.T) {
 	})
 }
 
-func TestSourceCrawlB2RUnboundOwnerContinuitySQLite(t *testing.T) {
-	t.Run("continuity proven", func(t *testing.T) {
+func TestSourceCrawlB2RUnboundSourceStatusSQLite(t *testing.T) {
+	t.Run("unbound terminal suppresses source status", func(t *testing.T) {
 		raw, handler := openAsyncGoalSQLite(t)
-		claim, receipt := sourceCrawlResultClaim(t, raw, &handler, 42, "unbound-continuity", false)
+		claim, receipt := sourceCrawlResultClaim(t, raw, &handler, 42, "unbound-suppress", false)
 		result, err := reportSourceCrawlAttemptTerminalAt(context.Background(), &handler,
 			receipt, claim.ClaimedAt.Add(time.Second))
 		if err != nil || result.Result != sourceCrawlTerminalApplied ||
-			!result.SourceStatusChanged {
+			result.SourceStatusChanged {
 			t.Fatalf("unbound terminal = %+v err=%v", result, err)
 		}
 		attempt, source := sourceCrawlB2RReadAttemptSource(t, raw, 42)
-		if attempt != "completed" || source != "completed" {
+		if attempt != "completed" || source != "processing" {
 			t.Fatalf("attempt/source = %s/%s", attempt, source)
 		}
 	})
@@ -253,6 +253,43 @@ func TestSourceCrawlB2RUnboundOwnerContinuitySQLite(t *testing.T) {
 		attempt, source := sourceCrawlB2RReadAttemptSource(t, raw, 42)
 		if attempt != "claimed" || source != "processing" {
 			t.Fatalf("disabled attempt/source = %s/%s", attempt, source)
+		}
+	})
+
+	t.Run("expired claim is reclaimable after suppression", func(t *testing.T) {
+		raw, handler := openAsyncGoalSQLite(t)
+		claim, receipt := sourceCrawlResultClaim(t, raw, &handler, 42, "unbound-reclaim", false)
+		result, err := reportSourceCrawlAttemptTerminalAt(context.Background(), &handler,
+			receipt, claim.ClaimedAt.Add(time.Second))
+		if err != nil || result.Result != sourceCrawlTerminalApplied ||
+			result.SourceStatusChanged {
+			t.Fatalf("unbound terminal = %+v err=%v", result, err)
+		}
+		// Simulate the elapsed claim lease. The source is still `processing`,
+		// but an expired current claim makes it eligible again.
+		expiredLease := claim.ClaimedAt.Add(time.Second)
+		if _, err := raw.Exec(`UPDATE SourceCrawlClaims SET lease_expires_at=?
+			WHERE source_id=42`, expiredLease); err != nil {
+			t.Fatalf("expire current claim: %v", err)
+		}
+		if _, err := raw.Exec(`UPDATE SourceCrawlAttempts SET lease_expires_at=?
+			WHERE source_id=42`, expiredLease); err != nil {
+			t.Fatalf("expire history claim: %v", err)
+		}
+		request := sourceCrawlClaimRequest("unbound-reclaim-next")
+		request.Limit = 1
+		claims, err := claimSourceCrawlAttemptsAt(context.Background(), &handler, request,
+			claim.LeaseExpiresAt.Add(time.Minute))
+		if err != nil || len(claims) != 1 || claims[0].SourceID != 42 ||
+			claims[0].Generation != claim.Generation+1 {
+			t.Fatalf("reclaim = %+v err=%v", claims, err)
+		}
+		var source string
+		if err := raw.QueryRow(`SELECT status FROM Sources WHERE source_id=42`).Scan(&source); err != nil {
+			t.Fatalf("read source: %v", err)
+		}
+		if source != "processing" {
+			t.Fatalf("reclaimed source status = %s", source)
 		}
 	})
 
@@ -371,5 +408,52 @@ func TestSourceCrawlB2RLateWorkerCannotReplaceTerminalSQLite(t *testing.T) {
 	attempt, operation, source := sourceCrawlResultReadState(t, raw, 42)
 	if attempt != "failed" || operation != "failed" || source != "error" {
 		t.Fatalf("states = %s/%s/%s", attempt, operation, source)
+	}
+}
+
+func TestSourceCrawlB2RClaimBindsProcessingOperationSQLite(t *testing.T) {
+	raw, handler := openAsyncGoalSQLite(t)
+	sourceCrawlResultSeedSource(t, raw, 42, 7, "bind-processing")
+	enableSourceCrawlClaimMode(t, raw)
+	sourceCrawlInsertBoundOperation(t, raw, 42, 7, "bind-processing", "processing")
+	request := sourceCrawlClaimRequest("bind-processing")
+	request.Limit = 1
+	claims, err := claimSourceCrawlAttemptsAt(context.Background(), &handler, request,
+		sourceCrawlClaimTestNow)
+	if err != nil || len(claims) != 1 || claims[0].Outcome != SourceCrawlClaimed ||
+		claims[0].OperationID == "" {
+		t.Fatalf("processing claim = %+v err=%v", claims, err)
+	}
+	claim := claims[0]
+	binding := &sourceCrawlOperationBinding{
+		OperationID: claim.OperationID, RequestID: claim.RequestID,
+		RunID: claim.RunID, AgentID: claim.AgentID, Owner: claim.Owner,
+		PrincipalUserID: claim.PrincipalUserID, ApprovalID: claim.ApprovalID,
+		ApprovalSHA256: claim.ApprovalSHA256,
+	}
+	receipt := sourceCrawlTerminalReceipt{
+		Attempt: sourceCrawlAttempt{
+			AttemptID: claim.AttemptID, ClaimRequestID: claim.ClaimRequestID,
+			SourceID: claim.SourceID, Generation: claim.Generation, EngineID: claim.EngineID,
+			State: sourceCrawlAttemptClaimed, ClaimedAt: claim.ClaimedAt,
+			LeaseExpiresAt: claim.LeaseExpiresAt, Binding: binding,
+		},
+		Attribution: sourceCrawlHandoffBound,
+		Outcome:     sourceCrawlTerminalCompletedOutcome,
+		ReasonCode:  "crawl_completed",
+		ObservedAt:  claim.ClaimedAt.Add(time.Second),
+		OperationResult: &sourceCrawlTerminalOperationResult{
+			Binding: *binding, ResultState: CrawlOperationCompleted,
+		},
+	}
+	result, err := reportSourceCrawlAttemptTerminalAt(context.Background(), &handler,
+		receipt, claim.ClaimedAt.Add(2*time.Second))
+	if err != nil || result.Result != sourceCrawlTerminalApplied ||
+		!result.SourceStatusChanged {
+		t.Fatalf("processing terminal = %+v err=%v", result, err)
+	}
+	attempt, operation, source := sourceCrawlResultReadState(t, raw, 42)
+	if attempt != "completed" || operation != "completed" || source != "completed" {
+		t.Fatalf("processing states = %s/%s/%s", attempt, operation, source)
 	}
 }

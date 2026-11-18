@@ -62,6 +62,10 @@ var (
 var (
 	errCrawlFenced  = errors.New("source crawl fence lost")
 	errCrawlTimeout = errors.New("timeout during crawling")
+	// errIndexingFailure marks a page-indexing error. Fenced crawls treat it
+	// as a failed crawl because a page that was not persisted cannot support a
+	// truthful completed result. Legacy behaviour is unchanged.
+	errIndexingFailure = errors.New("page indexing failed")
 )
 
 func (ctx *ProcessContext) crawlContext() context.Context {
@@ -112,27 +116,25 @@ func (ctx *ProcessContext) checkCrawlFence() error {
 	return nil
 }
 
-// quarantineSession marks the crawl as having failed to quiesce. It prevents
-// both the finishing worker and the deferred finalizer from returning or
-// closing a session that may still be in use. The VDI slot is intentionally
-// not returned to the pool; a quarantined slot must be recovered by the
-// operator through the normal VDI restart/recycle procedure.
+// quarantineSession marks the crawl as having failed to quiesce. The deferred
+// finalizer then neither returns nor closes the session, and it does not clear
+// per-crawl shared state that the still-running worker may use. It deliberately
+// does not set VDIReturned: the worker's own eventual return is safe once its
+// work has actually finished, and it recovers the pool slot. If the worker
+// never finishes, the slot stays out of the pool by design.
 func (ctx *ProcessContext) quarantineSession(reason string) {
 	if ctx == nil {
 		return
 	}
 	ctx.quarantineOnce.Do(func() {
-		ctx.sessionQuarantined = true
-		ctx.VDIOperationMutex.Lock()
-		ctx.VDIReturned = true
-		ctx.VDIOperationMutex.Unlock()
+		ctx.sessionQuarantined.Store(true)
 		cmn.DebugMsg(cmn.DbgLvlError,
 			"quarantining VDI session for source %d: %s", ctx.source.ID, reason)
 	})
 }
 
 func (ctx *ProcessContext) sessionIsQuarantined() bool {
-	return ctx != nil && ctx.sessionQuarantined
+	return ctx != nil && ctx.sessionQuarantined.Load()
 }
 
 // validateFencedClaimStartup is the exported cmd-level pre-start check. It
@@ -340,9 +342,9 @@ func ReportFencedCrawlFailure(db *cdb.Handler, coordinator SourceCrawlCoordinato
 
 // ReportFencedCrawlOutcome reports a terminal result for a source that was
 // claimed but never entered CrawlWebsite, such as a queued source dropped at
-// batch shutdown or a VDI acquisition failure. The terminal transaction also
-// owns the unbound operational source-status update when owner continuity is
-// proven; there is no second, unfenced status write.
+// batch shutdown or a VDI acquisition failure. Source status is written only
+// by the terminal transaction for bound attempts; unbound attempts are
+// suppressed because schema 1.17 has no durable claim-time owner.
 func ReportFencedCrawlOutcome(db *cdb.Handler, coordinator SourceCrawlCoordinator,
 	outcome cdb.SourceCrawlTerminalOutcome, timeout time.Duration) {
 	if db == nil || coordinator == nil {
@@ -363,6 +365,13 @@ func ReportFencedCrawlOutcome(db *cdb.Handler, coordinator SourceCrawlCoordinato
 	cmn.DebugMsg(cmn.DbgLvlInfo,
 		"fenced terminal outcome for source %d attempt %s: %s (%s)",
 		coordinator.SourceID(), coordinator.AttemptID(), result.Result, result.Reason)
+}
+
+// networkInfoCollectionFailed reports whether the network-information
+// collector recorded a terminal error. The collector state uses 3 for error,
+// matching the Status flag convention.
+func networkInfoCollectionFailed(status int32) bool {
+	return status == 3
 }
 
 // awaitCrawlQuiescence waits for the crawl worker to finish within the bounded

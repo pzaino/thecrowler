@@ -423,12 +423,11 @@ type sourceCrawlTerminalAuthority struct {
 	AttemptState          sourceCrawlAttemptState
 	Binding               *sourceCrawlOperationBinding
 
-	SourceDeleted                     bool
-	SourceDisabled                    bool
-	SourceOwnershipVerified           bool
-	SourceOwnershipContinuityVerified bool
-	CurrentSourceOwnerUserID          uint64
-	ApprovalHistory                   sourceCrawlApprovalHistoryState
+	SourceDeleted            bool
+	SourceDisabled           bool
+	SourceOwnershipVerified  bool
+	CurrentSourceOwnerUserID uint64
+	ApprovalHistory          sourceCrawlApprovalHistoryState
 }
 
 var (
@@ -603,13 +602,22 @@ func (a sourceCrawlTerminalAuthority) sourceCrawlTerminalSourceStatusEligible(
 	}
 	if receipt.Attribution != sourceCrawlHandoffBound {
 		// An unbound attempt has no recorded operation principal. Schema 1.17
-		// can prove owner continuity only through the verified SourceOwnership
-		// provenance row: it must still name the current Sources.usr_id owner
-		// and must not have been written after the claim. Otherwise the update
-		// is suppressed and the source is recovered through the bounded
-		// processing-timeout/lease reclaim path.
-		return a.SourceOwnershipVerified && a.SourceOwnershipContinuityVerified &&
-			a.CurrentSourceOwnerUserID != 0
+		// cannot prove that the current source owner is the owner the claim was
+		// validated against:
+		//
+		//   - SourceOwnership.last_updated_at is written with CURRENT_TIMESTAMP,
+		//     which PostgreSQL evaluates at transaction start, not commit time;
+		//   - Sources.usr_id is mutable and is not versioned;
+		//   - no claim-time owner is persisted on SourceCrawlClaims or
+		//     SourceCrawlAttempts for an unbound attempt.
+		//
+		// An ownership transfer that begins before the claim and commits after
+		// it can therefore leave last_updated_at <= claimed_at even though the
+		// owner changed. A source-status mutation must not be authorized on
+		// that basis, so unbound updates are suppressed. The source stays
+		// `processing` and becomes claimable again when the claim lease
+		// expires; a durable claim-time owner field requires B3 approval.
+		return false
 	}
 	if receipt.Attempt.Binding == nil || a.Binding == nil ||
 		*a.Binding != *receipt.Attempt.Binding || receipt.OperationResult == nil ||

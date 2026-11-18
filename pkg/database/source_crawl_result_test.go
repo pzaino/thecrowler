@@ -239,8 +239,8 @@ func TestSourceCrawlResultSQLiteTerminalUnboundOnly(t *testing.T) {
 	if err != nil || result.Result != sourceCrawlTerminalApplied {
 		t.Fatalf("unbound terminal = %+v err=%v", result, err)
 	}
-	if !result.SourceStatusChanged {
-		t.Fatal("unbound attempt with proven owner continuity did not update source status")
+	if result.SourceStatusChanged {
+		t.Fatal("unbound attempt changed source status")
 	}
 	if count := sourceCrawlAttemptHistoryCount(t, raw, 42); count != 1 {
 		t.Fatalf("history count = %d", count)
@@ -252,7 +252,7 @@ func TestSourceCrawlResultSQLiteTerminalUnboundOnly(t *testing.T) {
 	if err := raw.QueryRow(`SELECT status FROM Sources WHERE source_id=?`, 42).Scan(&sourceState); err != nil {
 		t.Fatalf("read source: %v", err)
 	}
-	if attemptState != string(sourceCrawlAttemptCompleted) || sourceState != "completed" {
+	if attemptState != string(sourceCrawlAttemptCompleted) || sourceState != "processing" {
 		t.Fatalf("unbound states = attempt=%s source=%s", attemptState, sourceState)
 	}
 	if operations := sourceCrawlStatusOperationIDs(t, raw, 42); len(operations) != 0 {
@@ -764,7 +764,7 @@ func TestSourceCrawlResultSQLiteAlreadyPendingAndMissingProposal(t *testing.T) {
 		}
 		result, err := reportSourceCrawlAttemptTerminalAt(context.Background(), &handler,
 			receipt, claim.ClaimedAt.Add(2*time.Second))
-		if err != nil || result.Result != sourceCrawlTerminalApplied || !result.SourceStatusChanged {
+		if err != nil || result.Result != sourceCrawlTerminalApplied || result.SourceStatusChanged {
 			t.Fatalf("already-pending terminal = %+v err=%v", result, err)
 		}
 		var operationState, sourceState string
@@ -774,7 +774,7 @@ func TestSourceCrawlResultSQLiteAlreadyPendingAndMissingProposal(t *testing.T) {
 		if err := raw.QueryRow(`SELECT status FROM Sources WHERE source_id=42`).Scan(&sourceState); err != nil {
 			t.Fatalf("read already-pending source: %v", err)
 		}
-		if operationState != "already_pending" || sourceState != "completed" {
+		if operationState != "already_pending" || sourceState != "processing" {
 			t.Fatalf("already-pending states = %s/%s", operationState, sourceState)
 		}
 	})

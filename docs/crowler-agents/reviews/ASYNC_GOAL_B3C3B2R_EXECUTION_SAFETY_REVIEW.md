@@ -4,6 +4,17 @@
 
 **Implemented in the working tree. Not production-ready. Not deployed.**
 
+> **Corrected by WP-05B3C3B2V.** Independent verification found two defects in
+> this review's design: (1) the unbound owner-continuity rule based on
+> `SourceOwnership.last_updated_at <= claimed_at` is not sound on PostgreSQL,
+> because both the ownership upsert and the trigger write `CURRENT_TIMESTAMP`
+> (transaction start), so a transfer that begins before the claim and commits
+> after it can carry an older timestamp; unbound source-status mutation is now
+> suppressed entirely. (2) Quarantining a session also marked `VDIReturned`,
+> and `closeSession` cleared shared crawl state while the worker could still
+> run; quarantine now only suppresses the finalizer's release and cleanup.
+> See `ASYNC_GOAL_B3C3B2V_INDEPENDENT_REVIEW.md`.
+
 B2R hardens the approved B2 live fenced crawler handoff. It adds no schema
 object, migration, default-mode change, public API, configuration field or
 agent manifest. Schema remains **1.17**, writer generation remains

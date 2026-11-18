@@ -1,5 +1,10 @@
 # WP-05B3C3B2R test report
 
+> **Corrected by WP-05B3C3B2V.** The unbound owner-continuity and quarantine
+> expectations recorded here were superseded: unbound source-status mutation is
+> now suppressed, and quarantine no longer marks the session as returned or
+> clears shared crawl state. See `ASYNC_GOAL_B3C3B2V_TEST_REPORT.md`.
+
 ## Environment
 
 | Item | Value |

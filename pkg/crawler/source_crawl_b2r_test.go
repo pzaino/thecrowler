@@ -73,6 +73,17 @@ func TestNetworkOnlyCrawlResult(t *testing.T) {
 	}
 }
 
+func TestNetworkInfoCollectionFailed(t *testing.T) {
+	if !networkInfoCollectionFailed(3) {
+		t.Fatal("collector error state 3 was not treated as failed")
+	}
+	for _, status := range []int32{0, 1, 2} {
+		if networkInfoCollectionFailed(status) {
+			t.Fatalf("collector state %d was treated as failed", status)
+		}
+	}
+}
+
 func TestAwaitCrawlQuiescence(t *testing.T) {
 	done := make(chan struct{})
 	if awaitCrawlQuiescence(done, 20*time.Millisecond) {
@@ -90,8 +101,14 @@ func TestAwaitCrawlQuiescence(t *testing.T) {
 func TestQuarantineSession(t *testing.T) {
 	ctx := &ProcessContext{source: &cdb.Source{ID: 42}}
 	ctx.quarantineSession("timeout")
-	if !ctx.sessionIsQuarantined() || !ctx.VDIReturned {
-		t.Fatal("quarantine did not mark the session as quarantined and unreturned")
+	if !ctx.sessionIsQuarantined() {
+		t.Fatal("quarantine did not mark the session as quarantined")
+	}
+	// The finalizer, not the quarantining goroutine, must suppress the release.
+	// VDIReturned stays false so the worker's own eventual return can recover
+	// the slot safely once its work has actually finished.
+	if ctx.VDIReturned {
+		t.Fatal("quarantine marked the session as already returned")
 	}
 	// A second call is idempotent.
 	ctx.quarantineSession("again")
@@ -109,12 +126,16 @@ func TestCloseSessionDoesNotReturnQuarantinedVDI(t *testing.T) {
 		},
 	}
 	ctx.sessionFinalized = false
+	// Shared state the still-running worker may use.
+	ctx.newLinks = []LinkItem{{Link: "https://still-running.example/"}}
+	ctx.visitedLinks = map[string]bool{"https://still-running.example/": true}
+	ctx.CollectedCookies = map[string]interface{}{"cookie": "still-running"}
+	ctx.pStatus = 1
 	ctx.quarantineSession("timeout")
 	release := make(chan vdi.SeleniumInstance, 1)
 	var wg sync.WaitGroup
 	wg.Add(1)
 	ctx.WG = &wg
-	ctx.pStatus = 1
 	var sel vdi.SeleniumInstance
 	closeSession(ctx, &Pars{}, &sel, release, errCrawlTimeout)
 	select {
@@ -122,9 +143,18 @@ func TestCloseSessionDoesNotReturnQuarantinedVDI(t *testing.T) {
 		t.Fatal("quarantined VDI was returned to the pool")
 	default:
 	}
-	if !ctx.VDIReturned {
-		t.Fatal("quarantined session is not marked as not-returned")
+	if ctx.VDIReturned {
+		t.Fatal("quarantined session was marked as returned")
 	}
+	if len(ctx.newLinks) != 1 || ctx.visitedLinks == nil || ctx.CollectedCookies == nil {
+		t.Fatal("closeSession cleared shared state still owned by the worker")
+	}
+	if ctx.pStatus == 10 {
+		t.Fatal("closeSession finalized the pipeline state while quarantined")
+	}
+	// The worker's late updates must remain safe: this unconditional map write
+	// is the shape that would panic on a cleared map.
+	ctx.visitedLinks["https://late.example/"] = true
 	waitCh := make(chan struct{})
 	go func() {
 		wg.Wait()

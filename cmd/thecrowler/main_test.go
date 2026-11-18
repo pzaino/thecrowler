@@ -312,14 +312,17 @@ func TestRetrieveAvailableSourcesFencedSQLite(t *testing.T) {
 	result, err := sources[0].Handoff.ReportTerminal(context.Background(), &handler,
 		cdb.SourceCrawlOutcomeCompleted, observed)
 	if err != nil || result.Result != cdb.SourceCrawlResultApplied ||
-		!result.SourceStatusChanged {
+		result.SourceStatusChanged {
 		t.Fatalf("fenced terminal = %+v err=%v", result, err)
 	}
 	var state string
 	if err := handler.QueryRow(`SELECT status FROM Sources WHERE source_id=42`).Scan(&state); err != nil {
 		t.Fatalf("read fenced source status: %v", err)
 	}
-	if state != "completed" {
-		t.Fatalf("fenced source status = %s, want completed", state)
+	// Unbound source status is suppressed: schema 1.17 cannot prove owner
+	// continuity. The source remains processing and is reclaimable when the
+	// claim lease expires.
+	if state != "processing" {
+		t.Fatalf("fenced source status = %s, want processing", state)
 	}
 }

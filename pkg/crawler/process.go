@@ -69,7 +69,7 @@ type ProcessContext struct {
 	crawlAbortReason     atomic.Value              // Stable reason for crawl cancellation
 	sourceCrawl          SourceCrawlCoordinator    // Optional fenced attempt handoff
 	quarantineOnce       sync.Once                 // Ensures a session is quarantined once
-	sessionQuarantined   bool                      // Session must not be reused or closed
+	sessionQuarantined   atomic.Bool               // Session must not be released by the finalizer
 	sessionFinalized     bool                      // closeSession completed exactly once
 	visitedLinks         map[string]bool           // Map to keep track of visited links
 	userURLPatterns      []string                  // User-defined URL patterns

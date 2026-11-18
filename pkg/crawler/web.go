@@ -1034,6 +1034,11 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "indexing page: %v", err)
 		ctx.updateSourceState(err)
+		if ctx.sourceCrawl != nil {
+			// A fenced crawl must not report completion when its initial page
+			// was not indexed.
+			return ctx.wd, htmlContent, initialLinks, err
+		}
 	}
 
 	// visitedLinks update (make sure this is protected if used concurrently elsewhere)

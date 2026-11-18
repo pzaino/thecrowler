@@ -388,7 +388,9 @@ jobs:
             TestPostgresSourceCrawlB2RFenceBoundary \
             TestPostgresSourceCrawlB2RValidateTxSupersession \
             TestPostgresSourceCrawlB2RUnboundOwnershipTransfer \
-            TestPostgresSourceCrawlB2RContinuityThenTransfer; do
+            TestPostgresSourceCrawlB2RUnboundSuppressionThenTransfer \
+            TestPostgresSourceCrawlB2RProvenanceTimestampIsNotContinuity \
+            TestPostgresSourceCrawlB2RClaimBindsProcessingOperation; do
             grep -F -- "=== RUN   ${test}" "$log"
             grep -F -- "--- PASS: ${test}" "$log"
           done
