@@ -2,8 +2,8 @@
 
 ## Status
 
-**B1 Option A implemented internally. No crawler or service caller is wired.**
-**B2 is approved but is a separate follow-up package. B3 is not approved.**
+**B1 Option A implemented internally. The B2 live crawler handoff is implemented
+separately. B3 is not approved.**
 
 The attributable approval is recorded in
 [`ASYNC_GOAL_B3C3_STAGE_B_APPROVAL_REQUEST.md`](ASYNC_GOAL_B3C3_STAGE_B_APPROVAL_REQUEST.md):

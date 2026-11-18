@@ -89,16 +89,41 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 	processCtx := NewProcessContext(args)
 	if processCtx == nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "failed to create a new ProcessContext")
-		UpdateSourceState(args.DB, args.Src.URL, errors.New("failed to create a new ProcessContext"))
+		reportFencedCrawlFailure(args, errors.New("failed to create a new ProcessContext"))
 		args.Status.EndTime = time.Now()
 		args.Status.PipelineRunning.Store(3) // Set the pipeline status to error
 		args.Status.TotalErrors.Add(1)
 		args.Status.LastError = "failed to create a new ProcessContext"
 		cmn.DebugMsg(cmn.DbgLvlError, "Crawling process aborted for source: %s", args.Src.URL)
+		if args.WG != nil {
+			args.WG.Done()
+		}
+		select {
+		case releaseVDI <- sel:
+		default:
+		}
 		return errors.New("failed to create a new ProcessContext")
 	}
 
-	// We have process context, so we can proceed:
+	// We have process context, so we can proceed. Stop the heartbeat and
+	// cancel the crawl context when this call finishes.
+	defer processCtx.crawlCancel()
+	stopHeartbeat := startSourceCrawlHeartbeat(processCtx, processCtx.db)
+	defer stopHeartbeat()
+	if err := processCtx.checkCrawlFence(); err != nil {
+		processCtx.Status.PipelineRunning.Store(3)
+		processCtx.Status.TotalErrors.Add(1)
+		processCtx.Status.LastError = err.Error()
+		reportFencedCrawlFailure(args, err)
+		if processCtx.WG != nil {
+			processCtx.WG.Done()
+		}
+		select {
+		case releaseVDI <- sel:
+		default:
+		}
+		return err
+	}
 
 	// Pipeline has started
 	processCtx.Status.StartTime = time.Now()
@@ -156,6 +181,12 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		})
 	}()
 
+	if err := processCtx.checkCrawlFence(); err != nil {
+		processCtx.Status.PipelineRunning.Store(3)
+		processCtx.Status.TotalErrors.Add(1)
+		processCtx.Status.LastError = err.Error()
+		return err
+	}
 	switch classifySourceProtocol(args.Src.URL) {
 	case SourceProtocolEmail:
 		emailArgs := *args
@@ -164,9 +195,13 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 			webQueue = &bufferedWebCrawlQueue{}
 			emailArgs.WebCrawlQueue = webQueue
 		}
-		err = crawlEmailWithResultHandler(context.Background(), &emailArgs, emailIndexResultHandler{processCtx: processCtx})
+		err = crawlEmailWithResultHandler(processCtx.crawlContext(), &emailArgs, emailIndexResultHandler{processCtx: processCtx})
 		if err == nil && webQueue != nil {
-			err = crawlEmailWebLinks(processCtx, sel, webQueue.drain())
+			if fenceErr := processCtx.checkCrawlFence(); fenceErr != nil {
+				err = fenceErr
+			} else {
+				err = crawlEmailWebLinks(processCtx, sel, webQueue.drain())
+			}
 		}
 		if err != nil {
 			processCtx.Status.PipelineRunning.Store(3)
@@ -179,6 +214,12 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		processCtx.Status.EndTime = time.Now()
 		return nil
 	case SourceProtocolNetwork:
+		if err := processCtx.checkCrawlFence(); err != nil {
+			processCtx.Status.PipelineRunning.Store(3)
+			processCtx.Status.TotalErrors.Add(1)
+			processCtx.Status.LastError = err.Error()
+			return err
+		}
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-CrawlWebsite] URL %s has no HTTP(S) or FTP(S) protocol, collecting network information only...", args.Src.URL)
 		processCtx.GetNetInfo(args.Src.URL)
 		_, indexErr := processCtx.IndexNetInfo(1)
@@ -188,7 +229,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		} else {
 			processCtx.Status.PipelineRunning.Store(2)
 		}
-		UpdateSourceState(args.DB, args.Src.URL, nil)
+		UpdateSourceStateForCrawl(processCtx, args, nil)
 		processCtx.Status.EndTime = time.Now()
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-CrawlWebsite] Finished collecting network information for: %s", args.Src.URL)
 		return nil
@@ -198,7 +239,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 
 	// Initialize the Selenium instance
 	if err = processCtx.ConnectToVDI(sel); err != nil {
-		UpdateSourceState(args.DB, args.Src.URL, err)
+		UpdateSourceStateForCrawl(processCtx, args, err)
 		processCtx.Status.EndTime = time.Now()
 		processCtx.Status.PipelineRunning.Store(3)
 		processCtx.Status.TotalErrors.Add(1)
@@ -530,7 +571,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		processCtx.Status.PipelineRunning.Store(3)
 		processCtx.Status.CrawlingRunning.Store(3)
 		processCtx.Status.LastError = "timeout during crawling"
-		UpdateSourceState(args.DB, args.Src.URL, errors.New("timeout during crawling"))
+		UpdateSourceStateForCrawl(processCtx, args, errors.New("timeout during crawling"))
 		err = errors.New("timeout")
 		return err
 	case <-done:
@@ -696,10 +737,22 @@ func closeSession(ctx *ProcessContext,
 	}
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Pipeline completed for source: %v", ctx.source.ID)
 	ctx.Status.EndTime = time.Now()
-	UpdateSourceState(args.DB, args.Src.URL, err)
+	emitCompletionEvent := false
+	if ctx.sourceCrawl != nil {
+		// A fenced crawl's source/operation status is written only by the
+		// terminal reporter. The legacy URL-based update is intentionally
+		// skipped so a stale worker cannot overwrite the source row.
+		result := ctx.reportSourceCrawlTerminal(err)
+		emitCompletionEvent = result.Result == cdb.SourceCrawlResultApplied
+	} else {
+		UpdateSourceState(args.DB, args.Src.URL, err)
+		emitCompletionEvent = ctx.config.Crawler.CreateEventWhenDone
+	}
 
-	// Create a database event to indicate the crawl has completed
-	if ctx.config.Crawler.CreateEventWhenDone {
+	// Create a database event to indicate the crawl has completed. For a
+	// fenced crawl it is emitted only when the authoritative terminal result
+	// was applied; the event remains an audit hint, not completion proof.
+	if emitCompletionEvent {
 		err := CreateCrawlCompletedEvent(*ctx.db, ctx.source.ID, ctx.Status)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "Failed to create crawl completed event in DB: %v", err)
@@ -787,14 +840,22 @@ func NewProcessContext(args *Pars) *ProcessContext {
 	if config.IsEmpty() {
 		config = *cfg.NewConfig()
 	}
+	parent := args.Context
+	if parent == nil {
+		parent = context.Background()
+	}
+	crawlCtx, crawlCancel := context.WithCancel(parent)
 	newPCtx := ProcessContext{
-		source: &args.Src,
-		db:     &args.DB,
-		sel:    args.Sel,
-		re:     args.RE,
-		SelID:  args.SelIdx,
-		Status: args.Status,
-		WG:     args.WG,
+		source:      &args.Src,
+		db:          &args.DB,
+		sel:         args.Sel,
+		re:          args.RE,
+		SelID:       args.SelIdx,
+		Status:      args.Status,
+		WG:          args.WG,
+		crawlCtx:    crawlCtx,
+		crawlCancel: crawlCancel,
+		sourceCrawl: args.SourceCrawl,
 	}
 	newPCtx.config = *cfg.DeepCopyConfig(&config)
 	newPCtx.visitedLinks = make(map[string]bool)
@@ -909,6 +970,9 @@ func (ctx *ProcessContext) IndexPageContext(waitCtx context.Context, pageInfo *P
 
 // IndexNetInfo indexes the network information of a source in the database
 func (ctx *ProcessContext) IndexNetInfo(flags int) (uint64, error) {
+	if err := ctx.checkCrawlFence(); err != nil {
+		return 0, err
+	}
 	pageInfo := PageInfo{}
 	pageInfo.HTTPInfo = ctx.hi
 	pageInfo.NetInfo = ctx.ni
@@ -996,6 +1060,9 @@ func indexPageContext(
 	if strings.TrimSpace(url) == "" {
 		return 0, errors.New("url cannot be empty")
 	}
+	if err := ctx.checkCrawlFence(); err != nil {
+		return 0, err
+	}
 
 	pageInfo.URL = url
 	EnsurePageCrowlerMeta(pageInfo, ctx.source, ctx.srcCfg)
@@ -1043,6 +1110,9 @@ func indexPageContext(
 		}
 
 		if indexID != 0 {
+			if err = ctx.checkCrawlFence(); err != nil {
+				return 0, err
+			}
 			if err = deleteWebObjects(
 				waitCtx,
 				ctx.db,
@@ -1149,6 +1219,10 @@ func indexPageContext(
 	// Commit the main page transaction.
 	phase = "commit"
 
+	if err = ctx.checkCrawlFence(); err != nil {
+		rollbackTransaction(tx)
+		return 0, err
+	}
 	if err = commitTransaction(tx); err != nil {
 		rollbackTransaction(tx)
 		return 0, err

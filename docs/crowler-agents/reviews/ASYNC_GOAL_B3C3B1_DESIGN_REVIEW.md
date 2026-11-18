@@ -2,14 +2,15 @@
 
 ## Status
 
-**Phase A complete. B1 Option A implemented internally. B2 approved; B2
-implementation pending. B3 not approved.**
+**Phase A complete. B1 Option A and B2 implemented. B3 not approved.**
 
 The maintainer approved B1 Option A and B2 on 2026-11-18 under
 `WP-05B3C3/Stage-B-2`. B1 is implemented in
 [`ASYNC_GOAL_B3C3B1_B1_IMPLEMENTATION.md`](ASYNC_GOAL_B3C3B1_B1_IMPLEMENTATION.md)
-with no crawler or service caller. B2 is a separate follow-up package. B3
-remains not approved.
+with no crawler or service caller. B2 is implemented as the live crawler
+handoff in
+[`ASYNC_GOAL_B3C3B2_IMPLEMENTATION.md`](ASYNC_GOAL_B3C3B2_IMPLEMENTATION.md).
+B3 remains not approved.
 
 WP-05B3C3B1R closed the remaining authority, current/history and claim-timing
 gaps. WP-05B3C3B1S closed the final-freshness and observation-time replay gaps.
@@ -289,8 +290,8 @@ Enabled internally:
 
 Not enabled:
 
-- Any live crawler handoff or worker caller. B2 is a separate approved but
-  pending package.
+- Any automatic mode switch or default-mode change. B2 is implemented but only
+  runs when the operator has explicitly selected `fenced`.
 - Automatic goal resume, event consumer or goal-success decision from a crawl
   result.
 - Page-index, browser/VDI, plugin, email or external-effect fencing. B2 must

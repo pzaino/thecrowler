@@ -17,12 +17,14 @@
 package crawler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/go-auxiliaries/selenium/log"
 
@@ -61,6 +63,11 @@ type ProcessContext struct {
 	getURLMutex          sync.Mutex                // Mutex to protect the getURLContent function
 	accessVDIMutex       sync.Mutex                // Mutex to protect access to the VDI instance
 	closeSession         sync.Mutex                // Mutex to protect the closeSession function
+	crawlCtx             context.Context           // Fenced crawl cancellation context
+	crawlCancel          context.CancelFunc        // Cancels crawlCtx on shutdown or fence loss
+	crawlAbortOnce       sync.Once                 // Ensures the abort reason is recorded once
+	crawlAbortReason     atomic.Value              // Stable reason for crawl cancellation
+	sourceCrawl          SourceCrawlCoordinator    // Optional fenced attempt handoff
 	visitedLinks         map[string]bool           // Map to keep track of visited links
 	userURLPatterns      []string                  // User-defined URL patterns
 	userURLBlockPatterns []string                  // User-defined URL block patterns

@@ -87,6 +87,7 @@ type sourceCrawlResultSource struct {
 	UserID   uint64
 	Disabled bool
 	Deleted  bool
+	Status   string
 }
 
 func (c sourceCrawlCurrentClaim) matchesAttempt(a sourceCrawlAttempt) bool {
@@ -192,21 +193,22 @@ func sourceCrawlBeginResultTx(ctx context.Context, db *Handler) (
 func sourceCrawlLockResultSourceTx(ctx context.Context, tx *sql.Tx, db Handler,
 	sourceID uint64) (sourceCrawlResultSource, bool, error) {
 	p := func(n int) string { return sourceCrawlPlaceholder(db, n) }
-	query := `SELECT usr_id, disabled, deleted_at FROM Sources WHERE source_id = ` + p(1)
+	query := `SELECT usr_id, disabled, deleted_at, status FROM Sources WHERE source_id = ` + p(1)
 	if normalizeDBMS(db.DBMS()) == "postgres" {
 		query += ` FOR UPDATE`
 	}
 	var userID int64
 	var disabled bool
 	var deletedAt sql.NullTime
-	err := tx.QueryRowContext(ctx, query, sourceID).Scan(&userID, &disabled, &deletedAt)
+	var status string
+	err := tx.QueryRowContext(ctx, query, sourceID).Scan(&userID, &disabled, &deletedAt, &status)
 	if errors.Is(err, sql.ErrNoRows) {
 		return sourceCrawlResultSource{}, false, nil
 	}
 	if err != nil {
 		return sourceCrawlResultSource{}, false, err
 	}
-	source := sourceCrawlResultSource{Disabled: disabled, Deleted: deletedAt.Valid}
+	source := sourceCrawlResultSource{Disabled: disabled, Deleted: deletedAt.Valid, Status: status}
 	if userID > 0 {
 		source.UserID = uint64(userID)
 	}

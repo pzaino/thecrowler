@@ -2,7 +2,7 @@
 
 ## Status
 
-**B1 implemented. B2 approved; B2 implementation pending. B3 not approved.**
+**B1 and B2 implemented. B3 not approved.**
 
 WP-05B3C3A stopped at claim/replay repairs, a real proposal-to-claim test and a
 pure handoff/terminal contract. WP-05B3C3B1 corrected the pure authority/replay
@@ -14,10 +14,10 @@ replay gaps.
 The maintainer approved B1 Option A and B2 on 2026-11-18. B1 is implemented as
 the internal, test-only repository in
 [`ASYNC_GOAL_B3C3B1_B1_IMPLEMENTATION.md`](ASYNC_GOAL_B3C3B1_B1_IMPLEMENTATION.md).
-B2 remains approved but not implemented; it is the live crawler handoff and its
-fencing/cancellation work. B3 remains not approved. No production activation,
-automatic mode switch, migration, deployment or automatic goal resume is
-authorized.
+B2 is implemented as the live crawler handoff and fencing work in
+[`ASYNC_GOAL_B3C3B2_IMPLEMENTATION.md`](ASYNC_GOAL_B3C3B2_IMPLEMENTATION.md).
+B3 remains not approved. No production activation, automatic mode switch,
+migration, deployment or automatic goal resume is authorized.
 
 ## Requested decisions (separate approvals)
 

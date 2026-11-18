@@ -308,7 +308,7 @@ caller or production activation is authorized.
 
 ## Decision 1j: B1 Option A and B2 approval
 
-**Status: B1 IMPLEMENTED; B2 APPROVED, PENDING; B3 NOT APPROVED.**
+**Status: B1 AND B2 IMPLEMENTED; B3 NOT APPROVED.**
 
 On 2026-11-18 the repository maintainer approved B1 Option A and B2. The
 attributable record is in `ASYNC_GOAL_B3C3_STAGE_B_APPROVAL_REQUEST.md`:
@@ -330,9 +330,14 @@ Not approved:
 - Automatic mode switching, migration application, deployment, production
   activation, automatic agent-goal resume, or a new public API/config/manifest.
 
-The B1 implementation is delivered first as an internal repository
-([`ASYNC_GOAL_B3C3B1_B1_IMPLEMENTATION.md`](ASYNC_GOAL_B3C3B1_B1_IMPLEMENTATION.md)).
-B2 follows as a separate reviewed change.
+The B1 implementation is recorded in
+[`ASYNC_GOAL_B3C3B1_B1_IMPLEMENTATION.md`](ASYNC_GOAL_B3C3B1_B1_IMPLEMENTATION.md).
+The B2 live crawler handoff, heartbeat, cancellation and fenced write behavior
+are recorded in
+[`ASYNC_GOAL_B3C3B2_IMPLEMENTATION.md`](ASYNC_GOAL_B3C3B2_IMPLEMENTATION.md).
+B2 adds a separate fenced operational source-status update for unbound attempts
+so ordinary fenced sources do not remain stuck in `processing`; it never creates
+a `Status` operation or goal evidence and does not relax the bound-owner policy.
 
 ## Decision 2: resume phase
 
@@ -423,8 +428,7 @@ No public schema or example was changed.
 
 ## Next action
 
-B1 Option A is implemented and tested as recorded in Decision 1j. B2 is approved
-but remains a separate reviewed change and has not been implemented yet. B3,
+B1 Option A and B2 are implemented and tested as recorded in Decision 1j. B3,
 automatic mode switching, migration application, deployment, production
 activation and automatic goal resume remain unapproved. Do not apply any addon
 to a persistent database or begin unapproved phases automatically.

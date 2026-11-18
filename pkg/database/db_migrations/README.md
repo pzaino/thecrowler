@@ -131,3 +131,7 @@ repository uses the existing 1.17 `SourceCrawlClaims`, `SourceCrawlAttempts`,
 `SourceCrawlClaimPolicy`, `Sources`, `SourceOwnership`, `CrawlProposals`,
 `CrawlApprovals` and `Status` objects. B2 is a separate pending crawler handoff;
 B3 additive schema remains unapproved.
+
+WP-05B3C3B2 adds no DDL. The live crawler handoff, heartbeat, cancellation and
+unbound operational source-status update use the existing 1.17 objects and the
+B1 repository. B3 additive schema remains unapproved.
