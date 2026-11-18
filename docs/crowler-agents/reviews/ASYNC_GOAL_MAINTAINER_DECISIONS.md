@@ -306,6 +306,34 @@ B1 is still exactly as requested in `ASYNC_GOAL_B3C3_STAGE_B_APPROVAL_REQUEST.md
 and remains unapproved. No heartbeat writer, terminal repository, DDL, live
 caller or production activation is authorized.
 
+## Decision 1j: B1 Option A and B2 approval
+
+**Status: B1 IMPLEMENTED; B2 APPROVED, PENDING; B3 NOT APPROVED.**
+
+On 2026-11-18 the repository maintainer approved B1 Option A and B2. The
+attributable record is in `ASYNC_GOAL_B3C3_STAGE_B_APPROVAL_REQUEST.md`:
+approver, UTC date, `WP-05B3C3/Stage-B-2`, exact instruction and scope.
+
+Approved:
+
+- B1 internal, opt-in, test-only lease-renewal and terminal-result repository on
+  existing schema 1.17, with no crawler, agent, event, MCP or public caller.
+- B2 live crawler handoff through `cmd/thecrowler`, `pkg/crawler.Pars` and
+  `ProcessContext`, including the approved fencing/cancellation requirements.
+  B2 must preserve the legacy path and may run only under an explicit operator
+  `fenced` mode.
+
+Not approved:
+
+- B3 additive DDL, canonical receipt digest, persisted `ExpectedState`, original
+  unbound class, request fingerprint or empty-batch acknowledgement.
+- Automatic mode switching, migration application, deployment, production
+  activation, automatic agent-goal resume, or a new public API/config/manifest.
+
+The B1 implementation is delivered first as an internal repository
+([`ASYNC_GOAL_B3C3B1_B1_IMPLEMENTATION.md`](ASYNC_GOAL_B3C3B1_B1_IMPLEMENTATION.md)).
+B2 follows as a separate reviewed change.
+
 ## Decision 2: resume phase
 
 **Status: PENDING.**
@@ -395,11 +423,8 @@ No public schema or example was changed.
 
 ## Next action
 
-WP-05B3C3B1S Phase A repairs and the updated design review are implemented and
-locally tested. Hosted PostgreSQL CI must be green on the exact submitted commit
-before the package is reported as fully verified. Phase B remains blocked: the
-internal repository/heartbeat (B1), live crawler caller (B2) and optional DDL
-(B3) each require a separate explicit maintainer approval. No production
-activation, terminal write, heartbeat, crawler caller, schema change or
-automatic goal resume is authorized. Do not apply any addon to a persistent
-database or begin those phases automatically.
+B1 Option A is implemented and tested as recorded in Decision 1j. B2 is approved
+but remains a separate reviewed change and has not been implemented yet. B3,
+automatic mode switching, migration application, deployment, production
+activation and automatic goal resume remain unapproved. Do not apply any addon
+to a persistent database or begin unapproved phases automatically.

@@ -1,5 +1,10 @@
 # WP-05B3C3B1S Test Report
 
+> **Follow-up.** The maintainer subsequently approved B1 Option A and B2 on
+> 2026-11-18. B1 is now implemented and tested; B2 remains a separate pending
+> package. See `ASYNC_GOAL_B3C3B1_B1_IMPLEMENTATION.md` and
+> `ASYNC_GOAL_B3C3B1_B1_TEST_REPORT.md`.
+
 ## Environment
 
 - Repository: `pzaino/thecrowler`

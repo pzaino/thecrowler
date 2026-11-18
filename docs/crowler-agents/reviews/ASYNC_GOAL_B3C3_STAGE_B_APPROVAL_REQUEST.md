@@ -2,18 +2,22 @@
 
 ## Status
 
-**Request only. Not approved.**
+**B1 implemented. B2 approved; B2 implementation pending. B3 not approved.**
 
 WP-05B3C3A stopped at claim/replay repairs, a real proposal-to-claim test and a
 pure handoff/terminal contract. WP-05B3C3B1 corrected the pure authority/replay
 model and audited the crawler side effects. WP-05B3C3B1R closed the remaining
 source-status, current/history, unbound-owner and claim-timing gaps.
 WP-05B3C3B1S then closed the all-class final-freshness and observation-time
-replay gaps. No terminal repository, heartbeat writer, live crawler handoff,
-migration, worker or production activation is approved.
+replay gaps.
 
-B1 remains **pending**. WP-05B3C3B1R and WP-05B3C3B1S are not B1 approval
-records and do not authorize any repository implementation.
+The maintainer approved B1 Option A and B2 on 2026-11-18. B1 is implemented as
+the internal, test-only repository in
+[`ASYNC_GOAL_B3C3B1_B1_IMPLEMENTATION.md`](ASYNC_GOAL_B3C3B1_B1_IMPLEMENTATION.md).
+B2 remains approved but not implemented; it is the live crawler handoff and its
+fencing/cancellation work. B3 remains not approved. No production activation,
+automatic mode switch, migration, deployment or automatic goal resume is
+authorized.
 
 ## Requested decisions (separate approvals)
 
@@ -51,19 +55,24 @@ Option A, no new DDL, is sufficient for the minimal internal repository but
 cannot prove the fields listed as limitations in
 `ASYNC_GOAL_B3C3B1_DESIGN_REVIEW.md`.
 
-## Required approval record
+## Recorded approval
 
-- Approver identity:
-- UTC approval date:
+- Approver identity: repository maintainer (user) in the OpenCode session.
+- UTC approval date: 2026-11-18.
+- Exact instruction: `this is the approval for B2.` followed by the recorded
+  clarification selecting `Approve B1 + B2 (Recommended)`.
 - Contract version: `WP-05B3C3/Stage-B-2`
-- B1 internal repository (Option A): approved / rejected
+- B1 internal repository (Option A): **approved**
 - B1 approval explicitly includes per-source lease timing, final freshness
   rejection, exact current/history equality, source-status authority preflight
-  and unbound owner-continuity denial: yes / no
-- B2 live crawler caller: approved / rejected
-- B3 additive schema (Option B): approved / rejected / not requested
-- B3 exact DDL/migration/addon/capability/rollback reference:
-- Rollout/drain/rollback authorization:
+  and unbound owner-continuity denial: **yes**
+- B2 live crawler caller: **approved**
+- B3 additive schema (Option B): **not requested / not approved**
+- B3 exact DDL/migration/addon/capability/rollback reference: not applicable
+- Rollout/drain/rollback authorization: B1 is internal and test-only. B2 must
+  preserve the legacy path, may run only when the operator has explicitly
+  selected `fenced` mode, and must not add an automatic mode switch, migration,
+  deployment or default-mode change.
 - Automatic goal resume: **not approved**
 - Public API/config/manifest contract: **not approved**
 

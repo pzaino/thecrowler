@@ -2,18 +2,20 @@
 
 ## Status
 
-**Phase A only. Stage B/B1 is not approved.**
+**Phase A complete. B1 Option A implemented internally. B2 approved; B2
+implementation pending. B3 not approved.**
 
-The reviewed Stage B approval request is still marked *Request only. Not
-approved.* No terminal repository, heartbeat writer, live crawler handoff,
-migration, worker or production activation is implemented here. WP-05B3C3B1R
-closed the remaining authority, current/history and claim-timing gaps.
-WP-05B3C3B1S closes the final-freshness and observation-time replay gaps without
-inferring B1 approval from the task.
+The maintainer approved B1 Option A and B2 on 2026-11-18 under
+`WP-05B3C3/Stage-B-2`. B1 is implemented in
+[`ASYNC_GOAL_B3C3B1_B1_IMPLEMENTATION.md`](ASYNC_GOAL_B3C3B1_B1_IMPLEMENTATION.md)
+with no crawler or service caller. B2 is a separate follow-up package. B3
+remains not approved.
 
+WP-05B3C3B1R closed the remaining authority, current/history and claim-timing
+gaps. WP-05B3C3B1S closed the final-freshness and observation-time replay gaps.
 This document records the corrected authority model, the persisted replay
 equivalence that schema 1.17 can actually prove, the remaining limitations, the
-crawler side-effect audit, and the exact approval scope still required.
+crawler side-effect audit, and the exact boundary still required for B2.
 
 ## 1. In plain English
 
@@ -274,12 +276,26 @@ No option is approved by this document. See
 - MySQL remains legacy-only.
 - No automatic mode flip, migration or startup DDL.
 
-## 12. What is not enabled
+## 12. What is enabled now, and what is not
 
-- No heartbeat or terminal repository implementation.
-- No live crawler handoff or worker caller.
-- No terminal `Status` write, event consumer or goal resume.
-- No schema change, migration, capability checksum change or writer-version
+Enabled internally:
+
+- The B1 Option A heartbeat and terminal-result repository described in
+  `ASYNC_GOAL_B3C3B1_B1_IMPLEMENTATION.md`.
+- Read-only exact terminal replay after lease expiry, replacement, source
+  deletion and a new process connection pool.
+- Bound operation-result recording with source-status updates only under the
+  strict bound-owner policy.
+
+Not enabled:
+
+- Any live crawler handoff or worker caller. B2 is a separate approved but
+  pending package.
+- Automatic goal resume, event consumer or goal-success decision from a crawl
+  result.
+- Page-index, browser/VDI, plugin, email or external-effect fencing. B2 must
+  define it.
+- Any schema change, migration, capability checksum change or writer-version
   change.
-- No public API, configuration or agent-manifest field.
-- No production crawler, model, browser, MCP or external execution.
+- Any public API, configuration or agent-manifest field.
+- Production crawler, model, browser, MCP or external execution.

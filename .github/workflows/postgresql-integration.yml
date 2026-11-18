@@ -353,7 +353,7 @@ jobs:
           export THECROWLER_POSTGRES_INTEGRATION=1
           log="$(mktemp)"
           trap 'rm -f "$log"' EXIT
-          go test -tags=integration ./pkg/database -run '^TestPostgresSourceCrawlAttempt' -count=1 -v 2>&1 | tee "$log"
+          go test -tags=integration ./pkg/database -run '^TestPostgresSourceCrawl(Attempt|Result)' -count=1 -v 2>&1 | tee "$log"
           for test in \
             TestPostgresSourceCrawlAttemptExactHistoryFK \
             TestPostgresSourceCrawlAttemptRuntimeCannotChangeMode \
@@ -376,7 +376,15 @@ jobs:
             TestPostgresSourceCrawlAttemptBindingAndRejections \
             TestPostgresSourceCrawlAttemptConcurrentClaimers \
             TestPostgresSourceCrawlAttemptAddonRepeatable \
-            TestPostgresSourceCrawlAttemptMySQLAndLegacyStartupCompatibility; do
+            TestPostgresSourceCrawlAttemptMySQLAndLegacyStartupCompatibility \
+            TestPostgresSourceCrawlResultLifecycle \
+            TestPostgresSourceCrawlResultHeartbeat \
+            TestPostgresSourceCrawlResultConcurrency \
+            TestPostgresSourceCrawlResultRestrictedRole \
+            TestPostgresSourceCrawlResultRollback \
+            TestPostgresSourceCrawlResultReplayAfterReplacement \
+            TestPostgresSourceCrawlResultConcurrentHeartbeat \
+            TestPostgresSourceCrawlResultLockTimeout; do
             grep -F -- "=== RUN   ${test}" "$log"
             grep -F -- "--- PASS: ${test}" "$log"
           done

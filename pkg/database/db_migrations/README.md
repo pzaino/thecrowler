@@ -124,5 +124,10 @@ objects. B1 Option A remains unapproved; any stronger request/receipt or
 owner-continuity storage remains a separate B3 design-only request.
 
 WP-05B3C3B1S adds no DDL. Its all-class final-freshness and terminal
-observation-time corrections also use existing 1.17 objects. B1 Option A remains
-unapproved; no heartbeat or terminal repository is implemented.
+observation-time corrections also use existing 1.17 objects.
+
+WP-05B3C3B1 B1 adds no DDL. The internal heartbeat and terminal-result
+repository uses the existing 1.17 `SourceCrawlClaims`, `SourceCrawlAttempts`,
+`SourceCrawlClaimPolicy`, `Sources`, `SourceOwnership`, `CrawlProposals`,
+`CrawlApprovals` and `Status` objects. B2 is a separate pending crawler handoff;
+B3 additive schema remains unapproved.

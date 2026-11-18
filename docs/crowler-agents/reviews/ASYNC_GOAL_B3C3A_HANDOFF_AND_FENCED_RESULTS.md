@@ -2,13 +2,15 @@
 
 ## Status
 
-**Design only. No production activation.**
+**Design contract. B1 internal repository implemented; B2 live handoff pending.**
 
 This document defines the contract for the next package, WP-05B3C3. It is
-grounded in the claim foundation that already exists in schema 1.17. The only
-code added here is an unexported, pure-Go validator set in
-`pkg/database/source_crawl_handoff.go`; nothing constructs or calls it, and
-nothing writes a terminal result.
+grounded in the claim foundation that already exists in schema 1.17. The
+original package added an unexported, pure-Go validator set in
+`pkg/database/source_crawl_handoff.go`. The approved B1 Option A implementation
+now provides the internal heartbeat and terminal-result repository described in
+[`ASYNC_GOAL_B3C3B1_B1_IMPLEMENTATION.md`](ASYNC_GOAL_B3C3B1_B1_IMPLEMENTATION.md);
+no crawler caller exists yet. B2 is the separate live handoff package.
 
 WP-05B3C3B1 corrected the authority and replay model: the authoritative claim
 and history timestamps, fresh post-lock database clock, complete unbound input
