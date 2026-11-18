@@ -340,7 +340,7 @@ func sourceCrawlLoadProposalByRequestTx(ctx context.Context, tx *sql.Tx, db Hand
 // approval reads are intentionally unlocked so this path cannot form a cycle
 // with scheduling.
 func sourceCrawlValidateBoundOperationTx(ctx context.Context, tx *sql.Tx, db Handler,
-	sourceID uint64, binding sourceCrawlOperationBinding, expected CrawlOperationState,
+	sourceID uint64, binding sourceCrawlOperationBinding,
 	now time.Time) (CrawlOperationState, sourceCrawlApprovalHistoryState, error) {
 	if err := binding.validate(); err != nil {
 		return "", "", fmt.Errorf("%w: %v", errSourceCrawlResultConflict, err)
@@ -404,12 +404,12 @@ func sourceCrawlValidateBoundOperationTx(ctx context.Context, tx *sql.Tx, db Han
 	if !sourceCrawlAcceptanceChronology(status, proposal, approval, details) {
 		return "", "", fmt.Errorf("%w: acceptance chronology", errSourceCrawlResultConflict)
 	}
+	// The authoritative operation row decides whether a terminal CAS is
+	// permitted. Schema 1.17 allows both accepted and processing; the worker
+	// does not get to choose or assert one.
 	state := CrawlOperationState(status.Status)
 	if state != CrawlOperationAccepted && state != CrawlOperationProcessing {
 		return "", "", fmt.Errorf("%w: operation state", errSourceCrawlResultConflict)
-	}
-	if expected != state {
-		return "", "", fmt.Errorf("%w: expected operation state", errSourceCrawlResultConflict)
 	}
 	history := sourceCrawlApprovalValidAtAcceptance
 	switch {
@@ -494,6 +494,34 @@ func sourceCrawlCASStatusTerminal(ctx context.Context, tx *sql.Tx, db Handler,
 		return fmt.Errorf("%w: status terminal CAS", errSourceCrawlResultConflict)
 	}
 	return nil
+}
+
+// sourceCrawlOwnershipContinuityTx returns true only when the verified
+// SourceOwnership row still names the current owner and has not been rewritten
+// at or after the claim. It is used exclusively for unbound attempts, which
+// have no persisted operation principal in schema 1.17. Transfer or any later
+// verification writes last_updated_at, so it fails closed for those cases.
+func sourceCrawlOwnershipContinuityTx(ctx context.Context, tx *sql.Tx, db Handler,
+	sourceID, currentOwner uint64, claimedAt time.Time) (bool, error) {
+	if sourceID == 0 || currentOwner == 0 {
+		return false, nil
+	}
+	p := func(n int) string { return sourceCrawlPlaceholder(db, n) }
+	var userID int64
+	var updatedAt time.Time
+	err := tx.QueryRowContext(ctx,
+		`SELECT user_id, last_updated_at FROM SourceOwnership WHERE source_id = `+p(1),
+		sourceID).Scan(&userID, &updatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if userID <= 0 || uint64(userID) != currentOwner {
+		return false, nil
+	}
+	return !updatedAt.UTC().Truncate(time.Microsecond).After(claimedAt), nil
 }
 
 func sourceCrawlUpdateSourceTerminal(ctx context.Context, tx *sql.Tx, db Handler,
@@ -757,7 +785,7 @@ func reportSourceCrawlAttemptTerminalWithClock(ctx context.Context, db *Handler,
 			}, nil
 		}
 		state, approval, err := sourceCrawlValidateBoundOperationTx(txCtx, tx, *db,
-			history.SourceID, *history.Binding, receipt.OperationResult.ExpectedState, now)
+			history.SourceID, *history.Binding, now)
 		if err != nil {
 			return sourceCrawlTerminalExecutionResult{
 				Result: sourceCrawlResultClass(err), Reason: "operation_authority", Attempt: history,
@@ -772,6 +800,7 @@ func reportSourceCrawlAttemptTerminalWithClock(ctx context.Context, db *Handler,
 	}
 
 	ownershipVerified := false
+	continuityVerified := false
 	if history.Binding != nil {
 		ownershipVerified, err = sourceCrawlVerifiedOwnerTx(txCtx, tx, *db,
 			history.SourceID, history.Binding.PrincipalUserID)
@@ -779,6 +808,30 @@ func reportSourceCrawlAttemptTerminalWithClock(ctx context.Context, db *Handler,
 			return sourceCrawlTerminalExecutionResult{
 				Result: sourceCrawlTerminalUnavailable, Reason: "ownership_read_unavailable", Attempt: history,
 			}, err
+		}
+		ownershipVerified = ownershipVerified &&
+			source.UserID == history.Binding.PrincipalUserID
+	} else {
+		// An unbound attempt carries no operation principal. The only durable
+		// owner-continuity evidence in schema 1.17 is the verified provenance
+		// row: it must still describe the current Sources.usr_id owner and
+		// must not have been written after the claim. Otherwise the source
+		// status update is suppressed.
+		ownershipVerified, err = sourceCrawlVerifiedOwnerTx(txCtx, tx, *db,
+			history.SourceID, source.UserID)
+		if err != nil {
+			return sourceCrawlTerminalExecutionResult{
+				Result: sourceCrawlTerminalUnavailable, Reason: "ownership_read_unavailable", Attempt: history,
+			}, err
+		}
+		if ownershipVerified {
+			continuityVerified, err = sourceCrawlOwnershipContinuityTx(txCtx, tx, *db,
+				history.SourceID, source.UserID, history.ClaimedAt)
+			if err != nil {
+				return sourceCrawlTerminalExecutionResult{
+					Result: sourceCrawlTerminalUnavailable, Reason: "ownership_read_unavailable", Attempt: history,
+				}, err
+			}
 		}
 	}
 	authority := sourceCrawlTerminalAuthority{
@@ -789,16 +842,16 @@ func reportSourceCrawlAttemptTerminalWithClock(ctx context.Context, db *Handler,
 		HistorySourceID: history.SourceID, HistoryAttemptID: history.AttemptID,
 		HistoryGeneration: history.Generation, HistoryClaimRequestID: history.ClaimRequestID,
 		HistoryEngineID: history.EngineID, HistoryClaimedAt: history.ClaimedAt,
-		CurrentLeaseExpiresAt: current.LeaseExpiresAt,
-		HistoryLeaseExpiresAt: history.LeaseExpiresAt,
-		AttemptState:          history.State,
-		Binding:               history.Binding,
-		SourceDeleted:         source.Deleted,
-		SourceDisabled:        source.Disabled,
-		SourceOwnershipVerified: ownershipVerified &&
-			history.Binding != nil && source.UserID == history.Binding.PrincipalUserID,
-		CurrentSourceOwnerUserID: source.UserID,
-		ApprovalHistory:          approvalHistory,
+		CurrentLeaseExpiresAt:             current.LeaseExpiresAt,
+		HistoryLeaseExpiresAt:             history.LeaseExpiresAt,
+		AttemptState:                      history.State,
+		Binding:                           history.Binding,
+		SourceDeleted:                     source.Deleted,
+		SourceDisabled:                    source.Disabled,
+		SourceOwnershipVerified:           ownershipVerified,
+		SourceOwnershipContinuityVerified: continuityVerified,
+		CurrentSourceOwnerUserID:          source.UserID,
+		ApprovalHistory:                   approvalHistory,
 	}
 	if err := authority.validate(receipt, now); err != nil {
 		return sourceCrawlTerminalExecutionResult{

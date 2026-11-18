@@ -1153,6 +1153,34 @@ func sourceCrawlClaimIsCurrent(ctx context.Context, q sourceCrawlClaimQueryer, d
 	return count == 1, nil
 }
 
+// SourceCrawlClaimModePolicy reads only the operator-owned cutover mode after
+// proving that the optional attempt objects exist. It is the command-level
+// dispatch check: a present but unreadable policy fails closed, while a
+// genuinely uninstalled optional capability is reported as absent by the
+// caller. Full structural readiness is still enforced before a claim.
+func SourceCrawlClaimModePolicy(ctx context.Context, db *Handler) (string, error) {
+	if db == nil || *db == nil {
+		return "", fmt.Errorf("database handler is nil")
+	}
+	if !SourceCrawlAttemptSupported((*db).DBMS()) {
+		return "", ErrSourceCrawlAttemptUnsupported
+	}
+	present, err := SourceCrawlAttemptSchemaPresent(ctx, db)
+	if err != nil {
+		return "", fmt.Errorf("%w: policy presence: %v", ErrSourceCrawlClaimUnavailable, err)
+	}
+	if !present {
+		return "", fmt.Errorf("%w: policy tables", ErrSourceCrawlAttemptSchemaUnavailable)
+	}
+	mode, err := sourceCrawlClaimMode(ctx, *db)
+	if err != nil {
+		// The objects exist, so an unreadable or missing policy row is a
+		// corrupt fenced claim store, never an uninstalled optional capability.
+		return "", fmt.Errorf("%w: policy row: %v", ErrSourceCrawlClaimUnavailable, err)
+	}
+	return mode, nil
+}
+
 // SourceCrawlClaimMode is a read-only view of the operator-owned cutover mode.
 func SourceCrawlClaimMode(ctx context.Context, db *Handler) (string, error) {
 	if db == nil || *db == nil {

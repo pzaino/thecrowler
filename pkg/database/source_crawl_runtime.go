@@ -22,7 +22,6 @@ package database
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"sync"
 	"time"
@@ -262,10 +261,13 @@ func (h *SourceCrawlHandoff) reportTerminalWithClock(ctx context.Context, db *Ha
 		if !ok {
 			return SourceCrawlTerminalResult{Result: SourceCrawlResultConflict, Reason: "invalid_outcome"}, nil
 		}
+		// The database reads the authoritative Status row under its own locks
+		// and permits a terminal CAS from accepted or processing. The worker
+		// deliberately supplies no expected state; a worker-supplied value is
+		// a precondition at most, never authority.
 		receipt.OperationResult = &sourceCrawlTerminalOperationResult{
-			Binding:       *h.attempt.Binding,
-			ExpectedState: CrawlOperationAccepted,
-			ResultState:   target,
+			Binding:     *h.attempt.Binding,
+			ResultState: target,
 		}
 	}
 	internal, err := reportSourceCrawlAttemptTerminalWithClock(ctx, db, receipt, clock)
@@ -274,146 +276,4 @@ func (h *SourceCrawlHandoff) reportTerminalWithClock(ctx context.Context, db *Ha
 		Reason:              internal.Reason,
 		SourceStatusChanged: internal.SourceStatusChanged,
 	}, err
-}
-
-// UpdateUnboundSourceStatus records the operational source status for an
-// unbound fenced attempt. It is deliberately separate from the B1 terminal
-// report: B1 never fabricates an operation or applies the bound-owner source
-// policy to unbound work. The current claim/attempt/generation and the terminal
-// history are the fence; this method never creates a Status row and is not
-// operation or goal evidence.
-func (h *SourceCrawlHandoff) UpdateUnboundSourceStatus(ctx context.Context, db *Handler,
-	outcome SourceCrawlTerminalOutcome, observedAt time.Time) (SourceCrawlTerminalResult, error) {
-	if h == nil {
-		return SourceCrawlTerminalResult{Result: SourceCrawlResultStaleFence, Reason: "handoff_missing"}, nil
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.attempt.Binding != nil {
-		return SourceCrawlTerminalResult{Result: SourceCrawlResultConflict, Reason: "handoff_bound"}, nil
-	}
-	internalOutcome, err := sourceCrawlInternalOutcome(outcome)
-	if err != nil {
-		return SourceCrawlTerminalResult{Result: SourceCrawlResultConflict, Reason: "invalid_outcome"}, nil
-	}
-	targetState, ok := sourceCrawlTerminalAttemptState(internalOutcome)
-	if !ok {
-		return SourceCrawlTerminalResult{Result: SourceCrawlResultConflict, Reason: "invalid_outcome"}, nil
-	}
-	targetStatus, lastError := sourceCrawlSourceStatusForOutcome(internalOutcome)
-	if targetStatus == "" {
-		return SourceCrawlTerminalResult{Result: SourceCrawlResultConflict, Reason: "invalid_outcome"}, nil
-	}
-	txCtx, tx, cancel, class, reason, err := sourceCrawlBeginResultTx(ctx, db)
-	if class != "" {
-		if class == sourceCrawlTerminalUnavailable {
-			return SourceCrawlTerminalResult{Result: sourceCrawlResultFromInternal(class), Reason: reason}, err
-		}
-		return SourceCrawlTerminalResult{Result: sourceCrawlResultFromInternal(class), Reason: reason}, nil
-	}
-	defer cancel()
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback()
-		}
-	}()
-	source, found, err := sourceCrawlLockResultSourceTx(txCtx, tx, *db, h.attempt.SourceID)
-	if err != nil {
-		return SourceCrawlTerminalResult{Result: SourceCrawlResultUnavailable, Reason: "source_read_unavailable"}, err
-	}
-	if !found || source.Deleted {
-		return SourceCrawlTerminalResult{Result: SourceCrawlResultStaleFence, Reason: "source_missing"}, nil
-	}
-	current, found, err := sourceCrawlLockCurrentClaimTx(txCtx, tx, *db, h.attempt.SourceID)
-	if err != nil {
-		return SourceCrawlTerminalResult{Result: SourceCrawlResultUnavailable, Reason: "claim_read_unavailable"}, err
-	}
-	if !found {
-		return SourceCrawlTerminalResult{Result: SourceCrawlResultStaleFence, Reason: "claim_missing"}, nil
-	}
-	history, found, err := sourceCrawlLoadAttemptTx(txCtx, tx, *db,
-		h.attempt.AttemptID, h.attempt.SourceID, h.attempt.Generation, true)
-	if err != nil {
-		class := sourceCrawlLoadResultClass(err)
-		return SourceCrawlTerminalResult{Result: sourceCrawlResultFromInternal(class), Reason: "attempt_read"}, nil
-	}
-	if !found {
-		return SourceCrawlTerminalResult{Result: SourceCrawlResultStaleFence, Reason: "attempt_missing"}, nil
-	}
-	if current.AttemptID != h.attempt.AttemptID || current.Generation != h.attempt.Generation {
-		return SourceCrawlTerminalResult{Result: SourceCrawlResultStaleFence, Reason: "attempt_not_current"}, nil
-	}
-	if !current.matchesAttempt(history) {
-		return SourceCrawlTerminalResult{Result: SourceCrawlResultConflict, Reason: "claim_history_mismatch"}, nil
-	}
-	if history.Binding != nil {
-		return SourceCrawlTerminalResult{Result: SourceCrawlResultConflict, Reason: "attempt_bound"}, nil
-	}
-	if history.State != targetState {
-		return SourceCrawlTerminalResult{Result: SourceCrawlResultConflict, Reason: "terminal_state_conflict"}, nil
-	}
-	if source.Status == targetStatus {
-		return SourceCrawlTerminalResult{
-			Result: SourceCrawlResultIdempotentReplay, Reason: "source_status_replay",
-			SourceStatusChanged: false,
-		}, nil
-	}
-	if source.Disabled {
-		return SourceCrawlTerminalResult{Result: SourceCrawlResultStaleFence, Reason: "source_disabled"}, nil
-	}
-	if source.Status != "processing" {
-		return SourceCrawlTerminalResult{Result: SourceCrawlResultConflict, Reason: "source_status_conflict"}, nil
-	}
-	now, err := sourceCrawlReadClaimClock(txCtx, tx, *db, sourceCrawlClaimDatabaseClock)
-	if err != nil {
-		return SourceCrawlTerminalResult{Result: SourceCrawlResultUnavailable, Reason: "database_clock_unavailable"}, err
-	}
-	changed, err := sourceCrawlUpdateUnboundSourceTerminal(txCtx, tx, *db, history.SourceID,
-		targetStatus, lastError, history.TerminalAt, now)
-	if err != nil {
-		return SourceCrawlTerminalResult{Result: SourceCrawlResultUnavailable, Reason: "source_update_unavailable"}, err
-	}
-	if !changed {
-		return SourceCrawlTerminalResult{Result: SourceCrawlResultConflict, Reason: "source_status_conflict"}, nil
-	}
-	if err := tx.Commit(); err != nil {
-		return SourceCrawlTerminalResult{Result: SourceCrawlResultUnavailable, Reason: "commit_uncertain"}, err
-	}
-	committed = true
-	return SourceCrawlTerminalResult{
-		Result: SourceCrawlResultApplied, Reason: "source_status_applied",
-		SourceStatusChanged: true,
-	}, nil
-}
-
-func sourceCrawlUpdateUnboundSourceTerminal(ctx context.Context, tx *sql.Tx, db Handler,
-	sourceID uint64, status, lastError string, crawledAt, now time.Time) (bool, error) {
-	p := func(n int) string { return sourceCrawlPlaceholder(db, n) }
-	var (
-		query string
-		args  []any
-	)
-	if lastError == "" {
-		query = `UPDATE Sources SET status = ` + p(1) + `, last_crawled_at = ` + p(2) + `,
-			last_error = NULL, last_error_at = NULL, last_updated_at = ` + p(3) + `
-			WHERE source_id = ` + p(4) + ` AND deleted_at IS NULL AND disabled = FALSE
-			  AND status = 'processing'`
-		args = []any{status, crawledAt, now, sourceID}
-	} else {
-		query = `UPDATE Sources SET status = ` + p(1) + `, last_crawled_at = ` + p(2) + `,
-			last_error = ` + p(3) + `, last_error_at = ` + p(4) + `, last_updated_at = ` + p(5) + `
-			WHERE source_id = ` + p(6) + ` AND deleted_at IS NULL AND disabled = FALSE
-			  AND status = 'processing'`
-		args = []any{status, crawledAt, lastError, crawledAt, now, sourceID}
-	}
-	updated, err := tx.ExecContext(ctx, query, args...)
-	if err != nil {
-		return false, err
-	}
-	rows, err := updated.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-	return rows == 1, nil
 }

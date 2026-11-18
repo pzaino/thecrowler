@@ -14,12 +14,15 @@
 
 package crawler
 
-// Stage B2 crawler-side handoff, heartbeat, cancellation and terminal reporting.
-// A nil SourceCrawlCoordinator keeps the legacy path unchanged.
+// Stage B2R crawler-side handoff, authoritative fence validation, heartbeat,
+// cancellation and terminal reporting. A nil SourceCrawlCoordinator keeps the
+// legacy path unchanged.
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -40,16 +43,26 @@ type SourceCrawlCoordinator interface {
 	Bound() bool
 	RenewLease(ctx context.Context, db *cdb.Handler, extension time.Duration) (cdb.SourceCrawlLeaseResult, error)
 	ReportTerminal(ctx context.Context, db *cdb.Handler, outcome cdb.SourceCrawlTerminalOutcome, observedAt time.Time) (cdb.SourceCrawlTerminalResult, error)
-	UpdateUnboundSourceStatus(ctx context.Context, db *cdb.Handler, outcome cdb.SourceCrawlTerminalOutcome, observedAt time.Time) (cdb.SourceCrawlTerminalResult, error)
+	ValidateCurrent(ctx context.Context, db *cdb.Handler) (cdb.SourceCrawlFenceStatus, error)
+	ValidateTx(ctx context.Context, tx *sql.Tx, db *cdb.Handler) error
 }
 
 var (
 	sourceCrawlHeartbeatInterval  = 5 * time.Minute
 	sourceCrawlHeartbeatExtension = 5 * time.Minute
 	sourceCrawlReportTimeout      = 10 * time.Second
+	sourceCrawlValidateTimeout    = 10 * time.Second
+	// crawlShutdownGrace bounds how long the timeout path waits for the crawl
+	// worker and its indexing transactions to quiesce before the VDI session is
+	// quarantined. A WebDriver call cannot be interrupted, so this is a bound,
+	// not a guarantee.
+	crawlShutdownGrace = 30 * time.Second
 )
 
-var errCrawlFenced = errors.New("source crawl fence lost")
+var (
+	errCrawlFenced  = errors.New("source crawl fence lost")
+	errCrawlTimeout = errors.New("timeout during crawling")
+)
 
 func (ctx *ProcessContext) crawlContext() context.Context {
 	if ctx == nil || ctx.crawlCtx == nil {
@@ -97,6 +110,113 @@ func (ctx *ProcessContext) checkCrawlFence() error {
 		return errCrawlFenced
 	}
 	return nil
+}
+
+// quarantineSession marks the crawl as having failed to quiesce. It prevents
+// both the finishing worker and the deferred finalizer from returning or
+// closing a session that may still be in use. The VDI slot is intentionally
+// not returned to the pool; a quarantined slot must be recovered by the
+// operator through the normal VDI restart/recycle procedure.
+func (ctx *ProcessContext) quarantineSession(reason string) {
+	if ctx == nil {
+		return
+	}
+	ctx.quarantineOnce.Do(func() {
+		ctx.sessionQuarantined = true
+		ctx.VDIOperationMutex.Lock()
+		ctx.VDIReturned = true
+		ctx.VDIOperationMutex.Unlock()
+		cmn.DebugMsg(cmn.DbgLvlError,
+			"quarantining VDI session for source %d: %s", ctx.source.ID, reason)
+	})
+}
+
+func (ctx *ProcessContext) sessionIsQuarantined() bool {
+	return ctx != nil && ctx.sessionQuarantined
+}
+
+// validateFencedClaimStartup is the exported cmd-level pre-start check. It
+// establishes the operator policy, claim identity, generation, lease and
+// source state before any external work begins.
+func validateFencedClaimStartup(db *cdb.Handler, coordinator SourceCrawlCoordinator,
+	timeout time.Duration) error {
+	if coordinator == nil {
+		return nil
+	}
+	if timeout <= 0 {
+		timeout = sourceCrawlValidateTimeout
+	}
+	checkCtx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	status, err := coordinator.ValidateCurrent(checkCtx, db)
+	if err != nil && status.Result == cdb.SourceCrawlFenceUnavailable {
+		return err
+	}
+	if status.Result != cdb.SourceCrawlFenceActive {
+		if err != nil {
+			return err
+		}
+		return &sourceCrawlFenceError{Status: status}
+	}
+	return nil
+}
+
+// ValidateFencedClaimStartup is the cmd-facing wrapper for the pre-start check.
+func ValidateFencedClaimStartup(db *cdb.Handler, coordinator SourceCrawlCoordinator,
+	timeout time.Duration) error {
+	return validateFencedClaimStartup(db, coordinator, timeout)
+}
+
+type sourceCrawlFenceError struct {
+	Status cdb.SourceCrawlFenceStatus
+}
+
+func (e *sourceCrawlFenceError) Error() string {
+	if e == nil {
+		return "source crawl fence is not current"
+	}
+	reason := e.Status.Reason
+	if reason == "" {
+		reason = string(e.Status.Result)
+	}
+	return "source crawl fence is not current: " + reason
+}
+
+// validateFencedClaim performs the authoritative in-process pre-work check.
+// It is called before the protocol branch and again after a blocking VDI
+// acquisition, immediately before work starts.
+func (ctx *ProcessContext) validateFencedClaim() error {
+	if ctx == nil || ctx.sourceCrawl == nil || ctx.db == nil {
+		return nil
+	}
+	return validateFencedClaimStartup(ctx.db, ctx.sourceCrawl, sourceCrawlValidateTimeout)
+}
+
+// validateIndexingFence is the transaction-held check used by current-state
+// database writes. It takes the source row lock and therefore serializes the
+// write with terminal reporting, supersession and ownership transfer.
+func (ctx *ProcessContext) validateIndexingFence(tx *sql.Tx) error {
+	if ctx == nil || ctx.sourceCrawl == nil || tx == nil || ctx.db == nil {
+		return nil
+	}
+	return ctx.sourceCrawl.ValidateTx(ctx.crawlContext(), tx, ctx.db)
+}
+
+// decideCrawlTerminalOutcome is the single terminal-outcome decision function.
+// A cancellation (fence loss, timeout or explicit shutdown) is classified
+// before an ordinary error so a timed-out or cancelled crawl cannot be reported
+// as completed.
+func decideCrawlTerminalOutcome(crawlErr error, cancelled bool) cdb.SourceCrawlTerminalOutcome {
+	switch {
+	case cancelled:
+		return cdb.SourceCrawlOutcomeCancelled
+	case errors.Is(crawlErr, context.Canceled), errors.Is(crawlErr, context.DeadlineExceeded):
+		return cdb.SourceCrawlOutcomeCancelled
+	case crawlErr != nil:
+		return cdb.SourceCrawlOutcomeFailed
+	default:
+		return cdb.SourceCrawlOutcomeCompleted
+	}
 }
 
 // startSourceCrawlHeartbeat renews the exact attempt until the crawl context
@@ -158,7 +278,7 @@ func startSourceCrawlHeartbeat(ctx *ProcessContext, db *cdb.Handler) func() {
 
 // UpdateSourceStateForCrawl keeps the legacy source-state behavior when no
 // fenced handoff exists. A fenced crawl's source status is written only by the
-// terminal reporter.
+// terminal reporter inside its own transaction.
 func UpdateSourceStateForCrawl(ctx *ProcessContext, args *Pars, crawlErr error) {
 	if args == nil || args.SourceCrawl != nil || (ctx != nil && ctx.sourceCrawl != nil) {
 		return
@@ -180,39 +300,15 @@ func (ctx *ProcessContext) reportSourceCrawlTerminal(crawlErr error) cdb.SourceC
 	if ctx == nil || ctx.sourceCrawl == nil || ctx.db == nil {
 		return cdb.SourceCrawlTerminalResult{Result: cdb.SourceCrawlResultUnsupported}
 	}
-	outcome := cdb.SourceCrawlOutcomeCompleted
-	switch {
-	case ctx.crawlAborted():
-		outcome = cdb.SourceCrawlOutcomeCancelled
-	case crawlErr != nil:
-		outcome = cdb.SourceCrawlOutcomeFailed
-	}
+	outcome := decideCrawlTerminalOutcome(crawlErr, ctx.crawlAborted())
 	reportCtx, cancel := context.WithTimeout(context.Background(), sourceCrawlReportTimeout)
 	defer cancel()
-	observedAt := time.Now().UTC().Truncate(time.Microsecond)
 	result, err := ctx.sourceCrawl.ReportTerminal(
-		reportCtx, ctx.db, outcome, observedAt)
+		reportCtx, ctx.db, outcome, time.Now().UTC().Truncate(time.Microsecond))
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError,
 			"reporting fenced terminal result for source %d attempt %s: %v",
 			ctx.sourceCrawl.SourceID(), ctx.sourceCrawl.AttemptID(), err)
-	}
-	if !ctx.sourceCrawl.Bound() &&
-		(result.Result == cdb.SourceCrawlResultApplied ||
-			result.Result == cdb.SourceCrawlResultIdempotentReplay) {
-		statusCtx, statusCancel := context.WithTimeout(context.Background(), sourceCrawlReportTimeout)
-		defer statusCancel()
-		statusResult, statusErr := ctx.sourceCrawl.UpdateUnboundSourceStatus(
-			statusCtx, ctx.db, outcome, observedAt)
-		if statusErr != nil {
-			cmn.DebugMsg(cmn.DbgLvlError,
-				"updating fenced unbound source status for source %d attempt %s: %v",
-				ctx.sourceCrawl.SourceID(), ctx.sourceCrawl.AttemptID(), statusErr)
-		}
-		if statusResult.Result == cdb.SourceCrawlResultApplied ||
-			statusResult.Result == cdb.SourceCrawlResultIdempotentReplay {
-			result.SourceStatusChanged = statusResult.SourceStatusChanged
-		}
 	}
 	cmn.DebugMsg(cmn.DbgLvlInfo,
 		"fenced terminal result for source %d attempt %s: %s (%s)",
@@ -232,37 +328,8 @@ func reportFencedCrawlFailure(args *Pars, crawlErr error) {
 		UpdateSourceState(args.DB, args.Src.URL, crawlErr)
 		return
 	}
-	reportCtx, cancel := context.WithTimeout(context.Background(), sourceCrawlReportTimeout)
-	defer cancel()
-	observedAt := time.Now().UTC().Truncate(time.Microsecond)
-	result, err := args.SourceCrawl.ReportTerminal(
-		reportCtx, &args.DB, cdb.SourceCrawlOutcomeFailed, observedAt)
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError,
-			"reporting fenced failure for source %d attempt %s: %v",
-			args.SourceCrawl.SourceID(), args.SourceCrawl.AttemptID(), err)
-	}
-	if !args.SourceCrawl.Bound() &&
-		(result.Result == cdb.SourceCrawlResultApplied ||
-			result.Result == cdb.SourceCrawlResultIdempotentReplay) {
-		statusCtx, statusCancel := context.WithTimeout(context.Background(), sourceCrawlReportTimeout)
-		defer statusCancel()
-		statusResult, statusErr := args.SourceCrawl.UpdateUnboundSourceStatus(
-			statusCtx, &args.DB, cdb.SourceCrawlOutcomeFailed, observedAt)
-		if statusErr != nil {
-			cmn.DebugMsg(cmn.DbgLvlError,
-				"updating fenced unbound source status for source %d attempt %s: %v",
-				args.SourceCrawl.SourceID(), args.SourceCrawl.AttemptID(), statusErr)
-		}
-		if statusResult.Result == cdb.SourceCrawlResultApplied ||
-			statusResult.Result == cdb.SourceCrawlResultIdempotentReplay {
-			result.SourceStatusChanged = statusResult.SourceStatusChanged
-		}
-	}
-	cmn.DebugMsg(cmn.DbgLvlInfo,
-		"fenced failure result for source %d attempt %s: %s (%s)",
-		args.SourceCrawl.SourceID(), args.SourceCrawl.AttemptID(),
-		result.Result, result.Reason)
+	ReportFencedCrawlOutcome(&args.DB, args.SourceCrawl, cdb.SourceCrawlOutcomeFailed,
+		sourceCrawlReportTimeout)
 }
 
 // ReportFencedCrawlFailure is the cmd-level equivalent for failures that occur
@@ -273,7 +340,9 @@ func ReportFencedCrawlFailure(db *cdb.Handler, coordinator SourceCrawlCoordinato
 
 // ReportFencedCrawlOutcome reports a terminal result for a source that was
 // claimed but never entered CrawlWebsite, such as a queued source dropped at
-// batch shutdown or a VDI acquisition failure.
+// batch shutdown or a VDI acquisition failure. The terminal transaction also
+// owns the unbound operational source-status update when owner continuity is
+// proven; there is no second, unfenced status write.
 func ReportFencedCrawlOutcome(db *cdb.Handler, coordinator SourceCrawlCoordinator,
 	outcome cdb.SourceCrawlTerminalOutcome, timeout time.Duration) {
 	if db == nil || coordinator == nil {
@@ -284,31 +353,68 @@ func ReportFencedCrawlOutcome(db *cdb.Handler, coordinator SourceCrawlCoordinato
 	}
 	reportCtx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	observedAt := time.Now().UTC().Truncate(time.Microsecond)
-	result, err := coordinator.ReportTerminal(reportCtx, db, outcome, observedAt)
+	result, err := coordinator.ReportTerminal(
+		reportCtx, db, outcome, time.Now().UTC().Truncate(time.Microsecond))
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError,
 			"reporting fenced terminal outcome for source %d attempt %s: %v",
 			coordinator.SourceID(), coordinator.AttemptID(), err)
 	}
-	if !coordinator.Bound() &&
-		(result.Result == cdb.SourceCrawlResultApplied ||
-			result.Result == cdb.SourceCrawlResultIdempotentReplay) {
-		statusCtx, statusCancel := context.WithTimeout(context.Background(), sourceCrawlReportTimeout)
-		defer statusCancel()
-		statusResult, statusErr := coordinator.UpdateUnboundSourceStatus(
-			statusCtx, db, outcome, observedAt)
-		if statusErr != nil {
-			cmn.DebugMsg(cmn.DbgLvlError,
-				"updating fenced unbound source status for source %d attempt %s: %v",
-				coordinator.SourceID(), coordinator.AttemptID(), statusErr)
-		}
-		if statusResult.Result == cdb.SourceCrawlResultApplied ||
-			statusResult.Result == cdb.SourceCrawlResultIdempotentReplay {
-			result.SourceStatusChanged = statusResult.SourceStatusChanged
-		}
-	}
 	cmn.DebugMsg(cmn.DbgLvlInfo,
 		"fenced terminal outcome for source %d attempt %s: %s (%s)",
 		coordinator.SourceID(), coordinator.AttemptID(), result.Result, result.Reason)
+}
+
+// awaitCrawlQuiescence waits for the crawl worker to finish within the bounded
+// shutdown grace. It returns false when the worker is still running and the
+// caller must quarantine the session instead of releasing it.
+func awaitCrawlQuiescence(done <-chan struct{}, grace time.Duration) bool {
+	if done == nil {
+		return false
+	}
+	if grace <= 0 {
+		select {
+		case <-done:
+			return true
+		default:
+			return false
+		}
+	}
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		return false
+	}
+}
+
+// networkOnlyCrawlResult maps the network-information index outcome to the
+// crawl error contract. A failed index is a failed crawl; an aborted or
+// context-cancelled index is classified as cancellation. Non-fatal
+// configuration handling around the collectors does not reach this function.
+func networkOnlyCrawlResult(indexErr error, aborted bool) error {
+	if indexErr == nil {
+		return nil
+	}
+	if aborted || errors.Is(indexErr, context.Canceled) ||
+		errors.Is(indexErr, context.DeadlineExceeded) {
+		return fmt.Errorf("%w: network information indexing: %w", errCrawlFenced, indexErr)
+	}
+	return fmt.Errorf("indexing network information: %w", indexErr)
+}
+
+// shouldEmitCrawlCompletedEvent preserves the configured completion-event
+// behavior. A fenced crawl may emit the event only for an applied, completed
+// terminal result (never a failed, cancelled or replayed one); the event is an
+// audit hint, not completion proof.
+func shouldEmitCrawlCompletedEvent(configured, fenced, eligible bool) bool {
+	if !configured {
+		return false
+	}
+	if !fenced {
+		return true
+	}
+	return eligible
 }

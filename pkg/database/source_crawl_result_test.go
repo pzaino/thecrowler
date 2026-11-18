@@ -33,10 +33,11 @@ func sourceCrawlResultSeedSource(t *testing.T, raw *sql.DB, sourceID, ownerID ui
 		fmt.Sprintf("https://result-%d.example/", sourceID), ownerID, priority); err != nil {
 		t.Fatalf("insert result source %d: %v", sourceID, err)
 	}
+	verifiedAt := sourceCrawlClaimTestNow.Add(-time.Hour).UTC().Truncate(time.Microsecond)
 	if _, err := raw.Exec(`INSERT INTO SourceOwnership
-		(source_id, user_id, verified_at, verified_by_user_id, verified_by, verification_method, verification_reason)
-		VALUES (?, ?, CURRENT_TIMESTAMP, 9, 'operator', 'result_test', 'result')`,
-		sourceID, ownerID); err != nil {
+		(source_id, user_id, verified_at, verified_by_user_id, verified_by, verification_method, verification_reason, created_at, last_updated_at)
+		VALUES (?, ?, ?, 9, 'operator', 'result_test', 'result', ?, ?)`,
+		sourceID, ownerID, verifiedAt, verifiedAt, verifiedAt); err != nil {
 		t.Fatalf("insert result ownership %d: %v", sourceID, err)
 	}
 }
@@ -238,8 +239,8 @@ func TestSourceCrawlResultSQLiteTerminalUnboundOnly(t *testing.T) {
 	if err != nil || result.Result != sourceCrawlTerminalApplied {
 		t.Fatalf("unbound terminal = %+v err=%v", result, err)
 	}
-	if result.SourceStatusChanged {
-		t.Fatal("unbound attempt changed source status")
+	if !result.SourceStatusChanged {
+		t.Fatal("unbound attempt with proven owner continuity did not update source status")
 	}
 	if count := sourceCrawlAttemptHistoryCount(t, raw, 42); count != 1 {
 		t.Fatalf("history count = %d", count)
@@ -251,7 +252,7 @@ func TestSourceCrawlResultSQLiteTerminalUnboundOnly(t *testing.T) {
 	if err := raw.QueryRow(`SELECT status FROM Sources WHERE source_id=?`, 42).Scan(&sourceState); err != nil {
 		t.Fatalf("read source: %v", err)
 	}
-	if attemptState != string(sourceCrawlAttemptCompleted) || sourceState != "processing" {
+	if attemptState != string(sourceCrawlAttemptCompleted) || sourceState != "completed" {
 		t.Fatalf("unbound states = attempt=%s source=%s", attemptState, sourceState)
 	}
 	if operations := sourceCrawlStatusOperationIDs(t, raw, 42); len(operations) != 0 {
@@ -763,7 +764,7 @@ func TestSourceCrawlResultSQLiteAlreadyPendingAndMissingProposal(t *testing.T) {
 		}
 		result, err := reportSourceCrawlAttemptTerminalAt(context.Background(), &handler,
 			receipt, claim.ClaimedAt.Add(2*time.Second))
-		if err != nil || result.Result != sourceCrawlTerminalApplied || result.SourceStatusChanged {
+		if err != nil || result.Result != sourceCrawlTerminalApplied || !result.SourceStatusChanged {
 			t.Fatalf("already-pending terminal = %+v err=%v", result, err)
 		}
 		var operationState, sourceState string
@@ -773,7 +774,7 @@ func TestSourceCrawlResultSQLiteAlreadyPendingAndMissingProposal(t *testing.T) {
 		if err := raw.QueryRow(`SELECT status FROM Sources WHERE source_id=42`).Scan(&sourceState); err != nil {
 			t.Fatalf("read already-pending source: %v", err)
 		}
-		if operationState != "already_pending" || sourceState != "processing" {
+		if operationState != "already_pending" || sourceState != "completed" {
 			t.Fatalf("already-pending states = %s/%s", operationState, sourceState)
 		}
 	})

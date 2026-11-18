@@ -78,6 +78,8 @@ func TestRetrieveAvailableSourcesPreservesClaimSubPriority(t *testing.T) {
 		"source_id", "source_uid", "url", "restricted", "flags", "config", "sub_priority",
 	}
 
+	mock.ExpectQuery("SELECT to_regclass('sourcecrawlclaims') IS NOT NULL AND to_regclass('sourcecrawlattempts') IS NOT NULL AND to_regclass('sourcecrawlclaimpolicy') IS NOT NULL").
+		WillReturnRows(sqlmock.NewRows([]string{"present"}).AddRow(true))
 	mock.ExpectQuery(`SELECT mode FROM SourceCrawlClaimPolicy WHERE policy_id = 1`).
 		WillReturnRows(sqlmock.NewRows([]string{"mode"}).AddRow("legacy"))
 	mock.ExpectBegin()
@@ -219,11 +221,14 @@ func (f *fakeDrainCoordinator) ReportTerminal(_ context.Context, _ *cdb.Handler,
 	return cdb.SourceCrawlTerminalResult{Result: cdb.SourceCrawlResultApplied}, nil
 }
 
-func (f *fakeDrainCoordinator) UpdateUnboundSourceStatus(_ context.Context, _ *cdb.Handler,
-	_ cdb.SourceCrawlTerminalOutcome, _ time.Time) (cdb.SourceCrawlTerminalResult, error) {
-	return cdb.SourceCrawlTerminalResult{
-		Result: cdb.SourceCrawlResultApplied, SourceStatusChanged: true,
-	}, nil
+func (f *fakeDrainCoordinator) ValidateCurrent(_ context.Context,
+	_ *cdb.Handler) (cdb.SourceCrawlFenceStatus, error) {
+	return cdb.SourceCrawlFenceStatus{Result: cdb.SourceCrawlFenceActive}, nil
+}
+
+func (f *fakeDrainCoordinator) ValidateTx(_ context.Context, _ *sql.Tx,
+	_ *cdb.Handler) error {
+	return nil
 }
 
 func TestDrainFencedSourcesReportsCancelled(t *testing.T) {
@@ -280,6 +285,13 @@ func TestRetrieveAvailableSourcesFencedSQLite(t *testing.T) {
 		VALUES (42, 'fenced-uid', 'https://fenced.example/', 'fenced', 'new', FALSE, 7, 'normal', 0)`); err != nil {
 		t.Fatalf("insert fenced source: %v", err)
 	}
+	// Unbound source-status mutation requires durable owner-continuity proof,
+	// so the verified provenance row must predate the claim.
+	if _, err := handler.Exec(`INSERT INTO SourceOwnership
+		(source_id, user_id, verified_at, verified_by_user_id, verified_by, verification_method, verification_reason)
+		VALUES (42, 7, CURRENT_TIMESTAMP, 1, 'operator', 'fixture', 'fixture')`); err != nil {
+		t.Fatalf("insert fenced ownership: %v", err)
+	}
 	oldConfig := config
 	config = c
 	config.Crawler.MaxSources = 1
@@ -299,14 +311,9 @@ func TestRetrieveAvailableSourcesFencedSQLite(t *testing.T) {
 	observed := time.Now().UTC().Truncate(time.Microsecond)
 	result, err := sources[0].Handoff.ReportTerminal(context.Background(), &handler,
 		cdb.SourceCrawlOutcomeCompleted, observed)
-	if err != nil || result.Result != cdb.SourceCrawlResultApplied {
+	if err != nil || result.Result != cdb.SourceCrawlResultApplied ||
+		!result.SourceStatusChanged {
 		t.Fatalf("fenced terminal = %+v err=%v", result, err)
-	}
-	statusResult, err := sources[0].Handoff.UpdateUnboundSourceStatus(context.Background(), &handler,
-		cdb.SourceCrawlOutcomeCompleted, observed)
-	if err != nil || statusResult.Result != cdb.SourceCrawlResultApplied ||
-		!statusResult.SourceStatusChanged {
-		t.Fatalf("fenced source status = %+v err=%v", statusResult, err)
 	}
 	var state string
 	if err := handler.QueryRow(`SELECT status FROM Sources WHERE source_id=42`).Scan(&state); err != nil {

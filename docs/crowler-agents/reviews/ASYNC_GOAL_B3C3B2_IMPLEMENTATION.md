@@ -10,6 +10,16 @@ The attributable approval is recorded in
 repository maintainer, 2026-11-18, `WP-05B3C3/Stage-B-2`, B1 and B2 approved,
 B3 not requested.
 
+**Superseded in part by WP-05B3C3B2R.** B2R corrected the live-execution
+defects found in this implementation: false network-only completion, the
+timeout/worker race, missing authoritative pre-start validation, unbound
+source-status ownership, the worker-supplied operation state, and the
+destructive-write fence gaps. See
+[`ASYNC_GOAL_B3C3B2R_EXECUTION_SAFETY_REVIEW.md`](ASYNC_GOAL_B3C3B2R_EXECUTION_SAFETY_REVIEW.md).
+In particular, the separate `UpdateUnboundSourceStatus` method described below
+no longer exists: unbound source status is written only inside the terminal
+transaction and only with durable owner-continuity proof.
+
 B2 uses the existing schema-1.17 attempt objects and the B1 repository. It adds
 no table, column, index, capability marker, migration, default-mode change or
 runtime grant.

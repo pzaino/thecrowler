@@ -357,3 +357,39 @@ func sourceCrawlPlaceholder(db Handler, position int) string {
 	}
 	return "?"
 }
+
+// SourceCrawlAttemptSchemaPresent reports whether the optional attempt objects
+// exist at all. It deliberately does not validate their structure. Callers use
+// it to distinguish "the optional capability is not installed" (legacy is the
+// documented behavior) from "the fenced claim store is present but unreadable
+// or corrupt" (fail closed).
+func SourceCrawlAttemptSchemaPresent(ctx context.Context, db *Handler) (bool, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if db == nil || *db == nil {
+		return false, fmt.Errorf("database handler is nil")
+	}
+	if !SourceCrawlAttemptSupported((*db).DBMS()) {
+		return false, nil
+	}
+	tables := []string{"SourceCrawlClaims", "SourceCrawlAttempts", "SourceCrawlClaimPolicy"}
+	switch normalizeDBMS((*db).DBMS()) {
+	case "postgres":
+		var present bool
+		const presentQuery = "SELECT to_regclass('sourcecrawlclaims') IS NOT NULL AND to_regclass('sourcecrawlattempts') IS NOT NULL AND to_regclass('sourcecrawlclaimpolicy') IS NOT NULL"
+		if err := (*db).QueryRowContext(ctx, presentQuery).Scan(&present); err != nil {
+			return false, err
+		}
+		return present, nil
+	default:
+		var count int
+		if err := (*db).QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM sqlite_master WHERE type='table'
+			  AND name IN ('SourceCrawlClaims','SourceCrawlAttempts','SourceCrawlClaimPolicy')`).
+			Scan(&count); err != nil {
+			return false, err
+		}
+		return count == len(tables), nil
+	}
+}

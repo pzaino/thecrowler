@@ -64,11 +64,6 @@ func TestSourceCrawlHandoffSQLiteBound(t *testing.T) {
 	if err != nil || after.Result != SourceCrawlResultStaleFence || after.Reason != "handoff_terminal" {
 		t.Fatalf("terminal handoff renewal = %+v err=%v", after, err)
 	}
-	if got, err := handoff.UpdateUnboundSourceStatus(context.Background(), &handler,
-		SourceCrawlOutcomeCompleted, claim.ClaimedAt.Add(2*time.Second)); err != nil ||
-		got.Result != SourceCrawlResultConflict {
-		t.Fatalf("bound handoff unbound status = %+v err=%v", got, err)
-	}
 }
 
 func TestSourceCrawlHandoffSQLiteUnbound(t *testing.T) {
@@ -88,16 +83,11 @@ func TestSourceCrawlHandoffSQLiteUnbound(t *testing.T) {
 	}
 	terminal, err := handoff.reportTerminalAt(context.Background(), &handler,
 		SourceCrawlOutcomeCompleted, claim.ClaimedAt.Add(2*time.Second), claim.ClaimedAt.Add(2*time.Second))
-	if err != nil || terminal.Result != SourceCrawlResultApplied || terminal.SourceStatusChanged {
+	if err != nil || terminal.Result != SourceCrawlResultApplied || !terminal.SourceStatusChanged {
 		t.Fatalf("unbound terminal = %+v err=%v", terminal, err)
 	}
 	if operations := sourceCrawlStatusOperationIDs(t, raw, 42); len(operations) != 0 {
 		t.Fatalf("unbound handoff created Status rows: %v", operations)
-	}
-	statusResult, err := handoff.UpdateUnboundSourceStatus(context.Background(), &handler,
-		SourceCrawlOutcomeCompleted, claim.ClaimedAt.Add(2*time.Second))
-	if err != nil || statusResult.Result != SourceCrawlResultApplied || !statusResult.SourceStatusChanged {
-		t.Fatalf("unbound source status = %+v err=%v", statusResult, err)
 	}
 	var sourceState string
 	if err := raw.QueryRow(`SELECT status FROM Sources WHERE source_id=42`).Scan(&sourceState); err != nil {
@@ -106,10 +96,11 @@ func TestSourceCrawlHandoffSQLiteUnbound(t *testing.T) {
 	if sourceState != "completed" {
 		t.Fatalf("unbound source status = %s", sourceState)
 	}
-	replay, err := handoff.UpdateUnboundSourceStatus(context.Background(), &handler,
-		SourceCrawlOutcomeCompleted, claim.ClaimedAt.Add(2*time.Second))
+	replay, err := handoff.reportTerminalAt(context.Background(), &handler,
+		SourceCrawlOutcomeCompleted, claim.ClaimedAt.Add(2*time.Second),
+		claim.LeaseExpiresAt.Add(time.Hour))
 	if err != nil || replay.Result != SourceCrawlResultIdempotentReplay || replay.SourceStatusChanged {
-		t.Fatalf("unbound source status replay = %+v err=%v", replay, err)
+		t.Fatalf("unbound terminal replay = %+v err=%v", replay, err)
 	}
 }
 
@@ -155,10 +146,5 @@ func TestSourceCrawlHandoffSQLiteLegacyMode(t *testing.T) {
 		SourceCrawlOutcomeCompleted, sourceCrawlClaimTestNow.Add(time.Second))
 	if err != nil || terminal.Result != SourceCrawlResultUnsupported {
 		t.Fatalf("legacy terminal = %+v err=%v", terminal, err)
-	}
-	if got, err := handoff.UpdateUnboundSourceStatus(context.Background(), &handler,
-		SourceCrawlOutcomeCompleted, sourceCrawlClaimTestNow.Add(time.Second)); err != nil ||
-		got.Result != SourceCrawlResultUnsupported {
-		t.Fatalf("legacy unbound status = %+v err=%v", got, err)
 	}
 }

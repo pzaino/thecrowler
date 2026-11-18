@@ -135,3 +135,8 @@ B3 additive schema remains unapproved.
 WP-05B3C3B2 adds no DDL. The live crawler handoff, heartbeat, cancellation and
 unbound operational source-status update use the existing 1.17 objects and the
 B1 repository. B3 additive schema remains unapproved.
+
+WP-05B3C3B2R adds no DDL. The authoritative pre-start/transaction-held fence
+validation, unbound owner-continuity rule and operation-state compatibility all
+use the existing schema-1.17 objects. A durable unbound claim-owner field or an
+atomic `refresh_content` replacement remains a separately gated B3 decision.

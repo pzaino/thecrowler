@@ -339,6 +339,39 @@ B2 adds a separate fenced operational source-status update for unbound attempts
 so ordinary fenced sources do not remain stuck in `processing`; it never creates
 a `Status` operation or goal evidence and does not relax the bound-owner policy.
 
+## Decision 1k: B2R execution-safety hardening
+
+**Status: IMPLEMENTED AND TESTED; NOT PRODUCTION-READY; B3 STILL NOT APPROVED.**
+
+B2R corrects the reviewed B2 live-execution defects without schema changes:
+
+- a failed network-only index is a failed crawl and can no longer be reported
+  as completed;
+- timeout records one reason, cancels the crawl, waits a bounded interval for
+  worker/indexing quiescence, quarantines the VDI when quiescence is not
+  established, and finalizes exactly once;
+- `closeSession` no longer uses the browser-failure `pStatus` marker as its
+  finalization guard;
+- authoritative `ValidateCurrent`/`ValidateTx` re-establish the fenced policy,
+  exact attempt, generation, lease, source liveness and processing state before
+  external work and inside current-state database transactions;
+- unbound source-status mutation requires durable owner-continuity proof and is
+  performed inside the terminal transaction; otherwise it is suppressed;
+- the terminal repository derives the operation state from the authoritative
+  `Status` row, so `accepted` and `processing` both permit a proper terminal CAS;
+- fenced `refresh_content` and fenced `null:` deletion are refused/quarantined
+  until an atomic or exact-fence contract exists;
+- an unreadable present fenced claim store fails closed; only a genuinely absent
+  optional schema (or MySQL) keeps the legacy path;
+- the configured completion-event flag is honoured for fenced runs.
+
+**Not approved by this decision:** B3 additive schema, a durable unbound
+claim-owner field, `refresh_content` atomic replacement, exact-fence `null:`
+deletion, production activation, automatic mode switching or automatic goal
+resumption. Those require separate approval. The fenced path is a candidate for
+controlled integration testing only after independent review and a live
+VDI/browser run.
+
 ## Decision 2: resume phase
 
 **Status: PENDING.**

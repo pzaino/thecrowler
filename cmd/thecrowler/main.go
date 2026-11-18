@@ -268,8 +268,23 @@ func retrieveAvailableSources(db cdb.Handler, maxSources int) ([]claimedSource, 
 	if maxSources <= 0 {
 		maxSources = config.Crawler.MaxSources
 	}
-	mode, modeErr := cdb.SourceCrawlClaimMode(context.Background(), &db)
-	if modeErr == nil && mode == "fenced" {
+	// The optional attempt capability is distinct from a corrupt or
+	// unreadable fenced policy. Only a genuinely uninstalled optional schema
+	// keeps the documented legacy path; a present but unreadable or corrupt
+	// claim store fails closed so a fenced deployment cannot silently start
+	// unfenced work.
+	mode, modeErr := cdb.SourceCrawlClaimModePolicy(context.Background(), &db)
+	if modeErr != nil {
+		if errors.Is(modeErr, cdb.ErrSourceCrawlAttemptSchemaUnavailable) ||
+			errors.Is(modeErr, cdb.ErrSourceCrawlAttemptUnsupported) {
+			return retrieveLegacySources(db, maxSources)
+		}
+		return nil, fmt.Errorf("reading source crawl claim mode: %w", modeErr)
+	}
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "legacy":
+		return retrieveLegacySources(db, maxSources)
+	case "fenced":
 		sources, err := retrieveFencedSources(db, maxSources)
 		if err == nil {
 			return sources, nil
@@ -279,8 +294,10 @@ func retrieveAvailableSources(db cdb.Handler, maxSources int) ([]claimedSource, 
 		if !errors.Is(err, cdb.ErrSourceCrawlClaimLegacyMode) {
 			return nil, err
 		}
+		return retrieveLegacySources(db, maxSources)
+	default:
+		return nil, fmt.Errorf("invalid source crawl claim mode %q", mode)
 	}
-	return retrieveLegacySources(db, maxSources)
 }
 
 func retrieveFencedSources(db cdb.Handler, maxSources int) ([]claimedSource, error) {
@@ -935,12 +952,9 @@ func crawlSources(wb *WorkBlock) uint64 {
 
 				// check if the source starts with the `null:` prefix, if yes, skip the crawling
 				// and queue the placeholder source for deletion from the database.
-				if strings.HasPrefix(strings.ToLower(strings.TrimSpace(source.Source.URL)), "null:") {
+				if isNullSource(source) {
 					cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Pipeline] Source URL starts with 'null:', skipping crawling and deleting source ID %d on VDI slot %d", source.Source.ID, vdiSlot+1)
-					if source.Handoff != nil {
-						crowler.ReportFencedCrawlFailure(&wb.db, source.Handoff, 10*time.Second)
-					}
-					nullSourceDeleteChan <- source.Source.ID
+					handleNullSourceDeletion(&wb.db, source, nullSourceDeleteChan)
 					continue
 				}
 
@@ -1027,6 +1041,29 @@ func crawlSources(wb *WorkBlock) uint64 {
 	}
 
 	return TotalSources.Load() // Return the total number of sources crawled
+}
+
+// isNullSource reports whether the claimed source is the special "null:"
+// deletion marker.
+func isNullSource(source claimedSource) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(source.Source.URL)), "null:")
+}
+
+// handleNullSourceDeletion keeps the legacy deletion behavior for unbound
+// sources. A fenced attempt cannot prove that its deletion is still
+// authorized: the lease may have expired or the source may have been
+// superseded or transferred while queued. The deletion is quarantined and a
+// terminal failure is recorded instead of deleting under a stale fence.
+func handleNullSourceDeletion(db *cdb.Handler, source claimedSource,
+	deleteChan chan<- uint64) {
+	if source.Handoff != nil {
+		cmn.DebugMsg(cmn.DbgLvlWarn,
+			"[DEBUG-Pipeline] Quarantining null: source deletion for fenced source ID %d",
+			source.Source.ID)
+		crowler.ReportFencedCrawlFailure(db, source.Handoff, 10*time.Second)
+		return
+	}
+	deleteChan <- source.Source.ID
 }
 
 func drainFencedSources(db *cdb.Handler, sourceChan <-chan claimedSource) {
@@ -1134,6 +1171,24 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, source claimedSource, idx 
 	// Start a goroutine to crawl the website
 	go func(args *crowler.Pars, c *cfg.Config) {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-startCrawling] Waiting for available VDI instance...")
+
+		// Authoritatively revalidate the fenced claim before the possibly
+		// blocking VDI acquisition. A queued claim can expire, be superseded
+		// or lose its source while this goroutine waits for a slot.
+		if args.SourceCrawl != nil {
+			if err := crowler.ValidateFencedClaimStartup(&wb.db, args.SourceCrawl,
+				10*time.Second); err != nil {
+				cmn.DebugMsg(cmn.DbgLvlWarn,
+					"[DEBUG-startCrawling] fenced claim is not current before VDI acquisition for source %d: %v",
+					args.Src.ID, err)
+				crowler.ReportFencedCrawlOutcome(&wb.db, args.SourceCrawl,
+					cdb.SourceCrawlOutcomeFailed, 10*time.Second)
+				if wg != nil {
+					wg.Done()
+				}
+				return
+			}
+		}
 
 		// Fetch the next available Selenium instance (VDI)
 		vdiPool := args.Sel

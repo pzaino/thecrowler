@@ -16,6 +16,7 @@ package crawler
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 	"sync"
@@ -26,24 +27,25 @@ import (
 )
 
 type fakeSourceCrawlCoordinator struct {
-	mu            sync.Mutex
-	sourceID      uint64
-	attemptID     string
-	generation    uint64
-	claimedAt     time.Time
-	lease         time.Time
-	bound         bool
-	renewResults  []cdb.SourceCrawlLeaseResult
-	renewCalls    int
-	renewCh       chan struct{}
-	reportOutcome cdb.SourceCrawlTerminalOutcome
-	reportAt      time.Time
-	reportCalls   int
-	reportResult  cdb.SourceCrawlTerminalResult
-	statusOutcome cdb.SourceCrawlTerminalOutcome
-	statusAt      time.Time
-	statusCalls   int
-	statusResult  cdb.SourceCrawlTerminalResult
+	mu             sync.Mutex
+	sourceID       uint64
+	attemptID      string
+	generation     uint64
+	claimedAt      time.Time
+	lease          time.Time
+	bound          bool
+	renewResults   []cdb.SourceCrawlLeaseResult
+	renewCalls     int
+	renewCh        chan struct{}
+	reportOutcome  cdb.SourceCrawlTerminalOutcome
+	reportAt       time.Time
+	reportCalls    int
+	reportResult   cdb.SourceCrawlTerminalResult
+	validateResult cdb.SourceCrawlFenceStatus
+	validateErr    error
+	validateCalls  int
+	validateTxErr  error
+	validateTxCall int
 }
 
 func (f *fakeSourceCrawlCoordinator) SourceID() uint64     { return f.sourceID }
@@ -91,19 +93,23 @@ func (f *fakeSourceCrawlCoordinator) ReportTerminal(_ context.Context, _ *cdb.Ha
 	return f.reportResult, nil
 }
 
-func (f *fakeSourceCrawlCoordinator) UpdateUnboundSourceStatus(_ context.Context, _ *cdb.Handler,
-	outcome cdb.SourceCrawlTerminalOutcome, observedAt time.Time) (cdb.SourceCrawlTerminalResult, error) {
+func (f *fakeSourceCrawlCoordinator) ValidateCurrent(_ context.Context,
+	_ *cdb.Handler) (cdb.SourceCrawlFenceStatus, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.statusCalls++
-	f.statusOutcome = outcome
-	f.statusAt = observedAt
-	if f.statusResult.Result == "" {
-		return cdb.SourceCrawlTerminalResult{
-			Result: cdb.SourceCrawlResultApplied, SourceStatusChanged: true,
-		}, nil
+	f.validateCalls++
+	if f.validateResult.Result == "" {
+		return cdb.SourceCrawlFenceStatus{Result: cdb.SourceCrawlFenceActive}, f.validateErr
 	}
-	return f.statusResult, nil
+	return f.validateResult, f.validateErr
+}
+
+func (f *fakeSourceCrawlCoordinator) ValidateTx(_ context.Context, _ *sql.Tx,
+	_ *cdb.Handler) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.validateTxCall++
+	return f.validateTxErr
 }
 
 func TestStartSourceCrawlHeartbeatAbortsOnLostFence(t *testing.T) {
@@ -208,13 +214,6 @@ func TestReportSourceCrawlTerminalOutcomes(t *testing.T) {
 			}
 			if fake.reportAt.IsZero() {
 				t.Fatal("terminal observation time is zero")
-			}
-			if fake.statusCalls != 1 || fake.statusOutcome != tc.want {
-				t.Fatalf("unbound status outcome = %s calls=%d want %s",
-					fake.statusOutcome, fake.statusCalls, tc.want)
-			}
-			if !result.SourceStatusChanged {
-				t.Fatal("unbound source status change was not reported")
 			}
 		})
 	}

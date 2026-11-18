@@ -1,5 +1,9 @@
 # WP-05B3C3B2 test report
 
+> **Superseded in part by WP-05B3C3B2R.** The unbound source-status tests and
+> the timeout/terminal expectations recorded here describe the B2 behavior that
+> B2R replaced. See `ASYNC_GOAL_B3C3B2R_TEST_REPORT.md` for current evidence.
+
 ## Environment
 
 - Repository: `pzaino/thecrowler`

@@ -275,8 +275,14 @@ func sourceCrawlAttemptTerminalTransitionAllowed(current sourceCrawlAttemptState
 	return ok
 }
 
+// sourceCrawlTerminalOperationTransitionAllowed validates an optional worker
+// precondition against the result. An empty expected state means "the
+// authoritative operation row decides": schema 1.17 permits a terminal CAS
+// from either accepted or processing, and the database repository already
+// reads that row under its own locks. A worker-supplied state is never
+// authority; when present it must match the state the database observed.
 func sourceCrawlTerminalOperationTransitionAllowed(expected, result CrawlOperationState) bool {
-	if !sourceCrawlTerminalOperationEligible(expected) {
+	if expected != "" && !sourceCrawlTerminalOperationEligible(expected) {
 		return false
 	}
 	switch result {
@@ -417,11 +423,12 @@ type sourceCrawlTerminalAuthority struct {
 	AttemptState          sourceCrawlAttemptState
 	Binding               *sourceCrawlOperationBinding
 
-	SourceDeleted            bool
-	SourceDisabled           bool
-	SourceOwnershipVerified  bool
-	CurrentSourceOwnerUserID uint64
-	ApprovalHistory          sourceCrawlApprovalHistoryState
+	SourceDeleted                     bool
+	SourceDisabled                    bool
+	SourceOwnershipVerified           bool
+	SourceOwnershipContinuityVerified bool
+	CurrentSourceOwnerUserID          uint64
+	ApprovalHistory                   sourceCrawlApprovalHistoryState
 }
 
 var (
@@ -595,10 +602,14 @@ func (a sourceCrawlTerminalAuthority) sourceCrawlTerminalSourceStatusEligible(
 		return false
 	}
 	if receipt.Attribution != sourceCrawlHandoffBound {
-		// An unbound attempt has no recorded operation principal, so verified
-		// ownership alone is not owner-continuity proof. A future B1 repository
-		// may record its history result but must not overwrite source status.
-		return false
+		// An unbound attempt has no recorded operation principal. Schema 1.17
+		// can prove owner continuity only through the verified SourceOwnership
+		// provenance row: it must still name the current Sources.usr_id owner
+		// and must not have been written after the claim. Otherwise the update
+		// is suppressed and the source is recovered through the bounded
+		// processing-timeout/lease reclaim path.
+		return a.SourceOwnershipVerified && a.SourceOwnershipContinuityVerified &&
+			a.CurrentSourceOwnerUserID != 0
 	}
 	if receipt.Attempt.Binding == nil || a.Binding == nil ||
 		*a.Binding != *receipt.Attempt.Binding || receipt.OperationResult == nil ||
