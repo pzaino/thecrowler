@@ -305,6 +305,13 @@ func (r sourceCrawlTerminalReceipt) validateStructure() error {
 	if r.ObservedAt.Before(r.Attempt.ClaimedAt) {
 		return fmt.Errorf("%w: terminal observation precedes claim", errSourceCrawlAttemptInvalid)
 	}
+	if !r.ObservedAt.Before(r.Attempt.LeaseExpiresAt) {
+		// Stale, not malformed: the value is plausible but outside the
+		// original attempt's execution window. The read-only replay classifier
+		// maps this to a conflict.
+		return fmt.Errorf("%w: terminal observation at or after the original lease expiry",
+			errSourceCrawlAttemptStale)
+	}
 	expectedReason, ok := sourceCrawlTerminalReasonCodes[r.Outcome]
 	if !ok || r.ReasonCode != expectedReason {
 		return fmt.Errorf("%w: terminal outcome or reason code", errSourceCrawlAttemptInvalid)
@@ -364,9 +371,6 @@ func (r sourceCrawlTerminalReceipt) validate(now time.Time) error {
 	}
 	if !now.Before(r.Attempt.LeaseExpiresAt) {
 		return fmt.Errorf("%w: terminal receipt after lease expiry", errSourceCrawlAttemptStale)
-	}
-	if !r.ObservedAt.Before(r.Attempt.LeaseExpiresAt) {
-		return fmt.Errorf("%w: terminal observation after lease expiry", errSourceCrawlAttemptStale)
 	}
 	return nil
 }

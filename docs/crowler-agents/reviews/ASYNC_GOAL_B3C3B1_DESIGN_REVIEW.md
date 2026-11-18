@@ -7,8 +7,9 @@
 The reviewed Stage B approval request is still marked *Request only. Not
 approved.* No terminal repository, heartbeat writer, live crawler handoff,
 migration, worker or production activation is implemented here. WP-05B3C3B1R
-closes the remaining authority and claim-timing gaps without inferring B1
-approval from the task.
+closed the remaining authority, current/history and claim-timing gaps.
+WP-05B3C3B1S closes the final-freshness and observation-time replay gaps without
+inferring B1 approval from the task.
 
 This document records the corrected authority model, the persisted replay
 equivalence that schema 1.17 can actually prove, the remaining limitations, the
@@ -87,9 +88,12 @@ evaluated by the statement. The expiry boundary is exclusive:
 
 Claim batches read a selection timestamp after the policy lock, then a fresh
 per-source timestamp after each source row is locked and before its claim
-mutation. A final fresh check demotes any bound claim whose short lease expired
-during a long batch to `stale_fence`; it is never returned as executable
-`claimed`.
+mutation. A final fresh check demotes **every** newly allocated attempt whose
+short lease expired during a long batch to `stale_fence`, including
+`unattributed`, `ambiguous`, `not_attributable` and `conflict` outcomes. No
+expired attempt is returned in a live-looking outcome. The durable history is
+not rewritten; the caller must still revalidate the authoritative fence before
+any privileged mutation.
 
 The pure snapshot is not a lock, a lease or execution authorization. The future
 repository must re-read it and re-evaluate the clock inside its mutation
@@ -111,8 +115,15 @@ reconstructed from `SourceCrawlAttempts` plus the exact `Status` operation state
 
 Equivalence details:
 
-- `ObservedAt` is ignored for replay identity. The persisted `terminal_at` is
-  authoritative and is never changed by a retry.
+- `ObservedAt` must be structurally plausible for the original attempt:
+  `observed_at >= claimed_at` and `observed_at < lease_expires_at`. The bound
+  is compared against the receipt-carried lease, not the current clock, so an
+  exact historical result remains replayable long after that lease expired.
+- `ObservedAt` is ignored for replay identity. Two different in-lease
+  observation values replay the same persisted result; the persisted
+  `terminal_at` is authoritative and is never changed by a retry. An incoming
+  observation exactly at or after the original lease expiry is a conflict even
+  when every durable identifier matches.
 - `ExpectedState` is a first-write precondition only. It is not persisted, so a
   retry with a different `ExpectedState` is still idempotent when the stored
   result matches.
@@ -130,7 +141,8 @@ Equivalence details:
 - the exact `ExpectedState` observed at the first CAS;
 - the original unbound reason;
 - a canonical receipt digest or a durable receipt ledger;
-- exact equality of a replayed observation timestamp;
+- exact equality of a replayed observation timestamp (the value must be
+  in-lease but need not equal the originally stored one);
 - a durable request fingerprint or an empty-batch acknowledgement.
 
 Those require a separately approved additive 1.17 extension (Option B). No such

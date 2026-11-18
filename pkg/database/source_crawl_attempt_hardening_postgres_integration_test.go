@@ -689,6 +689,175 @@ func TestPostgresSourceCrawlAttemptReplayClassification(t *testing.T) {
 	})
 }
 
+func TestPostgresSourceCrawlAttemptFinalFreshnessAllOutcomes(t *testing.T) {
+	db, sqlDB := openPostgresIntegrationTestDB(t)
+	adminDB := openAsyncGoalPostgresAdminDB(t)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	lease := time.Minute
+
+	type attribution struct {
+		name  string
+		setup func(*testing.T, uint64, string)
+		live  SourceCrawlClaimOutcome
+		bound bool
+	}
+	fixtures := []attribution{
+		{"bound", func(t *testing.T, sourceID uint64, label string) {
+			sourceCrawlAttemptInsertOperation(t, db, sourceID, 7, label, "accepted",
+				now.Add(-time.Minute), now)
+		}, SourceCrawlClaimed, true},
+		{"unattributed", func(*testing.T, uint64, string) {}, SourceCrawlUnattributed, false},
+		{"ambiguous", func(t *testing.T, sourceID uint64, label string) {
+			sourceCrawlAttemptInsertOperation(t, db, sourceID, 7, label+"-a", "accepted",
+				now.Add(-time.Minute), now)
+			sourceCrawlAttemptInsertOperation(t, db, sourceID, 7, label+"-b", "accepted",
+				now.Add(-time.Minute), now)
+		}, SourceCrawlAmbiguous, false},
+		{"not-attributable", func(t *testing.T, sourceID uint64, label string) {
+			sourceCrawlAttemptInsertOperation(t, db, sourceID, 7, label, "accepted",
+				now.Add(-time.Minute), now)
+			if _, err := adminDB.Exec(`UPDATE Sources SET usr_id=8 WHERE source_id=$1`, sourceID); err != nil {
+				t.Fatalf("transfer freshness source: %v", err)
+			}
+			if _, err := adminDB.Exec(`UPDATE SourceOwnership SET user_id=8 WHERE source_id=$1`, sourceID); err != nil {
+				t.Fatalf("transfer freshness ownership: %v", err)
+			}
+		}, SourceCrawlNotAttributable, false},
+	}
+
+	boundaries := []struct {
+		name      string
+		final     time.Time
+		firstLive bool
+	}{
+		{"just before lease expiry", now.Add(lease - time.Microsecond), true},
+		{"exactly at lease expiry", now.Add(lease), false},
+		{"after lease expiry", now.Add(lease + time.Microsecond), false},
+	}
+
+	for _, fx := range fixtures {
+		fx := fx
+		for _, boundary := range boundaries {
+			boundary := boundary
+			t.Run(fx.name+"/"+boundary.name, func(t *testing.T) {
+				priority := fmt.Sprintf("wp05b3c3b1s-%s-%d", fx.name, time.Now().UnixNano())
+				sourceA := createCrawlSchedulingSource(t, db, priority)
+				sourceB := createCrawlSchedulingSource(t, db, priority)
+				t.Cleanup(func() {
+					cleanupSourceCrawlAttemptRows(t, adminDB, sourceA)
+					cleanupSourceCrawlAttemptRows(t, adminDB, sourceB)
+				})
+				setSourceCrawlAttemptMode(t, adminDB, "fenced")
+				fx.setup(t, sourceA, fmt.Sprintf("freshness-%s-a", fx.name))
+				fx.setup(t, sourceB, fmt.Sprintf("freshness-%s-b", fx.name))
+
+				// Source A is persisted at now, source B 30 seconds later.
+				// The final timestamp decides whether A expired during the
+				// batch; B's longer remaining lease must stay live.
+				times := []time.Time{now, now, now.Add(30 * time.Second), boundary.final}
+				calls := 0
+				clock := func(context.Context, *sql.Tx, Handler) (time.Time, error) {
+					if calls >= len(times) {
+						return times[len(times)-1], nil
+					}
+					value := times[calls]
+					calls++
+					return value, nil
+				}
+				request := sourceCrawlAttemptRequestFor(
+					"pg-freshness-"+fx.name+"-"+boundary.name, priority)
+				request.Limit = 2
+				request.Lease = lease
+				claims, err := claimSourceCrawlAttemptsWithClock(context.Background(), db, request, clock)
+				if err != nil || len(claims) != 2 {
+					t.Fatalf("final freshness claim = %+v err=%v", claims, err)
+				}
+				if calls != 4 {
+					t.Fatalf("clock calls = %d, want 4", calls)
+				}
+				wantFirst := fx.live
+				if !boundary.firstLive {
+					wantFirst = SourceCrawlClaimStaleFence
+				}
+				if claims[0].SourceID != sourceA || claims[0].Outcome != wantFirst || claims[0].Reused {
+					t.Fatalf("first claim = %+v, want source %d outcome %s", claims[0], sourceA, wantFirst)
+				}
+				if claims[1].SourceID != sourceB || claims[1].Outcome != fx.live || claims[1].Reused {
+					t.Fatalf("second claim = %+v, want live source %d outcome %s", claims[1], sourceB, fx.live)
+				}
+				if claims[0].AttemptID == claims[1].AttemptID {
+					t.Fatal("attempt IDs must be unique per source")
+				}
+				for _, claim := range claims {
+					var (
+						currentAttempt, currentRequest string
+						currentGeneration              uint64
+						currentLease                   time.Time
+						historyAttempt, historyEngine  string
+						historyOperation               sql.NullString
+						historyLease                   time.Time
+					)
+					if err := sqlDB.QueryRow(`SELECT attempt_id, claim_request_id, generation, lease_expires_at
+						FROM SourceCrawlClaims WHERE source_id=$1`, claim.SourceID).Scan(
+						&currentAttempt, &currentRequest, &currentGeneration,
+						&currentLease); err != nil {
+						t.Fatalf("read current claim for %d: %v", claim.SourceID, err)
+					}
+					if err := sqlDB.QueryRow(`SELECT attempt_id, engine_id, operation_id, lease_expires_at
+						FROM SourceCrawlAttempts WHERE source_id=$1`, claim.SourceID).Scan(
+						&historyAttempt, &historyEngine, &historyOperation,
+						&historyLease); err != nil {
+						t.Fatalf("read attempt history for %d: %v", claim.SourceID, err)
+					}
+					if currentAttempt != claim.AttemptID || historyAttempt != claim.AttemptID ||
+						currentRequest != claim.ClaimRequestID || currentGeneration != claim.Generation ||
+						historyEngine != claim.EngineID {
+						t.Fatalf("current/history identity disagree for %d: %+v", claim.SourceID, claim)
+					}
+					if !currentLease.Equal(historyLease) || !currentLease.Equal(claim.LeaseExpiresAt) {
+						t.Fatalf("lease mismatch for %d: current=%v history=%v returned=%v",
+							claim.SourceID, currentLease, historyLease, claim.LeaseExpiresAt)
+					}
+					if fx.bound {
+						if claim.OperationID == "" || !historyOperation.Valid ||
+							historyOperation.String != claim.OperationID {
+							t.Fatalf("bound attempt lost its operation binding: %+v", claim)
+						}
+					} else if claim.OperationID != "" || historyOperation.Valid {
+						t.Fatalf("unbound attempt fabricated operation identity: %+v", claim)
+					}
+					var historyCount int
+					if err := sqlDB.QueryRow(`SELECT COUNT(*) FROM SourceCrawlAttempts WHERE source_id=$1`,
+						claim.SourceID).Scan(&historyCount); err != nil {
+						t.Fatalf("count attempt history for %d: %v", claim.SourceID, err)
+					}
+					if historyCount != 1 {
+						t.Fatalf("history count for %d = %d, want 1", claim.SourceID, historyCount)
+					}
+				}
+
+				// Replaying after every lease expired must reuse the stored
+				// attempts and return stale fences without a new generation.
+				replayNow := now.Add(2 * lease)
+				replayClock := func(context.Context, *sql.Tx, Handler) (time.Time, error) {
+					return replayNow, nil
+				}
+				replay, err := claimSourceCrawlAttemptsWithClock(context.Background(), db, request, replayClock)
+				if err != nil || len(replay) != 2 {
+					t.Fatalf("expired replay = %+v err=%v", replay, err)
+				}
+				for i := range replay {
+					if !replay[i].Reused || replay[i].Outcome != SourceCrawlClaimStaleFence ||
+						replay[i].AttemptID != claims[i].AttemptID ||
+						replay[i].Generation != claims[i].Generation {
+						t.Fatalf("expired replay[%d] = %+v, want stale reuse of %+v", i, replay[i], claims[i])
+					}
+				}
+			})
+		}
+	}
+}
+
 func TestPostgresSourceCrawlAttemptCandidateLoadFailure(t *testing.T) {
 	db, _ := openPostgresIntegrationTestDB(t)
 	adminDB := openAsyncGoalPostgresAdminDB(t)

@@ -279,6 +279,33 @@ No B1 repository, heartbeat, terminal writer, DDL, live caller or production
 activation is approved. The B1 gate remains exactly as requested in
 `ASYNC_GOAL_B3C3_STAGE_B_APPROVAL_REQUEST.md`.
 
+## Decision 1i: all-class final freshness and observation-time replay
+
+**Status: PHASE A PURE HARDENING IMPLEMENTED; B1 REMAINS PENDING.**
+
+WP-05B3C3B1S closes the two remaining Phase A defects and does not implement the
+terminal repository:
+
+- The final claim-batch freshness check now demotes every newly allocated
+  attempt whose lease expired at the final trusted timestamp, including
+  `unattributed`, `ambiguous`, `not_attributable` and `conflict` outcomes. No
+  expired attempt is returned in a live-looking outcome; the durable history is
+  unchanged and the caller must revalidate the fence.
+- The terminal receipt structural validator now requires
+  `claimed_at <= observed_at < lease_expires_at` against the receipt-carried
+  lease. The rule does not consult the current clock, so an exact historical
+  result remains replayable after expiry, while an observation exactly at or
+  after the original lease expiry is a conflict even on the read-only path.
+- `ObservedAt` remains ignored for replay identity because schema 1.17 does not
+  persist it. Two different in-lease observation values replay the same stored
+  result; the persisted `terminal_at` remains authoritative.
+- The per-source claim clock, all-class freshness and the replay rule are tested
+  on SQLite and disposable PostgreSQL using the deterministic clock seam.
+
+B1 is still exactly as requested in `ASYNC_GOAL_B3C3_STAGE_B_APPROVAL_REQUEST.md`
+and remains unapproved. No heartbeat writer, terminal repository, DDL, live
+caller or production activation is authorized.
+
 ## Decision 2: resume phase
 
 **Status: PENDING.**
@@ -368,7 +395,7 @@ No public schema or example was changed.
 
 ## Next action
 
-WP-05B3C3B1R Phase A repairs and the updated design review are implemented and
+WP-05B3C3B1S Phase A repairs and the updated design review are implemented and
 locally tested. Hosted PostgreSQL CI must be green on the exact submitted commit
 before the package is reported as fully verified. Phase B remains blocked: the
 internal repository/heartbeat (B1), live crawler caller (B2) and optional DDL

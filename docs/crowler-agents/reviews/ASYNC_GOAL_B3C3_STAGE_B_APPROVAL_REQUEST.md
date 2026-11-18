@@ -7,12 +7,13 @@
 WP-05B3C3A stopped at claim/replay repairs, a real proposal-to-claim test and a
 pure handoff/terminal contract. WP-05B3C3B1 corrected the pure authority/replay
 model and audited the crawler side effects. WP-05B3C3B1R closed the remaining
-source-status, current/history, unbound-owner and claim-timing gaps. No terminal
-repository, heartbeat writer, live crawler handoff, migration, worker or
-production activation is approved.
+source-status, current/history, unbound-owner and claim-timing gaps.
+WP-05B3C3B1S then closed the all-class final-freshness and observation-time
+replay gaps. No terminal repository, heartbeat writer, live crawler handoff,
+migration, worker or production activation is approved.
 
-B1 remains **pending**. WP-05B3C3B1R is not a B1 approval record and does not
-authorize any repository implementation.
+B1 remains **pending**. WP-05B3C3B1R and WP-05B3C3B1S are not B1 approval
+records and do not authorize any repository implementation.
 
 ## Requested decisions (separate approvals)
 

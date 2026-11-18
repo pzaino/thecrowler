@@ -309,6 +309,46 @@ func TestSourceCrawlTerminalReceiptValidation(t *testing.T) {
 	}
 }
 
+func TestSourceCrawlTerminalReceiptObservationTimeStructure(t *testing.T) {
+	_, receipt := sourceCrawlHandoffTestFixture(t)
+	receipt.Attempt.ClaimedAt = sourceCrawlHandoffTestNow.Add(-time.Hour)
+	receipt.Attempt.LeaseExpiresAt = sourceCrawlHandoffTestNow.Add(time.Hour)
+
+	cases := []struct {
+		name       string
+		observedAt time.Time
+		wantErr    bool
+	}{
+		{"inside lease", sourceCrawlHandoffTestNow, false},
+		{"exactly at claim", receipt.Attempt.ClaimedAt, false},
+		{"just before lease expiry", receipt.Attempt.LeaseExpiresAt.Add(-time.Microsecond), false},
+		{"before claim", receipt.Attempt.ClaimedAt.Add(-time.Microsecond), true},
+		{"exactly at lease expiry", receipt.Attempt.LeaseExpiresAt, true},
+		{"after lease expiry", receipt.Attempt.LeaseExpiresAt.Add(time.Microsecond), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			subject := copySourceCrawlTerminalReceipt(receipt)
+			subject.ObservedAt = tc.observedAt
+			err := subject.validateStructure()
+			if tc.wantErr && err == nil {
+				t.Fatal("structurally invalid observation was accepted")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("valid in-lease observation rejected: %v", err)
+			}
+			// The structural rule compares receipt-carried values only. It must
+			// remain valid long after the live lease has expired so an exact
+			// historical result can be replayed read-only.
+			if !tc.wantErr {
+				if err := subject.validate(sourceCrawlHandoffTestNow.Add(24 * time.Hour)); err == nil {
+					t.Fatal("live validator accepted a receipt after lease expiry")
+				}
+			}
+		})
+	}
+}
+
 func sourceCrawlTerminalAuthorityFixture(receipt sourceCrawlTerminalReceipt) sourceCrawlTerminalAuthority {
 	var ownerID uint64
 	if receipt.Attempt.Binding != nil {
@@ -669,8 +709,28 @@ func TestSourceCrawlTerminalReplayClassification(t *testing.T) {
 	expiredIncoming := copySourceCrawlTerminalReceipt(receipt)
 	expiredIncoming.Attempt.ClaimedAt = expiredStored.Attempt.ClaimedAt
 	expiredIncoming.Attempt.LeaseExpiresAt = expiredStored.Attempt.LeaseExpiresAt
+	// The original observation must be plausible for the historical attempt,
+	// but ObservedAt is not a replay-identity field: a different in-lease value
+	// still replays the one persisted result.
+	expiredIncoming.ObservedAt = expiredStored.Attempt.ClaimedAt.Add(20 * time.Minute)
 	if got := classifySourceCrawlPersistedTerminalReplay(&expiredStored, expiredIncoming); got != sourceCrawlTerminalIdempotentReplay {
-		t.Fatalf("post-expiry exact replay = %q", got)
+		t.Fatalf("post-expiry exact replay with in-lease observation = %q", got)
+	}
+
+	for _, tc := range []struct {
+		name       string
+		observedAt time.Time
+	}{
+		{"observation at original lease expiry", expiredStored.Attempt.LeaseExpiresAt},
+		{"observation after original lease expiry", expiredStored.Attempt.LeaseExpiresAt.Add(time.Microsecond)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			subject := copySourceCrawlTerminalReceipt(expiredIncoming)
+			subject.ObservedAt = tc.observedAt
+			if got := classifySourceCrawlPersistedTerminalReplay(&expiredStored, subject); got != sourceCrawlTerminalConflict {
+				t.Fatalf("%s = %q, want conflict", tc.name, got)
+			}
+		})
 	}
 
 	unboundAttempt := receipt.Attempt

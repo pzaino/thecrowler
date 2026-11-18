@@ -366,6 +366,7 @@ jobs:
             TestPostgresSourceCrawlAttemptCandidateLoadFailure \
             TestPostgresSourceCrawlAttemptDatabaseClockReconciliation \
             TestPostgresSourceCrawlAttemptPostLockClock \
+            TestPostgresSourceCrawlAttemptFinalFreshnessAllOutcomes \
             TestPostgresSourceCrawlAttemptAttributionFailClosed \
             TestPostgresSourceCrawlAttemptForgedAndDuplicateDetails \
             TestPostgresSourceCrawlAttemptWrongChronology \

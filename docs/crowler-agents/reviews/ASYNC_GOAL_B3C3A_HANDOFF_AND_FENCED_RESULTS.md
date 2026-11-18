@@ -129,8 +129,11 @@ accepted by the scheduler.
   wall clock. PostgreSQL `clock_timestamp()` is required where a deliberate lock
   wait can cross an expiry; `CURRENT_TIMESTAMP` is transaction-start time.
 - Claim batches use a fresh timestamp per source after its row lock. A final
-  freshness check demotes a short lease that expired during a long batch to
-  `stale_fence`; it is never returned as executable `claimed`.
+  freshness check demotes **every** newly allocated attempt whose short lease
+  expired during a long batch to `stale_fence`, regardless of whether it is
+  bound or `unattributed`/`ambiguous`/`not_attributable`/`conflict`. It is never
+  returned in a live-looking outcome. The durable history remains unchanged and
+  the caller must revalidate the fence before any privileged mutation.
 - Must match the exact `source_id`, `attempt_id`, `generation`,
   `claim_request_id` and `engine_id`.
 - Extends by a bounded amount. The proposed maximum is one hour per renewal and
@@ -213,7 +216,10 @@ goal evaluator.
 - A different engine, claim request, source, generation, claim time, lease,
   binding, outcome, reason or operation result is `conflict`.
 - A changed observation time for the same result is an explicitly ignored
-  retry field; the stored `terminal_at` remains authoritative.
+  retry field; the stored `terminal_at` remains authoritative. The incoming
+  value must still satisfy `claimed_at <= observed_at < lease_expires_at`
+  against the receipt-carried lease. An observation exactly at or after the
+  original lease expiry conflicts even on the read-only path.
 - `ExpectedState` is a first-write precondition, not a persisted replay-identity
   field. The original unbound class is normalized to `unbound`.
 - The incoming receipt must pass first-write structural validation even on the

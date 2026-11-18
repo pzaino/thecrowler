@@ -19,6 +19,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -974,6 +975,233 @@ func TestSourceCrawlAttemptSQLiteClaimAtLeaseBoundary(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func sourceCrawlStatusOperationIDs(t *testing.T, raw *sql.DB, sourceID uint64) []string {
+	t.Helper()
+	rows, err := raw.Query(`SELECT status_sha256 FROM Status WHERE source_id=? ORDER BY status_sha256`, sourceID)
+	if err != nil {
+		t.Fatalf("read status operations for %d: %v", sourceID, err)
+	}
+	defer rows.Close() //nolint:errcheck
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatalf("scan status operation for %d: %v", sourceID, err)
+		}
+		out = append(out, id)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("status operation rows for %d: %v", sourceID, err)
+	}
+	return out
+}
+
+func TestSourceCrawlAttemptSQLiteFinalFreshnessAllOutcomes(t *testing.T) {
+	const (
+		sourceA uint64 = 41
+		sourceB uint64 = 42
+	)
+	lease := time.Minute
+	base := sourceCrawlClaimTestNow
+
+	type attribution struct {
+		name  string
+		seed  func(*testing.T, *sql.DB, uint64)
+		live  SourceCrawlClaimOutcome
+		bound bool
+	}
+	fixtures := []attribution{
+		{
+			name: "bound",
+			seed: func(t *testing.T, raw *sql.DB, sourceID uint64) {
+				sourceCrawlInsertBoundOperation(t, raw, sourceID, 7,
+					fmt.Sprintf("freshness-bound-%d", sourceID), "accepted")
+			},
+			live:  SourceCrawlClaimed,
+			bound: true,
+		},
+		{
+			name: "unattributed",
+			seed: func(*testing.T, *sql.DB, uint64) {},
+			live: SourceCrawlUnattributed,
+		},
+		{
+			name: "ambiguous",
+			seed: func(t *testing.T, raw *sql.DB, sourceID uint64) {
+				sourceCrawlSubmittedProposalFixture(t, raw, sourceID, 7,
+					fmt.Sprintf("freshness-ambiguous-a-%d", sourceID), nil, "submitted")
+				sourceCrawlSubmittedProposalFixture(t, raw, sourceID, 7,
+					fmt.Sprintf("freshness-ambiguous-b-%d", sourceID), nil, "submitted")
+			},
+			live: SourceCrawlAmbiguous,
+		},
+		{
+			name: "not_attributable",
+			seed: func(t *testing.T, raw *sql.DB, sourceID uint64) {
+				sourceCrawlSubmittedProposalFixture(t, raw, sourceID, 7,
+					fmt.Sprintf("freshness-forged-%d", sourceID),
+					sourceCrawlClaimTestID(fmt.Sprintf("forged-operation-%d", sourceID)),
+					"submitted")
+			},
+			live: SourceCrawlNotAttributable,
+		},
+	}
+
+	boundaries := []struct {
+		name      string
+		final     time.Time
+		firstLive bool
+	}{
+		{"just before lease expiry", base.Add(lease - time.Microsecond), true},
+		{"exactly at lease expiry", base.Add(lease), false},
+		{"after lease expiry", base.Add(lease + time.Microsecond), false},
+	}
+
+	for _, fx := range fixtures {
+		fx := fx
+		for _, boundary := range boundaries {
+			boundary := boundary
+			t.Run(fx.name+"/"+boundary.name, func(t *testing.T) {
+				raw, handler := openAsyncGoalSQLite(t)
+				for _, sourceID := range []uint64{sourceA, sourceB} {
+					if _, err := raw.Exec(`INSERT INTO Sources
+						(source_id, source_uid, url, name, status, disabled, usr_id, priority, sub_priority)
+						VALUES (?, ?, ?, 'freshness fixture', 'new', FALSE, 7, '', 0)`,
+						sourceID, fmt.Sprintf("uid-freshness-%d", sourceID),
+						fmt.Sprintf("https://freshness-%d.example/", sourceID)); err != nil {
+						t.Fatalf("insert freshness source %d: %v", sourceID, err)
+					}
+					if _, err := raw.Exec(`INSERT INTO SourceOwnership
+						(source_id, user_id, verified_at, verified_by_user_id, verified_by, verification_method, verification_reason)
+						VALUES (?, 7, CURRENT_TIMESTAMP, 9, 'operator', 'claim_test', 'freshness')`, sourceID); err != nil {
+						t.Fatalf("insert freshness ownership %d: %v", sourceID, err)
+					}
+					fx.seed(t, raw, sourceID)
+				}
+				enableSourceCrawlClaimMode(t, raw)
+
+				// Source A is persisted at base, source B 30 seconds later.
+				// The final timestamp decides whether A expired during the
+				// batch; B's longer remaining lease must stay live.
+				times := []time.Time{base, base, base.Add(30 * time.Second), boundary.final}
+				calls := 0
+				clock := func(context.Context, *sql.Tx, Handler) (time.Time, error) {
+					if calls >= len(times) {
+						return times[len(times)-1], nil
+					}
+					value := times[calls]
+					calls++
+					return value, nil
+				}
+				request := sourceCrawlClaimRequest("final-freshness-" + fx.name)
+				request.Limit = 2
+				request.Lease = lease
+				claims, err := claimSourceCrawlAttemptsWithClock(context.Background(), &handler, request, clock)
+				if err != nil || len(claims) != 2 {
+					t.Fatalf("final freshness claim = %+v err=%v", claims, err)
+				}
+				if calls != 4 {
+					t.Fatalf("clock calls = %d, want 4", calls)
+				}
+
+				wantFirst := fx.live
+				if !boundary.firstLive {
+					wantFirst = SourceCrawlClaimStaleFence
+				}
+				if claims[0].SourceID != sourceA || claims[0].Outcome != wantFirst || claims[0].Reused {
+					t.Fatalf("first claim = %+v, want source %d outcome %s", claims[0], sourceA, wantFirst)
+				}
+				if claims[1].SourceID != sourceB || claims[1].Outcome != fx.live || claims[1].Reused {
+					t.Fatalf("second claim = %+v, want live source %d outcome %s", claims[1], sourceB, fx.live)
+				}
+				if claims[0].AttemptID == claims[1].AttemptID {
+					t.Fatal("attempt IDs must be unique per source")
+				}
+				for _, claim := range claims {
+					if claim.AttemptID == "" || claim.Generation != 1 {
+						t.Fatalf("attempt identity for source %d = %+v", claim.SourceID, claim)
+					}
+					if fx.bound {
+						if claim.OperationID == "" || claim.PrincipalUserID != 7 {
+							t.Fatalf("bound claim lacks its operation binding: %+v", claim)
+						}
+						operations := sourceCrawlStatusOperationIDs(t, raw, claim.SourceID)
+						if len(operations) != 1 || operations[0] != claim.OperationID {
+							t.Fatalf("bound operations for %d = %v, want %s", claim.SourceID, operations, claim.OperationID)
+						}
+					} else {
+						if claim.OperationID != "" || claim.RequestID != "" || claim.ApprovalID != "" ||
+							claim.Owner != "" || claim.PrincipalUserID != 0 {
+							t.Fatalf("unbound claim fabricated operation identity: %+v", claim)
+						}
+						if operations := sourceCrawlStatusOperationIDs(t, raw, claim.SourceID); len(operations) != 0 {
+							t.Fatalf("unbound claim created Status operations for %d: %v", claim.SourceID, operations)
+						}
+					}
+
+					var (
+						currentAttempt, currentRequest, currentEngine string
+						currentGeneration                             uint64
+						currentLease, historyLease                    time.Time
+						historyAttempt, historyRequest, historyEngine string
+						historyGeneration                             uint64
+					)
+					if err := raw.QueryRow(`SELECT attempt_id, claim_request_id, generation, engine_id, lease_expires_at
+						FROM SourceCrawlClaims WHERE source_id=?`, claim.SourceID).Scan(
+						&currentAttempt, &currentRequest, &currentGeneration, &currentEngine,
+						&currentLease); err != nil {
+						t.Fatalf("read current claim for %d: %v", claim.SourceID, err)
+					}
+					if err := raw.QueryRow(`SELECT attempt_id, claim_request_id, generation, engine_id, lease_expires_at
+						FROM SourceCrawlAttempts WHERE source_id=?`, claim.SourceID).Scan(
+						&historyAttempt, &historyRequest, &historyGeneration, &historyEngine,
+						&historyLease); err != nil {
+						t.Fatalf("read attempt history for %d: %v", claim.SourceID, err)
+					}
+					if currentAttempt != claim.AttemptID || historyAttempt != claim.AttemptID ||
+						currentRequest != claim.ClaimRequestID || historyRequest != claim.ClaimRequestID ||
+						currentGeneration != claim.Generation || historyGeneration != claim.Generation ||
+						currentEngine != claim.EngineID || historyEngine != claim.EngineID {
+						t.Fatalf("current/history identity disagree for %d: current=(%s,%s,%d,%s) history=(%s,%s,%d,%s)",
+							claim.SourceID, currentAttempt, currentRequest, currentGeneration, currentEngine,
+							historyAttempt, historyRequest, historyGeneration, historyEngine)
+					}
+					if !currentLease.Equal(historyLease) {
+						t.Fatalf("lease mismatch for %d: current=%v history=%v", claim.SourceID, currentLease, historyLease)
+					}
+					if !currentLease.Equal(claim.LeaseExpiresAt) {
+						t.Fatalf("returned lease for %d = %v, stored = %v", claim.SourceID, claim.LeaseExpiresAt, currentLease)
+					}
+					if count := sourceCrawlAttemptHistoryCount(t, raw, claim.SourceID); count != 1 {
+						t.Fatalf("history count for %d = %d, want 1", claim.SourceID, count)
+					}
+				}
+
+				// Replaying the same request after every lease expired must not
+				// allocate anything or resurrect the earlier live outcome.
+				replayNow := base.Add(2 * lease)
+				replayClock := func(context.Context, *sql.Tx, Handler) (time.Time, error) {
+					return replayNow, nil
+				}
+				replay, err := claimSourceCrawlAttemptsWithClock(context.Background(), &handler, request, replayClock)
+				if err != nil || len(replay) != 2 {
+					t.Fatalf("expired replay = %+v err=%v", replay, err)
+				}
+				for i := range replay {
+					if !replay[i].Reused || replay[i].Outcome != SourceCrawlClaimStaleFence ||
+						replay[i].AttemptID != claims[i].AttemptID ||
+						replay[i].Generation != claims[i].Generation {
+						t.Fatalf("expired replay[%d] = %+v, want stale reuse of %+v", i, replay[i], claims[i])
+					}
+					if count := sourceCrawlAttemptHistoryCount(t, raw, replay[i].SourceID); count != 1 {
+						t.Fatalf("replay history count for %d = %d, want 1", replay[i].SourceID, count)
+					}
+				}
+			})
+		}
 	}
 }
 

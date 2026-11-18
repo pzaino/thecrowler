@@ -1,5 +1,10 @@
 # WP-05B3C3B1R Test Report
 
+> **Historical record.** WP-05B3C3B1S supersedes the final-freshness scope
+> described here: the final batch check now demotes every newly allocated
+> attempt, not only bound `claimed` results. See
+> `ASYNC_GOAL_B3C3B1S_TEST_REPORT.md` for current evidence.
+
 ## Environment
 
 - Repository: `pzaino/thecrowler`

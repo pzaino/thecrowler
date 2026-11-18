@@ -122,3 +122,7 @@ WP-05B3C3B1R adds no DDL. Its source-status, duplicate current/history field,
 per-source claim-clock and replay-structure corrections use existing 1.17
 objects. B1 Option A remains unapproved; any stronger request/receipt or
 owner-continuity storage remains a separate B3 design-only request.
+
+WP-05B3C3B1S adds no DDL. Its all-class final-freshness and terminal
+observation-time corrections also use existing 1.17 objects. B1 Option A remains
+unapproved; no heartbeat or terminal repository is implemented.

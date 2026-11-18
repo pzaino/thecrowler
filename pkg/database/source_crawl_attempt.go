@@ -217,14 +217,17 @@ func claimSourceCrawlAttemptsWithClock(ctx context.Context, db *Handler, req Sou
 		claims = append(claims, claim)
 	}
 	if len(claims) > 0 {
-		// A long batch can outlive a short lease. Never return an expired
-		// attempt as executable "claimed" authority.
+		// A long batch can outlive a short lease. Every entry here is a newly
+		// allocated attempt, including unattributed, ambiguous,
+		// not-attributable and conflict outcomes. No expired attempt may be
+		// returned in a live-looking outcome, so demote all of them to
+		// stale_fence while keeping the durable history unchanged.
 		finalNow, err := sourceCrawlReadClaimClock(txCtx, tx, *db, clock)
 		if err != nil {
 			return nil, NormalizeTransactionError(txCtx, err)
 		}
 		for i := range claims {
-			if claims[i].Outcome == SourceCrawlClaimed &&
+			if claims[i].AttemptID != "" &&
 				!finalNow.Before(claims[i].LeaseExpiresAt) {
 				claims[i].Outcome = SourceCrawlClaimStaleFence
 			}
