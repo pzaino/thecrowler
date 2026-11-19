@@ -406,3 +406,23 @@ connection.
   driver and `pg_dump`.
 - The schema version must remain `1.17` and the writer generation must remain
   `verified-ownership-v1.17` after every deployment and rollback step.
+
+## Fenced refresh tests (WP-05B3C3B2F1)
+
+Atomic fenced `refresh_content` must prove, on both SQLite (portable link and
+orphan logic) and a disposable PostgreSQL 17 database (transaction, lock and
+trigger behaviour), that:
+
+- the page's `WebObjectsIndex` links are replaced and the replacement object is
+  kept;
+- an object still referenced by another page is never deleted;
+- a failure after link deletion but before commit restores the old links,
+  object and attributes;
+- a page linked to another source is refused with zero writes;
+- a new page performs no cleanup;
+- an expired/superseded claim cannot commit a replacement;
+- legacy `refresh_content` behaviour and fenced `null:` quarantine are
+  unchanged.
+
+`TestPostgresFencedRefresh*` is a mandatory CI gate in
+`.github/workflows/postgresql-integration.yml`; the step fails on `--- SKIP`.

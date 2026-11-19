@@ -473,6 +473,28 @@ jobs:
             exit 1
           fi
 
+      - name: Run fenced refresh PostgreSQL integration
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          export THECROWLER_POSTGRES_INTEGRATION=1
+          log="$(mktemp)"
+          trap 'rm -f "$log"' EXIT
+          go test -tags=integration ./pkg/crawler -run '^TestPostgresFencedRefresh' -count=1 -v 2>&1 | tee "$log"
+          for test in \
+            TestPostgresFencedRefreshAtomicReplacement \
+            TestPostgresFencedRefreshPreservesSharedObject \
+            TestPostgresFencedRefreshRefusesCrossSourcePage \
+            TestPostgresFencedRefreshRollbackRestoresOldGeneration \
+            TestPostgresFencedRefreshRejectsExpiredClaim; do
+            grep -F -- "=== RUN   ${test}" "$log"
+            grep -F -- "--- PASS: ${test}" "$log"
+          done
+          if grep -Fq -- '--- SKIP' "$log"; then
+            echo "Fenced refresh PostgreSQL integration was skipped" >&2
+            exit 1
+          fi
+
       - name: Run PostgreSQL integration suite
         env:
           THECROWLER_POSTGRES_INTEGRATION: "1"

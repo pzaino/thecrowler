@@ -547,8 +547,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 						// A fenced crawl must fail when an in-scope page could
 						// not be indexed, even if the failure is not marked
 						// critical for the legacy path.
-						if processCtx.sourceCrawl != nil &&
-							errors.Is(workerErr, errIndexingFailure) {
+						if fencedIndexingFailure(processCtx.sourceCrawl, workerErr) {
 							processCtx.Status.EndTime = time.Now()
 							processCtx.Status.CrawlingRunning.Store(3)
 							processCtx.Status.PipelineRunning.Store(3)
@@ -1219,16 +1218,18 @@ func indexPageContext(
 
 	var indexID uint64
 
-	// Refresh existing WebObjects when configured. The delete is an
-	// independent transaction that runs before the replacement page
-	// transaction, so a fenced crawl cannot make it atomic with the write that
-	// replaces the content. Refuse it rather than delete content under a
-	// possibly superseded or expired fence.
-	if ctx.config.Crawler.RefreshContent {
-		if ctx.sourceCrawl != nil {
-			return 0, errors.New(
-				"refresh_content is not supported for fenced source crawls")
-		}
+	// Refresh existing WebObjects when configured.
+	//
+	// Legacy sources keep the historical behaviour: a separate bounded
+	// transaction deletes the page's WebObjects before the replacement page
+	// transaction. A fenced source instead performs the whole replacement
+	// inside the validated main transaction below, so a failure or stale fence
+	// cannot leave the old content deleted. Fenced refresh also never deletes
+	// an object another page still references, and refuses a page linked to
+	// another source.
+	fencedRefresh := ctx.config.Crawler.RefreshContent && ctx.sourceCrawl != nil
+
+	if ctx.config.Crawler.RefreshContent && !fencedRefresh {
 		indexID, err = getIndexIDForURL(ctx.db, url)
 		if err != nil {
 			cmn.DebugMsg(
@@ -1284,6 +1285,32 @@ func indexPageContext(
 	if err := ctx.validateIndexingFence(tx); err != nil {
 		_ = tx.Rollback()
 		return 0, err
+	}
+
+	// Fenced refresh keeps the page lock, the cross-source decision and every
+	// destructive write inside this transaction so a rollback restores the old
+	// generation completely.
+	dbms := db.DBMS()
+	var refreshIndexID uint64
+	var refreshPageExists bool
+	if fencedRefresh {
+		if err := acquireFencedRefreshSerializationTx(txCtx, tx, dbms); err != nil {
+			_ = tx.Rollback()
+			return 0, err
+		}
+		refreshIndexID, refreshPageExists, err =
+			lockFencedRefreshPageTx(txCtx, tx, dbms, url)
+		if err != nil {
+			_ = tx.Rollback()
+			return 0, err
+		}
+		if refreshPageExists {
+			if err := ensureFencedRefreshSingleSourceTx(txCtx, tx, dbms,
+				refreshIndexID, sourceID); err != nil {
+				_ = tx.Rollback()
+				return 0, err
+			}
+		}
 	}
 
 	txStarted := time.Now()
@@ -1349,6 +1376,26 @@ func indexPageContext(
 	if err != nil {
 		rollbackTransaction(tx)
 		return 0, err
+	}
+
+	// Fenced refresh: replace the page's old object links with the object just
+	// written, then delete only objects that no page references any more. The
+	// old generation is restored by rollback if anything below fails or the
+	// fence is lost before commit.
+	if fencedRefresh {
+		if refreshPageExists && refreshIndexID != indexID {
+			rollbackTransaction(tx)
+			return 0, fmt.Errorf(
+				"fenced refresh page identity mismatch: locked=%d upserted=%d",
+				refreshIndexID, indexID)
+		}
+		if refreshPageExists {
+			if err := replaceFencedPageObjectsTx(txCtx, tx, dbms, indexID,
+				uint64(objID)); err != nil {
+				rollbackTransaction(tx)
+				return 0, err
+			}
+		}
 	}
 
 	// Commit the main page transaction.
@@ -3292,6 +3339,13 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 			cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Worker] %s: Returned to the main worker routine for '%s'\n", wid, url.Link)
 		} else {
 			processCtx.Status.TotalErrors.Add(1)
+			// A fenced crawl must report a page-indexing failure to the
+			// terminal reporter. Legacy crawls keep the historical behaviour of
+			// logging non-critical worker errors and continuing.
+			if fencedIndexingFailure(processCtx.sourceCrawl, err) {
+				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: Returning indexing failure for '%s': %v\n", wid, url.Link, err)
+				return err
+			}
 			if strings.Contains(err.Error(), errCriticalError) {
 				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: Returned to the main worker routine for '%s' with a critical error: %v\n", wid, url.Link, err)
 				return err

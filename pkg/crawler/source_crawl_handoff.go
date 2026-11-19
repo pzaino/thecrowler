@@ -370,6 +370,13 @@ func ReportFencedCrawlOutcome(db *cdb.Handler, coordinator SourceCrawlCoordinato
 // networkInfoCollectionFailed reports whether the network-information
 // collector recorded a terminal error. The collector state uses 3 for error,
 // matching the Status flag convention.
+// fencedIndexingFailure reports whether an indexing error must fail a fenced
+// crawl. Legacy crawls keep the historical behaviour of logging non-critical
+// worker errors and continuing.
+func fencedIndexingFailure(coordinator SourceCrawlCoordinator, err error) bool {
+	return coordinator != nil && errors.Is(err, errIndexingFailure)
+}
+
 func networkInfoCollectionFailed(status int32) bool {
 	return status == 3
 }

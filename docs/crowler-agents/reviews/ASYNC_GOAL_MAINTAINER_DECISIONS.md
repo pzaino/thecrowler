@@ -404,6 +404,79 @@ Decision 3, Decision 4, Decision 5, fenced refresh activation, production
 activation, automatic mode switching, automatic goal resumption and
 `null:` deletion. The existence of this note is not approval.
 
+## Decision 1m: WP-05B3C3B2F1 / B3 maintainer decision (2026-11-18)
+
+**Status: Decision 1a ownership model APPROVED (model only, no DDL).
+Decision 2 atomic fenced `refresh_content` APPROVED FOR IMPLEMENTATION.
+Decision 3 DEFERRED with `null:` semantics preserved. Decisions 4 and 5
+DEFERRED. No production activation.**
+
+The repository maintainer recorded the following decision on 2026-11-18 under
+work package `WP-05B3C3B2F1 / B3`.
+
+### Decision 1 — ownership semantics
+
+Option 1a, a monotonically increasing ownership epoch, is the selected design.
+Continuous, verifiable ownership is required for an in-flight fenced attempt:
+a transfer A -> B -> A invalidates the original attempt, because equality of
+claim-time and current owner identifiers does not prove uninterrupted
+ownership. The implementation work package must review every ownership-changing
+pathway (transfer, revocation, re-verification, administrative update) and
+establish whether the epoch must also advance when verified authority changes
+without a change to `Sources.usr_id`. This decision approves the model only;
+no Decision 1 DDL or runtime activation is authorised.
+
+### Decision 2 — atomic fenced `refresh_content`
+
+Approved for implementation subject to
+`ASYNC_GOAL_B3C3B2F1_REFRESH_DESIGN.md`:
+
+1. authoritative fenced-claim validation inside the database transaction;
+2. page-row locking and refusal to refresh a page shared by another source;
+3. page-scoped `WebObjectsIndex` replacement;
+4. `WebObjects` deletion only when no other page references the object;
+5. correct FK, cleanup-trigger, concurrency and rollback behaviour;
+6. protection against expired or superseded claims, cancellation and indexing
+   failures;
+7. deterministic SQLite and PostgreSQL integration tests;
+8. real Docker engine/PostgreSQL/API/Events/Selenium-VDI testing;
+9. full regression, race, vet, build and CI verification.
+
+Legacy refresh behaviour must not silently change. Existing legacy
+cross-source/shared-object data-loss risks must be documented separately.
+
+### Decision 3 — `null:` protocol
+
+Deferred for fenced-mode implementation. The `null:` protocol is an intentional
+pipeline-testing mechanism that exercises processing pathways without actual
+content collection; it is not an ordinary crawl, an invalid source or merely a
+source deletion request. Legacy `null:` behaviour must be preserved. No fenced
+`null:` execution, source deletion or cleanup change is authorised. For the
+Decision 2 package, the refresh changes must not regress legacy `null:` tests or
+alter fenced `null:` quarantine.
+
+### Decisions 4 and 5
+
+Deferred. No terminal receipt ledger/digest, claim-request fingerprint,
+acknowledgement table or empty-batch persistence in this work package.
+
+### Schema and compatibility
+
+Decision 2 uses existing schema 1.17 and writer generation
+`verified-ownership-v1.17`. Decision 1 DDL is not authorised; whether it stays
+in unreleased 1.17 or becomes a later migration is a separate determination.
+Default `legacy` claim mode, MySQL legacy-only behaviour, public API/Events/
+configuration/agent contracts, synchronous agent and MCP behaviour, native crawl
+and Information Seed behaviour, and `null:` testing semantics are preserved.
+
+### Explicit non-approvals
+
+No Decision 1 DDL or runtime activation, no Decision 3 fenced `null:`
+implementation or deletion, no Decisions 4/5, no production fenced-mode
+activation, no automatic mode switching, no automatic asynchronous goal
+resumption, no new public API/configuration contracts, and no MCP mutation
+execution or expanded agent privileges.
+
 ## Decision 2: resume phase
 
 **Status: PENDING.**

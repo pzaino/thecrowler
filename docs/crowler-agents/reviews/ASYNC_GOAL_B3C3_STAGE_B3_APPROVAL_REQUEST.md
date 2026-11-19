@@ -2,14 +2,25 @@
 
 ## Status
 
-**REQUEST ONLY. NOT APPROVED. NO DDL, MIGRATION OR RUNTIME WIRING IS
-AUTHORISED BY THIS DOCUMENT.**
+**PARTIALLY DECIDED ON 2026-11-18 (WP-05B3C3B2F1 / B3).**
+
+- Decision 1a (monotonic ownership epoch) is **approved as the ownership
+  model**. No DDL or activation is authorised.
+- Decision 2 (atomic fenced `refresh_content`) is **approved and implemented**
+  in WP-05B3C3B2F1, subject to the corrected design in
+  [`ASYNC_GOAL_B3C3B2F1_REFRESH_DESIGN.md`](ASYNC_GOAL_B3C3B2F1_REFRESH_DESIGN.md).
+- Decision 3 (`null:`) is **deferred**; legacy `null:` semantics are preserved
+  and fenced `null:` remains quarantined.
+- Decisions 4 and 5 are **deferred**.
+
+The rest of this document remains the decision request for the outstanding
+items. A chat request or the existence of a work package is not approval for
+anything still marked pending.
 
 B1 Option A and B2 were approved by the repository maintainer on 2026-11-18
-under `WP-05B3C3/Stage-B-2`. B3 was explicitly not requested. WP-05B3C3B2V is
-the independent verification package; it found that the B2R unbound
-owner-continuity rule is not sound and disabled it. This document asks the
-maintainer to decide the follow-up options, separately and explicitly.
+under `WP-05B3C3/Stage-B-2`. WP-05B3C3B2V found that the B2R unbound
+owner-continuity rule was not sound and disabled it; the corrected ownership
+model is Decision 1a above.
 
 Each decision below is independent. Approving one does not approve another.
 
@@ -171,6 +182,39 @@ statements, so an administrator transfer cannot silently leave the epoch
 unchanged. An `UPDATE` that writes the same `usr_id` is not an ownership change
 and does not advance it.
 
+### Ownership-path review for the selected Option 1a (2026-11-18)
+
+All tracked ownership-changing paths were reviewed:
+
+| Path | Location | Changes | Epoch rule |
+| --- | --- | --- | --- |
+| Admin verification / transfer | `pkg/database/source_ownership.go:396` | locks source, updates `Sources.usr_id`, upserts `SourceOwnership` | advances on `usr_id` change and on the provenance write |
+| Authenticated source creation | `pkg/database/source_authenticated.go:190` | inserts source + provenance in one transaction | provenance INSERT advances the epoch |
+| Information Seed source creation | `pkg/database/source_upsert_policy.go:247,271` | inserts source + provenance | provenance INSERT advances the epoch |
+| Source insert | `pkg/database/source.go:402` | `usr_id` at creation | new row starts at epoch 0; provenance INSERT advances it |
+| Direct administrative SQL | database owner | `UPDATE Sources SET usr_id`, `INSERT/UPDATE/DELETE SourceOwnership` | row triggers fire for direct DML as well |
+| Source deletion | source lifecycle | removes the source row | a deleted source cannot satisfy terminal checks; historical attempts are stale |
+
+The epoch must advance on **all** of the following, not only `usr_id` changes:
+
+- `Sources.usr_id` change (its own trigger);
+- `SourceOwnership` INSERT (first verification or re-grant after revocation);
+- `SourceOwnership` DELETE (revocation);
+- `SourceOwnership` UPDATE that changes `user_id` (transfer).
+
+A metadata-only re-verification of the same principal (`verified_at`,
+`verified_by`, method or reason) is not an ownership change and should **not**
+advance the epoch: it would otherwise invalidate healthy in-flight attempts
+without any authority change.
+
+This closes the ABA gap: A -> B -> A changes `usr_id` twice (or deletes and
+re-inserts provenance), so the epoch at terminal differs from the claim epoch
+and the update is suppressed. A delete-then-reinsert of the same owner is also
+caught by the INSERT trigger even when `usr_id` never changes. Restoring a
+backup can move the epoch backwards; that is a deployment concern and restored
+databases must be treated as a new authority baseline with no surviving
+in-flight claims.
+
 Claim time, under the existing source row lock:
 
 - read the verified `SourceOwnership` row;
@@ -303,7 +347,16 @@ visibility and the trigger definition.
 - Backup/restore rehearsal on a disposable database.
 - No production activation in the same work package.
 
-## 3. Decision 2 — atomic `refresh_content` (RECOMMENDED, no DDL)
+## 3. Decision 2 — atomic `refresh_content` (APPROVED, IMPLEMENTED, no DDL)
+
+**Status: approved 2026-11-18 and implemented in WP-05B3C3B2F1.** The original
+proposal below was necessary but not sufficient; the implemented contract adds
+page-row locking, cross-source page refusal, page-scoped link replacement and
+orphan-only object deletion. See
+[`ASYNC_GOAL_B3C3B2F1_REFRESH_DESIGN.md`](ASYNC_GOAL_B3C3B2F1_REFRESH_DESIGN.md)
+section 5.7 for the delivered behaviour and
+[`ASYNC_GOAL_B3C3B2F1_TEST_REPORT.md`](ASYNC_GOAL_B3C3B2F1_TEST_REPORT.md) for
+evidence.
 
 ### Problem
 

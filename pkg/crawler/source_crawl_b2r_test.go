@@ -217,31 +217,6 @@ func TestFencedIndexingFencePropagatesFailure(t *testing.T) {
 	}
 }
 
-func TestFencedRefreshContentIsRejected(t *testing.T) {
-	handler := openB2RSQLiteHandler(t)
-	fake := &fakeSourceCrawlCoordinator{sourceID: 42, attemptID: "attempt"}
-	ctx := &ProcessContext{
-		source:      &cdb.Source{ID: 42, URL: "https://refresh.example/"},
-		db:          &handler,
-		sourceCrawl: fake,
-		Status:      &Status{},
-	}
-	ctx.config.Crawler.RefreshContent = true
-	ctx.config.Crawler.IndexingConcurrency = 1
-	pageInfo := &PageInfo{}
-	if _, err := indexPageContext(context.Background(), ctx, "https://refresh.example/",
-		pageInfo); err == nil || !strings.Contains(err.Error(), "refresh_content") {
-		t.Fatalf("fenced refresh_content error = %v", err)
-	}
-	var count int
-	if err := handler.QueryRow(`SELECT COUNT(*) FROM WebObjects`).Scan(&count); err != nil {
-		t.Fatalf("read WebObjects: %v", err)
-	}
-	if count != 0 {
-		t.Fatalf("refresh_content wrote %d web objects", count)
-	}
-}
-
 func TestShouldEmitCrawlCompletedEvent(t *testing.T) {
 	cases := []struct {
 		configured, fenced, applied, want bool

@@ -2,20 +2,19 @@
 
 ## Status
 
-**DESIGN ONLY. NOT APPROVED. NOT IMPLEMENTED. FENCED REFRESH REMAINS REFUSED.**
+**APPROVED AND IMPLEMENTED (WP-05B3C3B2F1 / B3 Decision 2, 2026-11-18).**
 
-Decision 2 in
-[`ASYNC_GOAL_B3C3_STAGE_B3_APPROVAL_REQUEST.md`](ASYNC_GOAL_B3C3_STAGE_B3_APPROVAL_REQUEST.md)
-is explicitly classified as a separately approved code change.
+The maintainer recorded Decision 2 approval in
 [`ASYNC_GOAL_MAINTAINER_DECISIONS.md`](ASYNC_GOAL_MAINTAINER_DECISIONS.md)
-(Decision 1k) records that `refresh_content` atomic replacement is **not
-approved**. No later attributal decision exists in the tracked tree. The task
-that requested this work package is not approval.
+(Decision 1m). This document began as the design review that blocked the naive
+"move the delete into the main transaction" approach; section 5 now records the
+implemented transaction, and sections 4 and 6 remain the evidence and risk
+record.
 
-Consequently this package contains no runtime change, no test enabling fenced
-refresh, no DDL and no live destructive test. It delivers the source-level
-review, the reproducible safety evidence that blocks the naive design, and the
-corrected B3 ownership proposal.
+The implementation keeps legacy refresh unchanged, refuses a page shared with
+another source, replaces only page-scoped object links, deletes only orphaned
+objects, and runs every write inside the already validated indexing
+transaction. Schema stays 1.17.
 
 | Item | Value |
 | --- | --- |
@@ -296,6 +295,42 @@ budget (`database.transaction_timeout`, default 300 s). Moving it inside the
 main transaction trades that for atomicity: a large refresh can now roll back
 on timeout. That is safe (old content survives) but operationally visible and
 must be measured on representative page sizes before activation.
+
+### 5.7 Implemented behaviour (this work package)
+
+`pkg/crawler/fenced_refresh.go` implements the design:
+
+1. `acquireFencedRefreshSerializationTx` takes a transaction-scoped PostgreSQL
+   advisory lock (`hashtext('crowler:fenced-content-refresh')`) so two refreshes
+   whose content hashes cross-reference each other cannot deadlock. SQLite
+   writers are already serialized, so no extra lock is taken there.
+2. `lockFencedRefreshPageTx` locks the existing `SearchIndex` row with
+   `FOR UPDATE` (PostgreSQL) before any write.
+3. `ensureFencedRefreshSingleSourceTx` refuses a page linked to any other
+   source (`errFencedRefreshCrossSourcePage`).
+4. After the new page/object write, `replaceFencedPageObjectsTx` deletes only
+   `WebObjectsIndex` rows for this page and keeps the replacement object.
+5. `deleteFencedRefreshOrphanTx` locks each old object `FOR UPDATE` (PostgreSQL)
+   and deletes it only when no `WebObjectsIndex` row references it.
+6. The whole replacement remains inside the main transaction started after
+   `ValidateTx`, with a second `ValidateTx` before commit. Any error, stale
+   fence, expiry or supersession rolls the page, links and orphan deletions
+   back together.
+
+During live verification a pre-existing propagation gap was found: `worker`
+returned a page-indexing error only when the message contained the legacy
+`[critical]` marker, so a non-critical fenced indexing failure was logged and
+swallowed before the terminal reporter. `fencedIndexingFailure` now classifies
+the error at the worker boundary and returns it, so the drain sets
+`Status.LastError` and the crawl reports `failed`. Legacy non-critical worker
+errors keep their historical log-and-continue behaviour.
+
+The legacy branch still calls `getIndexIDForURL` and `deleteWebObjects` exactly
+as before. The obsolete "refresh_content is not supported for fenced source
+crawls" refusal is gone from the fenced path. Post-commit keyword/metatag/
+attribute/time-series phases are unchanged and section 5.5 still applies:
+`completed` means the page/object replacement committed, not whole-page
+replacement.
 
 ## 6. Risk matrix
 
