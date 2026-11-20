@@ -24,6 +24,15 @@ in configuration.
 
 ### Crawler and index integrity
 
+- The shared-artifact cleanup trigger (`handle_shared_entity_deletion()`) now
+  runs once per `DELETE` statement instead of once per deleted link. It still
+  locks the parent artifact `FOR UPDATE` before re-checking its references — the
+  2.3.0 data-integrity fix is unchanged — but it locks each parent once and
+  processes parents in ascending id order. Measured effect on a disposable
+  PostgreSQL 17 fixture: 2.8× faster vacuum-shaped cleanup, 4.8× faster
+  concurrent vacua, and about 25% slower on the opt-in single-link
+  `refresh_content` path, which is off by default and already serialised.
+
 - `refresh_content` is now page-scoped and orphan-only in **both** claim modes.
   A refresh replaces the current page's object links and deletes an artifact row
   only when no page still references it. A refresh no longer destroys an object

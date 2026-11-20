@@ -718,17 +718,25 @@ func TestMySQLV117MigrationUsesClientDelimiterAndRepeatableProcedures(t *testing
 	}
 }
 
-// TestPostgresSharedEntityDeletionConcurrencyContract pins the RC2-A fix.
+// TestPostgresSharedEntityDeletionConcurrencyContract pins the RC2 integrity
+// fix and the RC5 locking shape.
 //
-// handle_shared_entity_deletion() runs as an AFTER DELETE FOR EACH ROW trigger
-// on each link table. It must lock the parent artifact row FOR UPDATE before it
-// counts remaining links, otherwise a concurrent uncommitted link is invisible
-// to the count, the delete waits and then proceeds, and ON DELETE CASCADE
-// silently removes the other page's link.
+// Integrity (RC2): the trigger must lock the parent artifact row FOR UPDATE
+// before it counts remaining links. A concurrent link INSERT holds a KEY SHARE
+// foreign-key lock on that row, which conflicts with FOR UPDATE, so a reference
+// committed while the statement is running cannot be missed by the count and
+// then silently removed by ON DELETE CASCADE.
 //
-// Fresh installs and the v1.16 -> v1.17 upgrade must ship the identical body,
-// and every artifact family must use the locked form. SQLite omits the stored
-// function by design and must not grow a divergent implementation.
+// Shape (RC5): one AFTER DELETE FOR EACH STATEMENT trigger per link table with
+// an `OLD TABLE` transition relation, so a multi-link delete locks each parent
+// once instead of once per deleted row, and parents are processed in ascending
+// ID order so two concurrent multi-parent deletes cannot form a lock cycle.
+//
+// Fresh installs and the v1.16 -> v1.17 upgrade must ship the identical
+// function body and the identical trigger definitions; the upgrade drops and
+// recreates the triggers so a database migrated with the previous row-level
+// definition converges. SQLite omits the stored function by design and must not
+// grow a divergent implementation.
 func TestPostgresSharedEntityDeletionConcurrencyContract(t *testing.T) {
 	t.Parallel()
 
@@ -753,8 +761,10 @@ func TestPostgresSharedEntityDeletionConcurrencyContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	setupBody := extractBody(string(setupBytes))
-	migrationBody := extractBody(string(migrationBytes))
+	setupSQL := string(setupBytes)
+	migrationSQL := string(migrationBytes)
+	setupBody := extractBody(setupSQL)
+	migrationBody := extractBody(migrationSQL)
 	if setupBody == "" {
 		t.Fatal("postgresql-setup.pgsql missing handle_shared_entity_deletion()")
 	}
@@ -765,26 +775,61 @@ func TestPostgresSharedEntityDeletionConcurrencyContract(t *testing.T) {
 		t.Fatal("handle_shared_entity_deletion() body differs between setup and v1.17 migration (fresh installs must equal upgrades)")
 	}
 
-	// Each artifact family must lock the parent before counting. The pairs are
-	// (parent table, link table) so a missing lock cannot hide behind a similar
-	// fragment in another branch.
-	for _, pair := range [][2]string{
-		{"MetaTags", "MetaTagsIndex"},
-		{"WebObjects", "WebObjectsIndex"},
-		{"Keywords", "KeywordIndex"},
-		{"NetInfo", "NetInfoIndex"},
-		{"HTTPInfo", "HTTPInfoIndex"},
-	} {
-		parent, link := pair[0], pair[1]
-		lock := "FROM " + parent + " WHERE "
-		if !strings.Contains(setupBody, lock) {
-			t.Errorf("body does not lock %s before counting %s links", parent, link)
+	// RC2: every family must lock its parent before counting links, and must
+	// re-count through NOT EXISTS.
+	families := [][3]string{
+		{"MetaTags", "MetaTagsIndex", "metatag_id"},
+		{"WebObjects", "WebObjectsIndex", "object_id"},
+		{"Keywords", "KeywordIndex", "keyword_id"},
+		{"NetInfo", "NetInfoIndex", "netinfo_id"},
+		{"HTTPInfo", "HTTPInfoIndex", "httpinfo_id"},
+	}
+	for _, f := range families {
+		parent, link, id := f[0], f[1], f[2]
+		if !strings.Contains(setupBody, "FROM "+parent+" WHERE "+id+" = target_id FOR UPDATE;") {
+			t.Errorf("body does not lock %s FOR UPDATE before counting %s links", parent, link)
 		}
-		if !strings.Contains(setupBody, "FOR UPDATE") {
-			t.Errorf("body has no FOR UPDATE for %s", parent)
+		if !strings.Contains(setupBody, "NOT EXISTS (SELECT 1 FROM "+link+" WHERE "+id+" = target_id)") {
+			t.Errorf("body does not re-check %s links", link)
 		}
-		if !strings.Contains(setupBody, "FROM "+link+" WHERE ") {
-			t.Errorf("body does not re-count %s links", link)
+		// RC5: one lock per distinct parent, deterministic ascending order.
+		ordered := "SELECT DISTINCT " + id + " FROM deleted_links ORDER BY " + id
+		if !strings.Contains(setupBody, ordered) {
+			t.Errorf("body does not process %s parents once in ascending order (%q)", parent, ordered)
+		}
+	}
+
+	// RC5: the function is a statement-level trigger body.
+	if strings.Contains(setupBody, "OLD.") {
+		t.Error("statement-level body must use the deleted_links transition relation, not OLD.<column>")
+	}
+	if !strings.Contains(setupBody, "RETURN NULL;") {
+		t.Error("statement-level AFTER trigger must RETURN NULL")
+	}
+
+	// RC5: both files replace the triggers, so a repeatable migration converges
+	// from the previous row-level definition.
+	for label, sql := range map[string]string{"setup": setupSQL, "migration": migrationSQL} {
+		if got := strings.Count(sql, "REFERENCING OLD TABLE AS deleted_links"); got != 5 {
+			t.Errorf("%s: %d triggers use an OLD TABLE transition relation, want 5", label, got)
+		}
+		if got := strings.Count(sql, "FOR EACH STATEMENT\nEXECUTE FUNCTION handle_shared_entity_deletion();"); got != 5 {
+			t.Errorf("%s: %d statement-level cleanup triggers, want 5", label, got)
+		}
+		if got := strings.Count(sql, "FOR EACH ROW\nEXECUTE FUNCTION handle_shared_entity_deletion();"); got != 0 {
+			t.Errorf("%s: %d row-level cleanup triggers remain, want 0", label, got)
+		}
+		if got := strings.Count(sql, "DROP TRIGGER IF EXISTS trg_after_delete_"); got != 5 {
+			t.Errorf("%s: %d trigger replacements, want 5 (drop before create)", label, got)
+		}
+		for _, f := range families {
+			trigger := "trg_after_delete_" + strings.ToLower(f[1])
+			if !strings.Contains(sql, "DROP TRIGGER IF EXISTS "+trigger+" ON "+f[1]+";") {
+				t.Errorf("%s: missing DROP for %s", label, trigger)
+			}
+			if !strings.Contains(sql, "CREATE TRIGGER "+trigger+"\nAFTER DELETE ON "+f[1]+"\nREFERENCING OLD TABLE AS deleted_links") {
+				t.Errorf("%s: %s is not an AFTER DELETE statement trigger with a transition table", label, trigger)
+			}
 		}
 	}
 

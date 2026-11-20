@@ -458,6 +458,64 @@ Two schema-level behaviours must be asserted explicitly:
   before counting links, that fresh installs and the v1.17 migration ship the
   identical body, and that SQLite keeps its documented omission.
 
+## Shared-artifact cleanup trigger tests (RC5)
+
+`handle_shared_entity_deletion()` is a correctness boundary, not only a
+performance detail. Any change to it must ship with the following evidence.
+
+**Integrity, per family (`keyword`, `metatag`, `webobject`, `netinfo`,
+`httpinfo`), on the real schema.** The family-generic tests live in
+`pkg/database/shared_artifact_integrity_postgres_integration_test.go`:
+
+- a link insert held open in one transaction must survive the removal of the
+  parent's last visible link in another (the RC2 race);
+- two concurrent last-link removals must leave either a referenced parent or no
+  parent, never a parent with zero links;
+- a non-last removal on a widely shared parent must not disturb concurrent
+  inserts;
+- the final removal must delete the parent in the same transaction (no delayed
+  orphan cleanup);
+- random-order contention must preserve the exact link count;
+- vacuum-shaped and cascade-shaped removals must preserve other pages' links.
+
+**Rejected simplifications must stay characterised.** Two shapes are known to
+lose data and are pinned so they are not proposed again:
+
+- `TestPostgresSharedArtifactLegacyBodyLosesConcurrentLink` — the pre-RC2 body
+  (count, then delete, no parent lock);
+- `TestPostgresSharedArtifactSingleStatementDeleteIsUnsafe` — folding the lock
+  and the re-check into one `DELETE … AND NOT EXISTS`. PostgreSQL evaluates the
+  qualification before the row lock and does not re-evaluate it after waiting on
+  a foreign-key `KEY SHARE` holder.
+
+Do not convert either characterization into a passing expectation; a change that
+makes them pass means the protection was removed.
+
+**Shape and convergence.** `TestPostgresSharedEntityDeletionConcurrencyContract`
+(static) must pin: `FOR UPDATE` before the re-check, one statement-level trigger
+per link table with an `OLD TABLE` transition relation, ascending parent-id
+order, identical function bodies in `postgresql-setup.pgsql` and the v1.17
+migration, `DROP` + `CREATE` for every trigger, and the documented SQLite
+omission. `TestPostgresSharedArtifactTriggerDefinitionConverges` must prove that
+a database carrying the previous row-level definition converges when the
+migration is re-applied.
+
+**Measurement.** `TestPostgresSharedArtifactContentionBenchmark` is opt-in
+(`CROWLER_RC5_BENCH=1`, `CROWLER_RC5_POSTGRES_TEST_DISPOSABLE=1`,
+`CROWLER_RC5_POSTGRES_DSN`) and writes CSV. It compares the shipped body with the
+frozen RC4F body and with the pre-RC2 characterization body on identical
+fixtures. Requirements:
+
+- never treat the pre-RC2 body as an acceptable candidate, only as a
+  characterization of historical throughput;
+- the `current` variant must be read from `postgresql-setup.pgsql` so the
+  benchmark cannot measure a stale copy;
+- report throughput, p95/p99 latency, failures by SQLSTATE, deadlocks and the
+  sampled lock-wait fraction; a single throughput number is not evidence;
+- record that `lock_wait_ratio` is a `pg_stat_activity` sample, not exact lock
+  wait time, and that `pg_stat_statements`/`log_lock_waits` are usually
+  unavailable.
+
 The RC2-A concurrency regression is
 `TestPostgresSharedObjectTriggerPreservesConcurrentReference`: an uncommitted
 concurrent link must make the trigger wait, and after the linker commits the

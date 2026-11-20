@@ -1,5 +1,26 @@
 # Release 2.3.0 pre-release runbook
 
+> **RC5 note (2026-11-20).** The cleanup trigger `handle_shared_entity_deletion()`
+> is now `AFTER DELETE FOR EACH STATEMENT` with an `OLD TABLE` transition
+> relation: one `FOR UPDATE` parent lock and re-check per distinct parent, in
+> ascending parent-id order, instead of once per deleted link. The RC2
+> lock-before-recount rule is unchanged. When re-running this runbook, verify the
+> installed shape before the scenarios:
+>
+> ```sql
+> SELECT tgname, (tgtype & 1) = 1 AS row_level, tgoldtable
+> FROM pg_trigger WHERE NOT tgisinternal
+>   AND tgname LIKE 'trg_after_delete_%index' ORDER BY tgname;
+> ```
+>
+> Expect five rows with `row_level = false` and `tgoldtable = deleted_links`
+> (`trg_after_delete_source_searchindex` is unrelated and remains row-level), and
+> confirm `md5(prosrc)` for the function matches a fresh install of the same
+> build. Add a cleanup scenario: two sources that share a keyword and an object,
+> vacuum one, and confirm the shared artifact and the other source's links
+> survive. See [`RELEASE_230_RC5_LOCK_ANALYSIS.md`](RELEASE_230_RC5_LOCK_ANALYSIS.md)
+> and [`RELEASE_230_RC5_DEPLOYMENT_MONITORING.md`](RELEASE_230_RC5_DEPLOYMENT_MONITORING.md).
+
 > **RC4F note (2026-11-20).** This runbook supersedes the RC4 candidate. RC4F
 > fixes the redirect comparison so that only standards-equivalent spellings are
 > the same resource: `/hotel` and `/hotel/` are **different** and a 301/302

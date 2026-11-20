@@ -530,6 +530,44 @@ jobs:
             exit 1
           fi
 
+      - name: Run shared-artifact locking PostgreSQL integration
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          export THECROWLER_POSTGRES_INTEGRATION=1
+          # The two characterization tests install a different trigger body in a
+          # throwaway child database, so they need the disposable opt-in.
+          export CROWLER_RC5_POSTGRES_TEST_DISPOSABLE=1
+          export CROWLER_RC5_POSTGRES_DSN="postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:5432/${POSTGRES_DB}?sslmode=disable"
+          log="$(mktemp)"
+          trap 'rm -f "$log"' EXIT
+          # RC5: statement-level cleanup trigger. Integrity is asserted per
+          # artifact family; the two loss shapes are asserted to still lose data
+          # so they cannot be reintroduced as an "optimisation".
+          # The contention benchmark is opt-in and not part of the gate.
+          go test -tags=integration ./pkg/database \
+            -run '^TestPostgresSharedArtifact' \
+            -skip '^TestPostgresSharedArtifactContentionBenchmark$' \
+            -count=1 -v 2>&1 | tee "$log"
+          for test in \
+            TestPostgresSharedArtifactConcurrentInsertSurvivesLastLinkDelete \
+            TestPostgresSharedArtifactConcurrentLastLinkRemovals \
+            TestPostgresSharedArtifactWideParentRemovalKeepsInserts \
+            TestPostgresSharedArtifactFinalRemovalDeletesParent \
+            TestPostgresSharedArtifactRandomOrderContention \
+            TestPostgresSharedArtifactVacuumAndCascadeKeepOtherPages \
+            TestPostgresSharedArtifactIsolationLevelIsReadCommitted \
+            TestPostgresSharedArtifactLegacyBodyLosesConcurrentLink \
+            TestPostgresSharedArtifactSingleStatementDeleteIsUnsafe \
+            TestPostgresSharedArtifactTriggerDefinitionConverges; do
+            grep -F -- "=== RUN   ${test}" "$log"
+            grep -F -- "--- PASS: ${test}" "$log"
+          done
+          if grep -Fq -- '--- SKIP' "$log"; then
+            echo "Shared-artifact locking integration was skipped" >&2
+            exit 1
+          fi
+
       - name: Run event retention PostgreSQL integration
         timeout-minutes: 10
         run: |

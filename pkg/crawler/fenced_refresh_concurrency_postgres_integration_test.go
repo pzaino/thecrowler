@@ -372,11 +372,12 @@ func TestPostgresFencedRefreshOrphanLockWaitsForInFlightReference(t *testing.T) 
 //
 // PostgreSQL schema 1.17 already installs trg_after_delete_webobjectsindex,
 // which calls handle_shared_entity_deletion() after every WebObjectsIndex
-// delete. The fenced helper deleteFencedRefreshOrphanTx therefore usually finds
-// the row already gone. SQLite has no equivalent trigger, so there the helper
-// performs the delete. Both converge on the same observable state, but the
-// release record must not claim the explicit helper is the authority on
-// PostgreSQL when a pre-existing per-row trigger runs first.
+// delete (once per statement since RC5, which does not change which component
+// performs the delete). The fenced helper deleteFencedRefreshOrphanTx therefore
+// usually finds the row already gone. SQLite has no equivalent trigger, so there
+// the helper performs the delete. Both converge on the same observable state,
+// but the release record must not claim the explicit helper is the authority on
+// PostgreSQL when a pre-existing trigger runs first.
 func TestPostgresFencedRefreshOrphanCleanupTriggerCharacterization(t *testing.T) {
 	handler, admin := openFencedRefreshPostgres(t)
 	_, _, _, _, _ = fencedRefreshEnvironment(t, handler, admin, "trigger")

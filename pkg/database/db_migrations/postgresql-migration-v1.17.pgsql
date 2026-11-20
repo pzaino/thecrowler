@@ -956,83 +956,115 @@ GRANT EXECUTE ON FUNCTION update_sources(INTEGER,VARCHAR,VARCHAR,VARCHAR,VARCHAR
 -- 1.17 install. The body locks the parent artifact row before counting links;
 -- see postgresql-setup.pgsql for the concurrency rationale.
 --
+-- Handles the deletion of shared artifacts once their last link is removed.
+--
+-- The trigger runs once per DELETE statement. For every distinct parent
+-- referenced by the deleted rows it takes the same FOR UPDATE row lock the RC2
+-- integrity fix introduced, re-counts the remaining links and deletes the
+-- parent only when none remain. FOR UPDATE conflicts with the KEY SHARE lock a
+-- concurrent link INSERT needs for its foreign key, so a reference committed
+-- while the statement was running is always seen by the re-count.
+--
+-- Parents are processed in ascending ID order. Two concurrent multi-parent
+-- deletions therefore acquire the same locks in the same order and cannot form
+-- a lock cycle, and one statement locks each parent once instead of once per
+-- deleted link.
 CREATE OR REPLACE FUNCTION handle_shared_entity_deletion()
 RETURNS TRIGGER AS $$
+DECLARE
+    target_id BIGINT;
 BEGIN
     IF TG_TABLE_NAME = 'metatagsindex' THEN
-        PERFORM 1 FROM MetaTags WHERE metatag_id = OLD.metatag_id FOR UPDATE;
-        IF FOUND THEN
-            IF (SELECT COUNT(*) FROM MetaTagsIndex WHERE metatag_id = OLD.metatag_id) = 0 THEN
-                DELETE FROM MetaTags WHERE metatag_id = OLD.metatag_id;
+        FOR target_id IN SELECT DISTINCT metatag_id FROM deleted_links ORDER BY metatag_id LOOP
+            PERFORM 1 FROM MetaTags WHERE metatag_id = target_id FOR UPDATE;
+            IF FOUND THEN
+                IF NOT EXISTS (SELECT 1 FROM MetaTagsIndex WHERE metatag_id = target_id) THEN
+                    DELETE FROM MetaTags WHERE metatag_id = target_id;
+                END IF;
             END IF;
-        END IF;
+        END LOOP;
     ELSIF TG_TABLE_NAME = 'webobjectsindex' THEN
-        PERFORM 1 FROM WebObjects WHERE object_id = OLD.object_id FOR UPDATE;
-        IF FOUND THEN
-            IF (SELECT COUNT(*) FROM WebObjectsIndex WHERE object_id = OLD.object_id) = 0 THEN
-                DELETE FROM WebObjects WHERE object_id = OLD.object_id;
+        FOR target_id IN SELECT DISTINCT object_id FROM deleted_links ORDER BY object_id LOOP
+            PERFORM 1 FROM WebObjects WHERE object_id = target_id FOR UPDATE;
+            IF FOUND THEN
+                IF NOT EXISTS (SELECT 1 FROM WebObjectsIndex WHERE object_id = target_id) THEN
+                    DELETE FROM WebObjects WHERE object_id = target_id;
+                END IF;
             END IF;
-        END IF;
+        END LOOP;
     ELSIF TG_TABLE_NAME = 'keywordindex' THEN
-        PERFORM 1 FROM Keywords WHERE keyword_id = OLD.keyword_id FOR UPDATE;
-        IF FOUND THEN
-            IF (SELECT COUNT(*) FROM KeywordIndex WHERE keyword_id = OLD.keyword_id) = 0 THEN
-                DELETE FROM Keywords WHERE keyword_id = OLD.keyword_id;
+        FOR target_id IN SELECT DISTINCT keyword_id FROM deleted_links ORDER BY keyword_id LOOP
+            PERFORM 1 FROM Keywords WHERE keyword_id = target_id FOR UPDATE;
+            IF FOUND THEN
+                IF NOT EXISTS (SELECT 1 FROM KeywordIndex WHERE keyword_id = target_id) THEN
+                    DELETE FROM Keywords WHERE keyword_id = target_id;
+                END IF;
             END IF;
-        END IF;
+        END LOOP;
     ELSIF TG_TABLE_NAME = 'netinfoindex' THEN
-        PERFORM 1 FROM NetInfo WHERE netinfo_id = OLD.netinfo_id FOR UPDATE;
-        IF FOUND THEN
-            IF (SELECT COUNT(*) FROM NetInfoIndex WHERE netinfo_id = OLD.netinfo_id) = 0 THEN
-                DELETE FROM NetInfo WHERE netinfo_id = OLD.netinfo_id;
+        FOR target_id IN SELECT DISTINCT netinfo_id FROM deleted_links ORDER BY netinfo_id LOOP
+            PERFORM 1 FROM NetInfo WHERE netinfo_id = target_id FOR UPDATE;
+            IF FOUND THEN
+                IF NOT EXISTS (SELECT 1 FROM NetInfoIndex WHERE netinfo_id = target_id) THEN
+                    DELETE FROM NetInfo WHERE netinfo_id = target_id;
+                END IF;
             END IF;
-        END IF;
+        END LOOP;
     ELSIF TG_TABLE_NAME = 'httpinfoindex' THEN
-        PERFORM 1 FROM HTTPInfo WHERE httpinfo_id = OLD.httpinfo_id FOR UPDATE;
-        IF FOUND THEN
-            IF (SELECT COUNT(*) FROM HTTPInfoIndex WHERE httpinfo_id = OLD.httpinfo_id) = 0 THEN
-                DELETE FROM HTTPInfo WHERE httpinfo_id = OLD.httpinfo_id;
+        FOR target_id IN SELECT DISTINCT httpinfo_id FROM deleted_links ORDER BY httpinfo_id LOOP
+            PERFORM 1 FROM HTTPInfo WHERE httpinfo_id = target_id FOR UPDATE;
+            IF FOUND THEN
+                IF NOT EXISTS (SELECT 1 FROM HTTPInfoIndex WHERE httpinfo_id = target_id) THEN
+                    DELETE FROM HTTPInfo WHERE httpinfo_id = target_id;
+                END IF;
             END IF;
-        END IF;
+        END LOOP;
     END IF;
-    RETURN OLD;
+    RETURN NULL;
 END;
 $$ LANGUAGE plpgsql;
 
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_after_delete_metatagsindex') THEN
-        CREATE TRIGGER trg_after_delete_metatagsindex
-        AFTER DELETE ON MetaTagsIndex
-        FOR EACH ROW
-        EXECUTE FUNCTION handle_shared_entity_deletion();
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_after_delete_webobjectsindex') THEN
-        CREATE TRIGGER trg_after_delete_webobjectsindex
-        AFTER DELETE ON WebObjectsIndex
-        FOR EACH ROW
-        EXECUTE FUNCTION handle_shared_entity_deletion();
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_after_delete_keywordindex') THEN
-        CREATE TRIGGER trg_after_delete_keywordindex
-        AFTER DELETE ON KeywordIndex
-        FOR EACH ROW
-        EXECUTE FUNCTION handle_shared_entity_deletion();
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_after_delete_netinfoindex') THEN
-        CREATE TRIGGER trg_after_delete_netinfoindex
-        AFTER DELETE ON NetInfoIndex
-        FOR EACH ROW
-        EXECUTE FUNCTION handle_shared_entity_deletion();
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_after_delete_httpinfoindex') THEN
-        CREATE TRIGGER trg_after_delete_httpinfoindex
-        AFTER DELETE ON HTTPInfoIndex
-        FOR EACH ROW
-        EXECUTE FUNCTION handle_shared_entity_deletion();
-    END IF;
-END
-$$;
+-- Triggers to handle the deletion of shared entities.
+--
+-- One AFTER DELETE FOR EACH STATEMENT trigger per link table. The transition
+-- table exposes the deleted links so the function can deduplicate parent IDs
+-- and lock each parent once. DROP + CREATE keeps fresh installs and repeated
+-- migrations converging on the same definition.
+
+DROP TRIGGER IF EXISTS trg_after_delete_metatagsindex ON MetaTagsIndex;
+CREATE TRIGGER trg_after_delete_metatagsindex
+AFTER DELETE ON MetaTagsIndex
+REFERENCING OLD TABLE AS deleted_links
+FOR EACH STATEMENT
+EXECUTE FUNCTION handle_shared_entity_deletion();
+
+DROP TRIGGER IF EXISTS trg_after_delete_webobjectsindex ON WebObjectsIndex;
+CREATE TRIGGER trg_after_delete_webobjectsindex
+AFTER DELETE ON WebObjectsIndex
+REFERENCING OLD TABLE AS deleted_links
+FOR EACH STATEMENT
+EXECUTE FUNCTION handle_shared_entity_deletion();
+
+DROP TRIGGER IF EXISTS trg_after_delete_keywordindex ON KeywordIndex;
+CREATE TRIGGER trg_after_delete_keywordindex
+AFTER DELETE ON KeywordIndex
+REFERENCING OLD TABLE AS deleted_links
+FOR EACH STATEMENT
+EXECUTE FUNCTION handle_shared_entity_deletion();
+
+DROP TRIGGER IF EXISTS trg_after_delete_netinfoindex ON NetInfoIndex;
+CREATE TRIGGER trg_after_delete_netinfoindex
+AFTER DELETE ON NetInfoIndex
+REFERENCING OLD TABLE AS deleted_links
+FOR EACH STATEMENT
+EXECUTE FUNCTION handle_shared_entity_deletion();
+
+DROP TRIGGER IF EXISTS trg_after_delete_httpinfoindex ON HTTPInfoIndex;
+CREATE TRIGGER trg_after_delete_httpinfoindex
+AFTER DELETE ON HTTPInfoIndex
+REFERENCING OLD TABLE AS deleted_links
+FOR EACH STATEMENT
+EXECUTE FUNCTION handle_shared_entity_deletion();
 
 UPDATE DBSchemaVersion SET is_current=FALSE;
 INSERT INTO DBSchemaVersion(version,description,is_current)
