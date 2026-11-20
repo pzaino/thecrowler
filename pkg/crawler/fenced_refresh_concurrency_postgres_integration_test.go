@@ -37,10 +37,13 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/lib/pq"
 
 	cdb "github.com/pzaino/thecrowler/pkg/database"
 )
@@ -539,33 +542,30 @@ func TestPostgresFencedRefreshConcurrentRefreshersAndIndexer(t *testing.T) {
 	}
 }
 
-// TestPostgresSharedObjectTriggerRaceCharacterization pins a pre-existing
-// schema-1.17 concurrency defect that Decision 2 does not introduce and does not
-// fix.
+// TestPostgresSharedObjectTriggerPreservesConcurrentReference is the positive
+// regression for the RC1 trigger race (WP-REL230-RC2 / RC2-A).
 //
 // Schema 1.17 installs trg_after_delete_webobjectsindex. For every deleted
-// WebObjectsIndex row it runs handle_shared_entity_deletion(), which does
+// WebObjectsIndex row it runs handle_shared_entity_deletion(). Before RC2-A that
+// function counted references and then deleted the parent as two separate READ
+// COMMITTED statements with no parent-row lock, so an uncommitted concurrent
+// link was invisible to the count, the delete waited and then proceeded, and
+// WebObjectsIndex.object_id ON DELETE CASCADE silently removed the other page's
+// committed link.
 //
-//	IF (SELECT COUNT(*) FROM WebObjectsIndex WHERE object_id = OLD.object_id) = 0
-//	THEN DELETE FROM WebObjects WHERE object_id = OLD.object_id;
+// RC2-A makes the function lock the parent row FOR UPDATE before counting. This
+// test performs exactly that interleaving:
 //
-// The count and the delete are separate READ COMMITTED statements and no row
-// lock is taken first. A concurrent transaction that has inserted its own link
-// to the same object but not yet committed is invisible to the count. The
-// delete then blocks on that transaction's foreign-key row lock, and after the
-// commit proceeds anyway. WebObjectsIndex.object_id is ON DELETE CASCADE, so the
-// other page's link disappears without any error.
+//  1. object O is linked to page X;
+//  2. session B inserts WebObjectsIndex(Y, O) and does not commit, so it holds a
+//     KEY SHARE lock on O;
+//  3. session A deletes WebObjectsIndex(X, O); the trigger must block on O;
+//  4. B commits;
+//  5. A's trigger re-counts, sees B's committed reference, and preserves O.
 //
-// The fenced helper deleteFencedRefreshOrphanTx avoids this pattern by locking
-// the object FOR UPDATE and re-counting, but the trigger fires first, during
-// the link deletion, so the fenced path inherits the defect. The legacy path is
-// worse: it deletes the object row outright.
-//
-// This is a characterization test. It asserts the current defective outcome so
-// the release record carries reproducible evidence. An approved fix (for
-// example, locking the WebObjects row FOR UPDATE before the count, which
-// requires a schema-function change) must update this expectation deliberately.
-func TestPostgresSharedObjectTriggerRaceCharacterization(t *testing.T) {
+// The assertion is the opposite of the RC1 characterization test: object_rows=1,
+// page_y_links=1, and the object keeps its attributes.
+func TestPostgresSharedObjectTriggerPreservesConcurrentReference(t *testing.T) {
 	handler, admin := openFencedRefreshPostgres(t)
 	unique := fencedRefreshUnique("trigger-race")
 
@@ -589,6 +589,14 @@ func TestPostgresSharedObjectTriggerRaceCharacterization(t *testing.T) {
 
 	objectID := fencedRefreshSeedObject(t, admin, "trigger-race-"+unique)
 	fencedRefreshLinkObject(t, admin, pageX, objectID)
+	if _, err := admin.Exec(`
+		INSERT INTO ObjectAttributes
+			(object_id, object_type, attribute_key, attribute_value,
+			 normalized_value, value_hash)
+		VALUES ($1, 'webobject', 'price', '20', '20', repeat('0', 64))`,
+		objectID); err != nil {
+		t.Fatalf("seed attribute: %v", err)
+	}
 
 	connA := openFencedRefreshRuntimeConnection(t)
 	connB := openFencedRefreshRuntimeConnection(t)
@@ -621,7 +629,7 @@ func TestPostgresSharedObjectTriggerRaceCharacterization(t *testing.T) {
 		_ = txB.Rollback()
 		t.Fatalf("link delete did not wait for the in-flight reference: err=%v", err)
 	case <-time.After(300 * time.Millisecond):
-		// Expected: the orphan-cleanup DELETE is waiting for the linker.
+		// Expected: the orphan-cleanup trigger is waiting on the parent row.
 	}
 
 	if err := txB.Commit(); err != nil {
@@ -642,78 +650,228 @@ func TestPostgresSharedObjectTriggerRaceCharacterization(t *testing.T) {
 		t.Fatalf("commit deleter: %v", err)
 	}
 
-	objectRows := fencedRefreshCountObjects(t, handler, []uint64{objectID})
-	pageYLinks := fencedRefreshCountLinks(t, handler, pageY, objectID)
-	if objectRows != 0 || pageYLinks != 0 {
-		t.Fatalf("shared-object trigger race is no longer reproducible: "+
-			"object_rows=%d page_y_links=%d "+
-			"(if this changed because the orphan trigger was fixed, update this "+
-			"characterization test and the release record)",
-			objectRows, pageYLinks)
+	if got := fencedRefreshCountObjects(t, handler, []uint64{objectID}); got != 1 {
+		t.Fatalf("concurrent reference lost the shared object: object_rows=%d", got)
+	}
+	if got := fencedRefreshCountLinks(t, handler, pageY, objectID); got != 1 {
+		t.Fatalf("concurrent reference lost page Y's link: page_y_links=%d", got)
+	}
+	if got := fencedRefreshCountAttributes(t, handler, objectID); got != 1 {
+		t.Fatalf("shared object lost attributes: %d", got)
 	}
 }
 
-// TestPostgresLegacyRefreshSharedObjectHazardReproducer pins the pre-existing
-// legacy refresh behaviour that Decision 2 deliberately does not change.
-//
-// The legacy path deletes the object row rather than the page link. When two
-// pages hash to identical content they share one WebObjects row, so refreshing
-// either page removes the object and its attributes for both. This test exists
-// so the release record has a reproducible demonstration instead of an
-// assertion in prose. It is a characterization test, not an endorsement: a
-// future approved fix must update this expectation deliberately.
-func TestPostgresLegacyRefreshSharedObjectHazardReproducer(t *testing.T) {
+// TestPostgresSharedObjectTriggerDeletesZeroReferenceObject confirms the other
+// side of the RC2-A contract: when no other page references the object, the
+// trigger still deletes it, and a repeated delete statement is idempotent.
+func TestPostgresSharedObjectTriggerDeletesZeroReferenceObject(t *testing.T) {
 	handler, admin := openFencedRefreshPostgres(t)
-	unique := fencedRefreshUnique("legacy-hazard")
-	sourceID := fencedRefreshSeedSource(t, admin, unique)
+	unique := fencedRefreshUnique("trigger-zero")
 
-	pageAURL := "https://legacy-hazard.invalid/" + unique + "/a"
-	pageBURL := "https://legacy-hazard.invalid/" + unique + "/b"
-	var pageAID, pageBID uint64
+	pageURL := "https://trigger-zero.invalid/" + unique
+	var pageID uint64
 	if err := admin.QueryRow(`INSERT INTO SearchIndex (page_url, title, summary)
-		VALUES ($1, 'a', '') RETURNING index_id`, pageAURL).Scan(&pageAID); err != nil {
-		t.Fatalf("insert page A: %v", err)
-	}
-	if err := admin.QueryRow(`INSERT INTO SearchIndex (page_url, title, summary)
-		VALUES ($1, 'b', '') RETURNING index_id`, pageBURL).Scan(&pageBID); err != nil {
-		t.Fatalf("insert page B: %v", err)
+		VALUES ($1, 'zero', '') RETURNING index_id`, pageURL).Scan(&pageID); err != nil {
+		t.Fatalf("insert page: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = admin.Exec(`DELETE FROM WebObjectsIndex WHERE index_id = ANY($1::bigint[])`,
-			pqUint64Array([]uint64{pageAID, pageBID}))
-		_, _ = admin.Exec(`DELETE FROM SourceSearchIndex WHERE source_id = $1`, sourceID)
-		_, _ = admin.Exec(`DELETE FROM SearchIndex WHERE index_id = ANY($1::bigint[])`,
-			pqUint64Array([]uint64{pageAID, pageBID}))
+		_, _ = admin.Exec(`DELETE FROM WebObjectsIndex WHERE index_id = $1`, pageID)
+		_, _ = admin.Exec(`DELETE FROM SearchIndex WHERE index_id = $1`, pageID)
 	})
 
-	sharedID := fencedRefreshSeedObject(t, admin, "legacy-shared")
-	fencedRefreshLinkObject(t, admin, pageAID, sharedID)
-	fencedRefreshLinkObject(t, admin, pageBID, sharedID)
+	objectID := fencedRefreshSeedObject(t, admin, "trigger-zero-"+unique)
+	fencedRefreshLinkObject(t, admin, pageID, objectID)
+
+	for attempt := 0; attempt < 3; attempt++ {
+		if _, err := admin.Exec(`DELETE FROM WebObjectsIndex WHERE index_id = $1 AND object_id = $2`,
+			pageID, objectID); err != nil {
+			t.Fatalf("attempt %d delete: %v", attempt, err)
+		}
+		if got := fencedRefreshCountObjects(t, handler, []uint64{objectID}); got != 0 {
+			t.Fatalf("attempt %d: zero-reference object survived: %d", attempt, got)
+		}
+	}
+}
+
+// TestPostgresLegacyRefreshPreservesSharedObject is the positive regression for
+// RC2-B. Two pages share one hash-deduplicated object. Refreshing page X must
+// replace only X's link and must leave page Y's link, the shared object and its
+// attributes intact.
+func TestPostgresLegacyRefreshPreservesSharedObject(t *testing.T) {
+	handler, admin := openFencedRefreshPostgres(t)
+	unique := fencedRefreshUnique("legacy-shared")
+	sourceID := fencedRefreshSeedSource(t, admin, unique)
+	pageXURL := "https://" + unique + ".invalid/x"
+	pageYURL := "https://" + unique + ".invalid/y"
+
+	ctx := openLegacyRefreshContext(t, handler, sourceID, pageXURL)
+	t.Cleanup(func() {
+		_, _ = admin.Exec(`DELETE FROM WebObjectsIndex WHERE index_id IN
+			(SELECT index_id FROM SearchIndex WHERE page_url = ANY($1::text[]))`,
+			pq.Array([]string{pageXURL, pageYURL}))
+		_, _ = admin.Exec(`DELETE FROM SearchIndex WHERE page_url = ANY($1::text[])`,
+			pq.Array([]string{pageXURL, pageYURL}))
+	})
+
+	sharedBody := "legacy shared body " + unique
+	if _, err := indexPageContext(context.Background(), ctx, pageXURL,
+		legacyRefreshPageInfo(ctx, sourceID, sharedBody)); err != nil {
+		t.Fatalf("index X: %v", err)
+	}
+	if _, err := indexPageContext(context.Background(), ctx, pageYURL,
+		legacyRefreshPageInfo(ctx, sourceID, sharedBody)); err != nil {
+		t.Fatalf("index Y: %v", err)
+	}
+
+	pageXID := fencedRefreshPageIndex(t, handler, pageXURL)
+	pageYID := fencedRefreshPageIndex(t, handler, pageYURL)
+	sharedHash := fencedRefreshPageObjects(t, handler, pageXID)[0]
+	if got := fencedRefreshPageObjects(t, handler, pageYID); len(got) != 1 || got[0] != sharedHash {
+		t.Fatalf("pages did not converge on one object: x=%s y=%v", sharedHash, got)
+	}
+	var sharedObjectID uint64
+	if err := handler.QueryRow(`SELECT object_id FROM WebObjects WHERE object_hash = $1`,
+		sharedHash).Scan(&sharedObjectID); err != nil {
+		t.Fatalf("read shared object: %v", err)
+	}
 	if _, err := admin.Exec(`
 		INSERT INTO ObjectAttributes
 			(object_id, object_type, attribute_key, attribute_value,
 			 normalized_value, value_hash)
 		VALUES ($1, 'webobject', 'price', '20', '20', repeat('0', 64))`,
-		sharedID); err != nil {
+		sharedObjectID); err != nil {
 		t.Fatalf("seed attribute: %v", err)
 	}
 
-	// This is exactly what the legacy refresh branch calls before the
-	// replacement page transaction.
-	if err := deleteWebObjects(context.Background(), &handler, pageAID); err != nil {
-		t.Fatalf("legacy deleteWebObjects: %v", err)
+	if _, err := indexPageContext(context.Background(), ctx, pageXURL,
+		legacyRefreshPageInfo(ctx, sourceID, "legacy changed body "+unique)); err != nil {
+		t.Fatalf("legacy refresh X: %v", err)
 	}
 
-	objectRows := fencedRefreshCountObjects(t, handler, []uint64{sharedID})
-	pageBLinks := fencedRefreshCountLinks(t, handler, pageBID, sharedID)
-	attributes := fencedRefreshCountAttributes(t, handler, sharedID)
+	if got := fencedRefreshPageObjects(t, handler, pageYID); len(got) != 1 || got[0] != sharedHash {
+		t.Fatalf("refreshing X changed page Y's object: %v", got)
+	}
+	if got := fencedRefreshCountObjects(t, handler, []uint64{sharedObjectID}); got != 1 {
+		t.Fatalf("refreshing X deleted the shared object: %d", got)
+	}
+	if got := fencedRefreshCountAttributes(t, handler, sharedObjectID); got != 1 {
+		t.Fatalf("refreshing X removed the shared object's attributes: %d", got)
+	}
+	if got := fencedRefreshCountLinks(t, handler, pageYID, sharedObjectID); got != 1 {
+		t.Fatalf("refreshing X removed page Y's link: %d", got)
+	}
+	if got := fencedRefreshPageObjects(t, handler, pageXID); len(got) != 1 || got[0] == sharedHash {
+		t.Fatalf("refreshing X did not replace X's object: %v", got)
+	}
+}
 
-	if objectRows != 0 || pageBLinks != 0 || attributes != 0 {
-		t.Fatalf("legacy shared-object hazard is not reproducible: "+
-			"object_rows=%d page_b_links=%d attributes=%d "+
-			"(if this changed because the legacy delete was fixed, update this "+
-			"characterization test and the release record)",
-			objectRows, pageBLinks, attributes)
+// TestPostgresLegacyRefreshRefusesCrossSourcePage covers the deliberate RC2-B
+// behaviour change: a legacy refresh of a page linked to more than one source is
+// refused with an explicit error and zero writes, instead of silently rewriting
+// associations another source depends on.
+func TestPostgresLegacyRefreshRefusesCrossSourcePage(t *testing.T) {
+	handler, admin := openFencedRefreshPostgres(t)
+	unique := fencedRefreshUnique("legacy-cross")
+	sourceID := fencedRefreshSeedSource(t, admin, unique)
+	otherSourceID := fencedRefreshSeedSource(t, admin, "xsrc")
+	pageURL := "https://" + unique + ".invalid/page"
+
+	ctx := openLegacyRefreshContext(t, handler, sourceID, pageURL)
+	t.Cleanup(func() {
+		_, _ = admin.Exec(`DELETE FROM WebObjectsIndex WHERE index_id IN
+			(SELECT index_id FROM SearchIndex WHERE page_url = $1)`, pageURL)
+		_, _ = admin.Exec(`DELETE FROM SourceSearchIndex WHERE index_id IN
+			(SELECT index_id FROM SearchIndex WHERE page_url = $1)`, pageURL)
+		_, _ = admin.Exec(`DELETE FROM SearchIndex WHERE page_url = $1`, pageURL)
+	})
+
+	if _, err := indexPageContext(context.Background(), ctx, pageURL,
+		legacyRefreshPageInfo(ctx, sourceID, "cross generation one "+unique)); err != nil {
+		t.Fatalf("initial index: %v", err)
+	}
+	indexID := fencedRefreshPageIndex(t, handler, pageURL)
+	if _, err := admin.Exec(`INSERT INTO SourceSearchIndex (source_id, index_id)
+		VALUES ($1, $2) ON CONFLICT DO NOTHING`, otherSourceID, indexID); err != nil {
+		t.Fatalf("link other source: %v", err)
+	}
+	oldObjects := fencedRefreshPageObjects(t, handler, indexID)
+
+	_, err := indexPageContext(context.Background(), ctx, pageURL,
+		legacyRefreshPageInfo(ctx, sourceID, "cross generation two "+unique))
+	if !errors.Is(err, errFencedRefreshCrossSourcePage) {
+		t.Fatalf("cross-source legacy refresh error = %v", err)
+	}
+	if got := fencedRefreshPageObjects(t, handler, indexID); len(got) != 1 || got[0] != oldObjects[0] {
+		t.Fatalf("cross-source refusal changed page objects: %v", got)
+	}
+	var pageLinks int
+	if err := handler.QueryRow(`SELECT COUNT(*) FROM WebObjectsIndex WHERE index_id = $1`,
+		indexID).Scan(&pageLinks); err != nil {
+		t.Fatalf("count page links: %v", err)
+	}
+	if pageLinks != 1 {
+		t.Fatalf("refusal changed the page link count: %d", pageLinks)
+	}
+}
+
+// TestPostgresLegacyRefreshRollbackRestoresOldGeneration injects a delete
+// failure and confirms the unified legacy path rolls the whole replacement back:
+// the old link, object and content survive.
+func TestPostgresLegacyRefreshRollbackRestoresOldGeneration(t *testing.T) {
+	handler, admin := openFencedRefreshPostgres(t)
+	unique := fencedRefreshUnique("legacy-rollback")
+	sourceID := fencedRefreshSeedSource(t, admin, unique)
+	pageURL := "https://" + unique + ".invalid/page"
+
+	ctx := openLegacyRefreshContext(t, handler, sourceID, pageURL)
+	t.Cleanup(func() {
+		_, _ = admin.Exec(`DROP TRIGGER IF EXISTS rc2_fail_legacy_refresh ON WebObjects`)
+		_, _ = admin.Exec(`DROP FUNCTION IF EXISTS rc2_fail_legacy_refresh()`)
+		_, _ = admin.Exec(`DELETE FROM WebObjectsIndex WHERE index_id IN
+			(SELECT index_id FROM SearchIndex WHERE page_url = $1)`, pageURL)
+		_, _ = admin.Exec(`DELETE FROM SearchIndex WHERE page_url = $1`, pageURL)
+	})
+
+	if _, err := indexPageContext(context.Background(), ctx, pageURL,
+		legacyRefreshPageInfo(ctx, sourceID, "legacy rollback one "+unique)); err != nil {
+		t.Fatalf("initial index: %v", err)
+	}
+	indexID := fencedRefreshPageIndex(t, handler, pageURL)
+	oldHash := fencedRefreshPageObjects(t, handler, indexID)[0]
+
+	if _, err := admin.Exec(`
+		CREATE OR REPLACE FUNCTION rc2_fail_legacy_refresh() RETURNS trigger AS $$
+		BEGIN
+			RAISE EXCEPTION 'rc2 injected legacy refresh failure';
+		END;
+		$$ LANGUAGE plpgsql`); err != nil {
+		t.Fatalf("create failure function: %v", err)
+	}
+	if _, err := admin.Exec(`
+		CREATE TRIGGER rc2_fail_legacy_refresh BEFORE DELETE ON WebObjects
+		FOR EACH ROW WHEN (OLD.object_hash = '` + oldHash + `')
+		EXECUTE FUNCTION rc2_fail_legacy_refresh()`); err != nil {
+		t.Fatalf("create failure trigger: %v", err)
+	}
+
+	if _, err := indexPageContext(context.Background(), ctx, pageURL,
+		legacyRefreshPageInfo(ctx, sourceID, "legacy rollback two "+unique)); err == nil {
+		t.Fatal("injected failure did not fail the legacy refresh")
+	}
+
+	objects := fencedRefreshPageObjects(t, handler, indexID)
+	if len(objects) != 1 || objects[0] != oldHash {
+		t.Fatalf("rollback page objects = %v want %s", objects, oldHash)
+	}
+	var content string
+	if err := handler.QueryRow(`
+		SELECT w.object_content FROM WebObjectsIndex wi
+		JOIN WebObjects w ON w.object_id = wi.object_id
+		WHERE wi.index_id = $1`, indexID).Scan(&content); err != nil {
+		t.Fatalf("read content: %v", err)
+	}
+	if content != "legacy rollback one "+unique {
+		t.Fatalf("rollback content = %q", content)
 	}
 }
 
@@ -741,4 +899,191 @@ func fencedRefreshSeedSource(t *testing.T, admin *sql.DB, label string) uint64 {
 		_, _ = admin.Exec(`DELETE FROM Sources WHERE source_id = $1`, sourceID)
 	})
 	return sourceID
+}
+
+// TestPostgresSharedObjectTriggerStress repeats the RC2-A interleaving to catch
+// scheduling-dependent regressions. Each iteration uses fresh pages and a fresh
+// object, and the whole test is bounded so a lock-order regression fails fast
+// instead of hanging CI.
+func TestPostgresSharedObjectTriggerStress(t *testing.T) {
+	handler, admin := openFencedRefreshPostgres(t)
+	connA := openFencedRefreshRuntimeConnection(t)
+	connB := openFencedRefreshRuntimeConnection(t)
+	setFencedRefreshLockTimeout(t, connA, "10s")
+	setFencedRefreshLockTimeout(t, connB, "10s")
+
+	unique := fencedRefreshUnique("trigger-stress")
+	deadline := time.Now().Add(90 * time.Second)
+
+	for iteration := 0; iteration < 25; iteration++ {
+		if time.Now().After(deadline) {
+			t.Fatalf("stress iterations exceeded their budget at %d", iteration)
+		}
+		pageXURL := fmt.Sprintf("https://trigger-stress.invalid/%s/%d/x", unique, iteration)
+		pageYURL := fmt.Sprintf("https://trigger-stress.invalid/%s/%d/y", unique, iteration)
+		var pageX, pageY uint64
+		if err := admin.QueryRow(`INSERT INTO SearchIndex (page_url, title, summary)
+			VALUES ($1, 'x', '') RETURNING index_id`, pageXURL).Scan(&pageX); err != nil {
+			t.Fatalf("iteration %d insert page X: %v", iteration, err)
+		}
+		if err := admin.QueryRow(`INSERT INTO SearchIndex (page_url, title, summary)
+			VALUES ($1, 'y', '') RETURNING index_id`, pageYURL).Scan(&pageY); err != nil {
+			t.Fatalf("iteration %d insert page Y: %v", iteration, err)
+		}
+		t.Cleanup(func() {
+			_, _ = admin.Exec(`DELETE FROM WebObjectsIndex WHERE index_id = ANY($1::bigint[])`,
+				pqUint64Array([]uint64{pageX, pageY}))
+			_, _ = admin.Exec(`DELETE FROM SearchIndex WHERE index_id = ANY($1::bigint[])`,
+				pqUint64Array([]uint64{pageX, pageY}))
+		})
+
+		objectID := fencedRefreshSeedObject(t, admin,
+			fmt.Sprintf("trigger-stress-%s-%d", unique, iteration))
+		fencedRefreshLinkObject(t, admin, pageX, objectID)
+
+		txB, err := connB.Begin()
+		if err != nil {
+			t.Fatalf("iteration %d begin B: %v", iteration, err)
+		}
+		if _, err = txB.Exec(`INSERT INTO WebObjectsIndex (index_id, object_id) VALUES ($1, $2)`,
+			pageY, objectID); err != nil {
+			_ = txB.Rollback()
+			t.Fatalf("iteration %d link Y: %v", iteration, err)
+		}
+		txA, err := connA.Begin()
+		if err != nil {
+			_ = txB.Rollback()
+			t.Fatalf("iteration %d begin A: %v", iteration, err)
+		}
+		done := make(chan error, 1)
+		go func() {
+			_, err := txA.Exec(`DELETE FROM WebObjectsIndex WHERE index_id = $1 AND object_id = $2`,
+				pageX, objectID)
+			done <- err
+		}()
+		time.Sleep(5 * time.Millisecond)
+		if err := txB.Commit(); err != nil {
+			_ = txA.Rollback()
+			t.Fatalf("iteration %d commit B: %v", iteration, err)
+		}
+		select {
+		case err := <-done:
+			if err != nil {
+				_ = txA.Rollback()
+				t.Fatalf("iteration %d delete A: %v", iteration, err)
+			}
+		case <-time.After(10 * time.Second):
+			_ = txA.Rollback()
+			t.Fatalf("iteration %d delete A did not finish", iteration)
+		}
+		if err := txA.Commit(); err != nil {
+			t.Fatalf("iteration %d commit A: %v", iteration, err)
+		}
+
+		if got := fencedRefreshCountObjects(t, handler, []uint64{objectID}); got != 1 {
+			t.Fatalf("iteration %d lost the shared object: %d", iteration, got)
+		}
+		if got := fencedRefreshCountLinks(t, handler, pageY, objectID); got != 1 {
+			t.Fatalf("iteration %d lost page Y's link: %d", iteration, got)
+		}
+	}
+}
+
+// TestPostgresRefreshAndVacuumRemainConsistent runs a legacy refresh of source A
+// while VacuumSource removes source B's links to the same shared object. Both
+// paths now take the parent row lock before an orphan decision. The test asserts
+// that both complete without a deadlock or silent inconsistency: the object
+// exists exactly when at least one page still links it.
+func TestPostgresRefreshAndVacuumRemainConsistent(t *testing.T) {
+	handler, admin := openFencedRefreshPostgres(t)
+	unique := fencedRefreshUnique("vacuum-shared")
+	sourceA := fencedRefreshSeedSource(t, admin, "vsrc-a")
+	sourceB := fencedRefreshSeedSource(t, admin, "vsrc-b")
+	pageAURL := "https://" + unique + ".invalid/a"
+	pageBURL := "https://" + unique + ".invalid/b"
+
+	ctxA := openLegacyRefreshContext(t, handler, sourceA, pageAURL)
+	t.Cleanup(func() {
+		_, _ = admin.Exec(`DELETE FROM WebObjectsIndex WHERE index_id IN
+			(SELECT index_id FROM SearchIndex WHERE page_url = ANY($1::text[]))`,
+			pq.Array([]string{pageAURL, pageBURL}))
+		_, _ = admin.Exec(`DELETE FROM SourceSearchIndex WHERE source_id = ANY($1::bigint[])`,
+			pqUint64Array([]uint64{sourceA, sourceB}))
+		_, _ = admin.Exec(`DELETE FROM SearchIndex WHERE page_url = ANY($1::text[])`,
+			pq.Array([]string{pageAURL, pageBURL}))
+	})
+
+	sharedBody := "vacuum shared body " + unique
+	if _, err := indexPageContext(context.Background(), ctxA, pageAURL,
+		legacyRefreshPageInfo(ctxA, sourceA, sharedBody)); err != nil {
+		t.Fatalf("index A: %v", err)
+	}
+	pageBInfo := legacyRefreshPageInfo(ctxA, sourceB, sharedBody)
+	// Index page B directly so it belongs to source B only.
+	pageBInfo.Config = &ctxA.config
+	tx, err := handler.Begin()
+	if err != nil {
+		t.Fatalf("begin page B: %v", err)
+	}
+	indexB, err := insertOrUpdateSearchIndex(tx, pageBURL, pageBInfo)
+	if err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("index B search index: %v", err)
+	}
+	if _, err = tx.Exec(`INSERT INTO SourceSearchIndex (source_id, index_id)
+		VALUES ($1, $2) ON CONFLICT DO NOTHING`, sourceB, indexB); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("link B: %v", err)
+	}
+	if _, _, _, err = insertOrUpdateWebObjects(tx, indexB, pageBInfo); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("index B object: %v", err)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatalf("commit page B: %v", err)
+	}
+
+	pageAID := fencedRefreshPageIndex(t, handler, pageAURL)
+	sharedHash := fencedRefreshPageObjects(t, handler, pageAID)[0]
+	var sharedID uint64
+	if err := handler.QueryRow(`SELECT object_id FROM WebObjects WHERE object_hash = $1`,
+		sharedHash).Scan(&sharedID); err != nil {
+		t.Fatalf("read shared object: %v", err)
+	}
+
+	deadline := time.Now().Add(30 * time.Second)
+	refreshDone := make(chan error, 1)
+	vacuumDone := make(chan error, 1)
+	go func() {
+		_, err := indexPageContext(context.Background(), ctxA, pageAURL,
+			legacyRefreshPageInfo(ctxA, sourceA, "vacuum changed body "+unique))
+		refreshDone <- err
+	}()
+	go func() {
+		vacuumDone <- cdb.VacuumSource(&handler, sourceB)
+	}()
+
+	for _, ch := range []chan error{refreshDone, vacuumDone} {
+		select {
+		case err := <-ch:
+			if err != nil {
+				t.Fatalf("concurrent operation failed: %v", err)
+			}
+		case <-time.After(time.Until(deadline)):
+			t.Fatal("concurrent refresh/vacuum did not finish within the budget")
+		}
+	}
+
+	var survivingLinks int
+	if err := handler.QueryRow(`SELECT COUNT(*) FROM WebObjectsIndex WHERE object_id = $1`,
+		sharedID).Scan(&survivingLinks); err != nil {
+		t.Fatalf("count surviving links: %v", err)
+	}
+	objectRows := fencedRefreshCountObjects(t, handler, []uint64{sharedID})
+	if survivingLinks > 0 && objectRows != 1 {
+		t.Fatalf("object deleted while %d links remain", survivingLinks)
+	}
+	if survivingLinks == 0 && objectRows != 0 {
+		t.Fatalf("orphaned object survived: links=%d object_rows=%d", survivingLinks, objectRows)
+	}
 }

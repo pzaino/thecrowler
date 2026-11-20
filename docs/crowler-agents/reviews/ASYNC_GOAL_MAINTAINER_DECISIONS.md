@@ -611,3 +611,100 @@ Consequences until a decision exists:
 The full analysis, ranked blockers and the four separate release questions are
 in `RELEASE_230_GO_NO_GO.md`, with the code audit in
 `RELEASE_230_INDEPENDENT_RISK_REVIEW.md`.
+
+## Decision 1o: RC2-A and RC2-B approvals (2026-11-20)
+
+**Status: APPROVED AND IMPLEMENTED under WP-REL230-RC2.**
+
+### Approval record
+
+- Approver: repository maintainer (user) in the OpenCode session.
+- UTC date: 2026-11-20.
+- Exact answers recorded by the two binary decisions presented before any edit:
+  - RC2-A: `APPROVE RC2-A (Recommended)`
+  - RC2-B: `APPROVE RC2-B (Recommended)`
+- Baseline: `e6a41d317835356b1ed7ebd3fd31c8aa781f272c` (`develop`, clean).
+- Contract: `WP-REL230-RC2/RC2-A+RC2-B`.
+
+### RC2-A scope
+
+Change the authoritative `handle_shared_entity_deletion()` body so every
+artifact family locks the parent row (`MetaTags`, `WebObjects`, `Keywords`,
+`NetInfo`, `HTTPInfo`) with `FOR UPDATE` before counting remaining links, and
+delete the parent only when the locked row still has zero references.
+
+Definitions updated in:
+
+- `pkg/database/postgresql-setup.pgsql` (fresh 1.17 install);
+- `pkg/database/db_migrations/postgresql-migration-v1.17.pgsql` (v1.16 -> 1.17
+  upgrade and repeatable re-run for development databases already stamped 1.17),
+  including idempotent creation of the five `trg_after_delete_*` triggers.
+
+SQLite keeps its documented omission: it has no stored function and no
+equivalent trigger, so the application-level orphan deletion remains the only
+path there.
+
+Not included: any other DDL, a schema-version bump, a writer-generation change,
+MySQL changes, or a production migration.
+
+### RC2-B scope
+
+Replace the legacy `refresh_content` global object delete
+(`DELETE FROM WebObjects WHERE object_id IN (SELECT ... WHERE index_id = $1)`,
+which removed globally hash-shared rows) with the same page-scoped,
+orphan-only, in-transaction replacement already used by the fenced path:
+
+- the page row is locked `FOR UPDATE` before any write, in both modes;
+- the cross-source page check applies in both modes;
+- only this page's `WebObjectsIndex` rows are replaced;
+- a `WebObjects` row is deleted only when globally unreferenced;
+- the whole replacement commits or rolls back with the main indexing
+  transaction.
+
+`deleteWebObjects`, `getIndexIDForURL` and `webObjectCleanupTimeout` are removed;
+they had no other production callers.
+
+### Observable behaviour change (RC2-B)
+
+- A page that hashes to the same object as another page no longer loses that
+  object when one page refreshes.
+- A refresh of a page linked to more than one source now fails with
+  `content refresh refused: page is shared with another source` and changes
+  nothing, instead of silently rewriting associations another source depends on.
+- `refresh_content: false` and all crawling without refresh are unchanged.
+- The atomic unit is still the page/object phase; keywords, metatags, object
+  attributes and time-series buckets remain separate post-commit transactions.
+
+### Rollback
+
+- SQL rollback: re-apply the previous function body. It is a single
+  `CREATE OR REPLACE FUNCTION`; no data is rewritten and no table is dropped.
+- Code rollback: revert the crawler change; the previous separate-transaction
+  legacy path returns. No schema change is required either way.
+- The default claim mode stays `legacy`; no operator action is needed.
+
+### Schema compatibility
+
+Release remains `v2.3.0`, schema `1.17`, writer generation
+`verified-ownership-v1.17`. The change is inside unreleased 1.17; no new
+migration version is introduced. A 1.17 database created before this change is
+updated by re-running `postgresql-migration-v1.17.pgsql`, which is already the
+sanctioned repeatable path and is exercised by CI.
+
+### Test gates attached to this approval
+
+- Positive regression for the RC2-A interleaving (object and page-Y link
+  survive), 25-iteration stress, zero-reference deletion, and refresh versus
+  `VacuumSource` consistency.
+- Positive regression for RC2-B (shared object, attributes, memberships survive
+  a refresh of the other page), cross-source refusal, rollback, and
+  repeated-generation replacement.
+- Static convergence test for the function body and trigger inventory.
+- Full PostgreSQL integration suite, race detector, vet, builds, formatting,
+  actionlint, and the shipping-image full-stack run.
+
+### Explicit non-approvals
+
+- Ownership epoch DDL, fenced `null:` deletion, automatic asynchronous resume,
+  MCP mutation dispatch/reconciliation, production fenced activation and any new
+  public contract remain deferred and unapproved.

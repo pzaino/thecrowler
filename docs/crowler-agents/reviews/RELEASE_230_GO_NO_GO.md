@@ -1,5 +1,12 @@
 # Release 2.3.0 go / no-go
 
+> **Superseded for the current release decision (2026-11-20).** This is the RC1
+> record. RC2 closed B-01 and B-02: see
+> [`RELEASE_230_RC2_GO_NO_GO.md`](RELEASE_230_RC2_GO_NO_GO.md),
+> [`RELEASE_230_RC2_IMPLEMENTATION.md`](RELEASE_230_RC2_IMPLEMENTATION.md) and
+> [`RELEASE_230_RC2_TEST_REPORT.md`](RELEASE_230_RC2_TEST_REPORT.md). The blocker
+> text below is retained verbatim as the historical RC1 evidence.
+
 Work package: `WP-REL230-RC1`
 Decision owner: the repository maintainer
 Prepared: 2026-11-20
@@ -124,6 +131,11 @@ under a separate approved package before release; the gate then becomes NO-GO fo
 
 ### B-01 — P0 for `refresh_content`: pre-existing orphan trigger can silently delete another page's committed object link
 
+> **CLOSED in WP-REL230-RC2 (2026-11-20).** `handle_shared_entity_deletion()` now
+> locks the parent row before counting; fresh install, the v1.17 migration and a
+> simulated pre-fix database converge; the positive regression and the 25-iteration
+> stress test pass. See `RELEASE_230_RC2_GO_NO_GO.md`.
+
 **Reproducer:** `TestPostgresSharedObjectTriggerRaceCharacterization`
 (`pkg/crawler/fenced_refresh_concurrency_postgres_integration_test.go`). Also
 reproducible by hand with two sessions as described in
@@ -145,6 +157,11 @@ therefore of fenced refresh. Does **not** affect default 2.3.0, where
 `refresh_content: false`.
 
 ### B-02 — P1 for `refresh_content`: legacy refresh deletes hash-shared objects for every page
+
+> **CLOSED in WP-REL230-RC2 (2026-11-20).** The legacy path is now page-scoped and
+> orphan-only, shares the fenced implementation, and refuses cross-source pages.
+> The hazard characterization was replaced by positive regressions. See
+> `RELEASE_230_RC2_GO_NO_GO.md`.
 
 **Reproducer:** `TestPostgresLegacyRefreshSharedObjectHazardReproducer`.
 

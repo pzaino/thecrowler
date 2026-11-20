@@ -500,27 +500,50 @@ jobs:
             exit 1
           fi
 
-      - name: Run shared-object hazard characterization PostgreSQL tests
+      - name: Run shared-object integrity PostgreSQL regressions
         timeout-minutes: 10
         run: |
           set -euo pipefail
           export THECROWLER_POSTGRES_INTEGRATION=1
           log="$(mktemp)"
           trap 'rm -f "$log"' EXIT
-          # These two tests pin known pre-existing schema-1.17 defects. They must
-          # keep passing so the defects stay visible; a fix must update them
-          # deliberately rather than delete them.
+          # RC2-A closes the orphan-trigger race; RC2-B replaces the legacy
+          # global object delete with page-scoped, orphan-only replacement.
+          # These are positive regressions: they must assert preservation, not
+          # reproduce a defect.
           go test -tags=integration ./pkg/crawler \
-            -run '^(TestPostgresSharedObjectTriggerRaceCharacterization|TestPostgresLegacyRefreshSharedObjectHazardReproducer)$' \
+            -run '^(TestPostgresSharedObjectTriggerPreservesConcurrentReference|TestPostgresSharedObjectTriggerDeletesZeroReferenceObject|TestPostgresSharedObjectTriggerStress|TestPostgresLegacyRefresh.*|TestPostgresRefreshAndVacuumRemainConsistent)$' \
             -count=1 -v 2>&1 | tee "$log"
           for test in \
-            TestPostgresSharedObjectTriggerRaceCharacterization \
-            TestPostgresLegacyRefreshSharedObjectHazardReproducer; do
+            TestPostgresSharedObjectTriggerPreservesConcurrentReference \
+            TestPostgresSharedObjectTriggerDeletesZeroReferenceObject \
+            TestPostgresSharedObjectTriggerStress \
+            TestPostgresLegacyRefreshPreservesSharedObject \
+            TestPostgresLegacyRefreshRefusesCrossSourcePage \
+            TestPostgresLegacyRefreshRollbackRestoresOldGeneration \
+            TestPostgresRefreshAndVacuumRemainConsistent; do
             grep -F -- "=== RUN   ${test}" "$log"
             grep -F -- "--- PASS: ${test}" "$log"
           done
           if grep -Fq -- '--- SKIP' "$log"; then
-            echo "Shared-object hazard characterization was skipped" >&2
+            echo "Shared-object integrity regressions were skipped" >&2
+            exit 1
+          fi
+
+      - name: Run event retention PostgreSQL integration
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          export THECROWLER_POSTGRES_INTEGRATION=1
+          log="$(mktemp)"
+          trap 'rm -f "$log"' EXIT
+          go test -tags=integration ./services/events \
+            -run '^TestPostgresEventJanitorDeletesOnlyExpiredRows$' \
+            -count=1 -v 2>&1 | tee "$log"
+          grep -F -- '=== RUN   TestPostgresEventJanitorDeletesOnlyExpiredRows' "$log"
+          grep -F -- '--- PASS: TestPostgresEventJanitorDeletesOnlyExpiredRows' "$log"
+          if grep -Fq -- '--- SKIP' "$log"; then
+            echo "Event retention PostgreSQL integration was skipped" >&2
             exit 1
           fi
 

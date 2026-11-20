@@ -2781,28 +2781,54 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Function to handle the deletion of shared entities when no longer linked to any Source.
+--
+-- Concurrency contract (WP-REL230-RC2 / RC2-A): every branch locks the parent
+-- artifact row FOR UPDATE before it counts remaining links. The lock is what
+-- makes the check-and-delete atomic against a concurrent inserter. Without it,
+-- READ COMMITTED hides an uncommitted link from the COUNT, the DELETE then
+-- waits on that transaction's foreign-key row lock, and once it commits the
+-- DELETE proceeds anyway. Because the link tables reference the artifact with
+-- ON DELETE CASCADE, the other page's just-committed link then disappears with
+-- no error. Locking first makes the concurrent inserter block until this
+-- transaction finishes, after which the COUNT sees its committed row and the
+-- artifact is preserved.
 CREATE OR REPLACE FUNCTION handle_shared_entity_deletion()
 RETURNS TRIGGER AS $$
 BEGIN
     IF TG_TABLE_NAME = 'metatagsindex' THEN
-        IF (SELECT COUNT(*) FROM MetaTagsIndex WHERE metatag_id = OLD.metatag_id) = 0 THEN
-            DELETE FROM MetaTags WHERE metatag_id = OLD.metatag_id;
+        PERFORM 1 FROM MetaTags WHERE metatag_id = OLD.metatag_id FOR UPDATE;
+        IF FOUND THEN
+            IF (SELECT COUNT(*) FROM MetaTagsIndex WHERE metatag_id = OLD.metatag_id) = 0 THEN
+                DELETE FROM MetaTags WHERE metatag_id = OLD.metatag_id;
+            END IF;
         END IF;
     ELSIF TG_TABLE_NAME = 'webobjectsindex' THEN
-        IF (SELECT COUNT(*) FROM WebObjectsIndex WHERE object_id = OLD.object_id) = 0 THEN
-            DELETE FROM WebObjects WHERE object_id = OLD.object_id;
+        PERFORM 1 FROM WebObjects WHERE object_id = OLD.object_id FOR UPDATE;
+        IF FOUND THEN
+            IF (SELECT COUNT(*) FROM WebObjectsIndex WHERE object_id = OLD.object_id) = 0 THEN
+                DELETE FROM WebObjects WHERE object_id = OLD.object_id;
+            END IF;
         END IF;
     ELSIF TG_TABLE_NAME = 'keywordindex' THEN
-        IF (SELECT COUNT(*) FROM KeywordIndex WHERE keyword_id = OLD.keyword_id) = 0 THEN
-            DELETE FROM Keywords WHERE keyword_id = OLD.keyword_id;
+        PERFORM 1 FROM Keywords WHERE keyword_id = OLD.keyword_id FOR UPDATE;
+        IF FOUND THEN
+            IF (SELECT COUNT(*) FROM KeywordIndex WHERE keyword_id = OLD.keyword_id) = 0 THEN
+                DELETE FROM Keywords WHERE keyword_id = OLD.keyword_id;
+            END IF;
         END IF;
     ELSIF TG_TABLE_NAME = 'netinfoindex' THEN
-        IF (SELECT COUNT(*) FROM NetInfoIndex WHERE netinfo_id = OLD.netinfo_id) = 0 THEN
-            DELETE FROM NetInfo WHERE netinfo_id = OLD.netinfo_id;
+        PERFORM 1 FROM NetInfo WHERE netinfo_id = OLD.netinfo_id FOR UPDATE;
+        IF FOUND THEN
+            IF (SELECT COUNT(*) FROM NetInfoIndex WHERE netinfo_id = OLD.netinfo_id) = 0 THEN
+                DELETE FROM NetInfo WHERE netinfo_id = OLD.netinfo_id;
+            END IF;
         END IF;
     ELSIF TG_TABLE_NAME = 'httpinfoindex' THEN
-        IF (SELECT COUNT(*) FROM HTTPInfoIndex WHERE httpinfo_id = OLD.httpinfo_id) = 0 THEN
-            DELETE FROM HTTPInfo WHERE httpinfo_id = OLD.httpinfo_id;
+        PERFORM 1 FROM HTTPInfo WHERE httpinfo_id = OLD.httpinfo_id FOR UPDATE;
+        IF FOUND THEN
+            IF (SELECT COUNT(*) FROM HTTPInfoIndex WHERE httpinfo_id = OLD.httpinfo_id) = 0 THEN
+                DELETE FROM HTTPInfo WHERE httpinfo_id = OLD.httpinfo_id;
+            END IF;
         END IF;
     END IF;
     RETURN OLD;

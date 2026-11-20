@@ -14,8 +14,9 @@ the default claim mode. It is a verification procedure.
   project name every time.
 - Do not switch a production deployment to `fenced` as part of the runbook.
   The runbook switches mode only inside the disposable stack.
-- Do not enable `refresh_content` in a deployment while R-01/R-02 in
-  `RELEASE_230_INDEPENDENT_RISK_REVIEW.md` are open.
+- `refresh_content` is page-scoped and orphan-only in both claim modes since
+  WP-REL230-RC2. A refresh of a page linked to more than one source is refused
+  by design; do not work around that refusal by changing the data model.
 
 ## 1. Prerequisites
 
@@ -119,15 +120,18 @@ go test -tags=integration ./pkg/database -run '^TestPostgresSourceCrawl(Attempt|
 go test -tags=integration ./pkg/agent -run '^TestPostgresGoalAsync' -count=1 -v
 go test -tags=integration ./pkg/agent -run '^TestPostgresFullProposalApprovalSchedulerClaimAndObservation$' -count=1 -v
 go test -tags=integration ./pkg/crawler -run '^TestPostgresFencedRefresh' -count=1 -v
-go test -tags=integration ./pkg/crawler -run '^TestPostgresSharedObjectTriggerRaceCharacterization$' -count=1 -v
-go test -tags=integration ./pkg/crawler -run '^TestPostgresLegacyRefreshSharedObjectHazardReproducer$' -count=1 -v
+go test -tags=integration ./pkg/crawler -run '^TestPostgresSharedObjectTrigger' -count=1 -v
+go test -tags=integration ./pkg/crawler -run '^TestPostgresLegacyRefresh' -count=1 -v
+go test -tags=integration ./pkg/crawler -run '^TestPostgresRefreshAndVacuumRemainConsistent$' -count=1 -v
 go test -tags=integration ./pkg/crawler -run '^TestPostgresKeyword' -count=1 -v
+go test -tags=integration ./services/events -run '^TestPostgresEventJanitor' -count=1 -v
 go test -p 1 -tags=integration ./pkg/database/... ./pkg/crawler/... ./pkg/agent/... ./services/api/... -count=1 -timeout 40m
 ```
 
-Expected: every package passes. The two characterization tests pass, which
-means R-01 and R-02 are still present. **If they start failing, a schema change
-landed; update the characterization tests and this runbook deliberately.**
+Expected: every package passes. The shared-object and legacy refresh tests are
+now **positive regressions**: they assert that a concurrent reference and a
+shared object survive. If they fail, a regression has been introduced; do not
+weaken them.
 
 ## 5. Disposable Docker stack with a real browser
 
@@ -204,7 +208,7 @@ Run these in order, asserting database state rather than logs.
 | ID | Scenario | Assertion |
 | --- | --- | --- |
 | S-01 | Legacy crawl of `http://rel230-fixture:8000/index.html` with `refresh_content` off | source `completed`; `SourceSearchIndex` link exists; `WebObjects` row exists; `crawl_completed` event exists when the flag is on; no `SourceCrawlClaims` row |
-| S-02 | Legacy crawl of `shared.html`, then index the same content from a second page, then `refresh_content` on the first page | reproduces R-02: the shared object and the second page's link are gone |
+| S-02 | Legacy crawl of `shared.html`, then index the same content from a second page, then `refresh_content` on the first page | the second page keeps its link, object and attributes; only the refreshed page's link is replaced |
 | S-03 | Switch mode to `fenced`, crawl the fixture | claim row + attempt row exist; attempt `completed`; source status per the unbound rule; single page object |
 | S-04 | Fenced crawl of the same page after changing the fixture body, `refresh_content` on | one link, new hash, old object removed |
 | S-05 | Fenced refresh with an injected `BEFORE DELETE ON WebObjects` failure | attempt `failed`; old link, object and content intact |
@@ -267,8 +271,7 @@ The gate is green only when:
 - the migration rehearsal completes and the restored database matches;
 - the Docker stack reaches readiness with the published VDI image;
 - scenarios S-01, S-03, S-04, S-05, S-06, S-07, S-08, S-09 and S-10 pass;
-- S-02 reproduces R-02, which is a known, documented defect rather than a
-  silent regression;
+- S-02 shows the shared object and the other page's link preserved (RC2-B);
 - `MCPMutationDispatchAttempts` is 0 and no resume activity exists;
 - the hosted CI state for the exact candidate commit is recorded, or explicitly
   marked unverified.

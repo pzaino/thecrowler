@@ -946,6 +946,94 @@ LANGUAGE plpgsql;
 
 GRANT EXECUTE ON FUNCTION update_sources(INTEGER,VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR) TO :CROWLER_DB_USER;
 
+--
+-- Shared-artifact orphan cleanup (WP-REL230-RC2 / RC2-A)
+--
+-- A database upgraded from 1.16 keeps whatever version of
+-- handle_shared_entity_deletion() it already had, because 1.17 previously only
+-- defined it in the fresh-install script. Re-define it here, and create the
+-- triggers if they are missing, so an upgraded database converges with a fresh
+-- 1.17 install. The body locks the parent artifact row before counting links;
+-- see postgresql-setup.pgsql for the concurrency rationale.
+--
+CREATE OR REPLACE FUNCTION handle_shared_entity_deletion()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF TG_TABLE_NAME = 'metatagsindex' THEN
+        PERFORM 1 FROM MetaTags WHERE metatag_id = OLD.metatag_id FOR UPDATE;
+        IF FOUND THEN
+            IF (SELECT COUNT(*) FROM MetaTagsIndex WHERE metatag_id = OLD.metatag_id) = 0 THEN
+                DELETE FROM MetaTags WHERE metatag_id = OLD.metatag_id;
+            END IF;
+        END IF;
+    ELSIF TG_TABLE_NAME = 'webobjectsindex' THEN
+        PERFORM 1 FROM WebObjects WHERE object_id = OLD.object_id FOR UPDATE;
+        IF FOUND THEN
+            IF (SELECT COUNT(*) FROM WebObjectsIndex WHERE object_id = OLD.object_id) = 0 THEN
+                DELETE FROM WebObjects WHERE object_id = OLD.object_id;
+            END IF;
+        END IF;
+    ELSIF TG_TABLE_NAME = 'keywordindex' THEN
+        PERFORM 1 FROM Keywords WHERE keyword_id = OLD.keyword_id FOR UPDATE;
+        IF FOUND THEN
+            IF (SELECT COUNT(*) FROM KeywordIndex WHERE keyword_id = OLD.keyword_id) = 0 THEN
+                DELETE FROM Keywords WHERE keyword_id = OLD.keyword_id;
+            END IF;
+        END IF;
+    ELSIF TG_TABLE_NAME = 'netinfoindex' THEN
+        PERFORM 1 FROM NetInfo WHERE netinfo_id = OLD.netinfo_id FOR UPDATE;
+        IF FOUND THEN
+            IF (SELECT COUNT(*) FROM NetInfoIndex WHERE netinfo_id = OLD.netinfo_id) = 0 THEN
+                DELETE FROM NetInfo WHERE netinfo_id = OLD.netinfo_id;
+            END IF;
+        END IF;
+    ELSIF TG_TABLE_NAME = 'httpinfoindex' THEN
+        PERFORM 1 FROM HTTPInfo WHERE httpinfo_id = OLD.httpinfo_id FOR UPDATE;
+        IF FOUND THEN
+            IF (SELECT COUNT(*) FROM HTTPInfoIndex WHERE httpinfo_id = OLD.httpinfo_id) = 0 THEN
+                DELETE FROM HTTPInfo WHERE httpinfo_id = OLD.httpinfo_id;
+            END IF;
+        END IF;
+    END IF;
+    RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_after_delete_metatagsindex') THEN
+        CREATE TRIGGER trg_after_delete_metatagsindex
+        AFTER DELETE ON MetaTagsIndex
+        FOR EACH ROW
+        EXECUTE FUNCTION handle_shared_entity_deletion();
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_after_delete_webobjectsindex') THEN
+        CREATE TRIGGER trg_after_delete_webobjectsindex
+        AFTER DELETE ON WebObjectsIndex
+        FOR EACH ROW
+        EXECUTE FUNCTION handle_shared_entity_deletion();
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_after_delete_keywordindex') THEN
+        CREATE TRIGGER trg_after_delete_keywordindex
+        AFTER DELETE ON KeywordIndex
+        FOR EACH ROW
+        EXECUTE FUNCTION handle_shared_entity_deletion();
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_after_delete_netinfoindex') THEN
+        CREATE TRIGGER trg_after_delete_netinfoindex
+        AFTER DELETE ON NetInfoIndex
+        FOR EACH ROW
+        EXECUTE FUNCTION handle_shared_entity_deletion();
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_after_delete_httpinfoindex') THEN
+        CREATE TRIGGER trg_after_delete_httpinfoindex
+        AFTER DELETE ON HTTPInfoIndex
+        FOR EACH ROW
+        EXECUTE FUNCTION handle_shared_entity_deletion();
+    END IF;
+END
+$$;
+
 UPDATE DBSchemaVersion SET is_current=FALSE;
 INSERT INTO DBSchemaVersion(version,description,is_current)
 VALUES ('1.17','Durable crawl approval persistence',TRUE)

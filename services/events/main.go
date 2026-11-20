@@ -1855,16 +1855,58 @@ func processEvent(event cdb.Event) {
 		}
 	}
 
-	// Remove the event if needed
-	removalPolicy := strings.ToLower(strings.TrimSpace(config.Events.EventRemoval))
-	if removalPolicy == "" {
+	// Remove the event if needed. The decision is a pure function so the
+	// documented policy can be tested deterministically; see
+	// eventRemovalAction and services/events/event_retention_test.go.
+	switch eventRemovalAction(config.Events.EventRemoval, processingSuccess) {
+	case eventRemovalExpire:
 		expireEvent(event.ID)
-	} else if removalPolicy == cmn.AlwaysStr {
+	case eventRemovalDelete:
 		removeHandledEvent(event.ID)
-	} else if (removalPolicy == "on_success") && processingSuccess {
-		removeHandledEvent(event.ID)
-	} else if (removalPolicy == "on_failure") && !processingSuccess {
-		removeHandledEvent(event.ID)
+	}
+}
+
+// eventRemovalOutcome is the closed outcome of the consumer acknowledgement
+// policy in events.automatic_events_removal.
+type eventRemovalOutcome int
+
+const (
+	// eventRemovalKeep leaves the event row untouched. It is the outcome of the
+	// explicit "never" policy and of any unrecognised value.
+	eventRemovalKeep eventRemovalOutcome = iota
+	// eventRemovalExpire marks the row processed by moving expires_at forward,
+	// which is what the empty policy (the documented default) does.
+	eventRemovalExpire
+	// eventRemovalDelete removes the handled row immediately.
+	eventRemovalDelete
+)
+
+// eventRemovalAction maps the configured acknowledgement policy and the
+// processing outcome to the action the consumer takes on the event row.
+//
+// The consumer policy is independent of the janitor: every event is also
+// created with a finite expires_at, and the janitor deletes rows once that
+// timestamp has passed. "never" therefore means "the consumer never removes or
+// expires the row", not "the row is permanent".
+func eventRemovalAction(policy string, processingSuccess bool) eventRemovalOutcome {
+	switch strings.ToLower(strings.TrimSpace(policy)) {
+	case "":
+		return eventRemovalExpire
+	case cmn.AlwaysStr:
+		return eventRemovalDelete
+	case "on_success":
+		if processingSuccess {
+			return eventRemovalDelete
+		}
+		return eventRemovalKeep
+	case "on_failure":
+		if !processingSuccess {
+			return eventRemovalDelete
+		}
+		return eventRemovalKeep
+	default:
+		// "never" and any unrecognised value keep the row for the janitor.
+		return eventRemovalKeep
 	}
 }
 

@@ -33,6 +33,15 @@ RUN apk update && apk add ca-certificates && rm -rf /var/cache/apk/*
 RUN apk add --no-cache bash
 RUN apk add --no-cache gcc musl-dev
 
+# Go module source for the builder stage.
+#
+# Defaults to the public proxy, so a normal build is unchanged. A deployment or
+# CI job whose Docker network cannot reach the public proxy may pass
+# --build-arg GOPROXY=<internal proxy or file:// cache>. Checksum verification
+# against go.sum is never disabled, and neither is GOSUMDB.
+ARG GOPROXY=https://proxy.golang.org,direct
+ENV GOPROXY=${GOPROXY}
+
 WORKDIR /app
 
 COPY ./cmd ./cmd

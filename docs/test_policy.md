@@ -407,11 +407,16 @@ connection.
 - The schema version must remain `1.17` and the writer generation must remain
   `verified-ownership-v1.17` after every deployment and rollback step.
 
-## Fenced refresh tests (WP-05B3C3B2F1)
+## Refresh-content tests (WP-05B3C3B2F1, unified by WP-REL230-RC2)
 
-Atomic fenced `refresh_content` must prove, on both SQLite (portable link and
-orphan logic) and a disposable PostgreSQL 17 database (transaction, lock and
-trigger behaviour), that:
+`refresh_content` has one implementation for both claim modes: the legacy path
+and the fenced path share the page lock, the cross-source refusal, the
+page-scoped link replacement and the orphan-only object deletion, and the whole
+replacement runs inside the main indexing transaction.
+
+Both modes must prove, on SQLite (portable link and orphan logic) and a
+disposable PostgreSQL 17 database (transaction, lock and trigger behaviour),
+that:
 
 - the page's `WebObjectsIndex` links are replaced and the replacement object is
   kept;
@@ -420,11 +425,10 @@ trigger behaviour), that:
 - a failure after link deletion but before commit restores the old links,
   object and attributes, including a failure injected in a later batching
   iteration;
-- a page linked to another source is refused with zero writes;
+- a page linked to another source is refused with zero writes, in both modes;
 - a new page performs no cleanup;
-- an expired/superseded claim cannot commit a replacement;
-- legacy `refresh_content` behaviour and fenced `null:` quarantine are
-  unchanged.
+- an expired/superseded fenced claim cannot commit a replacement;
+- fenced `null:` quarantine is unchanged.
 
 The bounded batching loop (`fencedRefreshObjectBatch`, 128 rows) must be
 exercised with more than one batch on both backends, and the PostgreSQL suite
@@ -440,29 +444,37 @@ PostgreSQL lock behaviour is part of the contract, not an optional extra:
   reference and then preserve the object;
 - two fenced refreshes plus one ordinary indexer sharing a content hash must
   complete without deadlock or lock timeout, and every page must keep exactly
-  one link.
+  one link;
+- a concurrent refresh and `VacuumSource` must leave the database consistent:
+  the object exists exactly when at least one link references it.
 
-Two pre-existing behaviours must be asserted explicitly so they cannot be lost
-by accident:
+Two schema-level behaviours must be asserted explicitly:
 
 - `TestPostgresFencedRefreshOrphanCleanupTriggerCharacterization` records that
   `trg_after_delete_webobjectsindex` performs the orphan deletion on PostgreSQL
   and that SQLite has no equivalent trigger.
-- `TestPostgresSharedObjectTriggerRaceCharacterization` records the pre-existing
-  `handle_shared_entity_deletion()` race in which an uncommitted concurrent
-  reference is invisible to the trigger's `COUNT(*)`, the `DELETE` proceeds
-  after it commits, and `ON DELETE CASCADE` silently removes the other page's
-  committed link. This is a known schema-level defect. A fix requires a schema
-  change and must update that characterization test deliberately rather than
-  deleting it.
+- `TestPostgresSharedEntityDeletionConcurrencyContract` (static) pins that
+  `handle_shared_entity_deletion()` locks every parent artifact row `FOR UPDATE`
+  before counting links, that fresh installs and the v1.17 migration ship the
+  identical body, and that SQLite keeps its documented omission.
 
-`TestPostgresLegacyRefreshSharedObjectHazardReproducer` records the legacy
-`deleteWebObjects` shared-object data-loss hazard. It is a characterization test:
-a future approved fix to the legacy path must update the expectation.
+The RC2-A concurrency regression is
+`TestPostgresSharedObjectTriggerPreservesConcurrentReference`: an uncommitted
+concurrent link must make the trigger wait, and after the linker commits the
+object, its attributes and the other page's link must all survive. It is
+complemented by `TestPostgresSharedObjectTriggerStress` (25 iterations) and
+`TestPostgresSharedObjectTriggerDeletesZeroReferenceObject`.
 
-`TestPostgresFencedRefresh*` and the two shared-object characterization tests are
-mandatory CI gates in `.github/workflows/postgresql-integration.yml`; the steps
-fail on `--- SKIP`.
+The RC2-B legacy regressions are
+`TestPostgresLegacyRefreshPreservesSharedObject`,
+`TestPostgresLegacyRefreshRefusesCrossSourcePage`,
+`TestPostgresLegacyRefreshRollbackRestoresOldGeneration` and
+`TestPostgresLegacyRefreshReplacesPageGeneration`. Do not reintroduce a
+characterization test that asserts shared-object loss; that behaviour is fixed.
+
+`TestPostgresFencedRefresh*`, the shared-object trigger tests and the legacy
+refresh tests are mandatory CI gates in
+`.github/workflows/postgresql-integration.yml`; the steps fail on `--- SKIP`.
 
 ## Keyword suppression window tests
 

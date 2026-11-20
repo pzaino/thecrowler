@@ -1150,18 +1150,6 @@ func indexPage(ctx *ProcessContext, url string, pageInfo *PageInfo) (uint64, err
 	return indexPageContext(ctx.crawlContext(), ctx, url, pageInfo)
 }
 
-func getIndexIDForURL(db *cdb.Handler, url string) (uint64, error) {
-	var indexID uint64
-	err := (*db).QueryRow(`SELECT index_id FROM SearchIndex WHERE page_url = $1`, url).Scan(&indexID)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return 0, nil
-		}
-		return 0, err
-	}
-	return indexID, nil
-}
-
 func indexPageContext(
 	waitCtx context.Context,
 	ctx *ProcessContext,
@@ -1218,48 +1206,19 @@ func indexPageContext(
 
 	var indexID uint64
 
-	// Refresh existing WebObjects when configured.
+	// Refresh existing content when configured.
 	//
-	// Legacy sources keep the historical behaviour: a separate bounded
-	// transaction deletes the page's WebObjects before the replacement page
-	// transaction. A fenced source instead performs the whole replacement
-	// inside the validated main transaction below, so a failure or stale fence
-	// cannot leave the old content deleted. Fenced refresh also never deletes
-	// an object another page still references, and refuses a page linked to
-	// another source.
-	fencedRefresh := ctx.config.Crawler.RefreshContent && ctx.sourceCrawl != nil
-
-	if ctx.config.Crawler.RefreshContent && !fencedRefresh {
-		indexID, err = getIndexIDForURL(ctx.db, url)
-		if err != nil {
-			cmn.DebugMsg(
-				cmn.DbgLvlError,
-				"checking existing indexID for URL %s: %v",
-				url,
-				err,
-			)
-			return 0, err
-		}
-
-		if indexID != 0 {
-			if err = ctx.checkCrawlFence(); err != nil {
-				return 0, err
-			}
-			if err = deleteWebObjects(
-				waitCtx,
-				ctx.db,
-				indexID,
-			); err != nil {
-				cmn.DebugMsg(
-					cmn.DbgLvlError,
-					"deleting existing WebObjects for indexID %d: %v",
-					indexID,
-					err,
-				)
-				return 0, err
-			}
-		}
-	}
+	// Both refresh paths now share one implementation: the page row is locked,
+	// a page linked to more than one source is refused, only this page's object
+	// links are replaced, and an object row is deleted only when no page
+	// references it. The whole replacement runs inside the main indexing
+	// transaction, so a failure or a lost fence cannot leave the old generation
+	// deleted.
+	//
+	// This supersedes the historical legacy behaviour, which deleted the page's
+	// objects in a separate transaction and removed globally hash-shared object
+	// rows that other pages still referenced (WP-REL230-RC2 / RC2-B).
+	refreshContent := ctx.config.Crawler.RefreshContent
 
 	var sourceID uint64
 	if ctx.source != nil {
@@ -1287,13 +1246,13 @@ func indexPageContext(
 		return 0, err
 	}
 
-	// Fenced refresh keeps the page lock, the cross-source decision and every
-	// destructive write inside this transaction so a rollback restores the old
-	// generation completely.
+	// Refresh keeps the page lock, the cross-source decision and every
+	// destructive write inside this transaction, for both the legacy and the
+	// fenced path, so a rollback restores the old generation completely.
 	dbms := db.DBMS()
 	var refreshIndexID uint64
 	var refreshPageExists bool
-	if fencedRefresh {
+	if refreshContent {
 		if err := acquireFencedRefreshSerializationTx(txCtx, tx, dbms); err != nil {
 			_ = tx.Rollback()
 			return 0, err
@@ -1382,11 +1341,11 @@ func indexPageContext(
 	// written, then delete only objects that no page references any more. The
 	// old generation is restored by rollback if anything below fails or the
 	// fence is lost before commit.
-	if fencedRefresh {
+	if refreshContent {
 		if refreshPageExists && refreshIndexID != indexID {
 			rollbackTransaction(tx)
 			return 0, fmt.Errorf(
-				"fenced refresh page identity mismatch: locked=%d upserted=%d",
+				"refresh page identity mismatch: locked=%d upserted=%d",
 				refreshIndexID, indexID)
 		}
 		if refreshPageExists {
@@ -2083,86 +2042,6 @@ func strLeft(s string, x int) string {
 		return s
 	}
 	return string(runes[:x])
-}
-
-const webObjectCleanupTimeout = 15 * time.Minute
-
-// deleteWebObjects removes all WebObjects currently associated with indexID.
-//
-// Refresh-content cleanup deliberately runs in its own transaction so that
-// potentially expensive WebObject/ObjectAttributes cleanup does not consume
-// the indexPage transaction's database.transaction_timeout budget.
-//
-// The transaction is still bounded to prevent a pathological cleanup from
-// remaining open indefinitely and holding an MVCC snapshot.
-//
-// Any error is returned to the caller. The caller must not continue with the
-// replacement WebObject when cleanup fails, otherwise old and new generations
-// could coexist for the same page.
-func deleteWebObjects(
-	parent context.Context,
-	db *cdb.Handler,
-	indexID uint64,
-) (retErr error) {
-	if db == nil || *db == nil {
-		return errors.New("database handler is nil")
-	}
-	if indexID == 0 {
-		return errors.New("index ID is required")
-	}
-	if parent == nil {
-		parent = context.Background()
-	}
-
-	cleanupCtx, cancelCleanup := context.WithTimeout(
-		parent,
-		webObjectCleanupTimeout,
-	)
-	defer cancelCleanup()
-
-	tx, err := (*db).BeginTx(cleanupCtx, nil)
-	if err != nil {
-		return cdb.NormalizeTransactionError(cleanupCtx, err)
-	}
-
-	started := time.Now()
-	committed := false
-
-	defer func() {
-		if !committed {
-			_ = tx.Rollback()
-		}
-
-		retErr = cdb.NormalizeTransactionError(cleanupCtx, retErr)
-		cdb.LogTransactionOutcome(
-			"deleteWebObjects",
-			started,
-			retErr,
-		)
-	}()
-
-	_, err = tx.ExecContext(
-		cleanupCtx,
-		`
-			DELETE FROM WebObjects
-			WHERE object_id IN (
-				SELECT object_id
-				FROM WebObjectsIndex
-				WHERE index_id = $1
-			)
-		`,
-		indexID,
-	)
-	if err != nil {
-		return err
-	}
-
-	if err = tx.Commit(); err != nil {
-		return err
-	}
-
-	committed = true
-	return nil
 }
 
 // insertOrUpdateWebObjects inserts or updates a web object entry in the database.

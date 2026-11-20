@@ -717,3 +717,86 @@ func TestMySQLV117MigrationUsesClientDelimiterAndRepeatableProcedures(t *testing
 		}
 	}
 }
+
+// TestPostgresSharedEntityDeletionConcurrencyContract pins the RC2-A fix.
+//
+// handle_shared_entity_deletion() runs as an AFTER DELETE FOR EACH ROW trigger
+// on each link table. It must lock the parent artifact row FOR UPDATE before it
+// counts remaining links, otherwise a concurrent uncommitted link is invisible
+// to the count, the delete waits and then proceeds, and ON DELETE CASCADE
+// silently removes the other page's link.
+//
+// Fresh installs and the v1.16 -> v1.17 upgrade must ship the identical body,
+// and every artifact family must use the locked form. SQLite omits the stored
+// function by design and must not grow a divergent implementation.
+func TestPostgresSharedEntityDeletionConcurrencyContract(t *testing.T) {
+	t.Parallel()
+
+	const fnName = "handle_shared_entity_deletion()"
+	extractBody := func(s string) string {
+		start := strings.Index(s, "CREATE OR REPLACE FUNCTION "+fnName)
+		if start < 0 {
+			return ""
+		}
+		end := strings.Index(s[start:], "$$ LANGUAGE plpgsql;")
+		if end < 0 {
+			return ""
+		}
+		return s[start : start+end]
+	}
+
+	setupBytes, err := os.ReadFile("postgresql-setup.pgsql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	migrationBytes, err := os.ReadFile("db_migrations/postgresql-migration-v1.17.pgsql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	setupBody := extractBody(string(setupBytes))
+	migrationBody := extractBody(string(migrationBytes))
+	if setupBody == "" {
+		t.Fatal("postgresql-setup.pgsql missing handle_shared_entity_deletion()")
+	}
+	if migrationBody == "" {
+		t.Fatal("postgresql-migration-v1.17.pgsql missing handle_shared_entity_deletion()")
+	}
+	if setupBody != migrationBody {
+		t.Fatal("handle_shared_entity_deletion() body differs between setup and v1.17 migration (fresh installs must equal upgrades)")
+	}
+
+	// Each artifact family must lock the parent before counting. The pairs are
+	// (parent table, link table) so a missing lock cannot hide behind a similar
+	// fragment in another branch.
+	for _, pair := range [][2]string{
+		{"MetaTags", "MetaTagsIndex"},
+		{"WebObjects", "WebObjectsIndex"},
+		{"Keywords", "KeywordIndex"},
+		{"NetInfo", "NetInfoIndex"},
+		{"HTTPInfo", "HTTPInfoIndex"},
+	} {
+		parent, link := pair[0], pair[1]
+		lock := "FROM " + parent + " WHERE "
+		if !strings.Contains(setupBody, lock) {
+			t.Errorf("body does not lock %s before counting %s links", parent, link)
+		}
+		if !strings.Contains(setupBody, "FOR UPDATE") {
+			t.Errorf("body has no FOR UPDATE for %s", parent)
+		}
+		if !strings.Contains(setupBody, "FROM "+link+" WHERE ") {
+			t.Errorf("body does not re-count %s links", link)
+		}
+	}
+
+	sqliteBytes, err := os.ReadFile("sqlite-setup.sqlite3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqliteStr := string(sqliteBytes)
+	if !strings.Contains(sqliteStr, "-- handle_shared_entity_deletion(): PostgreSQL stored function omitted") {
+		t.Error("sqlite-setup.sqlite3 must document that handle_shared_entity_deletion() is PostgreSQL-only")
+	}
+	if strings.Contains(sqliteStr, "CREATE OR REPLACE FUNCTION handle_shared_entity_deletion") {
+		t.Error("sqlite-setup.sqlite3 must not define a PostgreSQL stored function")
+	}
+}

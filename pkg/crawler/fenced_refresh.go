@@ -14,31 +14,37 @@
 
 package crawler
 
-// Atomic fenced refresh_content support (WP-05B3C3B2F1 / B3 Decision 2).
+// Refresh-content support for both claim modes (WP-05B3C3B2F1 / B3 Decision 2,
+// unified by WP-REL230-RC2 / RC2-B).
 //
-// The legacy refresh path deletes a page's WebObjects in an independent
-// transaction before the replacement page transaction. That is not safe for a
-// fenced crawl: a failure or stale fence between the delete and the replacement
-// would leave the old content deleted, and the delete removes globally
-// hash-deduplicated object rows that another page may still reference.
+// The historical legacy path deleted a page's WebObjects in an independent
+// transaction before the replacement page transaction. That was unsafe for two
+// reasons: a failure or stale fence between the delete and the replacement
+// would leave the old content deleted, and the delete removed globally
+// hash-deduplicated object rows that another page may still reference. The
+// fenced path replaced it with the algorithm below; RC2-B moved the legacy path
+// onto the same implementation, so both modes now behave identically apart from
+// the fence itself.
 //
-// The fenced path instead performs the whole replacement inside the already
-// validated indexing transaction:
+// The whole replacement runs inside the caller's already validated indexing
+// transaction:
 //
-//  1. ValidateTx (source row) serializes the attempt with claim allocation,
+//  1. ValidateTx (fenced only) serializes the attempt with claim allocation,
 //     heartbeat, terminal reporting and supersession.
 //  2. The page row is locked, so a concurrent source cannot link the same page
 //     between the ownership check and the replacement.
 //  3. A page linked to more than one source is refused: WebObjectsIndex has no
-//     source dimension, so a single-source fence cannot authorize changing the
-//     associations another source sees.
+//     source dimension, so a single-source refresh cannot authorize changing
+//     the associations another source sees.
 //  4. Only page-scoped WebObjectsIndex rows are removed.
 //  5. A WebObjects row is deleted only when no WebObjectsIndex row (for any
-//     page) still references it. The statement-level cleanup trigger then only
-//     removes attributes/memberships/correlations of genuinely orphaned
-//     objects.
+//     page) still references it. On PostgreSQL the pre-existing
+//     trg_after_delete_webobjectsindex trigger usually performs that orphan
+//     delete first; on SQLite this code is the only deleter.
 //
-// Legacy refresh behaviour is intentionally unchanged.
+// The historical "fenced" prefix on the helper names is retained deliberately:
+// it keeps this release patch focused on behaviour, and every helper is used by
+// both paths now. See docs/crowler-agents/reviews/RELEASE_230_RC2_IMPLEMENTATION.md.
 
 import (
 	"context"
@@ -51,13 +57,13 @@ import (
 
 var (
 	// errFencedRefreshCrossSourcePage is returned when the page being refreshed
-	// is also linked to another source. A source-scoped fence cannot authorize
+	// is also linked to another source. A source-scoped refresh cannot authorize
 	// a destructive change to a page another source depends on.
 	errFencedRefreshCrossSourcePage = errors.New(
-		"fenced refresh refused: page is shared with another source")
+		"content refresh refused: page is shared with another source")
 
 	errFencedRefreshTransactionRequired = errors.New(
-		"fenced refresh requires an active transaction")
+		"content refresh requires an active transaction")
 )
 
 // fencedRefreshObjectBatch bounds the number of page-scoped object links
