@@ -1,5 +1,13 @@
 # Release 2.3.0 RC2 go / no-go
 
+> **Verified by RC3 (2026-11-20).** The RC2 code was frozen at
+> `ef28d7672fe7134f4d277f673fe28a9d2f4424a3`, which passed all eight hosted
+> checks including the new shared-object integrity and event-retention gates,
+> and was re-validated on the repository's own shipping images with a real
+> browser. See [`RELEASE_230_RC3_CI_AND_RELEASE_GATE.md`](RELEASE_230_RC3_CI_AND_RELEASE_GATE.md)
+> and [`RELEASE_230_RC3_TEST_REPORT.md`](RELEASE_230_RC3_TEST_REPORT.md). The
+> text below is retained as the RC2 record.
+
 Work package: `WP-REL230-RC2`
 Baseline: `e6a41d317835356b1ed7ebd3fd31c8aa781f272c` plus the RC2 patch
 Decision owner: the repository maintainer

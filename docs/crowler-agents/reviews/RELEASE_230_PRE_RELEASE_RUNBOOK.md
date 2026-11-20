@@ -1,5 +1,23 @@
 # Release 2.3.0 pre-release runbook
 
+> **RC3 note (2026-11-20).** The verified release candidate is
+> `ef28d7672fe7134f4d277f673fe28a9d2f4424a3`, which is hosted-CI green. The
+> scenario identifiers and results that were actually executed for the release
+> gate are recorded in [`RELEASE_230_RC3_TEST_REPORT.md`](RELEASE_230_RC3_TEST_REPORT.md);
+> where this runbook's older S-numbering differs, the RC3 report is
+> authoritative.
+>
+> Two practical corrections found during RC3:
+>
+> 1. The HTTP fixture used for refresh scenarios **must** send
+>    `Cache-Control: no-store`. Without it the browser can re-serve a cached
+>    body and a "refresh" becomes a no-op, which silently invalidates the
+>    scenario.
+> 2. A legacy (non-fenced) page-indexing failure can leave either
+>    `status='error'` or `status='completed'` depending on where the error
+>    surfaces, but `last_error` is populated in both cases. Assert on
+>    `last_error` and on the stored page/object rows, not on `status` alone.
+
 This is the repeatable sequence used by `WP-REL230-RC1` and intended to be
 re-run before any tag. It assumes the 2.3.0 scope described in
 `RELEASE_230_SCOPE_AND_GAP_MATRIX.md` has been accepted by the maintainer.
