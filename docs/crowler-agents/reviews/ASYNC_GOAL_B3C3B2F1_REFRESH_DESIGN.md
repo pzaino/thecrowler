@@ -2,31 +2,42 @@
 
 ## Status
 
-**APPROVED AND IMPLEMENTED (WP-05B3C3B2F1 / B3 Decision 2, 2026-11-18).**
+**APPROVED AND IMPLEMENTED (WP-05B3C3B2F1 / B3 Decision 2, 2026-11-18).
+RELEASE-GATE RE-REVIEWED (WP-REL230-RC1, 2026-11-20): one pre-existing
+PostgreSQL concurrency defect found, see section 10.**
 
 The maintainer recorded Decision 2 approval in
 [`ASYNC_GOAL_MAINTAINER_DECISIONS.md`](ASYNC_GOAL_MAINTAINER_DECISIONS.md)
-(Decision 1m). This document began as the design review that blocked the naive
-"move the delete into the main transaction" approach; section 5 now records the
-implemented transaction, and sections 4 and 6 remain the evidence and risk
-record.
+(Decision 1m).
+
+This document has two halves and they are deliberately labelled:
+
+- **Sections 1-9 are the original pre-approval design record**, written on
+  2026-11-18 while Decision 2 was still blocked. They explain why the naive
+  "move the delete into the main transaction" approach was unsafe, and they
+  still describe the package as refusing fenced refresh. That was true when they
+  were written and is retained unchanged so the evidence chain stays auditable.
+- **Section 10 is the implemented result**, re-verified on 2026-11-20 against
+  `9e719acce04d3606c46821e33b4f8dc23baa6b36`. Where sections 1-9 conflict with
+  section 10, section 10 describes the shipped behaviour.
 
 The implementation keeps legacy refresh unchanged, refuses a page shared with
 another source, replaces only page-scoped object links, deletes only orphaned
 objects, and runs every write inside the already validated indexing
 transaction. Schema stays 1.17.
 
-| Item | Value |
-| --- | --- |
-| Repository | `pzaino/thecrowler` |
-| Branch | `develop` |
-| Reviewed HEAD | `6a682ea6091fdb0a43b76e57616a2bc8a2c2edaa` |
-| Predecessor baseline | `f0f4fc97da6e2e5975b4cf26e5b8b4610324d4e2` (B2R) |
-| Release | `v2.3.0` |
-| Schema | `1.17` |
-| Writer generation | `verified-ownership-v1.17` |
-| Fenced refresh | refused (unchanged) |
-| Default claim mode | `legacy` (unchanged) |
+| Item | Original design (2026-11-18) | Implemented result (2026-11-20) |
+| --- | --- | --- |
+| Repository | `pzaino/thecrowler` | `pzaino/thecrowler` |
+| Branch | `develop` | `develop` |
+| Reviewed HEAD | `6a682ea6091fdb0a43b76e57616a2bc8a2c2edaa` | `9e719acce04d3606c46821e33b4f8dc23baa6b36` |
+| Predecessor baseline | `f0f4fc97da6e2e5975b4cf26e5b8b4610324d4e2` (B2R) | `be5572de9064c4e4020d5b8f3adf478de4952aad` |
+| Release | `v2.3.0` | `v2.3.0` |
+| Schema | `1.17` | `1.17` |
+| Writer generation | `verified-ownership-v1.17` | `verified-ownership-v1.17` |
+| Fenced refresh | refused (unchanged) | implemented; only reachable in operator-selected `fenced` mode |
+| Default claim mode | `legacy` (unchanged) | `legacy` (unchanged) |
+| `refresh_content` default | `false` | `false` (unchanged) |
 
 ## 1. Why this document exists
 
@@ -199,7 +210,12 @@ Additionally, a page row linked to more than one source must be **refused**:
 `WebObjectsIndex` has no source dimension, so removing the page's link set
 changes what the other source sees.
 
-## 5. Proposed transaction design (if Decision 2 is approved)
+## 5. Proposed transaction design (original design, 2026-11-18, pre-approval)
+
+> **Historical status note (added 2026-11-20).** This section is the design as
+> written before Decision 2 was approved. It says "it has not been implemented
+> or exercised"; that was true on 2026-11-18. The implemented transaction and
+> the tests that exercise it are recorded in section 10.
 
 This is the smallest design that appears sound on schema 1.17. It is a
 proposal; it has not been implemented or exercised.
@@ -298,6 +314,11 @@ must be measured on representative page sizes before activation.
 
 ### 5.7 Implemented behaviour (this work package)
 
+> **Date note.** Written on 2026-11-18 as the "implemented" subsection of a
+> document whose surrounding sections had not yet been updated. The authoritative
+> implemented description, including the release-gate re-verification and the
+> PostgreSQL trigger interaction, is section 10.
+
 `pkg/crawler/fenced_refresh.go` implements the design:
 
 1. `acquireFencedRefreshSerializationTx` takes a transaction-scoped PostgreSQL
@@ -334,6 +355,14 @@ replacement.
 
 ## 6. Risk matrix
 
+> **Status note (2026-11-20).** This matrix was written before approval. The
+> "Mitigation in the proposal" column describes the design, and the "Residual"
+> column assumed the design would be sufficient. Release-gate re-verification
+> showed that the last row of the shared-object risk is **not** fully closed on
+> PostgreSQL, because a pre-existing trigger performs its own unlocked
+> check-then-delete before the fenced helper runs. See section 10.3 and
+> `RELEASE_230_GO_NO_GO.md` B-01.
+
 | Risk | Level | Mitigation in the proposal | Residual |
 | --- | --- | --- | --- |
 | Shared `WebObjects` deleted for another page | **Blocker today** | orphan-only delete under object lock | none if implemented and tested |
@@ -347,7 +376,12 @@ replacement.
 | SQLite portable path parity | Low | SQLite fenced execution is test-only | must still be covered by unit tests |
 | MySQL | Low | legacy-only, unaffected | no fenced refresh |
 
-## 7. Why fenced refresh stays refused in this package
+## 7. Why fenced refresh stayed refused in this package (historical, superseded)
+
+> **Superseded on 2026-11-18 by Decision 1m and implemented on 2026-11-18/19.**
+> This section records the reasoning that was correct *before* approval. It is
+> retained as the audit trail for why the naive design was rejected. The current
+> behaviour is section 10.
 
 1. Decision 2 is not approved.
 2. Even with approval, the naive "move the delete into the main transaction"
@@ -361,7 +395,11 @@ replacement.
    larger redesign; enabling refresh must therefore document partial
    replacement rather than claim whole-page atomicity.
 
-## 8. Required tests before activation (not run)
+## 8. Required tests before activation (historical checklist, 2026-11-18)
+
+> **Status note (2026-11-20).** This was the pre-activation checklist. Section
+> 10.4 records which items are now covered, which are covered by the release-gate
+> suite added in WP-REL230-RC1, and which remain uncovered.
 
 Deterministic SQLite and disposable PostgreSQL 17:
 
@@ -387,7 +425,12 @@ Deterministic SQLite and disposable PostgreSQL 17:
 Real Docker/Selenium (REF-01..REF-10 in the work package) only after approval;
 none was executed here.
 
-## 9. Approval required
+## 9. Approval required (historical, satisfied 2026-11-18)
+
+> **Status note (2026-11-20).** This section was the approval gate. It was
+> satisfied by Decision 1m in
+> [`ASYNC_GOAL_MAINTAINER_DECISIONS.md`](ASYNC_GOAL_MAINTAINER_DECISIONS.md).
+> The text below is retained as the record of what was requested.
 
 No implementation may start until a tracked decision states the exact scope:
 
@@ -399,3 +442,186 @@ No implementation may start until a tracked decision states the exact scope:
 
 The decision must record approver, UTC date, work-package identifier and scope.
 A chat request or the existence of a work package is not approval.
+
+## 10. Implemented result and release-gate re-verification (2026-11-20)
+
+This section is authoritative for the shipped behaviour.
+
+### 10.1 What the code does
+
+`pkg/crawler/indexPageContext` chooses the refresh strategy per page:
+
+```text
+fencedRefresh := ctx.config.Crawler.RefreshContent && ctx.sourceCrawl != nil
+```
+
+- `RefreshContent == false` (the `config.default` value): no refresh path runs.
+- `RefreshContent == true` and no fenced handoff (legacy, and every MySQL
+  deployment): `getIndexIDForURL` + `deleteWebObjects` in their own bounded
+  transaction, unchanged from before Decision 2.
+- `RefreshContent == true` and a fenced handoff: the fenced path in
+  `pkg/crawler/fenced_refresh.go`, inside the main validated transaction.
+
+The fenced transaction body is:
+
+```text
+BEGIN
+  ValidateTx(tx)                          -- Sources row FOR UPDATE
+  pg_advisory_xact_lock(hashtext('crowler:fenced-content-refresh'))
+  SELECT index_id FROM SearchIndex
+    WHERE page_url = $1 FOR UPDATE        -- page row lock
+  if the page exists:
+      count SourceSearchIndex links for index_id excluding this source
+      if > 0 -> rollback, errFencedRefreshCrossSourcePage
+  upsert SearchIndex; insert SourceSearchIndex link
+  upsert WebObjects for the new content -> objID; insert WebObjectsIndex (I, objID)
+  replaceFencedPageObjectsTx(I, objID)    -- bounded 128-row loop
+  ValidateTx(tx)                          -- revalidation before commit
+COMMIT
+```
+
+`replaceFencedPageObjectsTx` repeatedly selects up to `fencedRefreshObjectBatch`
+(128) page-scoped object IDs in ascending `object_id` order, excludes the
+replacement object, deletes those `WebObjectsIndex` rows, then calls
+`deleteFencedRefreshOrphanTx` for each. The orphan helper takes
+`SELECT ... FOR UPDATE` on the `WebObjects` row and deletes it only when
+`COUNT(*) FROM WebObjectsIndex WHERE object_id = $1` is zero.
+
+### 10.2 Two facts the original design did not state
+
+Both were established during the release gate and both matter operationally.
+
+**The advisory lock serialises every fenced refresh globally.** It is a single
+key (`hashtext('crowler:fenced-content-refresh')`), so two fenced refreshes on
+unrelated sources do not run concurrently: the second waits for the first's
+main transaction. Ordinary (non-fenced) indexing never takes the lock and is not
+blocked by it. The lock is acquired *after* the source row lock, so a waiting
+refresh holds its own source row while it waits. A measured 286-link refresh
+took about 0.7 s of wall time in the release-gate environment, so the serialised
+section is short, but the design is a global bottleneck by construction and must
+not be described as per-source concurrency.
+
+**PostgreSQL already deletes orphaned objects from a pre-existing trigger.**
+Schema 1.17 installs `trg_after_delete_webobjectsindex`, an `AFTER DELETE FOR
+EACH ROW` trigger on `WebObjectsIndex` that calls
+`handle_shared_entity_deletion()`. That function counts the remaining rows and
+deletes the `WebObjects` row when the count is zero. Because it fires during the
+link delete, it normally removes the object *before*
+`deleteFencedRefreshOrphanTx` runs; the explicit helper then finds no row and
+returns. SQLite has no equivalent trigger, so there the explicit helper performs
+the delete. Both backends converge on the same observable state, but the design
+must not claim the explicit helper is the deleting authority on PostgreSQL.
+
+The trigger also imposes a cost the batching loop does not avoid: it is
+`FOR EACH ROW`, so a page with N stale links performs N `COUNT(*)` statements
+even though the application loop is batched at 128.
+
+### 10.3 A pre-existing concurrency defect the fenced path inherits
+
+`handle_shared_entity_deletion()` performs a `COUNT(*)` and then a separate
+`DELETE`, under `READ COMMITTED`, without locking the `WebObjects` row first.
+A concurrent transaction that has inserted its own `WebObjectsIndex` row for the
+same object but has not committed is invisible to the count. The `DELETE` then
+waits on that transaction's foreign-key row lock and, once it commits, proceeds
+anyway. The `WebObjectsIndex.object_id` foreign key is `ON DELETE CASCADE`, so
+the other page's just-committed link disappears with no error.
+
+`TestPostgresSharedObjectTriggerRaceCharacterization`
+(`pkg/crawler/fenced_refresh_concurrency_postgres_integration_test.go`)
+reproduces this deterministically: page Y links the object inside an uncommitted
+transaction, page X deletes its link, the delete blocks, page Y commits, and the
+final state is zero object rows and zero page-Y links.
+
+The fenced helper's `FOR UPDATE` plus re-count would be safe on its own, but the
+trigger fires first, so the fenced path does not fix this. The legacy path is
+worse in a different way: it deletes the object row outright, so it destroys a
+shared object without needing a race (see section 4.2 and
+`TestPostgresLegacyRefreshSharedObjectHazardReproducer`).
+
+Closing the race requires changing the schema function (for example locking the
+parent row before the count) or retiring the trigger in favour of lock-guarded
+application logic. Both are schema changes and are outside Decision 2. The
+release gate therefore records this as an open blocker rather than shipping a
+schema change under a fenced-refresh approval. See
+[`RELEASE_230_GO_NO_GO.md`](RELEASE_230_GO_NO_GO.md).
+
+### 10.4 Test coverage actually executed
+
+Deterministic SQLite (`go test ./pkg/crawler`):
+
+| Property | Test |
+| --- | --- |
+| Page link set replaced; orphan removed; shared object kept | `TestFencedRefreshReplacesPageLinksSQLite` |
+| Replacement object never deleted | `TestFencedRefreshKeepsReplacementObjectSQLite` |
+| Rollback restores links and object | `TestFencedRefreshRollbackRestoresOldContentSQLite` |
+| Cross-source page refused, then accepted after the second link is removed | `TestFencedRefreshRefusesCrossSourcePageSQLite` |
+| Missing page performs no cleanup | `TestFencedRefreshLocksOnlyExistingPageSQLite` |
+| Shared object keeps its attributes; orphaned object loses them | `TestFencedRefreshKeepsSharedObjectAttributesSQLite` |
+| More than two batches terminate and a shared object inside the range survives | `TestFencedRefreshBatchesLargeOldGenerationSQLite` |
+| A failure in the second batch rolls the whole replacement back | `TestFencedRefreshLaterBatchFailureRollsBackSQLite` |
+| Fenced indexing errors are fatal; legacy non-critical errors are not | `TestFencedIndexingFailureClassification` |
+
+Disposable PostgreSQL 17 (`go test -tags=integration ./pkg/crawler`):
+
+| Property | Test |
+| --- | --- |
+| Single-source replacement, old orphan removed | `TestPostgresFencedRefreshAtomicReplacement` |
+| Shared object and the other page's link survive | `TestPostgresFencedRefreshPreservesSharedObject` |
+| Cross-source page refused with zero writes | `TestPostgresFencedRefreshRefusesCrossSourcePage` |
+| Injected delete failure restores the old generation | `TestPostgresFencedRefreshRollbackRestoresOldGeneration` |
+| Expired claim cannot commit a refresh | `TestPostgresFencedRefreshRejectsExpiredClaim` |
+| 286 stale links across three batches, shared object inside the range preserved, measured wall time | `TestPostgresFencedRefreshBatchesLargeOldGeneration` |
+| The page `FOR UPDATE` lock blocks a concurrent `SourceSearchIndex` insert | `TestPostgresFencedRefreshPageLockBlocksConcurrentLink` |
+| The orphan `FOR UPDATE` lock waits for an in-flight reference and then preserves the object and its attributes | `TestPostgresFencedRefreshOrphanLockWaitsForInFlightReference` |
+| Which component deletes an orphan on PostgreSQL, and that a referenced object is preserved | `TestPostgresFencedRefreshOrphanCleanupTriggerCharacterization` |
+| Two fenced refreshes plus an ordinary indexer contend on one shared object; no deadlock, every page keeps one link | `TestPostgresFencedRefreshConcurrentRefreshersAndIndexer` |
+| The pre-existing orphan trigger race, reproduced deterministically | `TestPostgresSharedObjectTriggerRaceCharacterization` |
+| The legacy shared-object data-loss hazard, reproduced deterministically | `TestPostgresLegacyRefreshSharedObjectHazardReproducer` |
+
+### 10.5 Semantics operators must understand
+
+- **Atomic means the page/object phase.** The main transaction covers the
+  `SearchIndex` upsert, the `SourceSearchIndex` link, the `WebObjects` upsert,
+  the `WebObjectsIndex` replacement and the orphan deletion. Keywords,
+  metatags, object attributes and time-series buckets are separate
+  transactions.
+- **`completed` therefore means "the page/object replacement committed and
+  every phase the code treats as fatal succeeded"**, not "the whole page is a
+  new generation". Keywords and metatags from the previous crawl are retained.
+- **`failed` after the main commit does not mean the page is unchanged.** The
+  replacement is already durable; the terminal reason reports the later phase
+  that failed.
+- **A fenced `null:` source is quarantined.** `null:` is the pipeline-testing
+  protocol described in section 10.6, not a deletion request. Legacy `null:`
+  deletion is unchanged.
+- **Unbound fenced attempts do not write source status.** Schema 1.17 stores no
+  operation principal for an unbound attempt, so the source stays `processing`
+  and becomes claimable again when the claim lease expires. This is the
+  fail-closed behaviour approved in WP-05B3C3B2V; the owner-epoch DDL that would
+  lift it is approved only as a semantic model, not implemented.
+
+### 10.6 What `null:` actually is
+
+`null:` is an intentional pipeline-testing protocol: a source URL prefixed with
+`null:` exercises the claim, queue, VDI-slot and lifecycle stages while
+explicitly skipping content collection. It is not an invalid source and it is
+not a synonym for "delete this source".
+
+What actually executes in legacy mode:
+
+| Stage | Executes? |
+| --- | --- |
+| Source claim and queue dispatch | Yes |
+| VDI slot acquisition in the worker loop | Yes (the slot is taken, then released without navigation) |
+| Browser navigation, action rules, scraping | No |
+| Page indexing, web objects, keywords, metatags | No |
+| Source row deletion by `deleteNullSources` | Yes, asynchronously by source ID |
+
+What executes in fenced mode: claim and queue dispatch only. The worker logs the
+quarantine and reports a terminal failure through the handoff. No deletion is
+performed, because a deletion queued by source ID cannot prove that the claim is
+still current, and schema 1.17 has no durable claim-time owner to prove
+continuity. This is Decision 3, deferred.
+
+Treating `null:` as "all pipeline stages execute" is wrong: the point of the
+protocol is that collection is skipped while lifecycle handling is exercised.

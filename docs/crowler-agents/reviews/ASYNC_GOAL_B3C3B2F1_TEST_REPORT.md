@@ -193,6 +193,53 @@ These were test-environment issues, not product defects:
 - The KeywordSetPersistence timing failure described above is pre-existing and
   reproduced on the base commit.
 
+## 6a. Release-gate re-verification (WP-REL230-RC1, 2026-11-20)
+
+Re-run against `9e719acce04d3606c46821e33b4f8dc23baa6b36` on a disposable
+PostgreSQL 17.12 instance with the restricted `crowler` runtime role.
+
+Added coverage (details and the full matrix are in
+[`ASYNC_GOAL_B3C3B2F1_REFRESH_DESIGN.md`](ASYNC_GOAL_B3C3B2F1_REFRESH_DESIGN.md)
+section 10.4):
+
+- `TestFencedRefreshKeepsSharedObjectAttributesSQLite`
+- `TestFencedRefreshBatchesLargeOldGenerationSQLite`
+- `TestFencedRefreshLaterBatchFailureRollsBackSQLite`
+- `TestPostgresFencedRefreshBatchesLargeOldGeneration` — 286 stale links, three
+  batches, shared object inside the range preserved; 0.7 s wall time
+- `TestPostgresFencedRefreshPageLockBlocksConcurrentLink`
+- `TestPostgresFencedRefreshOrphanLockWaitsForInFlightReference`
+- `TestPostgresFencedRefreshOrphanCleanupTriggerCharacterization`
+- `TestPostgresFencedRefreshConcurrentRefreshersAndIndexer` — two fenced
+  refreshes plus one ordinary indexer on one shared object hash, five
+  iterations, no deadlock or lock timeout
+- `TestPostgresSharedObjectTriggerRaceCharacterization`
+- `TestPostgresLegacyRefreshSharedObjectHazardReproducer`
+
+Two behaviours that the original package did not record:
+
+1. **PostgreSQL orphan deletion is normally performed by the pre-existing
+   `trg_after_delete_webobjectsindex` trigger**, not by
+   `deleteFencedRefreshOrphanTx`. The explicit helper is the authority on SQLite
+   only. The trigger is `FOR EACH ROW`, so the application-level 128-row batching
+   does not bound the number of `COUNT(*)` statements.
+2. **That trigger has a pre-existing concurrency defect**: its `COUNT(*)` and
+   `DELETE` are separate statements with no parent-row lock, so an uncommitted
+   concurrent reference is invisible, the `DELETE` waits and then proceeds, and
+   `WebObjectsIndex.object_id ON DELETE CASCADE` silently removes the other
+   page's committed link. The fenced helper's own `FOR UPDATE` re-count would be
+   safe, but the trigger fires first. This is a schema-function defect, not a
+   fenced-refresh code defect, and fixing it requires a schema change that
+   Decision 2 does not authorise.
+
+Keyword suppression determinism: `TestPostgresKeywordSetPersistence` was
+re-anchored to the window boundary and
+`TestPostgresKeywordSuppressionWindowBranches` was added. It covers the
+production predicate at 29.999999 s, exactly 30 s and 30.000001 s inside one
+transaction, plus the public path for a recent and an hour-old row. Changing the
+production interval to 29 s makes the first two boundary cases fail, so the new
+test is not vacuous.
+
 ## 7. Evidence classification
 
 Executed locally on the patched tree: sections 3, 4 and 5. The implementation

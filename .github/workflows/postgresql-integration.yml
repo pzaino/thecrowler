@@ -486,12 +486,62 @@ jobs:
             TestPostgresFencedRefreshPreservesSharedObject \
             TestPostgresFencedRefreshRefusesCrossSourcePage \
             TestPostgresFencedRefreshRollbackRestoresOldGeneration \
-            TestPostgresFencedRefreshRejectsExpiredClaim; do
+            TestPostgresFencedRefreshRejectsExpiredClaim \
+            TestPostgresFencedRefreshBatchesLargeOldGeneration \
+            TestPostgresFencedRefreshPageLockBlocksConcurrentLink \
+            TestPostgresFencedRefreshOrphanLockWaitsForInFlightReference \
+            TestPostgresFencedRefreshOrphanCleanupTriggerCharacterization \
+            TestPostgresFencedRefreshConcurrentRefreshersAndIndexer; do
             grep -F -- "=== RUN   ${test}" "$log"
             grep -F -- "--- PASS: ${test}" "$log"
           done
           if grep -Fq -- '--- SKIP' "$log"; then
             echo "Fenced refresh PostgreSQL integration was skipped" >&2
+            exit 1
+          fi
+
+      - name: Run shared-object hazard characterization PostgreSQL tests
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          export THECROWLER_POSTGRES_INTEGRATION=1
+          log="$(mktemp)"
+          trap 'rm -f "$log"' EXIT
+          # These two tests pin known pre-existing schema-1.17 defects. They must
+          # keep passing so the defects stay visible; a fix must update them
+          # deliberately rather than delete them.
+          go test -tags=integration ./pkg/crawler \
+            -run '^(TestPostgresSharedObjectTriggerRaceCharacterization|TestPostgresLegacyRefreshSharedObjectHazardReproducer)$' \
+            -count=1 -v 2>&1 | tee "$log"
+          for test in \
+            TestPostgresSharedObjectTriggerRaceCharacterization \
+            TestPostgresLegacyRefreshSharedObjectHazardReproducer; do
+            grep -F -- "=== RUN   ${test}" "$log"
+            grep -F -- "--- PASS: ${test}" "$log"
+          done
+          if grep -Fq -- '--- SKIP' "$log"; then
+            echo "Shared-object hazard characterization was skipped" >&2
+            exit 1
+          fi
+
+      - name: Run keyword suppression window PostgreSQL integration
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          export THECROWLER_POSTGRES_INTEGRATION=1
+          log="$(mktemp)"
+          trap 'rm -f "$log"' EXIT
+          go test -tags=integration ./pkg/crawler \
+            -run '^(TestPostgresKeywordSetPersistence|TestPostgresKeywordSuppressionWindowBranches)$' \
+            -count=1 -v 2>&1 | tee "$log"
+          for test in \
+            TestPostgresKeywordSetPersistence \
+            TestPostgresKeywordSuppressionWindowBranches; do
+            grep -F -- "=== RUN   ${test}" "$log"
+            grep -F -- "--- PASS: ${test}" "$log"
+          done
+          if grep -Fq -- '--- SKIP' "$log"; then
+            echo "Keyword suppression integration was skipped" >&2
             exit 1
           fi
 

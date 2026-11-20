@@ -2880,6 +2880,31 @@ func upsertPostgresKeywords(db cdb.Handler, currCfg *cfg.Config, indexID uint64,
 		}
 	}
 
+	result, err := upsertPostgresKeywordRowsTx(tx, indexID, ordered, occurrences)
+	if err != nil {
+		return nil, err
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// upsertPostgresKeywordRowsTx performs the bounded, transactional keyword and
+// KeywordIndex upsert on an already open transaction.
+//
+// It is split out from upsertPostgresKeywords so a test can run the exact
+// production statement against one transaction. The thirty-second suppression
+// window compares `Keywords.last_updated_at` with `CURRENT_TIMESTAMP`, and
+// PostgreSQL evaluates `CURRENT_TIMESTAMP` once per transaction. Running the
+// baseline and the upsert in the same transaction is therefore the only way to
+// probe the window boundary without either waiting thirty real seconds or
+// letting scheduler delay decide which branch executes.
+func upsertPostgresKeywordRowsTx(tx *sql.Tx, indexID uint64, ordered []string, occurrences map[string]int64) ([]persistedKeyword, error) {
+	if tx == nil {
+		return nil, errors.New("postgres keyword upsert requires an active transaction")
+	}
+
 	result := make([]persistedKeyword, 0, len(ordered))
 	for start := 0; start < len(ordered); start += postgresKeywordBatchSize {
 		end := min(start+postgresKeywordBatchSize, len(ordered))
@@ -2928,25 +2953,22 @@ func upsertPostgresKeywords(db cdb.Handler, currCfg *cfg.Config, indexID uint64,
 		}
 		for rows.Next() {
 			var stored persistedKeyword
-			if err = rows.Scan(&stored.keyword, &stored.keywordID, &stored.keywordIndexID, &stored.occurrences); err != nil {
+			if scanErr := rows.Scan(&stored.keyword, &stored.keywordID, &stored.keywordIndexID, &stored.occurrences); scanErr != nil {
 				_ = rows.Close()
-				return nil, err
+				return nil, scanErr
 			}
 			result = append(result, stored)
 		}
-		if err = rows.Err(); err != nil {
+		if err := rows.Err(); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
-		if err = rows.Close(); err != nil {
+		if err := rows.Close(); err != nil {
 			return nil, err
 		}
 		if len(result) != end {
 			return nil, fmt.Errorf("PostgreSQL keyword upsert returned %d of %d rows", len(result), end)
 		}
-	}
-	if err = tx.Commit(); err != nil {
-		return nil, err
 	}
 	return result, nil
 }

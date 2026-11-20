@@ -415,14 +415,71 @@ trigger behaviour), that:
 
 - the page's `WebObjectsIndex` links are replaced and the replacement object is
   kept;
-- an object still referenced by another page is never deleted;
+- an object still referenced by another page is never deleted, including its
+  `ObjectAttributes`;
 - a failure after link deletion but before commit restores the old links,
-  object and attributes;
+  object and attributes, including a failure injected in a later batching
+  iteration;
 - a page linked to another source is refused with zero writes;
 - a new page performs no cleanup;
 - an expired/superseded claim cannot commit a replacement;
 - legacy `refresh_content` behaviour and fenced `null:` quarantine are
   unchanged.
 
-`TestPostgresFencedRefresh*` is a mandatory CI gate in
-`.github/workflows/postgresql-integration.yml`; the step fails on `--- SKIP`.
+The bounded batching loop (`fencedRefreshObjectBatch`, 128 rows) must be
+exercised with more than one batch on both backends, and the PostgreSQL suite
+must record the wall time of a large replacement so the cost stays comparable
+with `database.transaction_timeout`.
+
+PostgreSQL lock behaviour is part of the contract, not an optional extra:
+
+- the `SearchIndex` page row `FOR UPDATE` lock must block a concurrent
+  `SourceSearchIndex` insert, which is what makes the cross-source decision
+  sound;
+- the `WebObjects` orphan `FOR UPDATE` lock must wait for an in-flight
+  reference and then preserve the object;
+- two fenced refreshes plus one ordinary indexer sharing a content hash must
+  complete without deadlock or lock timeout, and every page must keep exactly
+  one link.
+
+Two pre-existing behaviours must be asserted explicitly so they cannot be lost
+by accident:
+
+- `TestPostgresFencedRefreshOrphanCleanupTriggerCharacterization` records that
+  `trg_after_delete_webobjectsindex` performs the orphan deletion on PostgreSQL
+  and that SQLite has no equivalent trigger.
+- `TestPostgresSharedObjectTriggerRaceCharacterization` records the pre-existing
+  `handle_shared_entity_deletion()` race in which an uncommitted concurrent
+  reference is invisible to the trigger's `COUNT(*)`, the `DELETE` proceeds
+  after it commits, and `ON DELETE CASCADE` silently removes the other page's
+  committed link. This is a known schema-level defect. A fix requires a schema
+  change and must update that characterization test deliberately rather than
+  deleting it.
+
+`TestPostgresLegacyRefreshSharedObjectHazardReproducer` records the legacy
+`deleteWebObjects` shared-object data-loss hazard. It is a characterization test:
+a future approved fix to the legacy path must update the expectation.
+
+`TestPostgresFencedRefresh*` and the two shared-object characterization tests are
+mandatory CI gates in `.github/workflows/postgresql-integration.yml`; the steps
+fail on `--- SKIP`.
+
+## Keyword suppression window tests
+
+The PostgreSQL keyword upsert refreshes `Keywords.last_updated_at` only when the
+row is older than 30 seconds (`Keywords.last_updated_at < CURRENT_TIMESTAMP -
+INTERVAL '30 seconds'`). Tests must not depend on how long the test body takes:
+
+- `TestPostgresKeywordSuppressionWindowBranches` pins both branches with inputs
+  that cannot flip under load (a future-dated row and an hour-old row) and pins
+  the exact boundary at 29.999999 s, 30 s and 30.000001 s,
+- by running the baseline insert and the production upsert inside one
+  transaction. PostgreSQL evaluates `CURRENT_TIMESTAMP` once per transaction,
+  which is the only way to probe the boundary without waiting or racing the
+  clock.
+- `upsertPostgresKeywordRowsTx` exists so that test can execute the real
+  production statement. `upsertPostgresKeywords` wraps it in the normal
+  transaction and is unchanged in behaviour.
+- Do not "fix" a slow run by raising the window or adding sleeps. A failure to
+  hold the window indicates either test nondeterminism (fixed here) or a real
+  indexing slowdown, and those require different responses.

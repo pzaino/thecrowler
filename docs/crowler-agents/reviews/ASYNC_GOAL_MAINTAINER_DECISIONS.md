@@ -570,3 +570,44 @@ B1 Option A and B2 are implemented and tested as recorded in Decision 1j. B3,
 automatic mode switching, migration application, deployment, production
 activation and automatic goal resume remain unapproved. Do not apply any addon
 to a persistent database or begin unapproved phases automatically.
+
+## Decision 1n: release-gate finding (OPEN, not decided)
+
+**Status: OPEN BLOCKER. No decision recorded. This entry reports a finding; it
+does not authorise anything.**
+
+WP-REL230-RC1 re-reviewed the merged Decision 2 work at
+`9e719acce04d3606c46821e33b4f8dc23baa6b36` and reproduced two pre-existing
+schema-1.17 defects that the fenced refresh path makes reachable:
+
+1. **Orphan-trigger race.** `handle_shared_entity_deletion()`, invoked by
+   `trg_after_delete_webobjectsindex`, counts references and then deletes the
+   `WebObjects` row as two separate `READ COMMITTED` statements without locking
+   the parent. An uncommitted concurrent reference is invisible to the count;
+   the delete waits, then proceeds, and `WebObjectsIndex.object_id` cascades the
+   other page's committed link away with no error. The fenced helper's
+   `FOR UPDATE` re-count would be safe, but the trigger fires first.
+   Reproducer: `TestPostgresSharedObjectTriggerRaceCharacterization`.
+2. **Legacy shared-object deletion.** `deleteWebObjects` removes the object row
+   rather than the page link, so a hash-shared object is destroyed for every
+   page. Reproducer: `TestPostgresLegacyRefreshSharedObjectHazardReproducer`.
+
+Both are reachable only when `refresh_content` is enabled; it defaults to
+`false`, and the default claim mode is `legacy`.
+
+Closing (1) requires a schema-function change (lock the parent row `FOR UPDATE`
+before the count, or retire the trigger in favour of lock-guarded application
+code). Closing (2) changes default-path semantics for deployments that enabled
+`refresh_content`. Neither is authorised by Decision 1m, which approved only the
+atomic fenced replacement using existing schema 1.17.
+
+Consequences until a decision exists:
+
+- `fenced` mode is **not** production-ready;
+- `refresh_content` must stay `false` in production;
+- the 2.3.0 release decision is `GO WITH EXPLICIT DEFERRALS` only, and it must
+  record this blocker.
+
+The full analysis, ranked blockers and the four separate release questions are
+in `RELEASE_230_GO_NO_GO.md`, with the code audit in
+`RELEASE_230_INDEPENDENT_RISK_REVIEW.md`.
