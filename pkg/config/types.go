@@ -99,28 +99,34 @@ type Crawler struct {
 	CrawlingIfError       string          `json:"crawling_if_error" yaml:"crawling_if_error"`                               // Whether to re-crawl a source if an error occurs
 	CrawlingIfOk          string          `json:"crawling_if_ok" yaml:"crawling_if_ok"`                                     // Whether to re-crawl a source if the crawling is successful
 	ProcessingTimeout     string          `json:"processing_timeout" yaml:"processing_timeout"`                             // Timeout for processing the source
-	RequestImages         bool            `json:"request_images" yaml:"request_images"`                                     // Whether to request the images or not
-	RequestCSS            bool            `json:"request_css" yaml:"request_css"`                                           // Whether to request the CSS or not
-	RequestScripts        bool            `json:"request_scripts" yaml:"request_scripts"`                                   // Whether to request the scripts or not
-	RequestPlugins        bool            `json:"request_plugins" yaml:"request_plugins"`                                   // Whether to request the plugins or not
-	RequestFrames         bool            `json:"request_frames" yaml:"request_frames"`                                     // Whether to request the frames or not
-	PreventDuplicateURLs  bool            `json:"prevent_duplicate_urls" yaml:"prevent_duplicate_urls"`                     // Whether to prevent crawling of duplicate URLs or not
-	RefreshContent        bool            `json:"refresh_content" yaml:"refresh_content"`                                   // Whether to refresh the content of the page or not
-	CollectHTML           bool            `json:"collect_html" yaml:"collect_html"`                                         // Whether to collect the HTML content or not
-	CollectImages         bool            `json:"collect_images" yaml:"collect_images"`                                     // Whether to collect the images or not
-	CollectFiles          bool            `json:"collect_files" yaml:"collect_files"`                                       // Whether to collect the files or not
-	CollectContent        bool            `json:"collect_content" yaml:"collect_content"`                                   // Whether to collect the content or not
-	CollectKeywords       bool            `json:"collect_keywords" yaml:"collect_keywords"`                                 // Whether to collect the keywords or not
-	CollectMetaTags       bool            `json:"collect_metatags" yaml:"collect_metatags"`                                 // Whether to collect the metatags or not
-	CollectPerfMetrics    bool            `json:"collect_performance" yaml:"collect_performance"`                           // Whether to collect the performance metrics or not
-	CollectPageEvents     bool            `json:"collect_events" yaml:"collect_events"`                                     // Whether to collect the page events or not
-	CollectXHR            bool            `json:"collect_xhr" yaml:"collect_xhr"`                                           // Whether to collect the XHR requests or not
-	FilterXHR             []string        `json:"filter_xhr" yaml:"filter_xhr"`                                             // Filter XHR mime_types
-	CollectLinks          bool            `json:"collect_links" yaml:"collect_links"`                                       // Whether to collect the links or not
-	ReportInterval        int             `json:"report_time" yaml:"report_time"`                                           // Time to wait before sending the report (in minutes)
-	CheckForRobots        bool            `json:"check_for_robots" yaml:"check_for_robots"`                                 // Whether to check for robots.txt or not
-	CreateEventWhenDone   bool            `json:"create_event_when_done" yaml:"create_event_when_done"`                     // Whether to create an event when the crawling is done or not
-	Control               ControlConfig   `json:"control" yaml:"control"`                                                   // Control/COnsole internal API
+	// Incognito is the effective per-source private-browsing mode. It has no
+	// global configuration key on purpose: `crawling_config.incognito` in the
+	// source document is the only way to set it, so one source can never
+	// change the process-wide default for another. nil keeps the historical
+	// behaviour (private for Chrome/Chromium). See config.CombineConfigs.
+	Incognito            *bool         `json:"-" yaml:"-"`
+	RequestImages        bool          `json:"request_images" yaml:"request_images"`                 // Whether to request the images or not
+	RequestCSS           bool          `json:"request_css" yaml:"request_css"`                       // Whether to request the CSS or not
+	RequestScripts       bool          `json:"request_scripts" yaml:"request_scripts"`               // Whether to request the scripts or not
+	RequestPlugins       bool          `json:"request_plugins" yaml:"request_plugins"`               // Whether to request the plugins or not
+	RequestFrames        bool          `json:"request_frames" yaml:"request_frames"`                 // Whether to request the frames or not
+	PreventDuplicateURLs bool          `json:"prevent_duplicate_urls" yaml:"prevent_duplicate_urls"` // Whether to prevent crawling of duplicate URLs or not
+	RefreshContent       bool          `json:"refresh_content" yaml:"refresh_content"`               // Whether to refresh the content of the page or not
+	CollectHTML          bool          `json:"collect_html" yaml:"collect_html"`                     // Whether to collect the HTML content or not
+	CollectImages        bool          `json:"collect_images" yaml:"collect_images"`                 // Whether to collect the images or not
+	CollectFiles         bool          `json:"collect_files" yaml:"collect_files"`                   // Whether to collect the files or not
+	CollectContent       bool          `json:"collect_content" yaml:"collect_content"`               // Whether to collect the content or not
+	CollectKeywords      bool          `json:"collect_keywords" yaml:"collect_keywords"`             // Whether to collect the keywords or not
+	CollectMetaTags      bool          `json:"collect_metatags" yaml:"collect_metatags"`             // Whether to collect the metatags or not
+	CollectPerfMetrics   bool          `json:"collect_performance" yaml:"collect_performance"`       // Whether to collect the performance metrics or not
+	CollectPageEvents    bool          `json:"collect_events" yaml:"collect_events"`                 // Whether to collect the page events or not
+	CollectXHR           bool          `json:"collect_xhr" yaml:"collect_xhr"`                       // Whether to collect the XHR requests or not
+	FilterXHR            []string      `json:"filter_xhr" yaml:"filter_xhr"`                         // Filter XHR mime_types
+	CollectLinks         bool          `json:"collect_links" yaml:"collect_links"`                   // Whether to collect the links or not
+	ReportInterval       int           `json:"report_time" yaml:"report_time"`                       // Time to wait before sending the report (in minutes)
+	CheckForRobots       bool          `json:"check_for_robots" yaml:"check_for_robots"`             // Whether to check for robots.txt or not
+	CreateEventWhenDone  bool          `json:"create_event_when_done" yaml:"create_event_when_done"` // Whether to create an event when the crawling is done or not
+	Control              ControlConfig `json:"control" yaml:"control"`                               // Control/COnsole internal API
 }
 
 // CustomEngine represents a custom engine configuration
@@ -1040,6 +1046,13 @@ type CrawlingConfig struct {
 	RetriesOnRedirect int      `json:"retries_on_redirect,omitempty" yaml:"retries_on_redirect,omitempty"` // Number of retries on redirect
 	UnwantedURLs      []string `json:"unwanted_urls,omitempty" yaml:"unwanted_urls,omitempty"`             // Unwanted URLs patterns that trigger a redirect detection
 	SourceType        string   `json:"source_type" yaml:"source_type"`                                     // Type of the source (website, api, file, db, email)
+	// Incognito overrides the private-browsing default for this source only.
+	// nil preserves the historical behaviour (private for Chrome/Chromium).
+	// It is ignored by browsers that have no equivalent private mode flag.
+	Incognito *bool `json:"incognito,omitempty" yaml:"incognito,omitempty"`
+	// FollowRedirects overrides http_headers.follow_redirects for this source
+	// only. nil inherits the global value.
+	FollowRedirects *bool `json:"follow_redirects,omitempty" yaml:"follow_redirects,omitempty"`
 }
 
 // IsEmpty returns true if the CrawlingConfig is empty

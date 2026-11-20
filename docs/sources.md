@@ -39,6 +39,85 @@ scope has 4 possible values:
   and everything else on the entire internet that is linked from the source and
   then recursively crawled as well).
 
+## Per-source crawling options
+
+Some crawl behaviour can be overridden for a single source without touching the
+global `config.yaml`. These options live directly under `crawling_config` in the
+source configuration document and are validated by
+`schemas/crowler-source-config-schema.json`.
+
+```yaml
+crawling_config:
+  site: "https://example.com/"
+  source_type: website
+  incognito: false        # optional; overrides private browsing for this source
+  follow_redirects: true  # optional; overrides http_headers.follow_redirects
+```
+
+### `incognito`
+
+| Source value | Behaviour |
+| --- | --- |
+| omitted | Preserve the historical default: Chrome and Chromium launch in private mode |
+| `true` | Launch a private/incognito browser session |
+| `false` | Launch a normal browser session |
+
+This option is honoured by Chrome and Chromium. Firefox has no equivalent launch
+flag, so the setting is ignored there and no Chrome-specific argument is ever
+passed to a Firefox session.
+
+The value is a strict JSON boolean. `"false"` (a string), `0`, `{}` and `[]` are
+rejected when the source is created or updated; a rejected document never falls
+back to a different browsing mode. A JSON `null` is treated as "not set", which
+preserves the default.
+
+There is deliberately no global `crawler.incognito` key: private browsing can
+only be changed per source, so one source can never alter the process-wide
+default for others.
+
+Sessions stay isolated in both modes. The VDI gives every browser session its own
+profile, and source-specific cookies, local storage, cache and credentials are
+never shared between sources, whether or not `incognito` is enabled.
+
+### `follow_redirects`
+
+| Global `http_headers.follow_redirects` | Source value | Effective |
+| --- | --- | --- |
+| `false` | omitted | `false` |
+| `false` | `true` | `true` |
+| `true` | `false` | `false` |
+| `true` | omitted | `true` |
+
+The source value is a strict JSON boolean and participates in the same
+reject-malformed-document rules as `incognito`. The global configuration is never
+rewritten by a source override.
+
+What the option actually controls:
+
+- **HTTP metadata collection** (`httpinfo`) uses the effective value directly.
+- **Browser navigation** always lets the browser perform the HTTP redirect,
+  because Selenium cannot stop at a `3xx` and a cross-origin redirect has already
+  happened by the time the page is inspectable. When the effective value is
+  `false`, a navigation that lands on a different resource is **refused**: it is
+  retried up to `retries_on_redirect` times and then fails the page instead of
+  being indexed as the requested URL. When the effective value is `true`, the
+  redirect is accepted and the final URL is used for indexing and metadata.
+
+Redirect acceptance is never a way to bypass policy. The final URL is still
+subject to the source's restrictions, `unwanted_urls` patterns, block patterns
+and ownership checks. Redirect chains in the Go HTTP client are bounded and
+loops produce an error. MCP Streamable HTTP keeps its own stricter rule and
+never follows redirects; this source option does not affect it.
+
+### Choosing values
+
+Most deployments leave both options unset. Use `incognito: false` only when a
+site behaves differently in a private session and you accept a normal profile;
+the VDI still isolates that session from other sources. Use
+`follow_redirects: true` for a single source that must reach its canonical URL
+when the global policy is conservative, and `follow_redirects: false` for a
+source whose redirects must never be silently accepted.
+
 ## Using addSource and removeSource commands
 
 The `addSource` and `removeSource` commands are used to add and remove sources

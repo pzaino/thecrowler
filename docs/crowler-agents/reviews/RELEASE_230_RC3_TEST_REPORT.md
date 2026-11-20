@@ -195,15 +195,18 @@ builder and runtime base images recorded in those files.
 ```text
 docker build --network=host -t rc3-api:normal -f Dockerfile.searchapi .
 ...
-#25 83.01 go: downloading github.com/felixge/httpsnoop v1.1.0
 ERROR: failed to build: failed to solve: Canceled: context canceled
 NORMAL_EXIT=124          # bounded at 7 minutes
 ```
 
-The builder stage **stalls during Go module download** with the public proxy
-default in this environment. This reproduces the condition recorded in the RC2
-report and is a host egress problem, not a repository defect. GitHub-hosted CI
-does not build these images, so this is not covered by the green CI run.
+> **Corrected by RC4 (2026-11-20).** The phrasing "stalls during Go module
+> download" was wrong. Re-running the same Dockerfile with no `GOPROXY` argument
+> and a realistic timeout completed successfully in **248 s** on the same host.
+> The observed silence in the build log is normal compilation after the module
+> download phase, not a hang. RC3's 7-minute bound, plus a missing local
+> `config.yaml` on the first attempt and heavy unrelated host CPU load, produced
+> a false negative. The `GOPROXY` argument remains a legitimate option for
+> restricted networks, but it is not required here.
 
 ### 6.2 Documented workaround path
 

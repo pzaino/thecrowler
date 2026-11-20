@@ -2338,6 +2338,8 @@ func CombineConfigs(dstConfig Config, srcConfig SourceConfig) Config {
 		combineCrawlerCfg(&dstConfig.Crawler, srcConfig.Custom["crawler"])
 	}
 
+	applySourceCrawlingOverrides(&dstConfig, srcConfig.CrawlingConfig)
+
 	if srcConfig.Custom["vdi"] != nil {
 		combineVDICfg(&dstConfig.Selenium, srcConfig.Custom["vdi"])
 	}
@@ -2380,6 +2382,58 @@ func CombineConfigs(dstConfig Config, srcConfig SourceConfig) Config {
 	}
 
 	return dstConfig
+}
+
+// applySourceCrawlingOverrides applies the two source-scoped crawling options
+// that live directly under `crawling_config` (rather than under
+// `custom.crawler`), because they describe how this particular source must be
+// fetched.
+//
+// Both options are optional pointers so that an explicit `false` is
+// distinguishable from "not set":
+//
+//   - Incognito: nil preserves the historical browser default (private for
+//     Chrome/Chromium). It is copied by value so concurrent sources never share
+//     a mutable flag.
+//   - FollowRedirects: nil inherits http_headers.follow_redirects. When set it
+//     becomes the effective value for every redirect-aware consumer of this
+//     source's merged configuration (HTTP header collection and browser
+//     navigation policy).
+//
+// dstConfig is the per-source merged copy, never the process-global
+// configuration, so this cannot leak between sources.
+func applySourceCrawlingOverrides(dstConfig *Config, crawling CrawlingConfig) {
+	if dstConfig == nil {
+		return
+	}
+	if crawling.Incognito != nil {
+		value := *crawling.Incognito
+		dstConfig.Crawler.Incognito = &value
+	}
+	if crawling.FollowRedirects != nil {
+		dstConfig.HTTPHeaders.FollowRedirects = *crawling.FollowRedirects
+	}
+}
+
+// EffectiveFollowRedirects reports the redirect policy that applies to this
+// (already merged) configuration. The source-level override is folded into
+// HTTPHeaders.FollowRedirects by applySourceCrawlingOverrides, so a single
+// value governs every consumer.
+func (c Config) EffectiveFollowRedirects() bool {
+	return c.HTTPHeaders.FollowRedirects
+}
+
+// EffectiveIncognito reports whether the browser must be launched with a
+// private profile for this (already merged) configuration. An absent value
+// keeps the historical behaviour: private browsing for Chrome/Chromium.
+func (c Config) EffectiveIncognito() bool {
+	return c.Crawler.EffectiveIncognito()
+}
+
+// EffectiveIncognito reports whether a private browser profile is required.
+// An absent value keeps the historical behaviour: private.
+func (c Crawler) EffectiveIncognito() bool {
+	return c.Incognito == nil || *c.Incognito
 }
 
 func combineCrawlerCfg(dstCfg *Crawler, srcCfgIface interface{}) {

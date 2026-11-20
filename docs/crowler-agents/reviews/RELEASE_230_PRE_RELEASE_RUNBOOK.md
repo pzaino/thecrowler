@@ -1,5 +1,22 @@
 # Release 2.3.0 pre-release runbook
 
+> **RC4 note (2026-11-20).** Two source-scoped crawling options are part of the
+> release candidate: `crawling_config.incognito` and
+> `crawling_config.follow_redirects`. When running the scenarios below, add a
+> source-level check for each: a source with `incognito: false` must still be
+> isolated from a previous session, and a source with `follow_redirects: false`
+> must refuse a redirected navigation instead of indexing the destination.
+> See [`RELEASE_230_RC4_IMPLEMENTATION.md`](RELEASE_230_RC4_IMPLEMENTATION.md)
+> for the exact contract and
+> [`RELEASE_230_RC4_TEST_REPORT.md`](RELEASE_230_RC4_TEST_REPORT.md) for the
+> executed evidence.
+>
+> The Docker image build no longer needs a temporary loopback proxy: the default
+> module path completes given a realistic build timeout, and the documented
+> `GOPROXY` build argument remains available for restricted networks. The
+> Information Seed harness now honours `INFOSEED_GOPROXY` and supports
+> `--fixture-only`.
+
 > **RC3 note (2026-11-20).** The verified release candidate is
 > `ef28d7672fe7134f4d277f673fe28a9d2f4424a3`, which is hosted-CI green. The
 > scenario identifiers and results that were actually executed for the release

@@ -495,3 +495,37 @@ INTERVAL '30 seconds'`). Tests must not depend on how long the test body takes:
 - Do not "fix" a slow run by raising the window or adding sleeps. A failure to
   hold the window indicates either test nondeterminism (fixed here) or a real
   indexing slowdown, and those require different responses.
+
+## Per-source crawl option tests (WP-REL230-RC4)
+
+`crawling_config.incognito` and `crawling_config.follow_redirects` are
+source-scoped overrides. Tests must prove the override reaches the real browser
+and navigation paths, not only the parsed configuration.
+
+Required coverage:
+
+- **Precedence.** An omitted value preserves the historical default; explicit
+  `true` and explicit `false` are both distinguishable from absent. The redirect
+  matrix is exactly: global `false`/omitted → `false`; global `false`/`true` →
+  `true`; global `true`/`false` → `false`; global `true`/omitted → `true`.
+- **Global immutability.** A source override must never rewrite the process
+  global configuration. Assert on the base `Config` value after the merge.
+- **Isolation.** Two sources merged from the same base must not share a mutable
+  flag or pointer, including under concurrent use.
+- **Strict types.** `"false"`, `0`, `{}` and `[]` must be rejected. JSON `null`
+  is treated as absent and must preserve the default; it must never be read as
+  an explicit `false`.
+- **Real launch arguments.** Assert `--incognito` is present exactly once by
+  default and for explicit `true`, absent for explicit `false`, and never
+  present for Firefox. Assert the remaining Chrome hardening flags survive when
+  the flag is removed.
+- **Real navigation policy.** Cover same-URL, fragment, trailing-slash and
+  root-slash equivalence (not redirects), and same-origin, cross-origin and
+  scheme-change redirects (refused when the policy is off).
+- **Live browser.** The Docker acceptance run must assert observed browser
+  behaviour (session capabilities and cookie/localStorage isolation between two
+  sessions), not only log lines. A source with `incognito: false` must still be
+  isolated from a previous session on the same VDI.
+
+Do not weaken the MCP Streamable HTTP rule while testing source redirects: MCP
+endpoints never follow redirects and that behaviour must stay covered.

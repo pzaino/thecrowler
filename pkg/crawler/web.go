@@ -1467,6 +1467,17 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to get current URL after navigation: %v", err)
 		}
+		// Source-scoped redirect acceptance. The browser always follows the
+		// HTTP redirect itself, so a forbidden redirect is detected here and
+		// refused instead of being indexed as the requested page.
+		if redirectNotPermitted(url, currentURL, ctx.redirectsFollowingPermitted()) {
+			cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Worker] %s: Redirect not permitted for source: requested '%s' landed on '%s'", id, url, currentURL)
+			if retries >= maxRetries {
+				return nil, "", fmt.Errorf("redirect not permitted: %s landed on %s after %d retries", url, currentURL, maxRetries)
+			}
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Retrying navigation to %s (%d/%d)", id, url, retries+1, maxRetries)
+			continue
+		}
 		gotRedirectedToUURL := false
 		if ctx.compiledUURLs != nil {
 			cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Checking for unwanted URLs (%d patterns) for URL: '%s'", id, len(ctx.compiledUURLs), currentURL)

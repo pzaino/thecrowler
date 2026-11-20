@@ -277,6 +277,34 @@ def prepare_source() -> None:
     log(f"prepared disposable source tree at {SRC}")
 
 
+def module_proxy_build_args() -> dict:
+    """Return Docker build args for the Go module proxy.
+
+    The shipping Dockerfiles expose a ``GOPROXY`` build argument so a build
+    network that cannot reach the public proxy can point at an internal mirror.
+    This harness honours the same documented variable instead of requiring an
+    undocumented temporary proxy. Checksum verification (``GOSUMDB`` and
+    ``go.sum``) is never disabled by this setting.
+    """
+    proxy = os.environ.get("INFOSEED_GOPROXY", "").strip() or os.environ.get("GOPROXY", "").strip()
+    if not proxy:
+        return {}
+    log(f"using Go module proxy for image builds: {proxy}")
+    return {"GOPROXY": proxy}
+
+
+def attach_build_args(service: dict) -> None:
+    """Attach the module-proxy build args to a compose service build block."""
+    args = module_proxy_build_args()
+    if not args or "build" not in service:
+        return
+    build = service.get("build")
+    if isinstance(build, str):
+        build = {"context": build}
+        service["build"] = build
+    build.setdefault("args", {}).update(args)
+
+
 def generate_and_isolate_compose() -> None:
     global COMPOSE, API_PORT, FIXTURE_PORT, BASE_URL, FIXTURE_URL
     API_PORT = free_port()
@@ -291,6 +319,7 @@ def generate_and_isolate_compose() -> None:
         service["labels"]["com.crowler.infoseed.service"] = service_name
         if "build" in service:
             service["build"]["network"] = "host"
+            attach_build_args(service)
         if service_name == "crowler-api":
             service["image"] = f"{RUN_ID}-api:{image_suffix}"
             service["ports"] = [f"127.0.0.1:{API_PORT}:8080"]
@@ -316,7 +345,7 @@ def generate_and_isolate_compose() -> None:
     services["fixture"] = {
         "container_name": f"{RUN_ID}-fixture",
         "image": f"{RUN_ID}-fixture:{image_suffix}",
-        "build": {"context": ".", "dockerfile": "tests/integration/infoseed-compose/fixture-server/Dockerfile", "network": "host"},
+        "build": {"context": ".", "dockerfile": "tests/integration/infoseed-compose/fixture-server/Dockerfile", "network": "host", "args": module_proxy_build_args()},
         "ports": [f"127.0.0.1:{FIXTURE_PORT}:8080"],
         "networks": ["crowler-net"],
         "labels": {"com.crowler.infoseed.run_id": RUN_ID, "com.crowler.infoseed.service": "fixture"},
@@ -326,7 +355,7 @@ def generate_and_isolate_compose() -> None:
     services["probe"] = {
         "container_name": f"{RUN_ID}-probe",
         "image": f"{RUN_ID}-probe:{image_suffix}",
-        "build": {"context": ".", "dockerfile": "tests/integration/infoseed-compose/probe/Dockerfile", "network": "host"},
+        "build": {"context": ".", "dockerfile": "tests/integration/infoseed-compose/probe/Dockerfile", "network": "host", "args": module_proxy_build_args()},
         "environment": [
             "DB_TYPE=postgres", "POSTGRES_DB=SitesIndex", "CROWLER_DB_USER=crowler", f"CROWLER_DB_PASSWORD={DB_PASSWORD}",
             "POSTGRES_DB_HOST=127.0.0.1", "POSTGRES_DB_PORT=5432", "POSTGRES_SSL_MODE=disable",
@@ -1493,6 +1522,11 @@ def write_report() -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--skip-build", action="store_true", help="reuse existing unique images (development only)")
+    parser.add_argument(
+        "--fixture-only",
+        action="store_true",
+        help="run the deterministic fixture suite only; skip the optional external publisher smoke check",
+    )
     args = parser.parse_args()
     preflight()
     try:
@@ -1526,7 +1560,11 @@ def main() -> int:
         case("IT-14", "PostgreSQL claim index and query plan", it14)
         case("IT-15", "Operator API, events and end-to-end observability", it15)
         case("IT-16", "Controlled restart and migration posture", it16)
-        external_smoke()
+        if args.fixture_only:
+            log("fixture-only mode: skipping the optional external publisher smoke check")
+            save_json("external-smoke.json", {"skipped": True, "reason": "--fixture-only", "gate_impact": "none; deterministic cases are unaffected"})
+        else:
+            external_smoke()
     except Exception as exc:  # noqa: BLE001
         log(f"FATAL harness error: {exc}")
         (ARTIFACTS / "harness-fatal.log").write_text(traceback.format_exc(), encoding="utf-8")

@@ -84,32 +84,17 @@ maintainer in `RELEASE_230_RC3_SIGNOFF_REQUEST.md` (§3).
 
 ## 4. Shipping image build environment finding
 
-The repository Dockerfiles are correct, but in this environment a plain
-`docker build` of the builder stage **stalls** during Go module download:
+> **Corrected by RC4 (2026-11-20).** RC3 recorded that a plain `docker build`
+> "stalls" during Go module download. That was a false negative: the same
+> Dockerfile with the default module path and no `GOPROXY` build argument
+> completed successfully in 248 s when given a realistic timeout. The build log
+> is silent during compilation, which was mistaken for a hang. The `GOPROXY`
+> build argument stays available and documented for restricted networks, and
+> module integrity is unchanged (`GOSUMDB` untouched, `go.sum` unmodified).
 
-```text
-docker build --network=host -t rc3-api:normal -f Dockerfile.searchapi .
-...
-#25 83.01 go: downloading github.com/felixge/httpsnoop v1.1.0
-ERROR: failed to build: failed to solve: Canceled: context canceled
-NORMAL_EXIT=124        (7-minute bound)
-```
-
-The stall reproduces with the public proxy default and is independent of the
-`GOPROXY` argument: it is a Docker-internal egress problem in this host, not a
-repository defect. None of the eight push-triggered checks builds these images,
-and the image-building workflows are `workflow_dispatch`-only, so CI neither
-masks nor reveals this.
-
-The documented workaround — `--build-arg GOPROXY=<internal proxy>` — was used
-to produce the acceptance images. Module integrity is unchanged: `GOSUMDB` is
-untouched, `GOFLAGS`/`GOINSECURE`/`GOPRIVATE` are not set, and `go.sum` was not
-modified. The workaround is classified as a build-environment exception, not as
-proof that the public path works from every network.
-
-Positive signal for reproducibility: the two images already produced by RC2
-rebuilt to **identical image IDs** on this run (see the test report), so the
-build is deterministic for the same source and builder digests.
+Positive signal for reproducibility: the images produced with the proxy
+workaround were byte-identical to RC2's for the same source, so the build is
+deterministic for the same source and builder digests.
 
 ## 5. Release artifact integrity
 
