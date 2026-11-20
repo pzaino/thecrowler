@@ -18,6 +18,7 @@ package config
 // File: /pkg/config/types.go
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -1049,10 +1050,73 @@ type CrawlingConfig struct {
 	// Incognito overrides the private-browsing default for this source only.
 	// nil preserves the historical behaviour (private for Chrome/Chromium).
 	// It is ignored by browsers that have no equivalent private mode flag.
+	// A JSON null is rejected: only an omitted key means "inherit".
 	Incognito *bool `json:"incognito,omitempty" yaml:"incognito,omitempty"`
 	// FollowRedirects overrides http_headers.follow_redirects for this source
-	// only. nil inherits the global value.
+	// only. nil inherits the global value. A JSON null is rejected: only an
+	// omitted key means "inherit".
 	FollowRedirects *bool `json:"follow_redirects,omitempty" yaml:"follow_redirects,omitempty"`
+}
+
+// UnmarshalJSON decodes a crawling configuration and enforces the documented
+// contract for the two optional source-scoped booleans.
+//
+// The authoritative schema declares both as `type: boolean` with
+// `additionalProperties: false`. `encoding/json` would happily decode an
+// explicit `null` into a nil pointer, silently turning "null" into "inherit".
+// The release contract is stricter and identical on every path (API request,
+// stored document reload, tests): the key may be omitted, or it may be `true` or
+// `false`. An explicit `null`, a string, a number, an array or an object is a
+// malformed document and is rejected, so a bad value can never silently change
+// the browser mode or the redirect policy.
+func (c *CrawlingConfig) UnmarshalJSON(data []byte) error {
+	type plain CrawlingConfig
+	aux := struct {
+		*plain
+		Incognito       json.RawMessage `json:"incognito"`
+		FollowRedirects json.RawMessage `json:"follow_redirects"`
+	}{plain: (*plain)(c)}
+
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+
+	incognito, err := parseOptionalStrictBool(aux.Incognito, "crawling_config.incognito")
+	if err != nil {
+		return err
+	}
+	followRedirects, err := parseOptionalStrictBool(aux.FollowRedirects, "crawling_config.follow_redirects")
+	if err != nil {
+		return err
+	}
+	// The embedded alias never receives these two keys: the outer fields have
+	// the same JSON names at a shallower depth and therefore win the decoder's
+	// conflict resolution.
+	c.Incognito = incognito
+	c.FollowRedirects = followRedirects
+	return nil
+}
+
+// parseOptionalStrictBool decodes one optional strict boolean. An absent value
+// (empty raw message) yields nil; `null` and any non-boolean scalar or compound
+// value is an error.
+func parseOptionalStrictBool(raw json.RawMessage, field string) (*bool, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	value := strings.TrimSpace(string(raw))
+	switch value {
+	case "true":
+		result := true
+		return &result, nil
+	case "false":
+		result := false
+		return &result, nil
+	case "null":
+		return nil, fmt.Errorf("%s must be a JSON boolean; null is not accepted (omit the key to inherit the default)", field)
+	default:
+		return nil, fmt.Errorf("%s must be a JSON boolean, got %.64s", field, value)
+	}
 }
 
 // IsEmpty returns true if the CrawlingConfig is empty

@@ -25,6 +25,14 @@ TARGET = """<!doctype html><html><head><title>RC4 Target Page</title></head>
 <body><h1>RC4 Target</h1><p>marker rc4-target-v1</p></body></html>
 """
 
+HOTEL_TRAILING = """<!doctype html><html><head><title>RC4 Hotel Trailing</title></head>
+<body><h1>RC4 Hotel</h1><p>marker rc4-hotel-trailing</p></body></html>
+"""
+
+MOTEL_TRAILING = """<!doctype html><html><head><title>RC4 Motel Bare</title></head>
+<body><h1>RC4 Motel</h1><p>marker rc4-motel-bare</p></body></html>
+"""
+
 COOKIE = """<!doctype html><html><head><title>RC4 Cookie Page</title></head>
 <body><h1>RC4 Cookie</h1><p>marker rc4-cookie-v1</p>
 <script>
@@ -63,6 +71,22 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
         if path == "/target.html":
             self.send(200, TARGET)
+            return
+        # Path-distinction fixture: /hotel and /hotel/ are different resources.
+        # The bare path redirects so a source that forbids redirects must refuse
+        # it, while a source that permits redirects indexes the slash body.
+        if path == "/hotel":
+            self.redirect(302, "/hotel/")
+            return
+        if path == "/hotel/":
+            self.send(200, HOTEL_TRAILING)
+            return
+        # The reverse direction, used to prove the comparison is symmetric.
+        if path == "/motel/":
+            self.redirect(302, "/motel")
+            return
+        if path == "/motel":
+            self.send(200, MOTEL_TRAILING)
             return
         if path == "/health":
             self.send(200, "ok", "text/plain")

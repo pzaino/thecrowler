@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -126,7 +127,10 @@ func TestCrawlingConfigStrictBooleans(t *testing.T) {
 		{"omitted", `{"site":"https://example.test/"}`, false},
 		{"true", `{"site":"https://example.test/","incognito":true,"follow_redirects":true}`, false},
 		{"false", `{"site":"https://example.test/","incognito":false,"follow_redirects":false}`, false},
-		{"null is treated as absent", `{"site":"https://example.test/","incognito":null,"follow_redirects":null}`, false},
+		// The schema declares both properties as `type: boolean`; an explicit
+		// null is a malformed document, not a synonym for "inherit".
+		{"null incognito", `{"site":"https://example.test/","incognito":null}`, true},
+		{"null follow_redirects", `{"site":"https://example.test/","follow_redirects":null}`, true},
 		{"string incognito", `{"site":"https://example.test/","incognito":"false"}`, true},
 		{"numeric incognito", `{"site":"https://example.test/","incognito":0}`, true},
 		{"numeric follow_redirects", `{"site":"https://example.test/","follow_redirects":1}`, true},
@@ -142,25 +146,69 @@ func TestCrawlingConfigStrictBooleans(t *testing.T) {
 			if !tc.wantErr && err != nil {
 				t.Fatalf("unexpected decode error: %v", err)
 			}
-			if !tc.wantErr && tc.name == "null is treated as absent" {
+			if !tc.wantErr && tc.name == "omitted" {
 				if crawling.Incognito != nil || crawling.FollowRedirects != nil {
-					t.Fatal("JSON null must be treated as absent, not as an explicit false")
+					t.Fatal("an omitted key must decode to nil (inherit)")
 				}
 			}
 		})
 	}
 }
 
-// TestCrawlingConfigNullKeepsPrivateBrowsing is the behavioural consequence of
-// accepting JSON null as "absent".
-func TestCrawlingConfigNullKeepsPrivateBrowsing(t *testing.T) {
+// TestCrawlingConfigRejectsExplicitNull is the behavioural consequence of the
+// strict contract: a source document containing null must be rejected instead of
+// silently inheriting, and the rejection must not alter the defaults.
+func TestCrawlingConfigRejectsExplicitNull(t *testing.T) {
+	for _, field := range []string{"incognito", "follow_redirects"} {
+		t.Run(field, func(t *testing.T) {
+			raw := `{"crawling_config":{"site":"https://example.test/","` + field + `":null}}`
+			var src SourceConfig
+			err := json.Unmarshal([]byte(raw), &src)
+			if err == nil {
+				t.Fatalf("explicit null for %s must be rejected", field)
+			}
+			if !strings.Contains(err.Error(), field) {
+				t.Fatalf("error must name the offending field, got: %v", err)
+			}
+			// The rejected document leaves zero-value behaviour behind, so a
+			// caller that ignores the error cannot silently get a different
+			// browser or redirect mode from a partially decoded struct.
+			if src.CrawlingConfig.Incognito != nil || src.CrawlingConfig.FollowRedirects != nil {
+				t.Fatalf("a rejected document must not populate %s", field)
+			}
+		})
+	}
+
+	// Omitting the key remains valid and preserves the historical defaults.
 	var src SourceConfig
-	if err := json.Unmarshal([]byte(`{"crawling_config":{"site":"https://example.test/","incognito":null}}`), &src); err != nil {
-		t.Fatalf("decode: %v", err)
+	if err := json.Unmarshal([]byte(`{"crawling_config":{"site":"https://example.test/"}}`), &src); err != nil {
+		t.Fatalf("omitted keys must decode: %v", err)
 	}
 	got := CombineConfigs(mergeTestBase(), src)
 	if !got.EffectiveIncognito() {
-		t.Fatal("JSON null must preserve the private-browsing default")
+		t.Fatal("omitted key must preserve the private-browsing default")
+	}
+}
+
+// TestCrawlingConfigStoredDocumentReload proves the contract also holds when a
+// persisted source document is re-read, not only on the API request path.
+func TestCrawlingConfigStoredDocumentReload(t *testing.T) {
+	stored := `{"crawling_config":{"site":"https://example.test/","incognito":false,"follow_redirects":true}}`
+	var src SourceConfig
+	if err := json.Unmarshal([]byte(stored), &src); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	got := CombineConfigs(mergeTestBase(), src)
+	if got.EffectiveIncognito() {
+		t.Fatal("stored explicit false must survive a reload")
+	}
+	if !got.EffectiveFollowRedirects() {
+		t.Fatal("stored explicit true must survive a reload")
+	}
+
+	corrupt := `{"crawling_config":{"site":"https://example.test/","incognito":null}}`
+	if err := json.Unmarshal([]byte(corrupt), &src); err == nil {
+		t.Fatal("a stored document with null must be rejected on reload")
 	}
 }
 

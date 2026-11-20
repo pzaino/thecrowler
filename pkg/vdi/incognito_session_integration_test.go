@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -121,6 +120,16 @@ func sessionArgs(t *testing.T, capabilities map[string]interface{}) []string {
 	return args
 }
 
+// liveFixtureURL is the page the live tests navigate to. It defaults to the
+// documented RC4 fixture host and can be overridden for another acceptance
+// stack (the RC4F stack uses a different alias).
+func liveFixtureURL() string {
+	if override := strings.TrimSpace(os.Getenv("THECROWLER_E2E_ISOLATION_FIXTURE_URL")); override != "" {
+		return override
+	}
+	return "http://rc4-fixture:8000/target.html"
+}
+
 func hasArg(args []string, want string) bool {
 	for _, a := range args {
 		if a == want {
@@ -165,7 +174,7 @@ func TestIncognitoBrowserIntegration(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			wd := newSessionWithIncognito(t, endpoint, tc.incognito)
-			if err := wd.Get("http://rc4-fixture:8000/target.html"); err != nil {
+			if err := wd.Get(liveFixtureURL()); err != nil {
 				t.Fatalf("navigate: %v", err)
 			}
 			title, err := wd.Title()
@@ -185,24 +194,9 @@ func TestIncognitoBrowserIntegration(t *testing.T) {
 func TestSessionIsolationIntegration(t *testing.T) {
 	endpoint := webdriverEndpoint(t)
 
-	listener, err := net.Listen("tcp", "0.0.0.0:0")
-	if err != nil {
-		t.Skipf("fixture listener unavailable: %v", err)
-	}
-	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		w.Header().Set("Cache-Control", "no-store")
-		fmt.Fprint(w, "<html><body><h1>isolation fixture</h1></body></html>")
-	})}
-	go func() { _ = server.Serve(listener) }()
-	defer func() { _ = server.Close() }()
-
-	fixtureURL := "http://" + listener.Addr().String() + "/"
-	// The browser runs in a container and cannot reach the host loopback. Use
-	// an override when the fixture is served on a container-reachable address.
-	if override := strings.TrimSpace(os.Getenv("THECROWLER_E2E_ISOLATION_FIXTURE_URL")); override != "" {
-		fixtureURL = override
-	}
+	// The browser runs in a container, so the fixture is served from a
+	// container-reachable address rather than a host loopback listener.
+	fixtureURL := liveFixtureURL()
 
 	setState := func(t *testing.T, wd selenium.WebDriver) {
 		t.Helper()

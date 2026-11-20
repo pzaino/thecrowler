@@ -80,8 +80,8 @@ unmodified, no `GOINSECURE`/`GOPRIVATE`/`GONOSUMDB`.
 | `TestSourceCrawlingOverrideIncognito` | explicit `true` and explicit `false`, with `false` distinguishable from absent |
 | `TestSourceCrawlingOverrideFollowRedirectsMatrix` | the four-row precedence table; the base configuration is never mutated |
 | `TestSourceCrawlingOverrideIsolation` | two sources merged from one base keep independent values and do not share a pointer |
-| `TestCrawlingConfigStrictBooleans` | omitted/true/false/null/types: strings, numbers, objects and arrays are rejected |
-| `TestCrawlingConfigNullKeepsPrivateBrowsing` | JSON `null` is "not set" and preserves the private default |
+| `TestCrawlingConfigStrictBooleans` | omitted/true/false/null/types: strings, numbers, objects and arrays are rejected (RC4F tightened `null` from "inherit" to "rejected") |
+| `TestCrawlingConfigNullKeepsPrivateBrowsing` | **superseded in RC4F** by `TestCrawlingConfigRejectsExplicitNull` |
 | `TestCrawlingConfigRoundTripPreservesOverrides` | marshal→unmarshal→merge keeps an explicit `false` |
 
 ### 4.2 Browser launch (`pkg/vdi/incognito_launch_test.go`)
@@ -99,7 +99,7 @@ unmodified, no `GOINSECURE`/`GOPRIVATE`/`GONOSUMDB`.
 
 | Test | Proves |
 | --- | --- |
-| `TestRedirectNotPermittedDecisionMatrix` | same URL, fragment, trailing slash and root slash are not redirects; same-origin, cross-origin and scheme-change redirects are refused; empty/unparsable destinations fail closed |
+| `TestRedirectNotPermittedDecisionMatrix` | **superseded in RC4F**: RC4 treated a trailing slash on any path as cosmetic, which wrongly accepted `/hotel` → `/hotel/`. The RC4F matrix keeps only standards-equivalent spellings as equal |
 | `TestNormalizedNavigationURL` | the cosmetic-equivalence rules used by the comparison |
 | `TestRedirectsFollowingPermittedReadsMergedConfig` | the browser path reads the same effective value for all four precedence rows |
 | `TestRedirectsFollowingPermittedNilContext` | defensive nil-context guard |

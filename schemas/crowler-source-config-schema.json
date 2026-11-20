@@ -93,11 +93,11 @@
         },
         "incognito": {
           "type": "boolean",
-          "description": "Private-browsing override for this source only. When omitted, the historical behaviour is preserved (Chrome and Chromium launch in private mode). true forces a private session, false forces a normal session. The option is honoured by Chrome and Chromium; Firefox has no equivalent launch flag, so the setting is ignored there. Sessions are isolated by the VDI either way."
+          "description": "Private-browsing override for this source only. When omitted, the historical behaviour is preserved (Chrome and Chromium launch in private mode). true forces a private session, false forces a normal session. An explicit null, string, number, array or object is rejected; omit the key to inherit. The option is honoured by Chrome and Chromium; Firefox has no equivalent launch flag, so the setting is ignored there. Sessions are isolated by the VDI either way."
         },
         "follow_redirects": {
           "type": "boolean",
-          "description": "Redirect policy override for this source only. When omitted, http_headers.follow_redirects applies. When set, it becomes the effective policy for this source: HTTP metadata collection uses it directly, and browser navigation refuses to accept a page that landed on a different URL, retrying up to retries_on_redirect times before failing. The browser itself always performs the HTTP redirect; this option controls acceptance, not interception. Source restrictions, unwanted_urls and ownership checks still apply to the final URL."
+          "description": "Redirect policy override for this source only. When omitted, http_headers.follow_redirects applies. When set, it becomes the effective policy for this source: HTTP metadata collection uses it directly, and browser navigation refuses to accept a page that landed on a different resource, retrying up to retries_on_redirect times before failing. An explicit null, string, number, array or object is rejected; omit the key to inherit. Only standards-equivalent spellings are treated as the same resource (scheme/host case, default port, origin-root path); /hotel and /hotel/, repeated slashes, escaped separators, path case and any query difference count as redirects. The browser itself always performs the HTTP redirect; this option controls acceptance, not interception. Source restrictions, unwanted_urls and ownership checks still apply to the final URL."
         },
         "load_validation": {
           "title": "Page Load Validation",

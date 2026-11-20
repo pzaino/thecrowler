@@ -1,5 +1,17 @@
 # Release 2.3.0 pre-release runbook
 
+> **RC4F note (2026-11-20).** This runbook supersedes the RC4 candidate. RC4F
+> fixes the redirect comparison so that only standards-equivalent spellings are
+> the same resource: `/hotel` and `/hotel/` are **different** and a 301/302
+> between them must be refused when `follow_redirects` is off. When running the
+> refresh/redirect scenarios, add the path-slash case explicitly: a fixture where
+> `/hotel` returns 302 to `/hotel/` must be refused under global `false` and under
+> a source-level `false`, and accepted under a source-level `true`. Also verify
+> that a source document containing `null` for `incognito` or
+> `follow_redirects` is rejected by the API, because only an omitted key means
+> "inherit". See [`RELEASE_230_RC4F_IMPLEMENTATION.md`](RELEASE_230_RC4F_IMPLEMENTATION.md)
+> and [`RELEASE_230_RC4F_TEST_REPORT.md`](RELEASE_230_RC4F_TEST_REPORT.md).
+
 > **RC4 note (2026-11-20).** Two source-scoped crawling options are part of the
 > release candidate: `crawling_config.incognito` and
 > `crawling_config.follow_redirects`. When running the scenarios below, add a

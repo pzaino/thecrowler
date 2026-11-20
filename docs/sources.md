@@ -66,10 +66,11 @@ This option is honoured by Chrome and Chromium. Firefox has no equivalent launch
 flag, so the setting is ignored there and no Chrome-specific argument is ever
 passed to a Firefox session.
 
-The value is a strict JSON boolean. `"false"` (a string), `0`, `{}` and `[]` are
-rejected when the source is created or updated; a rejected document never falls
-back to a different browsing mode. A JSON `null` is treated as "not set", which
-preserves the default.
+The value is a strict JSON boolean. `"false"` (a string), `0`, `{}`, `[]` and an
+explicit JSON `null` are all rejected when the source is created or updated; a
+rejected document never falls back to a different browsing mode. Only omitting
+the key means "inherit the default". This matches the JSON schema, which declares
+the property as `type: boolean`.
 
 There is deliberately no global `crawler.incognito` key: private browsing can
 only be changed per source, so one source can never alter the process-wide
@@ -89,8 +90,9 @@ never shared between sources, whether or not `incognito` is enabled.
 | `true` | omitted | `true` |
 
 The source value is a strict JSON boolean and participates in the same
-reject-malformed-document rules as `incognito`. The global configuration is never
-rewritten by a source override.
+reject-malformed-document rules as `incognito`: omit the key to inherit, use
+`true` or `false` to override, and expect an explicit `null` to be rejected. The
+global configuration is never rewritten by a source override.
 
 What the option actually controls:
 
@@ -102,6 +104,15 @@ What the option actually controls:
   retried up to `retries_on_redirect` times and then fails the page instead of
   being indexed as the requested URL. When the effective value is `true`, the
   redirect is accepted and the final URL is used for indexing and metadata.
+
+  "Different resource" is deliberately strict. Only standards-equivalent
+  spellings of the same destination are treated as the same resource: case in the
+  scheme and host, the scheme's default port, and an empty path versus `/` at the
+  origin root. Everything else is a redirect, including `/hotel` versus
+  `/hotel/`, repeated slashes, `%2F` versus `/`, path case, a different query or
+  query order, and any non-default port. A destination that is not an absolute
+  `http(s)` URL (for example `file:`, `about:` or a browser error page) always
+  fails closed.
 
 Redirect acceptance is never a way to bypass policy. The final URL is still
 subject to the source's restrictions, `unwanted_urls` patterns, block patterns

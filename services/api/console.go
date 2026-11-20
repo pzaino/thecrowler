@@ -811,7 +811,9 @@ func performAddSourceContext(ctx context.Context, query string, qType int, db *c
 		params.Config = cfg.SourceConfig{} // empty/default
 	} else {
 		// extract AddSource parameters from JSON
-		extractAddSourceParams(query, &params)
+		if err := extractAddSourceParams(query, &params); err != nil {
+			return ConsoleResponse{Message: "Invalid source request"}, err
+		}
 
 		params.URL = cdb.NormalizeSourceURL(params.URL)
 		if params.URL == "" {
@@ -878,13 +880,19 @@ func performAddSourceContext(ctx context.Context, query string, qType int, db *c
 	return resp, nil
 }
 
-func extractAddSourceParams(query string, params *addSourceRequest) {
+// extractAddSourceParams decodes the POST body into params.
+//
+// A decode failure is returned to the caller instead of being logged and
+// ignored: silently continuing would create a source with a different (usually
+// empty) configuration than the operator submitted. The error is classified as
+// an invalid source configuration so the HTTP layer answers 400.
+func extractAddSourceParams(query string, params *addSourceRequest) error {
 	params.Restricted = -1
 
 	// Unmarshal query into params
-	err := json.Unmarshal([]byte(query), &params)
-	if err != nil {
+	if err := json.Unmarshal([]byte(query), params); err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling the query: %v", err)
+		return fmt.Errorf("%w: %v", errInvalidSourceConfig, err)
 	}
 
 	// Check for missing parameters
@@ -917,8 +925,10 @@ func extractAddSourceParams(query string, params *addSourceRequest) {
 		}
 		if err := json.Unmarshal(configJSONChecked, &params.Config); err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling the Config field: %v", err)
+			return fmt.Errorf("%w: %v", errInvalidSourceConfig, err)
 		}
 	}
+	return nil
 }
 
 /*

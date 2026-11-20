@@ -57,13 +57,17 @@ database schema change, no migration and no new table or column.
 | --- | --- |
 | key omitted | default behaviour preserved |
 | `true` / `false` | honoured |
-| `null` | treated as absent; the default is preserved |
+| `null` | **rejected** (corrected in RC4F; see below) |
 | `"false"`, `0`, `{}`, `[]` | source document rejected at decode time |
 
-A malformed value can therefore never silently switch a site out of private
-browsing or silently enable redirect following. `null` is explicitly documented
-as "not set" rather than "false", because treating it as `false` would change
-browsing behaviour for a document that never expressed an intent.
+> **Corrected by RC4F (2026-11-20).** RC4 accepted a JSON `null` and treated it
+> as "not set", which disagreed with the JSON schema's `type: boolean`. RC4F
+> makes the contract consistent on every path: the key may be omitted, `true` or
+> `false`; an explicit `null` is rejected like any other non-boolean. Only
+> omission means "inherit".
+
+A malformed value therefore can never silently switch a site out of private
+browsing or silently enable redirect following.
 
 ### 2.2 Incognito precedence
 
@@ -157,9 +161,12 @@ implementation is explicit about this and enforces the part it can:
 
 1. Navigate to the requested URL.
 2. Read the final URL from the browser.
-3. Compare the requested and final URLs after collapsing only cosmetic
-   differences (URL fragment, trailing slash, surrounding whitespace — a browser
-   reports `https://host` as `https://host/` with no HTTP redirect involved).
+3. Compare the requested and final URLs as HTTP resources. Only
+   standards-equivalent spellings are equal: scheme/host case, the scheme's
+   default port, an empty path versus `/` at the origin root, and the fragment
+   (never sent to the server). Every path, escape, case, query and non-default
+   port difference is a redirect. (RC4F tightened this; RC4 wrongly treated a
+   trailing slash on any path as cosmetic, conflating `/hotel` and `/hotel/`.)
 4. If the policy forbids redirects and the destination differs, treat the
    attempt as a failed navigation: retry up to `retries_on_redirect` times, then
    fail the page with `redirect not permitted: <requested> landed on <final>`.
