@@ -111,6 +111,10 @@ creates verified ownership/approval tables, adds Information Seed
 claim/lease/retry columns and indexes, and installs the fenced claim function.
 It does not bulk-verify historical `usr_id` values.
 
+The operator procedure and the engine-specific caveats (PostgreSQL
+`:CROWLER_DB_USER`, MySQL `DELIMITER`, SQLite runtime repair) are documented in
+[Database migrations](../database-migrations.md).
+
 Rollback is additive-only in practice: restore the previous writer and schema
 version after draining workers, or leave the new nullable columns and indexes in
 place for a later retry. Do not drop the claim columns while any worker may

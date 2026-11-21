@@ -1,3 +1,48 @@
+-- ============================================================================
+-- CROWler schema migration: 1.16 -> 1.17 (MySQL / MariaDB)
+-- ============================================================================
+-- Target: schema 1.17, writer generation verified-ownership-v1.17.
+-- Source: an existing 1.16 database, or 1.17 for a repeatable re-run.
+-- Prerequisite: every earlier MySQL migration, in order (1.08, 1.09, 1.11,
+-- 1.13, 1.14, 1.15, 1.16). This file alone does not upgrade an older database.
+--
+-- RUNTIME SUPPORT: NOT AVAILABLE in 2.3.0. pkg/database.NewHandler() rejects
+-- database.type "mysql", and the MySQL handler is commented out in this source
+-- tree for licensing reasons. These scripts are shipped for reference and
+-- future work: do not deploy 2.3.0 on MySQL or MariaDB. The migration SQL
+-- itself was validated on MySQL 8.0 against a minimal 1.17-compatible schema;
+-- the shipped fresh-install script mysql-setup.mysql is not loadable as-is on
+-- MySQL 8.0 (reserved word `rank`) or MariaDB 11 (functional index).
+--
+-- Engine: MySQL 8.0 was used for the SQL validation. Legacy feature limits
+-- apply: durable crawl approvals, agent-goal persistence and the MCP capability
+-- are PostgreSQL/SQLite-only.
+--
+-- No PostgreSQL-style transactional DDL: MySQL commits each DDL statement
+-- implicitly. A failure can leave a partially upgraded schema (verified: an
+-- interrupted run left SourceOwnership and the five columns in place while
+-- DBSchemaVersion stayed 1.16). Back up first and replay deliberately; the
+-- guards and IF NOT EXISTS clauses converge on the complete file.
+-- Requires: an account that can create tables/procedures and alter
+-- InformationSeed (normally the database owner or an administrator).
+-- There is no :CROWLER_DB_USER token in this file.
+--
+-- CLI (preferred): the mysql client understands DELIMITER.
+--   mysql --defaults-extra-file=<option file> <database> < mysql-migration-v1.17.mysql
+--
+-- GUI: many raw-SQL panels send one statement at a time and do not understand
+-- DELIMITER. Use a script runner that supports DELIMITER, or execute each
+-- CREATE PROCEDURE ... BEGIN ... END block as ONE statement without the
+-- DELIMITER lines, then run the CALL/DROP statements in the original order.
+-- Do not let a console split a routine across statements.
+--
+-- Postchecks: DBSchemaVersion = 1.17; DatabaseWriterCompatibility =
+-- verified-ownership-v1.17; SourceOwnership exists; the five InformationSeed
+-- columns and three indexes exist.
+--
+-- Full guide: docs/database-migrations.md
+-- ============================================================================
+
 -- Version 1.17 adds verified source ownership provenance and Information Seed
 -- claim leases, fencing, heartbeat and retry metadata. Durable crawl approvals
 -- are PostgreSQL/SQLite-only in this release; MySQL keeps the ownership

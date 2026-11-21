@@ -1,3 +1,9 @@
+-- Optional CROWler 1.17 add-on: read docs/database-migrations.md before running.
+-- MCP mutation proposal/approval tables. Apply AFTER the base 1.17 migration,
+-- and only when the capability is absent (development databases already at 1.17).
+-- This file uses the psql token :CROWLER_DB_USER; a GUI or raw-SQL client
+-- needs the prepared copy from scripts/prepare-postgresql-migration.sh.
+
 -- WP-04C2-B additive MCP mutation persistence capability.
 --
 -- This migration is additive within schema 1.17. It does not change the schema

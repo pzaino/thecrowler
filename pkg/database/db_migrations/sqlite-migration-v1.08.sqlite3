@@ -1,3 +1,6 @@
+-- CROWler schema migration chain: read docs/database-migrations.md before running.
+-- Target version: 1.08. Apply every earlier migration first; do not run out of order.
+
 -- SQLite upgrade migration inventory for Information Seed schema v1.8.
 -- SQLite setup applies the column-add portions through pkg/database/sqlite_db.go
 -- because supported SQLite versions do not all provide ADD COLUMN IF NOT EXISTS.

@@ -1,3 +1,6 @@
+-- CROWler schema migration chain: read docs/database-migrations.md before running.
+-- Target version: 1.16. Apply every earlier migration first; do not run out of order.
+
 -- v1.16 is a PostgreSQL-only autovacuum tuning change; SQLite has no
 -- equivalent storage parameter.  This ledger-only migration keeps upgraded
 -- SQLite databases at the same schema version as fresh installs so the

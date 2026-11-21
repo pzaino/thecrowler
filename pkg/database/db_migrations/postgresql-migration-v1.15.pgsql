@@ -1,3 +1,6 @@
+-- CROWler schema migration chain: read docs/database-migrations.md before running.
+-- Target version: 1.15. Apply every earlier migration first; do not run out of order.
+
 -- Version 1.15 is deliberately one atomic unit.  In particular, do not move
 -- ownership/version bookkeeping outside this transaction: a failed GRANT must
 -- leave both the schema and its advertised version unchanged.

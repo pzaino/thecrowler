@@ -1,3 +1,6 @@
+-- CROWler schema migration chain: read docs/database-migrations.md before running.
+-- Target version: 1.14. Apply every earlier migration first; do not run out of order.
+
 -- series_hash is derived acceleration data. The metric, scope, and dimensions
 -- columns remain authoritative. Add it nullable first so old writers continue
 -- to work while this release is rolled out.

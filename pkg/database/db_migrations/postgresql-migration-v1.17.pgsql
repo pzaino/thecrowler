@@ -1,3 +1,48 @@
+-- ============================================================================
+-- CROWler schema migration: 1.16 -> 1.17 (PostgreSQL)
+-- ============================================================================
+-- Target: schema 1.17, writer generation verified-ownership-v1.17.
+-- Source: an existing 1.16 database, or 1.17 for a repeatable re-run.
+-- Prerequisite: every earlier PostgreSQL migration, in order (v1.08 through
+-- v1.16). This file alone does not upgrade an older database.
+-- Engine: PostgreSQL (17 is the release primary).
+-- Transaction: the whole file is one BEGIN ... COMMIT. Any error rolls the
+-- whole migration back; nothing is half-applied.
+--
+-- Requires: a role that can create/alter objects and grant to the CROWler role
+-- (normally the database owner or a superuser). The CROWLER_DB_USER role must
+-- already exist; this file does not create it. Take a backup first:
+--   pg_dump --format=custom <database> > backup.dump
+--
+-- CLI (preferred): psql substitutes the CROWLER_DB_USER variable from -v.
+--   PGOPTIONS='-c lock_timeout=5s' psql -X -v ON_ERROR_STOP=1 \
+--     -v CROWLER_DB_USER="$CROWLER_DB_USER" \
+--     -f postgresql-migration-v1.17.pgsql
+-- lock_timeout bounds each lock wait, not the total run time.
+--
+-- GUI / raw SQL: the PostgreSQL server does not understand the CROWLER_DB_USER
+-- psql variable.
+-- Prepare a validated copy with scripts/prepare-postgresql-migration.sh and run
+-- the WHOLE prepared file on ONE connection, inside its own BEGIN/COMMIT.
+-- Do not add a second transaction, do not run it statement by statement, and
+-- do not hand-edit it with a global search-and-replace.
+--
+-- Locks: the transaction takes ACCESS EXCLUSIVE on InformationSeed (ALTER TABLE)
+-- and on the five link tables (trigger replacement), held until COMMIT.
+-- Readers and writers of those tables are blocked for the migration duration.
+--
+-- Rollback: on error the transaction rolls back; fix the cause and re-run. The
+-- file is additive and safe to re-run. Never restore the pre-RC2 shared-entity
+-- trigger as a rollback (see the guide, section 9).
+--
+-- Postchecks: DBSchemaVersion = 1.17; DatabaseWriterCompatibility =
+-- verified-ownership-v1.17; five trg_after_delete_* triggers are FOR EACH
+-- STATEMENT with tgoldtable = deleted_links; md5(prosrc) of
+-- handle_shared_entity_deletion() equals a fresh install of the same build.
+--
+-- Full guide: docs/database-migrations.md
+-- ============================================================================
+
 -- Version 1.17 adds durable crawl-approval persistence, verified source
 -- ownership provenance, and Information Seed claim lease/fencing/retry state
 -- for the trusted operator/agent authorization paths.

@@ -49,3 +49,14 @@ You should now have a running CROWler instance waiting to receive Sources to
 crawl.
 
 Enjoy! :)
+
+## Upgrading an existing database
+
+A fresh Docker volume is created at the current schema. An **existing** CROWler
+database is not upgraded automatically by `docker compose up`: stop the old
+services, back up the database, apply the migration files in order, verify the
+markers, then start the new build.
+
+The complete procedure, including the command-line and SQL-GUI paths for
+PostgreSQL, SQLite and MySQL, is in
+[Database migrations](./database-migrations.md).

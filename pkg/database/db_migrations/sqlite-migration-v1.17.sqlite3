@@ -1,3 +1,41 @@
+-- ============================================================================
+-- CROWler schema migration: 1.16 -> 1.17 (SQLite)
+-- ============================================================================
+-- Target: schema 1.17, writer generation verified-ownership-v1.17.
+-- Source: an existing 1.16 database, or 1.17 for a repeatable re-run.
+-- Prerequisite: every earlier SQLite migration, in order (1.08, 1.09, 1.11,
+-- 1.13, 1.14, 1.15, 1.16). This file alone does not upgrade an older database.
+-- Engine: SQLite. Requires exclusive ownership of the database file.
+--
+-- Stop every CROWler writer before starting, then take a consistent backup
+-- while nothing is writing, for example:
+--   sqlite3 SitesIndex.db ".backup 'SitesIndex.backup.db'"
+--   (VACUUM INTO works too)
+--
+-- CLI: run the whole file on one connection; it has its own BEGIN/COMMIT.
+--   sqlite3 -bail SitesIndex.db < sqlite-migration-v1.17.sqlite3
+--
+-- GUI: open the database file, then execute the file as ONE script on ONE
+-- connection and keep its existing transaction. Do not wrap another BEGIN.
+--
+-- IMPORTANT: the Information Seed claim columns (claim_token, fencing_token,
+-- lease_expires_at, heartbeat_at, next_retry_at) are installed by
+-- ensureSQLiteInformationSeedSchema in pkg/database/sqlite_db.go at runtime,
+-- before startup compatibility checks. A SQL-only / GUI-only run does not fully
+-- converge: start the 2.3.0 service once afterwards and confirm the columns.
+--
+-- Failure handling: the file's transaction rolls back on error. A busy/locked
+-- database fails with SQLITE_BUSY; stop the writers and retry. PRAGMA
+-- busy_timeout is a per-connection busy-wait policy, not a lock timeout.
+--
+-- Postchecks: DBSchemaVersion = 1.17; DatabaseWriterCompatibility =
+-- verified-ownership-v1.17; SourceOwnership/CrawlApprovals/agent-goal tables
+-- present; PRAGMA foreign_key_check returns no rows; the five InformationSeed
+-- columns exist after the runtime repair.
+--
+-- Full guide: docs/database-migrations.md
+-- ============================================================================
+
 -- Version 1.17 adds durable crawl-approval persistence, verified source
 -- ownership provenance, and Information Seed claim leases/fencing/retry state.
 -- This is the SQLite parity migration; runtime schema repair installs the

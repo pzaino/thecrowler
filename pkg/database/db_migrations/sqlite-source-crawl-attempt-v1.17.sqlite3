@@ -1,3 +1,8 @@
+-- Optional CROWler 1.17 add-on: read docs/database-migrations.md before running.
+-- Fenced crawl attempt tables. Apply AFTER the base 1.17 migration, and only when the
+-- capability is absent.
+-- Single transaction; stop every CROWler writer and back up the file first.
+
 -- Additive fenced crawl-attempt ownership for development databases already
 -- stamped 1.17. Manual and opt-in; not applied automatically at startup.
 -- Run with: sqlite3 <database> < sqlite-source-crawl-attempt-v1.17.sqlite3

@@ -1,3 +1,6 @@
+-- CROWler schema migration chain: read docs/database-migrations.md before running.
+-- Target version: 1.09. Apply every earlier migration first; do not run out of order.
+
 --------------------------------------------------------------------------------
 -- Foundational time-series schema (v1.9).
 -- Metric definitions are configuration only; observations are append-only facts.

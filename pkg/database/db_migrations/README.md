@@ -1,5 +1,11 @@
 # Migrating CROWler's DB
 
+> **Start here:** [Database migrations](../../../docs/database-migrations.md) is
+> the operator guide. It covers the full chain, prerequisites, backups, the
+> PostgreSQL `:CROWLER_DB_USER` token and the `scripts/prepare-postgresql-migration.sh`
+> helper, GUI/SQL-console execution, MySQL `DELIMITER` handling, SQLite runtime
+> repair, postchecks and rollback. The notes below are developer-facing detail.
+
 This directory contains SQL migration scripts for updating the CROWler database schema. Each migration script is named according to the version it applies to, e.g., `postgresql-migration-v1.14.pgsql`. Before running a migration, ensure that you have backed up your database and that you have the necessary permissions to alter the schema.
 
 A migration script only applies changes from the previous release to the one it declares it updates. In other words you cannot migrate directly from version 1.12 to 1.14 without first applying the 1.13 migration.

@@ -17,6 +17,7 @@ deployed in a containerized environment.
 - [Features](./features.md)
 - [General Architecture](./architecture/architecture.md)
 - [Database Architecture](./database/database_architecture.md)
+- [Database migrations (upgrade and validation)](./database-migrations.md)
 - [Rulesets Architecture](./rules-and-rulesets/ruleset_architecture.md)
 - [Installation](./installation.md)
 - [Usage](./usage.md)

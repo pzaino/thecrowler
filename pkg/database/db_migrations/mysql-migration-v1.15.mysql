@@ -1,3 +1,6 @@
+-- CROWler schema migration chain: read docs/database-migrations.md before running.
+-- Target version: 1.15. Apply every earlier migration first; do not run out of order.
+
 CREATE TABLE IF NOT EXISTS TimeSeriesCardinalityMaintenanceLock (lock_id INTEGER NOT NULL PRIMARY KEY) ENGINE=InnoDB;
 CREATE TABLE IF NOT EXISTS DatabaseWriterCompatibility (lock_id INTEGER NOT NULL PRIMARY KEY,writer_generation VARCHAR(64) NOT NULL,CHECK(lock_id=1)) ENGINE=InnoDB;
 INSERT INTO DatabaseWriterCompatibility(lock_id,writer_generation) VALUES(1,'reservation-v1.15') ON DUPLICATE KEY UPDATE writer_generation=VALUES(writer_generation);

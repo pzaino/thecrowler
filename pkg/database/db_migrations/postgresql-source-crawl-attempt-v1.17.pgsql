@@ -1,3 +1,9 @@
+-- Optional CROWler 1.17 add-on: read docs/database-migrations.md before running.
+-- Fenced crawl attempt tables. Apply AFTER the base 1.17 migration, and
+-- only when the capability is absent (development databases already at 1.17).
+-- This file uses the psql token :CROWLER_DB_USER; a GUI or raw-SQL client
+-- needs the prepared copy from scripts/prepare-postgresql-migration.sh.
+
 -- Additive fenced crawl-attempt ownership for development databases already
 -- stamped 1.17. Manual and opt-in; not applied automatically at startup.
 -- Run with:
