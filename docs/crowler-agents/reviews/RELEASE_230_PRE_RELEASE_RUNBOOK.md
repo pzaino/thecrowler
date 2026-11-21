@@ -167,7 +167,10 @@ Migration rehearsal (disposable only):
 
 ```bash
 # 1. create a disposable 1.16 database, load the v1.16 setup, insert a fixture row
-# 2. apply pkg/database/db_migrations/postgresql-migration-v1.17.pgsql
+# 2. apply pkg/database/db_migrations/postgresql-migration-v1.17.pgsql in one
+#    session with the timeout set on that session, e.g.:
+#    PGOPTIONS='-c lock_timeout=5s' psql -X -v ON_ERROR_STOP=1 \
+#      -v CROWLER_DB_USER="$CROWLER_DB_USER" -f <that file>
 # 3. verify version 1.17, writer generation, and that the fixture row survived
 # 4. re-apply the same migration and verify it is idempotent
 # 5. apply pkg/database/db_migrations/postgresql-agent-goal-v1.17.pgsql twice
@@ -315,7 +318,9 @@ never prune globally.
 Nothing in this runbook changes a persistent database, so the rollback for the
 gate itself is removal of the disposable resources above.
 
-If a future deployment does apply the schema-1.17 migration:
+If a future deployment does apply the schema-1.17 migration, follow
+`RELEASE_230_RC5_DEPLOYMENT_MONITORING.md` §3 for the bounded invocation and the
+lock-lifetime rules, and §6 for the supported rollback shape:
 
 1. stop every writer;
 2. restore the verified backup taken before the migration;
