@@ -15,9 +15,12 @@ Backend-specific functions, procedures, triggers, indexes, constraints, and tran
 should be used where they improve correctness, atomicity, consistency, or performance, provided that
 the externally observable CROWler semantics remain consistent across supported database backends.
 
-Database portability does not imply lowest-common-denominator SQL. PostgreSQL, MySQL/MariaDB, and
-SQLite are expected to use the mechanisms that best fit their respective capabilities and intended
-deployment models.
+Database portability does not imply lowest-common-denominator SQL. Runtime
+support in 2.3.0 is PostgreSQL (primary) and SQLite. MySQL/MariaDB setup and
+migration SQL is retained for reference and schema-contract work, but the 2.3.0
+runtime does not construct a MySQL handler: `pkg/database.NewHandler()` rejects
+`database.type: mysql`. See [Database migrations](../database-migrations.md) for
+the operator matrix.
 
 ## `pkg/database`
 

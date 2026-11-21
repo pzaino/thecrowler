@@ -857,11 +857,12 @@ outcome is forbidden. Listener hints never advance state.
 
 #### Cross-database implications
 
-PostgreSQL is the currently supported database according to `pkg/database`;
-SQLite and MySQL/MariaDB schemas are also maintained and must not silently
-receive weaker correctness. The implementation should use the `database.Handler`
-transaction API and DB-specific statements behind a common state-store
-contract.
+PostgreSQL and SQLite are the supported 2.3.0 backends according to
+`pkg/database`. The MySQL/MariaDB schema is retained for reference and future
+work, but the 2.3.0 runtime does not enable that backend. Any future backend must
+not silently receive weaker correctness. The implementation should use the
+`database.Handler` transaction API and DB-specific statements behind a common
+state-store contract.
 
 - PostgreSQL may use `INSERT ... ON CONFLICT`, `UPDATE ... RETURNING`, row
   locks, and `TIMESTAMPTZ`, but those features cannot leak into mail semantics.

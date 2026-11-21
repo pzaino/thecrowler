@@ -197,9 +197,8 @@ provides deterministic test coverage, but production mutation relies on
 PostgreSQL row locking.
 
 The `Status` table is present in the PostgreSQL and SQLite schemas. MySQL's
-current schema does not contain it, so the new API fails closed with
-`crawl_store_unsupported` on MySQL; `ScheduleSourceCrawl()` remains available
-for legacy MySQL callers but does not claim durable idempotency.
+current schema does not contain it, and the 2.3.0 runtime does not enable the
+MySQL backend, so the scheduling API is not reachable there.
 
 The scheduling foundation itself uses the existing `Status` table. The v1.17
 migration adds the approval and verified-ownership tables required by the
@@ -283,10 +282,11 @@ The clean-install PostgreSQL/SQLite setup includes `CrawlApprovals` and
 `verified-ownership-v1.17`. Source creation derives ownership from the
 authenticated local user when API authentication is enabled and records
 verified provenance. Historical `usr_id` values remain unverified until an
-administrator uses the ownership-verification endpoint. MySQL keeps the
-ownership table but does not support durable approvals or authenticated atomic
-source mutation. The remaining agent-principal runtime wiring and
-external-identity mapping are documented in
+administrator uses the ownership-verification endpoint. The MySQL SQL keeps the
+ownership table, but the 2.3.0 runtime does not enable MySQL; durable approvals
+and authenticated atomic source mutation are PostgreSQL/SQLite features. The
+remaining agent-principal runtime wiring and external-identity mapping are
+documented in
 [`crawl_request_authorization.md`](crawl_request_authorization.md).
 
 ### Decision integrity

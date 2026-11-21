@@ -57,6 +57,7 @@ database is not upgraded automatically by `docker compose up`: stop the old
 services, back up the database, apply the migration files in order, verify the
 markers, then start the new build.
 
-The complete procedure, including the command-line and SQL-GUI paths for
-PostgreSQL, SQLite and MySQL, is in
-[Database migrations](./database-migrations.md).
+The complete procedure is in [Database migrations](./database-migrations.md).
+It covers PostgreSQL from the command line or a SQL GUI (including the ready-made
+file for the standard `crowler` role), SQLite, and the retained MySQL/MariaDB SQL
+notes.

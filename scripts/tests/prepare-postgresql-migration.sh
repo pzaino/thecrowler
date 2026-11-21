@@ -21,7 +21,7 @@ out="$WORK/migration.gui.sql"
 "$HELPER" --role crowler --output "$out" >/dev/null
 [ "$(grep -c ':CROWLER_DB_USER' "$out" || true)" = "0" ] || fail "token survived in the real migration"
 [ "$(grep -c '"crowler"' "$out" || true)" -ge 29 ] || fail "expected at least 29 quoted replacements"
-if ! cmp -s <(sed 's/:CROWLER_DB_USER/"crowler"/g' "$MIGRATION") <(tail -n +8 "$out"); then
+if ! cmp -s <(sed 's/:CROWLER_DB_USER/"crowler"/g' "$MIGRATION") <(tail -n +10 "$out"); then
   fail "generated body differs from the real migration outside the token"
 fi
 head -3 "$out" | grep -q 'GENERATED FILE' || fail "missing generated-file banner"
@@ -31,7 +31,7 @@ echo "PASS: prepares the real v1.17 migration (29 replacements, body byte-identi
 addon_out="$WORK/agent-goal.gui.sql"
 "$HELPER" --role crowler --input "$ADDON" --output "$addon_out" >/dev/null
 [ "$(grep -c ':CROWLER_DB_USER' "$addon_out" || true)" = "0" ] || fail "token survived in the add-on"
-if ! cmp -s <(sed 's/:CROWLER_DB_USER/"crowler"/g' "$ADDON") <(tail -n +8 "$addon_out"); then
+if ! cmp -s <(sed 's/:CROWLER_DB_USER/"crowler"/g' "$ADDON") <(tail -n +10 "$addon_out"); then
   fail "generated add-on body differs outside the token"
 fi
 echo "PASS: prepares the optional agent-goal add-on"

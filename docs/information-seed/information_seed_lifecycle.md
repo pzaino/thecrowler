@@ -925,9 +925,10 @@ the new row is enabled and immediately claimable (`status = 'new'` or
 2. PostgreSQL additionally sends `pg_notify('information_seed_created', seed_id)`.
    Other CROWler processes that are listening on that channel wake without
    waiting for their next polling tick.
-3. SQLite and MySQL rely on the in-process wake-up when the creator and
-   scheduler share a process. When no local scheduler is registered, or a wake-up
-   is missed, periodic polling remains the recovery mechanism.
+3. SQLite relies on the in-process wake-up when the creator and scheduler share
+   a process. The MySQL implementation is retained in SQL but is not reachable
+   in the 2.3.0 runtime. When no local scheduler is registered, or a wake-up is
+   missed, periodic polling remains the recovery mechanism.
 
 Direct insertion into `InformationSeed` is still supported for integrations that
 cannot call the helper, as long as the row uses a valid status, normally `new` or
@@ -939,8 +940,9 @@ notification, so they are discovered by the normal polling claim path:
 2. On PostgreSQL, the worker calls `update_informationseed`, which selects rows
    with `FOR UPDATE SKIP LOCKED` and changes them to `processing` in one database
    statement. The claim stamps `engine` and `last_processed_at` and increments
-   `attempts` before returning the rows. MySQL and SQLite preserve the same
-   lifecycle contract with their dialect-specific transactional claim paths.
+   `attempts` before returning the rows. SQLite preserves the same lifecycle
+   contract with its dialect-specific transactional claim path; the MySQL
+   equivalent is retained but not reachable in the 2.3.0 runtime.
 3. The worker processes claimed seeds and writes final `completed` or `error`
    state.
 

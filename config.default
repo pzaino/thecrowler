@@ -15,7 +15,9 @@ created_at: "2025-08-13T00:00:00"
 # Database (required in LOCAL mode)
 # --------------------------
 database:
-  # DB engine: postgres | mysql | sqlite (postgres recommended):
+  # DB engine: postgres | sqlite (postgres recommended).
+  # The 2.3.0 runtime does not enable MySQL/MariaDB; mysql migration SQL is
+  # retained for reference only.
   type: postgres
   # DB host (FQDN/IP/env-var allowed by regex in schema)
   host: ${DOCKER_DB_HOST}

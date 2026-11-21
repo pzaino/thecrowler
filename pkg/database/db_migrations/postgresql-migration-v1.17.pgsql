@@ -21,11 +21,14 @@
 -- lock_timeout bounds each lock wait, not the total run time.
 --
 -- GUI / raw SQL: the PostgreSQL server does not understand the CROWLER_DB_USER
--- psql variable.
--- Prepare a validated copy with scripts/prepare-postgresql-migration.sh and run
--- the WHOLE prepared file on ONE connection, inside its own BEGIN/COMMIT.
--- Do not add a second transaction, do not run it statement by statement, and
--- do not hand-edit it with a global search-and-replace.
+-- psql variable. For the default crowler runtime role, use the ready-made
+-- postgresql-migration-v1.17.gui-crowler.sql in this directory. It is generated
+-- mechanically from this file; regenerate it if this file changes.
+-- Custom roles: prepare a validated copy with
+-- scripts/prepare-postgresql-migration.sh and run the WHOLE prepared file on
+-- ONE connection, inside its own BEGIN/COMMIT. Do not add a second transaction,
+-- do not run it statement by statement, and do not hand-edit it with a global
+-- search-and-replace.
 --
 -- Locks: the transaction takes ACCESS EXCLUSIVE on InformationSeed (ALTER TABLE)
 -- and on the five link tables (trigger replacement), held until COMMIT.

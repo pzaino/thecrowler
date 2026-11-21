@@ -96,7 +96,7 @@ migration.
 | Method | PostgreSQL | SQLite | MySQL |
 | --- | --- | --- | --- |
 | CLI client (`psql`, `sqlite3`, `mysql`) | **Recommended** | **Recommended** | SQL only, runtime unsupported (§5) |
-| Desktop SQL editor / GUI | Works after preparing the file (§4.4) | Works if it runs one script on one connection | Only with DELIMITER support (§5) |
+| Desktop SQL editor / GUI | Ready-made file for the `crowler` role (§4.4); custom roles need preparation | Works if it runs one script on one connection | Only with DELIMITER support (§5) |
 | Hosted admin console (phpMyAdmin, Adminer, cloud consoles) | **Not verified.** Use only if it can run a whole script as one transaction on one connection | **Not verified** | **Not verified** |
 | Container/Compose "automatic" upgrade | No automatic in-place upgrade exists | No | No |
 
@@ -170,15 +170,125 @@ ORDER BY xact_age DESC;
 legitimate `CREATE INDEX` can exceed a small value. Leave it unset unless your
 change policy requires one.
 
-### 4.4 GUI and raw-SQL execution
+### 4.4 No-shell GUI path (standard `crowler` role)
 
 The PostgreSQL server does not understand `:CROWLER_DB_USER`; pasting the
-shipped file into a GUI fails with a syntax error at `:`. Prepare a validated
-copy first:
+canonical file into a GUI fails with a syntax error at `:`. For installations
+whose CROWler runtime role is exactly `crowler`, the release ships a ready-made
+copy:
+
+```text
+pkg/database/db_migrations/postgresql-migration-v1.17.gui-crowler.sql
+```
+
+It is produced mechanically from
+`postgresql-migration-v1.17.pgsql`: only the 29 `:CROWLER_DB_USER` tokens are
+replaced with the quoted identifier `"crowler"`, plus a fixed generated banner.
+Its transaction boundaries, version guards, trigger definitions, grants and
+marker updates are identical to the canonical migration. A repository test
+(`TestPostgresV117GUICrowlerArtifactMatchesCanonical`) fails if the copy drifts.
+
+> **Role warning.** Do not run this file if your runtime role is not exactly
+> `crowler`. It grants and transfers ownership to `"crowler"` and has no way to
+> discover your actual role. Installations with a custom role must prepare their
+> own copy with `scripts/prepare-postgresql-migration.sh` (administrator or
+> `psql`), as described below.
+
+#### Obtain the file without a shell
+
+Take the file from the same place you obtained this release: the 2.3.0 source
+archive or the repository file tree at the 2.3.0 commit. Download it unchanged.
+Do not copy it from another version, and do not edit it.
+
+#### Verify the target role
+
+In the SQL client, run:
+
+```sql
+SELECT 1 FROM pg_roles WHERE rolname = 'crowler';
+```
+
+One row means the role exists. No rows means the file is not applicable: create
+the runtime role first, or use a custom-role prepared copy. The migration does
+not create roles.
+
+#### Back up first
+
+Use one of:
+
+- your organisation's DBA-managed PostgreSQL backup;
+- the client's own PostgreSQL backup feature, **only if** it produces a real
+  `pg_dump`-equivalent backup;
+- `pg_dump --format=custom --file=crowler-before-1.17.dump "$PGDATABASE"` from a
+  machine that has the client tools.
+
+A CSV, spreadsheet or result-grid export is **not** a database backup. If you
+cannot obtain a verified consistent backup from the GUI, stop and ask a DBA;
+do not migrate on the strength of an export.
+
+#### Configure the client
+
+These settings matter more than the product name:
+
+- **Script execution, not "execute current statement".** The whole file must be
+  submitted as one script/batch.
+- **One connection.** The file's `BEGIN` … `COMMIT` and any `SET` must run on the
+  same session. A console that opens a new pooled connection per statement
+  cannot run this migration.
+- **No client-managed transaction.** If the client has "wrap script in a
+  transaction" or "autocommit off" automation, disable it. The file already has
+  its own `BEGIN` and `COMMIT`; a second `BEGIN` produces a warning and makes the
+  commit boundary ambiguous.
+- **No statement splitting.** Some consoles split on `;`. The migration contains
+  `DO $$ … $$` blocks; splitting them breaks the script.
+- **Server-side batch execution.** The client must send the file as a script to
+  the server, not replay it statement by statement through an ORM or query
+  builder.
+
+#### Add the lock bound in the same submission
+
+`lock_timeout` is per session. Putting it in a separate UI submission can land on
+a different pooled connection. Prepend it to the *same* script, above the file's
+`BEGIN`:
+
+```sql
+SET lock_timeout = '5s';
+```
+
+then the entire file contents. Submit once. This bounds each lock wait; it does
+not shorten locks already held and it does not release them early (§4.3). If
+your client cannot submit both as one script on one connection, do not use that
+client for the migration.
+
+#### Execute and verify
+
+1. Confirm the role (§ above) and the backup.
+2. Run the whole script on one connection, with the optional `SET` first.
+3. If the client reports an error, stop. The transaction should have rolled
+   back; confirm with the postchecks. Do not "fix" it by committing partial
+   results.
+4. Run the postchecks (§4.5).
+
+The shipped GUI copy has been executed as one raw SQL batch on a single
+PostgreSQL 17 connection in this release's validation. Specific desktop or
+hosted GUI products were **not** tested; see §10.
+
+#### If the client cannot guarantee one connection
+
+Do not migrate with it. Use `psql` (§4.2), a DBA-run migration, or a managed
+database migration job that provides a single session and a bounded lock wait.
+A console that silently reconnects between statements can leave the database in
+a state that is neither the old schema nor the new one.
+
+#### Custom runtime roles
+
+The GUI copy is only for `crowler`. For any other role, have an administrator
+generate a validated copy with the helper (requires a shell on the
+administrator's side):
 
 ```bash
 scripts/prepare-postgresql-migration.sh \
-  --role "$CROWLER_DB_USER" \
+  --role "<actual-runtime-role>" \
   --output /tmp/postgresql-migration-v1.17.gui.sql
 ```
 
@@ -187,30 +297,14 @@ The helper:
 - accepts only an unquoted identifier matching `^[A-Za-z_][A-Za-z0-9_]{0,62}$`
   and rejects quotes, spaces, dots, semicolons and every other injection vector;
 - replaces **only** the exact `:CROWLER_DB_USER` token with a double-quoted
-  identifier (e.g. `"crowler"`), preserving case;
+  identifier, preserving case;
 - verifies that no token survives and that the rest of the file is byte-identical;
-- refuses to overwrite an existing file without `--force`, and refuses to
-  rewrite the source in place.
+- refuses to overwrite an existing file without `--force`, refuses a directory
+  as the output, and refuses to rewrite the source in place.
 
-It works for the optional add-ons too (`--input <file>`).
-
-Then, in the GUI:
-
-1. Open the database with a role that has the privileges from §2.3.
-2. Open **the prepared file** as one script.
-3. Run it on **one connection**, as **one transaction**. Do not add a second
-   `BEGIN`, and do not run it statement by statement.
-4. Optional lock bound: prepend one line, before the file's own `BEGIN`:
-   ```sql
-   SET lock_timeout = '5s';
-   ```
-   and submit both as one script. This is preferred over setting the timeout
-   separately, because pooled consoles may switch connections between
-   submissions. If your console cannot run a whole script as a unit, use `psql`
-   or an administrative migration job instead.
-
-The prepared file has been tested as a single raw SQL batch on one PostgreSQL
-connection, not only through `psql`.
+It works for the optional add-ons too (`--input <file>`). There is no validated
+no-shell custom-role route in this release: do not hand-edit 29 tokens and do not
+promise that a client-side search-and-replace is equivalent.
 
 ### 4.5 Postchecks
 
@@ -225,9 +319,12 @@ WHERE NOT tgisinternal AND tgname LIKE 'trg_after_delete_%index'
 SELECT md5(prosrc) FROM pg_proc WHERE proname = 'handle_shared_entity_deletion';
 ```
 
-Compare the digest with a fresh 1.17 install of the same release build; they must
-match. A blocked or failed run exits non-zero and changes nothing (verified: a
-lock-timeout failure left the function body, triggers and both markers intact).
+For the 2.3.0 build validated for this guide the function digest is
+`5bdd88efd2e200043c2fb1502be5ba3b`. A fresh 1.17 install of the same build must
+produce the same value. If it differs, stop and compare the deployed build with
+the one you are migrating from; do not assume the migration succeeded. A blocked
+or failed run exits non-zero and changes nothing (verified: a lock-timeout
+failure left the function body, triggers and both markers intact).
 
 ### 4.6 Retry and repeatability
 
@@ -419,7 +516,8 @@ Verified on disposable instances for this release:
 | Engine / client | What was verified |
 | --- | --- |
 | PostgreSQL 17 + `psql` 17 | CLI upgrade from a simulated 1.16 database; repeat run; wrong prerequisite; missing role; lock-timeout failure and rollback |
-| PostgreSQL 17 + a raw-SQL driver on one connection | the prepared GUI file executed as one batch; identical schema, marker and function digest |
+| PostgreSQL 17 + a raw-SQL driver on one connection | the shipped `gui-crowler` file and a prepared custom copy executed as one batch; identical schema, markers, trigger count and function digest; reapply is idempotent |
+| PostgreSQL 17 + shipped GUI file + `SET lock_timeout` in the batch | a deliberately held conflicting lock aborted the batch with `55P03` and the whole transaction rolled back |
 | SQLite 3.54 + `sqlite3` CLI | CLI migration, busy/locked behaviour, `.backup` integrity, runtime convergence of the claim columns |
 | MySQL 8.0 + `mysql` client | migration SQL only, on a minimal compatible schema: delimiter path, per-routine path, idempotency, partial-application behaviour |
 | MariaDB 11.8 | fresh-install script only: blocked by a functional index (reported, not fixed) |
@@ -427,7 +525,9 @@ Verified on disposable instances for this release:
 **Not verified:** any specific desktop GUI product or hosted admin console
 (pgAdmin, DBeaver, phpMyAdmin, Adminer, cloud SQL consoles), and MySQL/MariaDB
 as a runtime backend (disabled in 2.3.0). Treat those paths as unsupported until
-someone tests them and records the result.
+someone tests them and records the result. A raw SQL batch executed through a
+driver is not evidence that a particular GUI product configures its script mode
+correctly.
 
 The supporting evidence is in
-[`crowler-agents/reviews/RELEASE_230_FINAL_MIGRATION_DOCS_VALIDATION.md`](crowler-agents/reviews/RELEASE_230_FINAL_MIGRATION_DOCS_VALIDATION.md).
+[`crowler-agents/reviews/RELEASE_230_DOC2_VALIDATION.md`](crowler-agents/reviews/RELEASE_230_DOC2_VALIDATION.md).

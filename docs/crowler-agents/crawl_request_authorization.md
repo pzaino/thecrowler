@@ -314,9 +314,9 @@ ownership history is preserved by `IF NOT EXISTS`/upsert semantics and by
 re-running the same v1.17 migration, which safely converges partially migrated
 databases.
 
-MySQL keeps the ownership-provenance table for schema compatibility but does
-not support durable crawl approvals or the authenticated atomic source-mutation
-contract; those features fail closed with an explicit unsupported result.
+The MySQL SQL keeps the ownership-provenance table for schema compatibility, but
+the 2.3.0 runtime does not enable MySQL/MariaDB. Durable crawl approvals and the
+authenticated atomic source-mutation contract are PostgreSQL/SQLite features.
 
 Rollback is additive and destructive only to proposal/approval/ownership
 provenance:
@@ -692,8 +692,9 @@ when only a proposal exists.
 ### Backends, diagnostics and limitations
 
 PostgreSQL and SQLite support proposals, approvals, authenticated source
-mutation, ownership verification and scheduling. MySQL retains ownership
-provenance only; mutation tools fail closed with an unsupported-backend error.
+mutation, ownership verification and scheduling. The MySQL SQL retains
+ownership provenance only, and the 2.3.0 runtime does not enable that backend,
+so mutation tools are not reachable there.
 
 Denied requests return stable reason codes such as `crawl_source_out_of_scope`,
 `crawl_source_ownership_missing`, `crawl_operation_not_allowlisted`,

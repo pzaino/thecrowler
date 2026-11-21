@@ -1,15 +1,17 @@
 # TheCROWler DB architecture
 
-The CROWler uses PostgreSQL as its primary production database, and the database
-package also carries setup/migration coverage for MySQL/MariaDB and SQLite so
-Information Seed schema changes can be validated consistently across supported
-DBMS backends.
+The CROWler uses PostgreSQL as its primary production database. The 2.3.0
+runtime supports PostgreSQL and SQLite. MySQL/MariaDB setup and migration SQL is
+retained for reference and schema-contract work, but it is not an operational
+2.3.0 backend: `pkg/database.NewHandler()` rejects `database.type: mysql` and the
+MySQL handler is commented out. See [Database migrations](../database-migrations.md)
+for the operator matrix and migration procedure.
 
 
 ## InformationSeed schema migration coverage
 
 Information Seed schema changes are represented in both fresh-install setup SQL
-and upgrade migration SQL for every supported DBMS:
+and upgrade migration SQL for every backend with shipped SQL:
 
 - PostgreSQL: `pkg/database/postgresql-setup.pgsql` and
   `pkg/database/db_migrations/postgresql-migration-v1.17.pgsql`.
@@ -61,7 +63,9 @@ DBMS-specific behavior and limitations:
   LOCKED` inside a transaction, followed by a guarded `UPDATE` of the locked
   primary keys and a select by the new claim token. This requires InnoDB row
   locks and MySQL versions that support `SKIP LOCKED`; older MySQL versions may
-  block on locked rows or require a different guarded-update fallback.
+  block on locked rows or require a different guarded-update fallback. This
+  branch is not reachable in the 2.3.0 runtime, which does not enable the MySQL
+  backend.
 - **SQLite** uses a transaction-safe bounded `UPDATE InformationSeed ... WHERE
   information_seed_id IN (SELECT ... LIMIT ...)` pattern, then selects rows by
   the unique claim token. SQLite does not provide row-level `SKIP LOCKED`, so
@@ -97,9 +101,10 @@ source/user lifecycle changes, while issuance validates those references while
 they are live.
 
 Fresh-install PostgreSQL, SQLite and MySQL setup files include the v1.17
-ownership-provenance table. PostgreSQL and SQLite also include
-`CrawlApprovals`; MySQL does not support durable approvals and fails closed with
-an explicit unsupported result. The v1.17 migration files create
+ownership-provenance table. PostgreSQL and SQLite also include `CrawlApprovals`;
+the MySQL setup does not create that table. Because the 2.3.0 runtime does not
+enable MySQL/MariaDB, durable approvals are not reachable on that backend at
+all. The v1.17 migration files create
 `SourceOwnership` on every backend and `CrawlApprovals` on PostgreSQL/SQLite,
 then advance both `DBSchemaVersion` and `DatabaseWriterCompatibility`.
 
@@ -495,7 +500,7 @@ The backfill deliberately does **not** update `TimeSeriesAggregates`. Its result
 
 ## Time-series storage
 
-`TimeSeriesMetrics`, `TimeSeriesObservations`, `TimeSeriesAggregates`, `TimeSeriesAggregationRuns`, and `EntityObservationBackfillCheckpoints` implement the v1 analytical projection on PostgreSQL, MySQL, and SQLite. Search and discovery tables remain authoritative; aggregate rows can be rebuilt from retained observations, and entity backfill updates raw scope before explicit reaggregation.
+`TimeSeriesMetrics`, `TimeSeriesObservations`, `TimeSeriesAggregates`, `TimeSeriesAggregationRuns`, and `EntityObservationBackfillCheckpoints` implement the v1 analytical projection for PostgreSQL, MySQL and SQLite schemas (MySQL is reference-only in 2.3.0). Search and discovery tables remain authoritative; aggregate rows can be rebuilt from retained observations, and entity backfill updates raw scope before explicit reaggregation.
 
 PostgreSQL cardinality admission does not lock `TimeSeriesMetrics`. Existing
 series use lock-free active-accounting lookups; a potentially new series or
@@ -516,4 +521,4 @@ Window computation and observation reads occur outside the replacement transacti
 
 SQLite's backend lease is a no-op, so only the in-process mutex coordinates aggregation; separate SQLite-using processes are not mutually excluded and must not aggregate concurrently. MySQL has time-series schema and repository SQL, but the aggregation runner currently rejects it because a cluster-wide writer lease has not been implemented. MySQL aggregation coordination is therefore not supported or verified.
 
-PostgreSQL partitioning configuration is optional and declarative in v1; automatic partition creation is not part of the shipped startup path. MySQL and SQLite use unpartitioned tables. See [Time-series observations and aggregates](timeseries.md#storage-portability-and-postgresql-partitioning).
+PostgreSQL partitioning configuration is optional and declarative in v1; automatic partition creation is not part of the shipped startup path. SQLite uses unpartitioned tables; the MySQL SQL is unpartitioned and reference-only in 2.3.0. See [Time-series observations and aggregates](timeseries.md#storage-portability-and-postgresql-partitioning).
