@@ -75,9 +75,6 @@ var (
 	// PluginRegister is the plugin register
 	PluginRegister *plg.JSPluginRegister
 
-	// AgentsEngine is the agent engine
-	AgentsEngine *agt.JobEngine
-
 	clientLimiters = make(map[string]*rate.Limiter)
 	limitersMutex  sync.Mutex
 	jobQueue       = make(chan cdb.Event, 160_000) // buffered notification queue
@@ -396,15 +393,43 @@ func cloudRunAddr(cfg cfg.Config) string {
 
 func startEventJanitor(db *cdb.Handler, interval time.Duration, config cfg.Config) {
 	ticker := time.NewTicker(interval)
+	auditTicker := time.NewTicker(mcpMutationAuditCleanupInterval)
 	go func() {
-		for range ticker.C {
-			cleanupExpiredEvents(db)
-			if strings.TrimSpace(config.Events.SysDBWebObjectsRetention) != "" {
-				threshold := parseDuration(config.Events.SysDBWebObjectsRetention)
-				cleanupTooOldWebObjects(db, threshold)
+		defer ticker.Stop()
+		defer auditTicker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				cleanupExpiredEvents(db)
+				if strings.TrimSpace(config.Events.SysDBWebObjectsRetention) != "" {
+					threshold := parseDuration(config.Events.SysDBWebObjectsRetention)
+					cleanupTooOldWebObjects(db, threshold)
+				}
+			case <-auditTicker.C:
+				cleanupMCPMutationAudit(db, config)
 			}
 		}
 	}()
+}
+
+// cleanupMCPMutationAudit removes at most one bounded batch of expired durable
+// MCP mutation audit rows. Unknown event types are retained deliberately.
+func cleanupMCPMutationAudit(db *cdb.Handler, config cfg.Config) {
+	if db == nil || *db == nil {
+		return
+	}
+	retention := mcpMutationAuditRetention(config.Events.MCPAuditRetention)
+	cutoff := time.Now().UTC().Add(-retention)
+	ctx, cancel := context.WithTimeout(context.Background(), mcpMutationAuditCleanupTimeout)
+	defer cancel()
+	removed, err := cdb.CleanupMCPMutationAudit(ctx, db, cutoff, cdb.MCPMutationAuditCleanupMaxBatch)
+	if err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "MCP mutation audit cleanup failed: %v", err)
+		return
+	}
+	if removed > 0 {
+		cmn.DebugMsg(cmn.DbgLvlDebug, "MCP mutation audit cleanup removed %d expired rows", removed)
+	}
 }
 
 func cleanupExpiredEvents(db *cdb.Handler) {
@@ -549,6 +574,10 @@ func initAll(configFile *string, config *cfg.Config, lmt **rate.Limiter) error {
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Initializing agents engine...")
 	agt.AgentsEngine = agt.NewJobEngine()
 	agt.RegisterActions(agt.AgentsEngine) // Use the initialized `agt.AgentsEngine`
+	if err := agt.SetMCPOperatorConfig(config.MCP); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "invalid MCP operator configuration: %v", err)
+		return fmt.Errorf("invalid MCP operator configuration: %w", err)
+	}
 	agtCfg := config.Agents
 	agt.AgentsRegistry = agt.NewJobConfig()
 	err = agt.AgentsRegistry.LoadConfig(agtCfg)
@@ -648,6 +677,11 @@ func initAPIv1() {
 
 	http.Handle(baseAPI+"list", listEventsWithMiddlewares)
 	cmn.RegisterAPIRoute(baseAPI+"list", []string{"GET"}, "List all events", tagsNone, false, false, 200, nil, nil, []cdb.Event{})
+
+	// Authenticated user-triggered manual agent execution. Only agents with a
+	// manual trigger and the events operator scope are eligible.
+	http.Handle("/v1/agent/run", withAll(http.HandlerFunc(agentRunHandler)))
+	cmn.RegisterAPIRoute("/v1/agent/run", []string{"POST"}, "Run a registered manual agent as the authenticated operator", tagsNone, true, false, 200, agentRunRequest{}, nil, agentRunResponse{})
 
 	// Handle uploads
 
@@ -1619,6 +1653,41 @@ func isRetryable(err error) bool {
 	return false
 }
 
+// agentInputConfig builds the trusted runtime context for an agent triggered by
+// an event. Rollout flags come from process configuration, never from the event
+// payload, so an event producer cannot relax identity or contract enforcement.
+func agentInputConfig(event cdb.Event, metaData map[string]interface{}) map[string]interface{} {
+	iCfg := make(map[string]interface{})
+	iCfg["vdi_hook"] = nil
+	iCfg["db_handler"] = dbHandler
+	iCfg["plugins_register"] = PluginRegister
+	iCfg["event"] = event
+	iCfg["meta_data"] = metaData
+	configMutex.Lock()
+	runtimeFlags := config.Agent
+	configMutex.Unlock()
+	iCfg["agent_runtime"] = runtimeFlags
+	return iCfg
+}
+
+// sourceEventMetaData extracts optional source metadata without trusting its
+// shape. Source configs are operator data, but a missing or malformed
+// meta_data object must not panic event processing or block agent dispatch.
+func sourceEventMetaData(configMap map[string]interface{}) map[string]interface{} {
+	metaData := make(map[string]interface{})
+	if configMap == nil {
+		return metaData
+	}
+	raw, ok := configMap["meta_data"]
+	if !ok || raw == nil {
+		return metaData
+	}
+	if parsed, ok := raw.(map[string]interface{}); ok {
+		return parsed
+	}
+	return metaData
+}
+
 // Process the "external" event
 func processEvent(event cdb.Event) {
 
@@ -1657,13 +1726,12 @@ func processEvent(event cdb.Event) {
 		source, err = cdb.GetSourceByID(&dbHandler, event.SourceID)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "Failed to retrieve source details: %v (probably source removed already by the system or the user)", err)
-		} else {
+		} else if source.Config != nil {
 			// extract the source details -> meta_data
 			if err := json.Unmarshal(*source.Config, &configMap); err != nil {
 				cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling config: %v", err)
-				metaData = nil
 			} else {
-				metaData = configMap["meta_data"].(map[string]interface{})
+				metaData = sourceEventMetaData(configMap)
 			}
 		}
 	}
@@ -1750,12 +1818,7 @@ func processEvent(event cdb.Event) {
 
 	if aExists {
 		// generate the minimal iCfg
-		iCfg := make(map[string]interface{})
-		iCfg["vdi_hook"] = nil
-		iCfg["db_handler"] = dbHandler
-		iCfg["plugins_register"] = PluginRegister
-		iCfg["event"] = event
-		iCfg["meta_data"] = metaData
+		iCfg := agentInputConfig(event, metaData)
 		cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-ProcessEvent] Source Config: %v", configMap)
 
 		for _, ac := range a {
@@ -1792,16 +1855,58 @@ func processEvent(event cdb.Event) {
 		}
 	}
 
-	// Remove the event if needed
-	removalPolicy := strings.ToLower(strings.TrimSpace(config.Events.EventRemoval))
-	if removalPolicy == "" {
+	// Remove the event if needed. The decision is a pure function so the
+	// documented policy can be tested deterministically; see
+	// eventRemovalAction and services/events/event_retention_test.go.
+	switch eventRemovalAction(config.Events.EventRemoval, processingSuccess) {
+	case eventRemovalExpire:
 		expireEvent(event.ID)
-	} else if removalPolicy == cmn.AlwaysStr {
+	case eventRemovalDelete:
 		removeHandledEvent(event.ID)
-	} else if (removalPolicy == "on_success") && processingSuccess {
-		removeHandledEvent(event.ID)
-	} else if (removalPolicy == "on_failure") && !processingSuccess {
-		removeHandledEvent(event.ID)
+	}
+}
+
+// eventRemovalOutcome is the closed outcome of the consumer acknowledgement
+// policy in events.automatic_events_removal.
+type eventRemovalOutcome int
+
+const (
+	// eventRemovalKeep leaves the event row untouched. It is the outcome of the
+	// explicit "never" policy and of any unrecognised value.
+	eventRemovalKeep eventRemovalOutcome = iota
+	// eventRemovalExpire marks the row processed by moving expires_at forward,
+	// which is what the empty policy (the documented default) does.
+	eventRemovalExpire
+	// eventRemovalDelete removes the handled row immediately.
+	eventRemovalDelete
+)
+
+// eventRemovalAction maps the configured acknowledgement policy and the
+// processing outcome to the action the consumer takes on the event row.
+//
+// The consumer policy is independent of the janitor: every event is also
+// created with a finite expires_at, and the janitor deletes rows once that
+// timestamp has passed. "never" therefore means "the consumer never removes or
+// expires the row", not "the row is permanent".
+func eventRemovalAction(policy string, processingSuccess bool) eventRemovalOutcome {
+	switch strings.ToLower(strings.TrimSpace(policy)) {
+	case "":
+		return eventRemovalExpire
+	case cmn.AlwaysStr:
+		return eventRemovalDelete
+	case "on_success":
+		if processingSuccess {
+			return eventRemovalDelete
+		}
+		return eventRemovalKeep
+	case "on_failure":
+		if !processingSuccess {
+			return eventRemovalDelete
+		}
+		return eventRemovalKeep
+	default:
+		// "never" and any unrecognised value keep the row for the janitor.
+		return eventRemovalKeep
 	}
 }
 

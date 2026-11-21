@@ -21,6 +21,7 @@ package agent
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -231,6 +232,10 @@ type Job struct {
 	Steps          []map[string]any `yaml:"steps" json:"steps"`
 	AgentsTimeout  int              `yaml:"timeout" json:"timeout"`
 	PluginsTimeout int              `yaml:"plugins_timeout" json:"plugins_timeout"`
+
+	// goalSpecs is an internal, non-serialized side table populated at load.
+	// The action never reads authority from runtime params.
+	goalSpecs []*AgentGoalSpec
 }
 
 // NewJobConfig creates a new job configuration
@@ -291,6 +296,9 @@ func parseAgentsBytes(data []byte, fileType string) (JobConfig, error) {
 		return cfg, err
 	}
 	if err = cfg.normalizeAgentIdentity(); err != nil {
+		return cfg, err
+	}
+	if err = cfg.freezeGoalSpecs(); err != nil {
 		return cfg, err
 	}
 	return cfg, nil
@@ -711,6 +719,19 @@ func (je *JobEngine) ExecuteAgent(agentRef string, inputCtx map[string]any) erro
 // result alongside the error. Existing error-only callers keep working
 // through ExecuteAgent.
 func (je *JobEngine) ExecuteAgentResult(agentRef string, inputCtx map[string]any) (any, error) {
+	return je.ExecuteAgentResultContext(context.Background(), agentRef, inputCtx)
+}
+
+// ExecuteAgentResultContext executes a registered agent with the trusted
+// caller context. Delegated actions use this path so HTTP cancellation reaches
+// the delegated agent instead of silently reverting to context.Background().
+func (je *JobEngine) ExecuteAgentResultContext(ctx context.Context, agentRef string, inputCtx map[string]any) (any, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	lookup := strings.TrimSpace(agentRef)
 	if lookup == "" {
 		return nil, fmt.Errorf("missing agent reference")
@@ -718,15 +739,15 @@ func (je *JobEngine) ExecuteAgentResult(agentRef string, inputCtx map[string]any
 	if AgentsRegistry != nil {
 		AgentsRegistry.ensureRegistry()
 		if def, ok := AgentsRegistry.registry.GetByID(lookup); ok {
-			return je.executeAgentDefinitionResult(def, inputCtx)
+			return je.executeAgentDefinitionResultContext(ctx, def, inputCtx)
 		}
 		if def, ok := AgentsRegistry.registry.GetByName(lookup); ok {
-			return je.executeAgentDefinitionResult(def, inputCtx)
+			return je.executeAgentDefinitionResultContext(ctx, def, inputCtx)
 		}
 	}
 
 	if agent, ok := je.GetAgentByName(lookup); ok {
-		return je.executeJobsResult(agent, inputCtx)
+		return je.executeJobsResultContext(ctx, agent, inputCtx)
 	}
 	return nil, fmt.Errorf("agent '%s' not found", lookup)
 }
@@ -734,12 +755,20 @@ func (je *JobEngine) ExecuteAgentResult(agentRef string, inputCtx map[string]any
 // executeJobsResult runs a raw job config (legacy path included) and returns
 // its terminal result.
 func (je *JobEngine) executeJobsResult(j *JobConfig, iCfg map[string]any) (any, error) {
+	return je.executeJobsResultContext(context.Background(), j, iCfg)
+}
+
+func (je *JobEngine) executeJobsResultContext(ctx context.Context, j *JobConfig, iCfg map[string]any) (any, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if j != nil && j.AgentIdentity != nil {
 		if def, err := j.NormalizeToAgentDefinition(AgentSourceMetadata{Location: "runtime"}); err == nil {
-			return je.executeAgentDefinitionResult(def, iCfg)
+			return je.executeAgentDefinitionResultContext(ctx, def, iCfg)
 		}
 	}
-	return je.executeJobsWithContextResult(j, iCfg, AgentExecutionContext{}, cfg.AgentRuntimeConfig{})
+	execCtx := AgentExecutionContext{MCPMutationPrincipal: mcpMutationPrincipalFromInput(iCfg), Context: ctx}
+	return je.executeJobsWithContextResult(j, iCfg, execCtx, cfg.AgentRuntimeConfig{})
 }
 
 func deepCopyJob(j Job) Job {
@@ -752,6 +781,9 @@ func deepCopyJob(j Job) Job {
 			m[k] = deepCloneStepValue(v)
 		}
 		out.Steps[i] = m
+	}
+	if j.goalSpecs != nil {
+		out.goalSpecs = append([]*AgentGoalSpec(nil), j.goalSpecs...)
 	}
 
 	return out
@@ -816,7 +848,8 @@ func (je *JobEngine) ExecuteJobs(j *JobConfig, iCfg map[string]any) error {
 			return je.executeAgentDefinition(def, iCfg)
 		}
 	}
-	return je.executeJobsWithContext(j, iCfg, AgentExecutionContext{}, cfg.AgentRuntimeConfig{})
+	execCtx := AgentExecutionContext{MCPMutationPrincipal: mcpMutationPrincipalFromInput(iCfg)}
+	return je.executeJobsWithContext(j, iCfg, execCtx, cfg.AgentRuntimeConfig{})
 }
 
 func (je *JobEngine) executeAgentDefinition(def *AgentDefinition, iCfg map[string]any) error {
@@ -825,6 +858,8 @@ func (je *JobEngine) executeAgentDefinition(def *AgentDefinition, iCfg map[strin
 	}
 	flags := runtimeFlagsFromConfig(iCfg)
 	ctx := newAgentExecutionContext(def.Identity, def.Source.Location)
+	ctx.MCPMutationPrincipal = mcpMutationPrincipalFromInput(iCfg)
+	ctx.Context = context.Background()
 	if flags.IdentityEnforcement || flags.ContractEnforcement {
 		je.startGovernanceRun()
 	}
@@ -832,11 +867,20 @@ func (je *JobEngine) executeAgentDefinition(def *AgentDefinition, iCfg map[strin
 }
 
 func (je *JobEngine) executeAgentDefinitionResult(def *AgentDefinition, iCfg map[string]any) (any, error) {
+	return je.executeAgentDefinitionResultContext(context.Background(), def, iCfg)
+}
+
+func (je *JobEngine) executeAgentDefinitionResultContext(parent context.Context, def *AgentDefinition, iCfg map[string]any) (any, error) {
 	if def == nil {
 		return nil, fmt.Errorf("nil agent definition")
 	}
+	if parent == nil {
+		parent = context.Background()
+	}
 	flags := runtimeFlagsFromConfig(iCfg)
 	ctx := newAgentExecutionContext(def.Identity, def.Source.Location)
+	ctx.MCPMutationPrincipal = mcpMutationPrincipalFromInput(iCfg)
+	ctx.Context = parent
 	if flags.IdentityEnforcement || flags.ContractEnforcement {
 		je.startGovernanceRun()
 	}
@@ -964,6 +1008,7 @@ func (je *JobEngine) executeJobsWithContextResult(j *JobConfig, iCfg map[string]
 				terminal, err := executeJobGroup(
 					je,
 					jg,
+					jobGroup.goalSpecs,
 					identity,
 					execCtx,
 					flags,
@@ -1000,7 +1045,7 @@ func (je *JobEngine) executeJobsWithContextResult(j *JobConfig, iCfg map[string]
 
 		} else {
 			// Execute the group serially
-			terminal, err := executeJobGroup(je, jobGroup.Steps, j.AgentIdentity, execCtx, flags)
+			terminal, err := executeJobGroup(je, jobGroup.Steps, jobGroup.goalSpecs, j.AgentIdentity, execCtx, flags)
 			if err != nil {
 				return nil, fmt.Errorf("failed to execute job group '%s': %v", jobGroup.Name, err)
 			}
@@ -1045,17 +1090,17 @@ func (je *JobEngine) executeJobsWithContextResult(j *JobConfig, iCfg map[string]
 
 // executeJobGroup runs jobs in a group serially with a fresh per-group budget,
 // returning the terminal step payload.
-func executeJobGroup(je *JobEngine, steps []map[string]any, identity *AgentIdentity, execCtx AgentExecutionContext, flags cfg.AgentRuntimeConfig) (any, error) {
+func executeJobGroup(je *JobEngine, steps []map[string]any, goalSpecs []*AgentGoalSpec, identity *AgentIdentity, execCtx AgentExecutionContext, flags cfg.AgentRuntimeConfig) (any, error) {
 	var budget *constraintBudgetManager
 	if flags.IdentityEnforcement && identity != nil {
-		b, err := newConstraintBudgetManager(*identity)
+		b, err := newConstraintBudgetManagerWithContext(execCtx.Context, *identity)
 		if err != nil {
 			return nil, err
 		}
 		budget = b
 		defer budget.release()
 	}
-	return executeJobGroupWithBudget(je, steps, identity, execCtx, flags, budget)
+	return executeJobGroupWithBudget(je, steps, goalSpecs, identity, execCtx, flags, budget)
 }
 
 // executeJobGroupWithBudget runs jobs in a group serially against an existing
@@ -1063,7 +1108,7 @@ func executeJobGroup(je *JobEngine, steps []map[string]any, identity *AgentIdent
 // variant so they are charged to the same group instead of receiving a fresh
 // budget. Only the budget owner (executeJobGroup) releases the context,
 // never a fallback invocation.
-func executeJobGroupWithBudget(je *JobEngine, steps []map[string]any, identity *AgentIdentity, execCtx AgentExecutionContext, flags cfg.AgentRuntimeConfig, budget *constraintBudgetManager) (any, error) {
+func executeJobGroupWithBudget(je *JobEngine, steps []map[string]any, goalSpecs []*AgentGoalSpec, identity *AgentIdentity, execCtx AgentExecutionContext, flags cfg.AgentRuntimeConfig, budget *constraintBudgetManager) (any, error) {
 	lastResult := make(map[string]any)
 
 	if (flags.IdentityEnforcement || flags.ContractEnforcement) && identity != nil {
@@ -1160,6 +1205,14 @@ func executeJobGroupWithBudget(je *JobEngine, steps []map[string]any, identity *
 			}
 		}
 
+		if strings.EqualFold(strings.TrimSpace(actionName), "AgentGoalRun") {
+			var spec *AgentGoalSpec
+			if goalSpecs != nil && i < len(goalSpecs) {
+				spec = goalSpecs[i]
+			}
+			setGoalRuntimeSpec(params, spec, i, identity, execCtx)
+		}
+
 		action, exists := je.actions[actionName]
 		if !exists {
 			return nil, fmt.Errorf("unknown action: %s", actionName)
@@ -1169,7 +1222,7 @@ func executeJobGroupWithBudget(je *JobEngine, steps []map[string]any, identity *
 		// ran in the gate block above; every executed attempt is charged
 		// exactly once here, success or failure. Actions rejected before
 		// invocation (capability/contract/validation) are never charged.
-		result, err := action.Execute(params)
+		result, err := executeActionWithContext(action, actionExecutionContext(execCtx, budget), params)
 		if flags.IdentityEnforcement && identity != nil {
 			budget.markActionExecuted(actionName)
 		}
@@ -1191,6 +1244,7 @@ func executeJobGroupWithBudget(je *JobEngine, steps []map[string]any, identity *
 						retryConfig,
 						actionName,
 						budget,
+						actionExecutionContext(execCtx, budget),
 					)
 				}
 			}
@@ -1200,7 +1254,7 @@ func executeJobGroupWithBudget(je *JobEngine, steps []map[string]any, identity *
 				je.appendAudit(AuditEvent{RunID: execCtx.RunID, TraceID: execCtx.TraceID, AgentID: auditAgentID, AgentName: auditAgentName, Owner: auditOwner, Action: actionName, RequiredCapability: requiredCapabilityForActionName(actionName), CapabilitiesUsed: capabilitiesUsed(identity, actionName), Outcome: auditOutcomeError, Reason: err.Error(), FailurePolicy: policy})
 				if fallback, hasFallback := (*step)["fallback"].([]map[string]interface{}); hasFallback && policy != "continue" {
 					cmn.DebugMsg(cmn.DbgLvlError, "Action %s failed, executing fallback steps", actionName)
-					return executeJobGroupWithBudget(je, fallback, identity, execCtx, flags, budget)
+					return executeJobGroupWithBudget(je, fallback, nil, identity, execCtx, flags, budget)
 				}
 				switch policy {
 				case "continue":
@@ -1208,7 +1262,7 @@ func executeJobGroupWithBudget(je *JobEngine, steps []map[string]any, identity *
 				case "fallback":
 					if fallback, hasFallback := (*step)["fallback"].([]map[string]interface{}); hasFallback {
 						cmn.DebugMsg(cmn.DbgLvlError, "Action %s failed, executing fallback steps", actionName)
-						return executeJobGroupWithBudget(je, fallback, identity, execCtx, flags, budget)
+						return executeJobGroupWithBudget(je, fallback, nil, identity, execCtx, flags, budget)
 					}
 					return nil, fmt.Errorf("action %s failed: %v", actionName, err)
 				default:
@@ -1241,13 +1295,30 @@ func terminalPayload(lastResult map[string]any) any {
 	return map[string]any{}
 }
 
+func actionExecutionContext(execCtx AgentExecutionContext, budget *constraintBudgetManager) context.Context {
+	if budget != nil && budget.ctx != nil {
+		return budget.ctx
+	}
+	if execCtx.Context != nil {
+		return execCtx.Context
+	}
+	return context.Background()
+}
+
+func executeActionWithContext(action Action, ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+	if contextual, ok := action.(ContextAction); ok {
+		return contextual.ExecuteContext(ctx, params)
+	}
+	return action.Execute(params)
+}
+
 // executeWithRetry executes an action with retry logic
 func executeWithRetry(
 	action Action,
 	params map[string]any,
 	retryConfig RetryConfig,
 ) (map[string]interface{}, error) {
-	return executeWithRetryBudget(action, params, retryConfig, "", nil)
+	return executeWithRetryBudget(action, params, retryConfig, "", nil, context.Background())
 }
 
 // executeWithRetryBudget executes an action with retry logic. Every retry
@@ -1260,7 +1331,11 @@ func executeWithRetryBudget(
 	retryConfig RetryConfig,
 	actionName string,
 	budget *constraintBudgetManager,
+	parent context.Context,
 ) (map[string]interface{}, error) {
+	if parent == nil {
+		parent = context.Background()
+	}
 	var (
 		lastError error
 		result    map[string]any
@@ -1308,14 +1383,20 @@ func executeWithRetryBudget(
 			delay,
 		)
 
-		time.Sleep(delay)
+		timer := time.NewTimer(delay)
+		select {
+		case <-parent.Done():
+			timer.Stop()
+			return nil, parent.Err()
+		case <-timer.C:
+		}
 
 		if budget != nil {
 			if err := budget.preStepCheck(actionName); err != nil {
 				return nil, err
 			}
 		}
-		result, lastError = action.Execute(params)
+		result, lastError = executeActionWithContext(action, parent, params)
 		if budget != nil {
 			budget.markActionExecuted(actionName)
 		}
@@ -1377,3 +1458,49 @@ jobs:
 
 
 */
+
+// ExecuteManualAgentResult executes only the manual-trigger jobs of a
+// registered agent. It is the trusted execution seam for the authenticated
+// manual-run entrypoint; the caller must supply a validated principal.
+func (je *JobEngine) ExecuteManualAgentResult(agentRef string, inputCtx map[string]any) (any, error) {
+	return je.ExecuteManualAgentResultContext(context.Background(), agentRef, inputCtx)
+}
+
+func (je *JobEngine) ExecuteManualAgentResultContext(ctx context.Context, agentRef string, inputCtx map[string]any) (any, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	lookup := strings.TrimSpace(agentRef)
+	if lookup == "" {
+		return nil, fmt.Errorf("missing agent reference")
+	}
+	if AgentsRegistry == nil {
+		return nil, fmt.Errorf("agent registry unavailable")
+	}
+	AgentsRegistry.ensureRegistry()
+	def, ok := AgentsRegistry.registry.GetByID(lookup)
+	if !ok {
+		def, ok = AgentsRegistry.registry.GetByName(lookup)
+	}
+	if !ok {
+		return nil, fmt.Errorf("agent %q not found", lookup)
+	}
+	manual, ok := def.ManualJobConfig()
+	if !ok {
+		return nil, fmt.Errorf("agent %q has no manual trigger", lookup)
+	}
+	if manual.AgentIdentity == nil {
+		return nil, fmt.Errorf("agent %q has no trusted identity", lookup)
+	}
+	flags := runtimeFlagsFromConfig(inputCtx)
+	execCtx := newAgentExecutionContext(*manual.AgentIdentity, "manual")
+	execCtx.MCPMutationPrincipal = mcpMutationPrincipalFromInput(inputCtx)
+	execCtx.Context = ctx
+	if flags.IdentityEnforcement || flags.ContractEnforcement {
+		je.startGovernanceRun()
+	}
+	return je.executeJobsWithContextResult(manual, inputCtx, execCtx, flags)
+}

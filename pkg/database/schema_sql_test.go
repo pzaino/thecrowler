@@ -2,6 +2,7 @@ package database
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -16,6 +17,11 @@ func TestInformationSeedSchemaSQLContainsFreshInstallAndUpgradeCoverage(t *testi
 		"last_processed_at",
 		"last_error_at",
 		"attempts",
+		"claim_token",
+		"fencing_token",
+		"lease_expires_at",
+		"heartbeat_at",
+		"next_retry_at",
 		"CREATE TABLE IF NOT EXISTS InformationSeedCandidate",
 		"normalized_url",
 		"decision_status",
@@ -28,6 +34,9 @@ func TestInformationSeedSchemaSQLContainsFreshInstallAndUpgradeCoverage(t *testi
 		"discovery_metadata",
 		"idx_informationseed_claim_queue",
 		"idx_informationseed_engine_status",
+		"idx_informationseed_lease_expiry",
+		"idx_informationseed_next_retry",
+		"idx_informationseed_claim_token",
 		"idx_informationseedcandidate_seed_decision",
 		"idx_informationseedcandidate_normalized_url",
 		"idx_sourceinformationseedindex_seed_source",
@@ -232,8 +241,9 @@ func TestSourceSubPriorityFreshInstallAndUpgradeCoverage(t *testing.T) {
 func TestPostgresInformationSeedClaimFunctionIsAtomicAndUpgradeSafe(t *testing.T) {
 	t.Parallel()
 
-	files := []string{"postgresql-setup.pgsql", "db_migrations/postgresql-migration-v1.10.pgsql"}
+	files := []string{"postgresql-setup.pgsql", "db_migrations/postgresql-migration-v1.17.pgsql"}
 	fragments := []string{
+		"DROP FUNCTION IF EXISTS update_informationseed(integer, varchar, varchar, varchar, varchar)",
 		"CREATE OR REPLACE FUNCTION update_informationseed(",
 		"FOR UPDATE SKIP LOCKED",
 		"UPDATE InformationSeed AS claimed_seed",
@@ -241,6 +251,9 @@ func TestPostgresInformationSeedClaimFunctionIsAtomicAndUpgradeSafe(t *testing.T
 		"engine = p_engineID",
 		"last_processed_at = NOW()",
 		"attempts = COALESCE(claimed_seed.attempts, 0) + 1",
+		"claim_token = p_claim_token",
+		"fencing_token = COALESCE(claimed_seed.fencing_token, 0) + 1",
+		"lease_expires_at = NOW() + p_lease_duration::INTERVAL",
 		"RETURNING claimed_seed.information_seed_id",
 	}
 
@@ -596,28 +609,239 @@ func TestPostgresStatementLevelCleanupTriggerContract(t *testing.T) {
 	}
 }
 
-// TestPostgresSchemaVersion116LedgerCoverage keeps every base setup and
-// v1.16 migration file advertising the same schema version the writer
-// requires, so fresh installs, upgrades, and the compatibility check agree.
-func TestPostgresSchemaVersion116LedgerCoverage(t *testing.T) {
+// TestSchemaVersion117LedgerCoverage keeps every base setup and v1.17
+// migration file advertising the same schema version the writer requires.
+func TestSchemaVersion117LedgerCoverage(t *testing.T) {
 	t.Parallel()
 
 	files := []string{
 		"postgresql-setup.pgsql", "mysql-setup.mysql", "sqlite-setup.sqlite3",
-		"db_migrations/postgresql-migration-v1.16.pgsql",
-		"db_migrations/mysql-migration-v1.16.mysql",
-		"db_migrations/sqlite-migration-v1.16.sqlite3",
+		"db_migrations/postgresql-migration-v1.17.pgsql",
+		"db_migrations/mysql-migration-v1.17.mysql",
+		"db_migrations/sqlite-migration-v1.17.sqlite3",
 	}
 	for _, file := range files {
 		content, err := os.ReadFile(file)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(string(content), "'1.16'") && !strings.Contains(string(content), "\"1.16\"") {
-			t.Errorf("%s missing schema version 1.16 stamp", file)
+		if !strings.Contains(string(content), "'1.17'") && !strings.Contains(string(content), "\"1.17\"") {
+			t.Errorf("%s missing schema version 1.17 stamp", file)
 		}
 	}
-	if RequiredSchemaVersion != "1.16" {
-		t.Fatalf("RequiredSchemaVersion = %q, want 1.16", RequiredSchemaVersion)
+	if RequiredSchemaVersion != "1.17" {
+		t.Fatalf("RequiredSchemaVersion = %q, want 1.17", RequiredSchemaVersion)
+	}
+	if WriterGeneration != "verified-ownership-v1.17" {
+		t.Fatalf("WriterGeneration = %q, want verified-ownership-v1.17", WriterGeneration)
+	}
+}
+
+// TestNoSchemaVersionAfter117 prevents accidental schema releases beyond the
+// current target while allowing historical migration files to remain.
+func TestNoSchemaVersionAfter117(t *testing.T) {
+	t.Parallel()
+
+	matches, err := filepath.Glob("db_migrations/*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range matches {
+		name := filepath.Base(file)
+		if strings.Contains(name, "v1.18") || strings.Contains(name, "v1.19") || strings.Contains(name, "v2.") {
+			t.Errorf("unexpected schema migration beyond 1.17: %s", name)
+		}
+	}
+	setupFiles := []string{"postgresql-setup.pgsql", "mysql-setup.mysql", "sqlite-setup.sqlite3"}
+	for _, file := range setupFiles {
+		content, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, forbidden := range []string{"'1.18'", "\"1.18\"", "'1.19'", "\"1.19\""} {
+			if strings.Contains(string(content), forbidden) {
+				t.Errorf("%s advertises schema version beyond 1.17: %s", file, forbidden)
+			}
+		}
+	}
+}
+
+func TestMCPMutationSchemaCapabilityCoverage(t *testing.T) {
+	t.Parallel()
+	files := []string{
+		"postgresql-setup.pgsql",
+		"sqlite-setup.sqlite3",
+		"db_migrations/postgresql-mcp-mutation-v1.17.pgsql",
+		"db_migrations/sqlite-mcp-mutation-v1.17.sqlite3",
+	}
+	fragments := []string{
+		"MCPMutationProposals",
+		"MCPMutationApprovals",
+		"MCPMutationDispatchAttempts",
+		"MCPMutationAudit",
+		"MCPMutationRunQuota",
+		"MCPMutationPrincipalQuota",
+		"SchemaCapabilities",
+		"mcp-mutation-authorization-v1",
+		MCPMutationCapabilityChecksum,
+	}
+	for _, file := range files {
+		content, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read %s: %v", file, err)
+		}
+		for _, fragment := range fragments {
+			if !strings.Contains(string(content), fragment) {
+				t.Errorf("%s missing MCP mutation capability fragment %q", file, fragment)
+			}
+		}
+	}
+}
+
+func TestMySQLV117MigrationUsesClientDelimiterAndRepeatableProcedures(t *testing.T) {
+	t.Parallel()
+	content, err := os.ReadFile("db_migrations/mysql-migration-v1.17.mysql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fragment := range []string{
+		"DELIMITER //",
+		"DELIMITER ;",
+		"DROP PROCEDURE IF EXISTS add_informationseed_v117_column_if_missing",
+		"DROP PROCEDURE IF EXISTS add_informationseed_v117_index_if_missing",
+		"CALL add_informationseed_v117_column_if_missing",
+		"CALL add_informationseed_v117_index_if_missing",
+	} {
+		if !strings.Contains(string(content), fragment) {
+			t.Errorf("mysql v1.17 migration missing %q", fragment)
+		}
+	}
+}
+
+// TestPostgresSharedEntityDeletionConcurrencyContract pins the RC2 integrity
+// fix and the RC5 locking shape.
+//
+// Integrity (RC2): the trigger must lock the parent artifact row FOR UPDATE
+// before it counts remaining links. A concurrent link INSERT holds a KEY SHARE
+// foreign-key lock on that row, which conflicts with FOR UPDATE, so a reference
+// committed while the statement is running cannot be missed by the count and
+// then silently removed by ON DELETE CASCADE.
+//
+// Shape (RC5): one AFTER DELETE FOR EACH STATEMENT trigger per link table with
+// an `OLD TABLE` transition relation, so a multi-link delete locks each parent
+// once instead of once per deleted row, and parents are processed in ascending
+// ID order so two concurrent multi-parent deletes cannot form a lock cycle.
+//
+// Fresh installs and the v1.16 -> v1.17 upgrade must ship the identical
+// function body and the identical trigger definitions; the upgrade drops and
+// recreates the triggers so a database migrated with the previous row-level
+// definition converges. SQLite omits the stored function by design and must not
+// grow a divergent implementation.
+func TestPostgresSharedEntityDeletionConcurrencyContract(t *testing.T) {
+	t.Parallel()
+
+	const fnName = "handle_shared_entity_deletion()"
+	extractBody := func(s string) string {
+		start := strings.Index(s, "CREATE OR REPLACE FUNCTION "+fnName)
+		if start < 0 {
+			return ""
+		}
+		end := strings.Index(s[start:], "$$ LANGUAGE plpgsql;")
+		if end < 0 {
+			return ""
+		}
+		return s[start : start+end]
+	}
+
+	setupBytes, err := os.ReadFile("postgresql-setup.pgsql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	migrationBytes, err := os.ReadFile("db_migrations/postgresql-migration-v1.17.pgsql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	setupSQL := string(setupBytes)
+	migrationSQL := string(migrationBytes)
+	setupBody := extractBody(setupSQL)
+	migrationBody := extractBody(migrationSQL)
+	if setupBody == "" {
+		t.Fatal("postgresql-setup.pgsql missing handle_shared_entity_deletion()")
+	}
+	if migrationBody == "" {
+		t.Fatal("postgresql-migration-v1.17.pgsql missing handle_shared_entity_deletion()")
+	}
+	if setupBody != migrationBody {
+		t.Fatal("handle_shared_entity_deletion() body differs between setup and v1.17 migration (fresh installs must equal upgrades)")
+	}
+
+	// RC2: every family must lock its parent before counting links, and must
+	// re-count through NOT EXISTS.
+	families := [][3]string{
+		{"MetaTags", "MetaTagsIndex", "metatag_id"},
+		{"WebObjects", "WebObjectsIndex", "object_id"},
+		{"Keywords", "KeywordIndex", "keyword_id"},
+		{"NetInfo", "NetInfoIndex", "netinfo_id"},
+		{"HTTPInfo", "HTTPInfoIndex", "httpinfo_id"},
+	}
+	for _, f := range families {
+		parent, link, id := f[0], f[1], f[2]
+		if !strings.Contains(setupBody, "FROM "+parent+" WHERE "+id+" = target_id FOR UPDATE;") {
+			t.Errorf("body does not lock %s FOR UPDATE before counting %s links", parent, link)
+		}
+		if !strings.Contains(setupBody, "NOT EXISTS (SELECT 1 FROM "+link+" WHERE "+id+" = target_id)") {
+			t.Errorf("body does not re-check %s links", link)
+		}
+		// RC5: one lock per distinct parent, deterministic ascending order.
+		ordered := "SELECT DISTINCT " + id + " FROM deleted_links ORDER BY " + id
+		if !strings.Contains(setupBody, ordered) {
+			t.Errorf("body does not process %s parents once in ascending order (%q)", parent, ordered)
+		}
+	}
+
+	// RC5: the function is a statement-level trigger body.
+	if strings.Contains(setupBody, "OLD.") {
+		t.Error("statement-level body must use the deleted_links transition relation, not OLD.<column>")
+	}
+	if !strings.Contains(setupBody, "RETURN NULL;") {
+		t.Error("statement-level AFTER trigger must RETURN NULL")
+	}
+
+	// RC5: both files replace the triggers, so a repeatable migration converges
+	// from the previous row-level definition.
+	for label, sql := range map[string]string{"setup": setupSQL, "migration": migrationSQL} {
+		if got := strings.Count(sql, "REFERENCING OLD TABLE AS deleted_links"); got != 5 {
+			t.Errorf("%s: %d triggers use an OLD TABLE transition relation, want 5", label, got)
+		}
+		if got := strings.Count(sql, "FOR EACH STATEMENT\nEXECUTE FUNCTION handle_shared_entity_deletion();"); got != 5 {
+			t.Errorf("%s: %d statement-level cleanup triggers, want 5", label, got)
+		}
+		if got := strings.Count(sql, "FOR EACH ROW\nEXECUTE FUNCTION handle_shared_entity_deletion();"); got != 0 {
+			t.Errorf("%s: %d row-level cleanup triggers remain, want 0", label, got)
+		}
+		if got := strings.Count(sql, "DROP TRIGGER IF EXISTS trg_after_delete_"); got != 5 {
+			t.Errorf("%s: %d trigger replacements, want 5 (drop before create)", label, got)
+		}
+		for _, f := range families {
+			trigger := "trg_after_delete_" + strings.ToLower(f[1])
+			if !strings.Contains(sql, "DROP TRIGGER IF EXISTS "+trigger+" ON "+f[1]+";") {
+				t.Errorf("%s: missing DROP for %s", label, trigger)
+			}
+			if !strings.Contains(sql, "CREATE TRIGGER "+trigger+"\nAFTER DELETE ON "+f[1]+"\nREFERENCING OLD TABLE AS deleted_links") {
+				t.Errorf("%s: %s is not an AFTER DELETE statement trigger with a transition table", label, trigger)
+			}
+		}
+	}
+
+	sqliteBytes, err := os.ReadFile("sqlite-setup.sqlite3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqliteStr := string(sqliteBytes)
+	if !strings.Contains(sqliteStr, "-- handle_shared_entity_deletion(): PostgreSQL stored function omitted") {
+		t.Error("sqlite-setup.sqlite3 must document that handle_shared_entity_deletion() is PostgreSQL-only")
+	}
+	if strings.Contains(sqliteStr, "CREATE OR REPLACE FUNCTION handle_shared_entity_deletion") {
+		t.Error("sqlite-setup.sqlite3 must not define a PostgreSQL stored function")
 	}
 }

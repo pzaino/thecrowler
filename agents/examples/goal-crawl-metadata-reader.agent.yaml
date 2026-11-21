@@ -1,0 +1,97 @@
+# Read-only crawl and stored-metadata inspection with a local tool-capable model.
+#
+# Replace OLLAMA_HOST, the model and source 7 with deployment values. The three
+# criteria are satisfied only by pinned tool observations from the new native
+# read-only tools; model text is not evidence.
+format_version: v2
+agent_identity:
+  agent_id: goal-crawl-metadata-reader
+  name: Goal Crawl Metadata Reader
+  agent_type: executor
+  owner: platform
+  trust_level: trusted
+  capabilities:
+    - goal_execution
+    - db_read
+    - ai_reasoning
+  memory:
+    scope: none
+  constraints:
+    max_steps: 3
+    time_budget: 3m
+jobs:
+  - name: Goal Crawl Metadata Reader
+    process: serial
+    trigger_type: manual
+    trigger_name: run_goal_crawl_metadata_reader
+    steps:
+      - action: AgentGoalRun
+        params:
+          provider: ollama
+          url: "http://OLLAMA_HOST:11434"
+          model: "tool-capable-model"
+          goal_id: source-7-crawl-metadata
+          objective: >-
+            Confirm source 7 has a completed crawl status and that its stored
+            scraped-field and artifact metadata can be found through the
+            authorized read-only tools.
+          prompt: >-
+            Call get_source_crawl_status with source_id 7, then
+            find_scraped_field_metadata with source_id 7, field "price" and
+            value "42", then find_artifact_metadata with source_id 7, field
+            "kind" and value "report". Do not add a limit argument. Do not claim
+            success without the tool observations.
+          allowlist:
+            - get_source_crawl_status
+            - find_scraped_field_metadata
+            - find_artifact_metadata
+          allowed_sources:
+            - 7
+          evidence:
+            allow:
+              - tool_observation
+            default_max_age: 15m
+            max_payload_bytes: 4096
+          budgets:
+            max_model_rounds: 5
+            max_tool_calls: 3
+            max_evidence_records: 8
+            max_evidence_bytes: 32768
+            max_total_result_bytes: 65536
+            max_elapsed: 90s
+            max_consecutive_denials: 2
+          acceptance:
+            mode: all
+            criteria:
+              - id: crawl_status
+                description: "Source 7 reports a completed crawl."
+                predicate:
+                  kind: evidence_field_equals
+                  evidence: tool_observation
+                  path: status
+                  value: completed
+                  where:
+                    tool: get_source_crawl_status
+                    arguments_sha256: 6ae5db037cd185030266d1147d2cd453ade38a9ac77b44372b1b8bfa247e30f7
+              - id: scraped_metadata
+                description: "The pinned scraped-field metadata search returned a match."
+                predicate:
+                  kind: evidence_field_number
+                  evidence: tool_observation
+                  path: count
+                  op: gte
+                  value: 1
+                  where:
+                    tool: find_scraped_field_metadata
+                    arguments_sha256: c72849dfed2af3d14f807ed8c024cbea38fbf232d9c94256210a36c596a196c5
+              - id: artifact_metadata
+                description: "The pinned artifact metadata search returned a match."
+                predicate:
+                  kind: evidence_field_number
+                  evidence: tool_observation
+                  path: count
+                  op: gte
+                  value: 1
+                  where:
+                    tool: find_artifact_metadata
+                    arguments_sha256: a8e3e7d78b228e0225dbb9cceb0ddb36106ad44ecc12586baf3997abf6a085ed

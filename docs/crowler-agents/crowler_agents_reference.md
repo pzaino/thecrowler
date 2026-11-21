@@ -438,6 +438,8 @@ capabilities:
   - call_plugin
   - ai_reasoning
   - delegate
+  - tool_execution
+  - goal_execution
 ```
 
 Use only these exact strings when validating against `schemas/crowler-agent-schema.json`.
@@ -454,6 +456,8 @@ Action-to-capability mapping enforced with identity enforcement on:
 | `CreateEvent` | `emit_event` |
 | `Decision` local branching | none |
 | `Decision` delegation | `delegate` |
+| `AgentToolLoop` | `tool_execution` |
+| `AgentGoalRun` | `goal_execution` entry; `db_read` for database evidence/resource status; `ai_reasoning` before model execution |
 
 Notes:
 
@@ -467,8 +471,9 @@ Notes:
   must use the canonical names. `decision` alone never authorizes
   delegation.
 * Trust ranks: `system` is top tier with `privileged`; `trusted` is mid;
-  `restricted`/`untrusted` are low. `DBQuery`, `RunCommand`, and
-  `PluginExecution` need rank 2 (`trusted`) or higher.
+  `restricted`/`untrusted` are low. `DBQuery`, `RunCommand`,
+  `PluginExecution`, `AgentToolLoop` and `AgentGoalRun` need rank 2
+  (`trusted`) or higher.
 
 ### 8.8 `constraints`
 
@@ -762,7 +767,9 @@ CROWler registers these built-in actions:
 * `RunCommand`,
 * `PluginExecution`,
 * `CreateEvent`,
-* `Decision`.
+* `Decision`,
+* `AgentToolLoop`,
+* `AgentGoalRun`.
 
 ### 11.1 `APIRequest`
 
@@ -944,8 +951,10 @@ Operations:
   come from operator configuration — CROWler never discovers endpoints.
 * A 30s HTTP timeout bounds in-flight I/O and an 8 MiB cap bounds retained
   provider output; non-2xx provider statuses surface as explicit step
-  errors. Auth tokens, prompts, and full responses never appear in error
-  text or logs.
+  errors. Provider errors carry only the HTTP status and a fixed category
+  (authentication, authorization, rate limit, server error, timeout,
+  redirect, TLS, transport failure). They never echo the response body,
+  prompt, endpoint URL, hostname, query string, or credentials.
 * Identity, contract, budget, and delegation gates run before any transport.
 
 References: <https://docs.ollama.com/api/openai-compatibility>,
@@ -955,10 +964,65 @@ References: <https://docs.ollama.com/api/openai-compatibility>,
 
 Phase 2 tool proposals are inert data. The opt-in `AgentToolLoop` action
 runs a bounded synchronous loop over vetted read-only tools
-(`get_source_status`, `search_indexed_pages`): at most 4 model rounds, 8
-tool calls, 16 KiB per observation, 64 KiB aggregate, 30 s elapsed, with the
-shorter job-group deadline always prevailing. One `AgentToolLoop` step is
-one job-group attempt; internal calls consume independent nested caps.
+(`get_source_status`, `search_indexed_pages`, `get_source_crawl_status`,
+`find_scraped_field_metadata`, `find_artifact_metadata`): at most 4 model
+rounds, 8 tool calls, 16 KiB per observation, 64 KiB aggregate, 30 s elapsed,
+with the shorter job-group deadline always prevailing. One `AgentToolLoop`
+step is one job-group attempt; internal calls consume independent nested caps.
+
+The default read-only catalog is:
+
+| Tool | Arguments | Safe result |
+| --- | --- | --- |
+| `get_source_status` | `source_id` | Source metadata; no config or account linkage. |
+| `search_indexed_pages` | `query`, optional `source_id`, optional `limit` (1..10) | Bounded page metadata and snippets. |
+| `get_source_crawl_status` | `source_id` | Current crawl status, timestamps, engine and safe operational flags; no raw `last_error` text, config or account linkage. Multiple status rows use the latest `last_updated_at`/`last_crawled_at`, matching the resource-status evaluator. |
+| `find_scraped_field_metadata` | `source_id`, `field` (1..128), `value` (1..500), optional `limit` (1..10, default 5) | Source UID, index ID, page URL, matched field, timestamps and rank. Raw `json_val` is never returned. |
+| `find_artifact_metadata` | `source_id`, `field` (1..128), `value` (1..500), optional `limit` (1..10, default 5) | Artifact ID, source type, source UID, page URL, matched field, timestamps and rank. Artifact content is never returned. |
+
+All five require `db_read`, an explicit run allowlist, trusted standing and the
+existing source scope. The `all` capability never satisfies the allowlist or
+scope. Source filtering is performed inside the database search function before
+`LIMIT`; the Go adapters also reject cross-source rows as defense in depth. A
+missing source is reported as `scope_denied`; database failures are generic tool
+errors without driver text. The new search tools use bound field/value
+parameters and never construct SQL from model input.
+
+Read-only external MCP tools can be admitted alongside the native catalog when
+an operator approves a local stdio server or an explicitly approved Streamable
+HTTP endpoint and its exact read-only tool pairs. The model-facing tool ID is
+namespaced as `mcp_<server>_<tool>`; unapproved, mutation-capable or dynamically
+advertised tools never enter the registry. HTTP endpoints, TLS roots,
+credentials, network exceptions and redirect policy are operator-only values.
+Mutation tools require an explicit `effect: mutation` and proposal opt-in and
+are never registered through the read-only path. See
+[`mcp-read-only.md`](mcp-read-only.md) and
+[`mcp-mutation-authorization.md`](mcp-mutation-authorization.md).
+
+State-changing crawl scheduling is **not** in the default read-only catalog.
+WP-03B2C adds an opt-in `request_source_crawl` mutation tool. It is admitted
+only through `RegisterMutation()`, a `mutation_policy` with `enabled: true`, an
+explicit operation allowlist, a non-empty source scope and a finite quota. The
+model may send only `{"source_id": 42}`. The tool persists a durable,
+run/tool-call-bound proposal and returns `approval_required`; it never approves
+or schedules by itself. An authenticated operator issues the exact approval and
+submits it through `/v1/console/crawl/approvals/submit`, which reuses
+`ScheduleSourceCrawlRequest()` and its source lock, ownership revalidation,
+approval revalidation and idempotency checks.
+
+The internal approved scheduling contract, durable idempotency semantics,
+request versus execution states and approval boundary are documented in
+[`crawl_scheduling_foundation.md`](crawl_scheduling_foundation.md). WP-03B2A/WP-03B2B
+add the trusted principal, authoritative source ownership, durable approval
+store, operator approval endpoints, final-mutation revalidation and stable
+proposal lifecycle documented in
+[`crawl_request_authorization.md`](crawl_request_authorization.md). The
+authorizer requires an explicit operation allowlist, trusted source scope,
+source ownership, authenticated principal, positive quota, run-bound durable
+approval, and verification by a trusted approval authority. A nil verifier or
+source authorizer fails closed. Source creation derives `usr_id` from the
+authenticated local user when API authentication is enabled. The legacy
+`ScheduleSourceCrawl()` path remains unchanged for existing internal callers.
 
 Every proposed call passes, in order: explicit opt-in, valid identity with
 enforcement on, trusted registry membership, explicit run allowlist (the
@@ -971,10 +1035,164 @@ results are size-bounded, secret-redacted observations returned as
 `role:"tool"` messages with matching `tool_call_id`s; the run ends on final
 text, budget exhaustion, cancellation, or provider error.
 
-Policy fields (`allowlist`, `limits`, `allowed_sources`) must be statically
+Policy fields (`allowlist`, `limits`, `allowed_sources`, `mutation_policy`) must be statically
 declared — input references there are rejected — and `AgentToolLoop`
 requires the `tool_execution` capability plus identity enforcement (`all`
-without enforcement still refuses). See `agents/examples/tool-loop-reader.agent.yaml`.
+without enforcement still refuses). The inference-endpoint fields
+(`provider`, `url`, `auth`, `model`) are equally static: `$response`,
+`$event` and `{{...}}` references are rejected before the provider is
+resolved. If a provider explicitly reports that its model lacks tool-call
+support (see `CROWLER_OLLAMA_TOOL_MODELS`), the loop denies before any HTTP
+call; providers that report unknown keep the historical permissive
+behaviour. See `agents/examples/tool-loop-reader.agent.yaml`.
+
+#### 11.2.3 Goal-driven verified execution (`AgentGoalRun`)
+
+`AgentGoalRun` is a separate opt-in action for goals that must end only when
+machine-checkable acceptance criteria pass. It does **not** change
+`AgentToolLoop` or `AIInteraction` semantics. It requires `format_version: v2`,
+identity enforcement, trust level `trusted` or above, and the
+`goal_execution` capability. The capability is an entry gate, not a blanket
+grant: database-backed evidence and source `resource_status` require `db_read`,
+and any model invocation requires `ai_reasoning`. A goal whose criteria are
+already proven by trusted initial evidence may finish without `ai_reasoning` or
+a model call. Tool calls still require their own tool capabilities, the
+explicit run allowlist, trust/contract checks and source scope.
+
+The action freezes its authority at manifest load: objective, criteria,
+evidence policy, budgets, allowlist, source scope, provider, URL and model are
+parsed once into an immutable `AgentGoalSpec`. The action reads that frozen
+spec and the engine-provided identity/scope from trusted runtime context; it
+never reads policy from model output, runtime params or prior-step config.
+Marker rejection remains defense-in-depth, not the provenance guarantee.
+
+Acceptance language:
+
+* composition: `all`, `any` (no `not`);
+* evidence checks: `evidence_exists`, `evidence_count`,
+  `evidence_field_equals`, `evidence_field_in`, `evidence_field_number`,
+  `evidence_scope`;
+* direct checks: `resource_status` for a source (the Information Seed variant is disabled in v1 pending an approved seed authorization scope);
+* `event_observed` is defined but **disabled in v1** until trusted event
+  producer provenance is approved. Crawl completion must be proven from source
+  status/indexed-page evidence, not a notification event.
+
+Zero-result criteria require an explicit, verified query-completion record.
+An empty set caused by an unavailable provider, a failed query, a truncated
+result or a missing completion observation is never treated as proof that the
+count is zero. `evidence_count` with `eq: 0` passes only after a completed,
+untruncated query returned no matches.
+
+Database-backed providers resolve the source with a context-aware lookup. A
+missing source is an invalid evidence request and an operational lookup failure
+is unavailable; neither becomes a completed zero-result query. Only a successful
+source lookup followed by a successful status/field read can prove zero matching
+records.
+
+`any` composition is fail-closed: a passing criterion cannot hide a `denied`
+or verification `error` result in another criterion, at top level or inside a
+nested `any`. A pass may still satisfy `any` when the other criteria are merely
+`unavailable` or not satisfied.
+
+Evidence is trusted only when it comes from a registered read-only provider or
+an authorized, pinned tool observation. `source_metadata`, `scraped_field` and
+`artifact` selectors require `source_id`; `tool_observation` requires `tool`
+and `arguments_sha256`. Page titles, snippets, scraped values and artifact
+content are untrusted; field comparisons outside a kind's verified field set
+are rejected with `untrusted_path`. Evidence is bound to a
+fresh run ID/nonce, agent identity, source scope, goal-spec hash, ledger ID and
+expiry; replayed, forged, tampered or cross-run evidence is rejected. Record
+integrity is checked in addition to the trust class; a hash alone is not
+authority. Model text is recorded as an untrusted claim, never as proof.
+
+The new metadata tools emit `tool_observation` evidence with the tool name,
+pinned argument hash, authorized source IDs, observation time, evidence ID and
+a bounded payload hash. Verified paths are limited to authoritative metadata
+(`source_id`, `source_uid`, `status`, safe timestamps and `count`); raw scraped
+values and artifact contents remain untrusted and are not eligible for
+deterministic verification. An MCP tool that reports `IsError=true` is a failed
+call: its bounded diagnostics are returned to the model, but no successful
+`tool_observation` record is created and it cannot satisfy an
+`evidence_exists` criterion. A successful MCP call remains ordinary
+`tool_observation` evidence and never becomes `system_verified` evidence.
+
+Selector and source binding are enforced: a provider must return the requested
+kind, an explicit source identity matching the selector and run scope, and
+matching selector fields where applicable. `page_url`, `status`,
+`json_field`/selected field and the selected value are checked against the
+observation; provider-supplied selector hashes are ignored. Missing,
+wrong-kind, wrong-field, wrong-value, wrong-source and mixed-source
+observations are rejected before admission. A request for source 7 cannot be
+satisfied by source 8.
+
+Freshness applies to both the trusted read time and the underlying data time.
+`source_status`, `indexed_page`, `scraped_field` and `artifact` evidence
+require a meaningful underlying timestamp when a freshness bound applies; a
+missing or malformed timestamp is unavailable/stale, never fresh.
+`source_metadata` and `tool_observation` are point-in-time checks of the
+current verified read/observation; their read/observation time is authoritative.
+A fresh read of an old crawl cannot satisfy a freshness-bound criterion.
+Query-completion records are run/ledger/spec bound, timestamped, and must have
+consistent kind, selector, count and limit; fabricated, stale, failed or
+truncated completion records cannot prove zero matches.
+
+Before any model request, `AgentGoalRun` rejects an explicitly
+tool-incompatible provider and applies the agent contract's provider/model
+restrictions. Unknown provider capability remains permissive for compatibility;
+explicitly unsupported tool calling is denied without an HTTP request.
+
+Terminal states are `criteria_met`, `incomplete`, `budget_exhausted`,
+`cancelled`, `denied`, `provider_error`, `tool_error` and
+`verification_error`. Only `criteria_met` maps to action-level success; all
+other states return an action error with the typed result in `output`.
+
+Default budgets preserve the `AgentToolLoop` posture (4 model rounds, 8 tool
+calls, 16 evidence records, 32 KiB evidence bytes, 64 KiB tool-result bytes,
+30 s). Explicit values may reach the approved ceilings (8 rounds, 16 calls,
+32 records, 64 KiB evidence bytes, 2 min). The inherited job-group deadline
+always wins. Direct evidence provider reads consume evidence budgets but not
+model tool-call budgets. A final model response with unmet criteria ends as
+`incomplete`; there is no automatic repair turn in v1.
+
+Minimal shape:
+
+```yaml
+- action: AgentGoalRun
+  params:
+    provider: ollama
+    url: "http://ollama:11434"
+    model: "qwen3:8b"
+    objective: "Confirm source 7 has indexed pages."
+    prompt: "Gather evidence; do not claim success without proof."
+    allowlist:
+      - get_source_status
+      - search_indexed_pages
+    allowed_sources:
+      - 7
+    evidence:
+      allow:
+        - source_status
+        - indexed_page
+        - tool_observation
+    acceptance:
+      mode: all
+      criteria:
+        - id: pages_indexed
+          description: "Source 7 has indexed pages."
+          predicate:
+            kind: evidence_count
+            evidence: indexed_page
+            where:
+              source_id: 7
+            op: gte
+            value: 1
+```
+
+See `agents/examples/goal-source-reader.agent.yaml`,
+`agents/examples/goal-source-any.agent.yaml` and
+`agents/examples/goal-crawl-metadata-reader.agent.yaml`. The schema defines the
+public field names; the approved design package under `artifacts/agentic/`
+documents the full contract, evidence model and test plan.
 
 ### 11.3 `DBQuery`
 
@@ -1269,7 +1487,14 @@ Authoring guidance:
 
 ## 14. AI provider model
 
-`AIInteraction` uses a provider abstraction. The code supports `provider: openai` by default, plus additional providers such as `gemini`, `grok`, and `mock` in tests/integration paths.
+`AIInteraction` and `AgentToolLoop` use a provider abstraction. The built-in
+provider is `openai-compatible`; `openai` is a registered alias with identical
+transport behaviour (kept for shipped manifests and earlier documentation).
+A first-class `ollama` provider reuses the same transport with
+Ollama-specific endpoint handling and capability reporting. Additional
+providers can register through the Go `RegisterLLMProvider` API (tests use
+mock providers this way). See
+`docs/crowler-agents/local-llm-providers.md` for the extension contract.
 
 Provider settings may be resolved in this precedence order:
 
@@ -1293,7 +1518,67 @@ Normalized AI inputs may include:
 * `frequency_penalty`,
 * other provider extras.
 
-### 14.1 OpenAI-compatible endpoint path
+Provider endpoints are operator configuration. In `AgentToolLoop`, the
+`provider`, `url`, `auth` and `model` fields must be statically declared; any
+`$response`, `$event` or `{{...}}` reference in them is rejected before the
+provider is resolved, including in the `config.ai` fallback and in a config
+inherited from a previous step. A prior model response or event can therefore
+never select the inference endpoint or its credential. `AIInteraction` keeps
+its legacy dataflow behaviour for compatibility.
+
+### 14.1 Ollama (first-class local provider)
+
+Set `provider: ollama` and point `url` at the Ollama server. A base URL is
+enough; the provider appends `/v1/chat/completions`:
+
+```yaml
+- action: AgentToolLoop
+  params:
+    provider: ollama
+    url: "http://ollama:11434"
+    model: "qwen3:8b"
+    prompt: "Summarize source 7."
+    allowlist:
+      - get_source_status
+```
+
+Rules:
+
+* Only `http` and `https` endpoints are accepted. `localhost`,
+  single-label container names (`ollama`, `crowler-ollama`) and IP literals
+  are valid; embedded credentials and fragments are rejected.
+* `/api/chat` is not implemented. The provider rejects it explicitly instead
+  of sending an incompatible payload.
+* Redirects are capped at five, and a redirect to a different scheme or
+  `host:port` is blocked without forwarding `Authorization`.
+* Tool support is model-dependent and is **not** inferred from the provider
+  name. Operators attest tool-capable models with
+  `CROWLER_OLLAMA_TOOL_MODELS` (comma-separated model names, or `*` for all):
+  * unset: capability unknown; historical permissive behaviour is preserved;
+  * set but empty: tool calls explicitly unsupported; `AgentToolLoop` fails
+    before any HTTP call;
+  * set with names: only those models are attested; other models fail before
+    any HTTP call.
+* The opt-in live tests are split by contract:
+  `CROWLER_OLLAMA_SMOKE_URL=http://host:11434 CROWLER_OLLAMA_SMOKE_MODEL=qwen3:8b go test ./pkg/agent -run TestOllamaConnectivityOptional -v`
+  checks provider connectivity, while
+  `... -run TestOllamaToolCallingSmokeOptional -v` requires a valid tool call
+  and a correlated follow-up turn. A text-only reply fails the tool-calling
+  test when a model is configured. A skipped test is not evidence of live
+  Ollama support.
+* `TestAgentGoalRunLiveOllamaNativeToolOptional` and its scope-denial
+  counterpart additionally require `THECROWLER_POSTGRES_INTEGRATION=1` and
+  the `DOCKER_POSTGRES_*` connection variables. They create and remove a
+  disposable source, then exercise `get_source_crawl_status` through the real
+  model and verifier.
+
+Capability metadata is available through the optional
+`ProviderCapabilityReporter` and `ModelCapabilityReporter` interfaces. The
+descriptor covers chat, tool calls, structured output, streaming, tool-result
+messages, cancellation and optional context/output limits. Providers that do
+not implement either interface are reported as unknown for every capability.
+
+### 14.2 OpenAI-compatible endpoint path
 
 Recommended current pattern:
 
@@ -1311,7 +1596,7 @@ Recommended current pattern:
         content: "Analyze: $response"
 ```
 
-### 14.2 Claude-style or other backend via gateway
+### 14.3 Claude-style or other backend via gateway
 
 If a backend does not natively match the expected request or response shape, use a gateway/proxy:
 
@@ -1320,7 +1605,7 @@ If a backend does not natively match the expected request or response shape, use
 3. Have the gateway translate between CROWler’s expected shape and the backend provider.
 4. Preserve stable manifest shape while swapping backends internally.
 
-### 14.3 AI step design rules
+### 14.4 AI step design rules
 
 For production use:
 

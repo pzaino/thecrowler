@@ -17,6 +17,11 @@ cspell.json
 
 # Test binary, built with `go test -c`
 *.test
+TESTING.md
+artifacts/
+deploy.sh
+__pycache__/
+**/__pycache__/
 
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
@@ -65,3 +70,7 @@ coverage.out
 # Keep AI PRs away
 **/TASKS.md
 **/AGENTS.md
+
+# Python bytecode and transient caches
+__pycache__/
+*.py[cod]

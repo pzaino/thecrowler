@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/url"
@@ -14,6 +15,7 @@ import (
 	"sync"
 	"text/template"
 	"time"
+	"unicode/utf8"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
@@ -51,6 +53,7 @@ type Runner struct {
 	Processors    []CandidateProcessor
 	Now           func() time.Time
 	AgentIdentity AgentIdentity
+	TrustedOwners bool
 }
 
 // SeedRunConfig is read from InformationSeed.config. All fields are optional.
@@ -244,22 +247,26 @@ func (stats *seedDiscoveryStats) addError(err error) {
 	stats.ErrorSummaries = append(stats.ErrorSummaries, trimEventString(redactInformationSeedError(err.Error()), 512))
 	if failures, ok := err.(interface{ ProviderFailures() []providerFailure }); ok {
 		for _, failure := range failures.ProviderFailures() {
-			stats.addProviderFailure(failure.Provider, failure.Summary)
+			stats.addProviderFailureRecord(failure)
 		}
 	}
 }
 
 func (stats *seedDiscoveryStats) addProviderFailure(provider, summary string) {
+	stats.addProviderFailureRecord(providerFailure{Provider: provider, Summary: summary})
+}
+
+func (stats *seedDiscoveryStats) addProviderFailureRecord(failure providerFailure) {
 	if stats == nil {
 		return
 	}
-	provider = strings.TrimSpace(provider)
-	if provider == "" {
-		provider = "unknown"
+	failure.Provider = strings.TrimSpace(failure.Provider)
+	if failure.Provider == "" {
+		failure.Provider = "unknown"
 	}
-	summary = trimEventString(redactInformationSeedError(summary), 512)
-	stats.addProviderMetric(provider, "errors", 1)
-	stats.ProviderFailures = append(stats.ProviderFailures, providerFailure{Provider: provider, Summary: summary})
+	failure.Summary = trimEventString(redactInformationSeedError(failure.Summary), 512)
+	stats.addProviderMetric(failure.Provider, "errors", 1)
+	stats.ProviderFailures = append(stats.ProviderFailures, failure)
 }
 
 type pluginFailure struct {
@@ -284,8 +291,11 @@ func (stats *seedDiscoveryStats) addPluginFailure(plugin, summary string) {
 }
 
 type providerFailure struct {
-	Provider string
-	Summary  string
+	Provider   string
+	Class      string
+	StatusCode int
+	Retryable  bool
+	Summary    string
 }
 
 type providerQueryError struct {
@@ -310,13 +320,19 @@ func (e providerQueryError) ProviderFailures() []providerFailure {
 // HTTP-only deployments while allowing application browser dependencies to be
 // injected explicitly.
 func NewRunner(db *cdb.Handler, config cfg.InformationSeedConfig, options ...RunnerOptions) *Runner {
-	return &Runner{
+	runner := &Runner{
 		DB:            db,
 		Config:        config,
 		Providers:     BuildProviders(config, providerDependencies(options...)),
 		Now:           time.Now,
 		AgentIdentity: DefaultInformationSeedAgentIdentity(),
 	}
+	for _, option := range options {
+		if option.TrustedOwners {
+			runner.TrustedOwners = true
+		}
+	}
+	return runner
 }
 
 // DefaultInformationSeedAgentIdentity returns the built-in system-agent identity
@@ -465,7 +481,7 @@ func (r *Runner) RunSeed(ctx context.Context, seed cdb.InformationSeed) (Result,
 		return result, fmt.Errorf("information seed runner is not configured")
 	}
 	if seed.Disabled {
-		return result, cdb.UpdateInformationSeedStatus(r.DB, seed.ID, "disabled", "")
+		return result, r.setInformationSeedStatus(ctx, seed, "disabled", "", nil)
 	}
 
 	stats := newSeedDiscoveryStats()
@@ -474,7 +490,14 @@ func (r *Runner) RunSeed(ctx context.Context, seed cdb.InformationSeed) (Result,
 	if err != nil {
 		stats.addError(err)
 		_ = r.emitInformationSeedEvent(ctx, seed, 0, informationSeedDiscoveryFailed, cdb.EventSeverityError, stats)
-		_ = cdb.UpdateInformationSeedStatus(r.DB, seed.ID, "error", redactInformationSeedError(err.Error()))
+		_ = r.setInformationSeedStatus(ctx, seed, "error", redactInformationSeedError(err.Error()), stats)
+		return result, err
+	}
+	ctx, stopHeartbeat := r.startInformationSeedHeartbeat(ctx, seed)
+	defer stopHeartbeat()
+	if err := ctx.Err(); err != nil {
+		stats.addError(fmt.Errorf("information seed run cancelled: %w", err))
+		_ = r.setInformationSeedStatus(ctx, seed, "error", "run cancelled", stats)
 		return result, err
 	}
 	processingTimeout := ParseDurationOrDefault(r.Config.ProcessingTimeout, 30*time.Minute)
@@ -487,7 +510,7 @@ func (r *Runner) RunSeed(ctx context.Context, seed cdb.InformationSeed) (Result,
 	if err != nil {
 		stats.addError(err)
 		_ = r.emitInformationSeedEvent(ctx, seed, 0, informationSeedDiscoveryFailed, cdb.EventSeverityError, stats)
-		_ = cdb.UpdateInformationSeedStatus(r.DB, seed.ID, "error", redactInformationSeedError(err.Error()))
+		_ = r.setInformationSeedStatus(ctx, seed, "error", redactInformationSeedError(err.Error()), stats)
 		return result, err
 	}
 	_ = r.emitInformationSeedEvent(ctx, seed, 0, informationSeedDiscoveryStarted, cdb.EventSeverityInfo, stats)
@@ -510,7 +533,11 @@ func (r *Runner) RunSeed(ctx context.Context, seed cdb.InformationSeed) (Result,
 	}
 	if err != nil && len(candidates) == 0 {
 		_ = r.emitInformationSeedEvent(ctx, seed, 0, informationSeedDiscoveryFailed, cdb.EventSeverityError, stats)
-		_ = cdb.UpdateInformationSeedStatus(r.DB, seed.ID, "error", redactInformationSeedError(err.Error()))
+		status := "error"
+		if providerFailuresArePermanent(err) {
+			status = "exhausted"
+		}
+		_ = r.setInformationSeedStatus(ctx, seed, status, redactInformationSeedError(err.Error()), stats)
 		return result, err
 	}
 
@@ -540,7 +567,7 @@ func (r *Runner) RunSeed(ctx context.Context, seed cdb.InformationSeed) (Result,
 	}
 	if err != nil && len(candidates) == 0 {
 		_ = r.emitInformationSeedEvent(ctx, seed, 0, informationSeedDiscoveryFailed, cdb.EventSeverityError, stats)
-		_ = cdb.UpdateInformationSeedStatus(r.DB, seed.ID, "error", redactInformationSeedError(err.Error()))
+		_ = r.setInformationSeedStatus(ctx, seed, "error", redactInformationSeedError(err.Error()), stats)
 		return result, err
 	}
 
@@ -551,7 +578,7 @@ func (r *Runner) RunSeed(ctx context.Context, seed cdb.InformationSeed) (Result,
 	if auditErr := r.persistCandidateDecisionEvidence(seed, allDecisions); auditErr != nil {
 		stats.addError(auditErr)
 		_ = r.emitInformationSeedEvent(ctx, seed, 0, informationSeedDiscoveryFailed, cdb.EventSeverityError, stats)
-		_ = cdb.UpdateInformationSeedStatus(r.DB, seed.ID, "error", redactInformationSeedError(auditErr.Error()))
+		_ = r.setInformationSeedStatus(ctx, seed, "error", redactInformationSeedError(auditErr.Error()), stats)
 		return result, auditErr
 	}
 
@@ -561,10 +588,15 @@ func (r *Runner) RunSeed(ctx context.Context, seed cdb.InformationSeed) (Result,
 	if persistErr != nil {
 		stats.addError(persistErr)
 		_ = r.emitInformationSeedEvent(ctx, seed, 0, informationSeedDiscoveryFailed, cdb.EventSeverityError, stats)
-		_ = cdb.UpdateInformationSeedStatus(r.DB, seed.ID, "error", redactInformationSeedError(persistErr.Error()))
+		_ = r.setInformationSeedStatus(ctx, seed, "error", redactInformationSeedError(persistErr.Error()), stats)
 		return result, persistErr
 	}
-	if err := cdb.UpdateInformationSeedStatus(r.DB, seed.ID, "completed", ""); err != nil {
+	if err := ctx.Err(); err != nil {
+		stats.addError(fmt.Errorf("information seed run cancelled: %w", err))
+		_ = r.setInformationSeedStatus(ctx, seed, "error", "run cancelled", stats)
+		return result, err
+	}
+	if err := r.setInformationSeedStatus(ctx, seed, "completed", "", stats); err != nil {
 		stats.addError(err)
 		_ = r.emitInformationSeedEvent(ctx, seed, 0, informationSeedDiscoveryFailed, cdb.EventSeverityError, stats)
 		return result, err
@@ -575,6 +607,115 @@ func (r *Runner) RunSeed(ctx context.Context, seed cdb.InformationSeed) (Result,
 	}
 	_ = r.emitInformationSeedEvent(ctx, seed, 0, informationSeedDiscoveryCompleted, severity, stats)
 	return result, nil
+}
+
+func (r *Runner) startInformationSeedHeartbeat(ctx context.Context, seed cdb.InformationSeed) (context.Context, context.CancelFunc) {
+	if r == nil || r.DB == nil || strings.TrimSpace(seed.ClaimToken) == "" {
+		return ctx, func() {}
+	}
+	interval := time.Duration(r.Config.HeartbeatInterval) * time.Second
+	if interval <= 0 {
+		interval = 20 * time.Second
+	}
+	lease := time.Duration(r.Config.LeaseDuration) * time.Second
+	if lease <= 0 {
+		lease = 2 * time.Minute
+	}
+	heartbeatCtx, cancel := context.WithCancel(ctx)
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-heartbeatCtx.Done():
+				return
+			case <-ticker.C:
+				if err := cdb.HeartbeatInformationSeedClaimContext(heartbeatCtx, r.DB, seed.ID, seed.ClaimToken, seed.FencingToken, lease); err != nil {
+					reason := "heartbeat"
+					if errors.Is(err, cdb.ErrInformationSeedClaimLost) {
+						reason = "lease_lost"
+					}
+					recordInformationSeedClaimFailure(reason)
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	return heartbeatCtx, cancel
+}
+
+func (r *Runner) setInformationSeedStatus(ctx context.Context, seed cdb.InformationSeed, status, errText string, stats *seedDiscoveryStats) error {
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if strings.TrimSpace(seed.ClaimToken) == "" {
+		return cdb.UpdateInformationSeedStatusContext(cleanupCtx, r.DB, seed.ID, status, errText)
+	}
+	if errors.Is(ctx.Err(), context.Canceled) && status != "disabled" && status != "pending" {
+		if stats != nil {
+			stats.addError(fmt.Errorf("information seed run cancelled: %w", ctx.Err()))
+		}
+		return cdb.ReleaseInformationSeedClaimContext(cleanupCtx, r.DB, seed.ID, seed.ClaimToken, seed.FencingToken, "pending", "", nil)
+	}
+	var nextRetryAt *time.Time
+	if status == "error" {
+		if r.Config.MaxAttempts > 0 && seed.Attempts >= r.Config.MaxAttempts {
+			status = "exhausted"
+		} else {
+			base := time.Duration(r.Config.RetryInterval) * time.Second
+			if base <= 0 {
+				base = time.Minute
+			}
+			maximum := time.Duration(r.Config.RetryBackoffMax) * time.Second
+			if maximum < base {
+				maximum = base
+			}
+			next := time.Now().UTC().Add(informationSeedRetryDelay(seed.Attempts, base, maximum))
+			nextRetryAt = &next
+		}
+	}
+	err := cdb.UpdateInformationSeedStatusFencedContext(cleanupCtx, r.DB, seed.ID, seed.ClaimToken, seed.FencingToken, status, errText, nextRetryAt)
+	if errors.Is(err, cdb.ErrInformationSeedClaimLost) {
+		recordInformationSeedClaimFailure("finalize")
+	}
+	return err
+}
+
+func providerFailuresArePermanent(err error) bool {
+	type failureSource interface {
+		ProviderFailures() []providerFailure
+	}
+	source, ok := err.(failureSource)
+	if !ok {
+		return false
+	}
+	failures := source.ProviderFailures()
+	if len(failures) == 0 {
+		return false
+	}
+	for _, failure := range failures {
+		if failure.Retryable || failure.Class == "" || failure.Class == "cancelled" || failure.Class == "timeout" || failure.Class == "transport" || failure.Class == "server_error" || failure.Class == "rate_limited" {
+			return false
+		}
+	}
+	return true
+}
+
+func informationSeedRetryDelay(attempts int, base, maximum time.Duration) time.Duration {
+	if attempts < 1 {
+		attempts = 1
+	}
+	delay := base
+	for attempt := 1; attempt < attempts; attempt++ {
+		if delay >= maximum || delay > maximum/2 {
+			return maximum
+		}
+		delay *= 2
+	}
+	if delay > maximum {
+		return maximum
+	}
+	return delay
 }
 
 func parseSeedRunConfig(seed cdb.InformationSeed) (SeedRunConfig, error) {
@@ -595,7 +736,7 @@ func defaultSeedRunConfig() SeedRunConfig {
 	return SeedRunConfig{
 		CreateSources:              true,
 		LinkExistingSources:        true,
-		UpdateExistingSourceConfig: true,
+		UpdateExistingSourceConfig: false,
 		Disabled:                   false,
 		Status:                     "new",
 	}
@@ -672,6 +813,9 @@ func (r *Runner) queryProvidersWithStats(ctx context.Context, seed cdb.Informati
 				case sem <- struct{}{}:
 					defer func() { <-sem }()
 				case <-ctx.Done():
+					mu.Lock()
+					failures = append(failures, providerFailure{Provider: providerName, Class: "cancelled", Summary: providerName + ": run cancelled"})
+					mu.Unlock()
 					return
 				}
 				providerOptions := providerOptionsWithMaxRequests(providerName, providerCfg, maxRequests)
@@ -685,17 +829,19 @@ func (r *Runner) queryProvidersWithStats(ctx context.Context, seed cdb.Informati
 					stats.addBrowserDiagnostics(providerName, providerOptions.Diagnostics)
 				}
 				if err != nil {
+					class, statusCode, retryable := searchproviders.ClassifyProviderError(err)
 					summary := fmt.Sprintf("%s: %s", providerName, redactInformationSeedError(err.Error()))
-					failures = append(failures, providerFailure{Provider: providerName, Summary: summary})
+					failures = append(failures, providerFailure{Provider: providerName, Class: class, StatusCode: statusCode, Retryable: retryable, Summary: summary})
 					return
 				}
 				for _, searchResult := range results {
-					candidates = append(candidates, Candidate{URL: searchResult.URL, Title: searchResult.Title, Provider: providerName, Query: query, Rank: searchResult.Rank, Score: searchResult.Score, Metadata: searchResult.Metadata})
+					candidates = append(candidates, Candidate{URL: searchResult.URL, Title: searchResult.Title, Snippet: boundedCandidateSnippet(searchResult.Snippet), Provider: providerName, Query: query, Rank: searchResult.Rank, Score: searchResult.Score, Metadata: searchResult.Metadata})
 				}
 			}(providerName, provider, providerCfg, query, perQueryMaxRequests)
 		}
 	}
 	wg.Wait()
+	sortCandidatesDeterministically(candidates)
 	if len(failures) > 0 {
 		return candidates, providerQueryError{SeedID: seed.ID, Failures: failures}
 	}
@@ -1141,12 +1287,13 @@ func (r *Runner) persistCandidates(ctx context.Context, seed cdb.InformationSeed
 				return linked, err
 			}
 		}
-		upsertResult, err := cdb.UpsertSourceWithPolicy(r.DB, &cdb.Source{URL: candidate.URL, Name: name, Priority: priority, SubPriority: subPriority, CategoryID: seed.CategoryID, UsrID: seed.UsrID, Restricted: restricted, Flags: flags}, sourceConfig, cdb.SourceUpsertPolicy{
+		upsertResult, err := cdb.UpsertSourceWithPolicyContext(ctx, r.DB, &cdb.Source{URL: candidate.URL, Name: name, Priority: priority, SubPriority: subPriority, CategoryID: seed.CategoryID, UsrID: seed.UsrID, Restricted: restricted, Flags: flags}, sourceConfig, cdb.SourceUpsertPolicy{
 			CreateSources:              runCfg.CreateSources,
 			LinkExistingSources:        runCfg.LinkExistingSources,
 			UpdateExistingSourceConfig: runCfg.UpdateExistingSourceConfig,
 			Disabled:                   runCfg.Disabled,
 			Status:                     runCfg.Status,
+			AuthoritativeOwnership:     r.TrustedOwners,
 		})
 		if err != nil {
 			return linked, fmt.Errorf("creating source for seed %d candidate %s: %w", seed.ID, candidate.URL, err)
@@ -1200,11 +1347,32 @@ func renderSourceName(tmplText string, seed cdb.InformationSeed, candidate Candi
 	return strings.TrimSpace(buf.String()), nil
 }
 
+func boundedCandidateSnippet(value string) string {
+	value = strings.TrimSpace(value)
+	const maxSnippetLength = 2048
+	if len(value) <= maxSnippetLength {
+		return value
+	}
+	truncated := value[:maxSnippetLength]
+	for len(truncated) > 0 && !utf8.ValidString(truncated) {
+		truncated = truncated[:len(truncated)-1]
+	}
+	return strings.TrimSpace(truncated)
+}
+
 func candidateMetadata(candidate Candidate) *json.RawMessage {
-	if len(candidate.Metadata) == 0 {
+	metadata := candidate.Metadata
+	if snippet := boundedCandidateSnippet(candidate.Snippet); snippet != "" {
+		metadata = make(map[string]interface{}, len(candidate.Metadata)+1)
+		for key, value := range candidate.Metadata {
+			metadata[key] = value
+		}
+		metadata["snippet"] = snippet
+	}
+	if len(metadata) == 0 {
 		return nil
 	}
-	data, err := json.Marshal(candidate.Metadata)
+	data, err := json.Marshal(metadata)
 	if err != nil {
 		return nil
 	}

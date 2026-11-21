@@ -13,6 +13,7 @@ information_seed:
   provider_allow_list:
     - rss_public_news
     - common_crawl_latest
+    - gdelt_doc
     - public_json_adapter
     # Enable only after explicit policy review and conservative rate limits.
     # - duckduckgo_html_search
@@ -37,11 +38,26 @@ information_seed:
       page_size: 10
       max_pages: 1
 
+    gdelt_doc:
+      provider: gdelt_doc
+      host: https://api.gdeltproject.org
+      endpoint: /api/v2/doc/doc
+      parameters:
+        mode: artlist
+        format: json
+        sort: datedesc
+      timeout: 20
+      rate_limit: 10s
+      max_requests: 1
+      page_size: 10
+      max_pages: 1
+
     common_crawl_latest:
       provider: common_crawl_index
       host: https://index.commoncrawl.org
+      # Verified against index.commoncrawl.org/collinfo.json on 2026-11-11.
       # Update the collection ID when Common Crawl publishes a newer index.
-      endpoint: /CC-MAIN-2026-18-index
+      endpoint: /CC-MAIN-2026-43-index
       parameters:
         output: json
         filter: status:200

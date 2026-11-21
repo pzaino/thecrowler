@@ -1,3 +1,6 @@
+-- CROWler schema migration chain: read docs/database-migrations.md before running.
+-- Target version: 1.12. Apply every earlier migration first; do not run out of order.
+
 -- CROWler authentication and authorization schema.
 CREATE TABLE IF NOT EXISTS Users (
     user_id BIGSERIAL PRIMARY KEY,

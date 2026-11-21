@@ -17,6 +17,7 @@
 package crawler
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -35,6 +36,8 @@ import (
 // Pars type to pass parameters to the goroutine
 type Pars struct {
 	WG                 *sync.WaitGroup
+	Context            context.Context
+	SourceCrawl        SourceCrawlCoordinator
 	DB                 cdb.Handler
 	Src                cdb.Source
 	Sel                *vdi.Pool //Sel     *chan vdi.SeleniumInstance

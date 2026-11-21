@@ -18,6 +18,7 @@ package config
 // File: /pkg/config/types.go
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -99,28 +100,34 @@ type Crawler struct {
 	CrawlingIfError       string          `json:"crawling_if_error" yaml:"crawling_if_error"`                               // Whether to re-crawl a source if an error occurs
 	CrawlingIfOk          string          `json:"crawling_if_ok" yaml:"crawling_if_ok"`                                     // Whether to re-crawl a source if the crawling is successful
 	ProcessingTimeout     string          `json:"processing_timeout" yaml:"processing_timeout"`                             // Timeout for processing the source
-	RequestImages         bool            `json:"request_images" yaml:"request_images"`                                     // Whether to request the images or not
-	RequestCSS            bool            `json:"request_css" yaml:"request_css"`                                           // Whether to request the CSS or not
-	RequestScripts        bool            `json:"request_scripts" yaml:"request_scripts"`                                   // Whether to request the scripts or not
-	RequestPlugins        bool            `json:"request_plugins" yaml:"request_plugins"`                                   // Whether to request the plugins or not
-	RequestFrames         bool            `json:"request_frames" yaml:"request_frames"`                                     // Whether to request the frames or not
-	PreventDuplicateURLs  bool            `json:"prevent_duplicate_urls" yaml:"prevent_duplicate_urls"`                     // Whether to prevent crawling of duplicate URLs or not
-	RefreshContent        bool            `json:"refresh_content" yaml:"refresh_content"`                                   // Whether to refresh the content of the page or not
-	CollectHTML           bool            `json:"collect_html" yaml:"collect_html"`                                         // Whether to collect the HTML content or not
-	CollectImages         bool            `json:"collect_images" yaml:"collect_images"`                                     // Whether to collect the images or not
-	CollectFiles          bool            `json:"collect_files" yaml:"collect_files"`                                       // Whether to collect the files or not
-	CollectContent        bool            `json:"collect_content" yaml:"collect_content"`                                   // Whether to collect the content or not
-	CollectKeywords       bool            `json:"collect_keywords" yaml:"collect_keywords"`                                 // Whether to collect the keywords or not
-	CollectMetaTags       bool            `json:"collect_metatags" yaml:"collect_metatags"`                                 // Whether to collect the metatags or not
-	CollectPerfMetrics    bool            `json:"collect_performance" yaml:"collect_performance"`                           // Whether to collect the performance metrics or not
-	CollectPageEvents     bool            `json:"collect_events" yaml:"collect_events"`                                     // Whether to collect the page events or not
-	CollectXHR            bool            `json:"collect_xhr" yaml:"collect_xhr"`                                           // Whether to collect the XHR requests or not
-	FilterXHR             []string        `json:"filter_xhr" yaml:"filter_xhr"`                                             // Filter XHR mime_types
-	CollectLinks          bool            `json:"collect_links" yaml:"collect_links"`                                       // Whether to collect the links or not
-	ReportInterval        int             `json:"report_time" yaml:"report_time"`                                           // Time to wait before sending the report (in minutes)
-	CheckForRobots        bool            `json:"check_for_robots" yaml:"check_for_robots"`                                 // Whether to check for robots.txt or not
-	CreateEventWhenDone   bool            `json:"create_event_when_done" yaml:"create_event_when_done"`                     // Whether to create an event when the crawling is done or not
-	Control               ControlConfig   `json:"control" yaml:"control"`                                                   // Control/COnsole internal API
+	// Incognito is the effective per-source private-browsing mode. It has no
+	// global configuration key on purpose: `crawling_config.incognito` in the
+	// source document is the only way to set it, so one source can never
+	// change the process-wide default for another. nil keeps the historical
+	// behaviour (private for Chrome/Chromium). See config.CombineConfigs.
+	Incognito            *bool         `json:"-" yaml:"-"`
+	RequestImages        bool          `json:"request_images" yaml:"request_images"`                 // Whether to request the images or not
+	RequestCSS           bool          `json:"request_css" yaml:"request_css"`                       // Whether to request the CSS or not
+	RequestScripts       bool          `json:"request_scripts" yaml:"request_scripts"`               // Whether to request the scripts or not
+	RequestPlugins       bool          `json:"request_plugins" yaml:"request_plugins"`               // Whether to request the plugins or not
+	RequestFrames        bool          `json:"request_frames" yaml:"request_frames"`                 // Whether to request the frames or not
+	PreventDuplicateURLs bool          `json:"prevent_duplicate_urls" yaml:"prevent_duplicate_urls"` // Whether to prevent crawling of duplicate URLs or not
+	RefreshContent       bool          `json:"refresh_content" yaml:"refresh_content"`               // Whether to refresh the content of the page or not
+	CollectHTML          bool          `json:"collect_html" yaml:"collect_html"`                     // Whether to collect the HTML content or not
+	CollectImages        bool          `json:"collect_images" yaml:"collect_images"`                 // Whether to collect the images or not
+	CollectFiles         bool          `json:"collect_files" yaml:"collect_files"`                   // Whether to collect the files or not
+	CollectContent       bool          `json:"collect_content" yaml:"collect_content"`               // Whether to collect the content or not
+	CollectKeywords      bool          `json:"collect_keywords" yaml:"collect_keywords"`             // Whether to collect the keywords or not
+	CollectMetaTags      bool          `json:"collect_metatags" yaml:"collect_metatags"`             // Whether to collect the metatags or not
+	CollectPerfMetrics   bool          `json:"collect_performance" yaml:"collect_performance"`       // Whether to collect the performance metrics or not
+	CollectPageEvents    bool          `json:"collect_events" yaml:"collect_events"`                 // Whether to collect the page events or not
+	CollectXHR           bool          `json:"collect_xhr" yaml:"collect_xhr"`                       // Whether to collect the XHR requests or not
+	FilterXHR            []string      `json:"filter_xhr" yaml:"filter_xhr"`                         // Filter XHR mime_types
+	CollectLinks         bool          `json:"collect_links" yaml:"collect_links"`                   // Whether to collect the links or not
+	ReportInterval       int           `json:"report_time" yaml:"report_time"`                       // Time to wait before sending the report (in minutes)
+	CheckForRobots       bool          `json:"check_for_robots" yaml:"check_for_robots"`             // Whether to check for robots.txt or not
+	CreateEventWhenDone  bool          `json:"create_event_when_done" yaml:"create_event_when_done"` // Whether to create an event when the crawling is done or not
+	Control              ControlConfig `json:"control" yaml:"control"`                               // Control/COnsole internal API
 }
 
 // CustomEngine represents a custom engine configuration
@@ -542,6 +549,10 @@ type EventsConfig struct {
 	CORS                     CORSConfig      `json:"cors" yaml:"cors"`                                               // CORS configuration for the Events Manager API
 	WebSocket                WebSocketConfig `json:"websocket" yaml:"websocket"`                                     // WebSocket live updates configuration
 	Auth                     AuthConfig      `json:"auth" yaml:"auth"`                                               // Authentication and authorization configuration
+
+	// MCPAuditRetention controls durable MCP mutation audit retention.
+	// Empty uses 90 days; values below 24 hours are raised to 24 hours.
+	MCPAuditRetention string `json:"mcp_mutation_audit_retention" yaml:"mcp_mutation_audit_retention"`
 }
 
 /////////////////////////////////////////////////
@@ -687,17 +698,31 @@ type InformationSeedPluginLimitsConfig struct {
 }
 
 // InformationSeedConfig represents bounded configuration for information seed discovery.
+type InformationSeedRetentionConfig struct {
+	Enabled       bool `json:"enabled" yaml:"enabled"`               // Opt-in deletion of terminal seed rows
+	CompletedDays int  `json:"completed_days" yaml:"completed_days"` // Retain completed seeds for this many days
+	DisabledDays  int  `json:"disabled_days" yaml:"disabled_days"`   // Retain legacy disabled-status seeds for this many days
+	ExhaustedDays int  `json:"exhausted_days" yaml:"exhausted_days"` // Retain retry-exhausted seeds for this many days
+	BatchSize     int  `json:"batch_size" yaml:"batch_size"`         // Maximum rows removed per maintenance pass
+	DryRun        bool `json:"dry_run" yaml:"dry_run"`               // Report candidates without deleting
+}
+
 type InformationSeedConfig struct {
 	Enabled              bool                                     `json:"enabled" yaml:"enabled"`                                 // Whether information seed discovery is enabled
 	QueryTimer           int                                      `json:"query_timer" yaml:"query_timer"`                         // Time to wait between seed discovery cycles (in seconds)
 	MaxConcurrentSeeds   int                                      `json:"max_concurrent_seeds" yaml:"max_concurrent_seeds"`       // Maximum seed discovery jobs to run concurrently
 	MaxQueriesPerSeed    int                                      `json:"max_queries_per_seed" yaml:"max_queries_per_seed"`       // Maximum provider queries generated per seed
 	MaxCandidatesPerSeed int                                      `json:"max_candidates_per_seed" yaml:"max_candidates_per_seed"` // Maximum candidate sources accepted per seed
-	RetryInterval        int                                      `json:"retry_interval" yaml:"retry_interval"`                   // Time to wait before retrying failed seed discovery (in seconds)
+	RetryInterval        int                                      `json:"retry_interval" yaml:"retry_interval"`                   // Base delay before retrying failed seed discovery (in seconds)
+	RetryBackoffMax      int                                      `json:"retry_backoff_max" yaml:"retry_backoff_max"`             // Maximum exponential retry delay (in seconds)
+	MaxAttempts          int                                      `json:"max_attempts" yaml:"max_attempts"`                       // Maximum automatic claim attempts; zero defaults to 5
+	HeartbeatInterval    int                                      `json:"heartbeat_interval" yaml:"heartbeat_interval"`           // Claim lease heartbeat interval (in seconds)
+	LeaseDuration        int                                      `json:"lease_duration" yaml:"lease_duration"`                   // Claim lease expiry after a lost heartbeat (in seconds)
 	ProcessingTimeout    string                                   `json:"processing_timeout" yaml:"processing_timeout"`           // Maximum time to process one seed
 	Providers            map[string]InformationSeedProviderConfig `json:"providers" yaml:"providers"`                             // Provider settings and credentials
 	ProviderAllowList    []string                                 `json:"provider_allow_list" yaml:"provider_allow_list"`         // Providers allowed to run; empty disables provider execution
 	PluginLimits         InformationSeedPluginLimitsConfig        `json:"plugin_limits" yaml:"plugin_limits"`                     // Plugin timeout and output-size limits
+	Retention            InformationSeedRetentionConfig           `json:"retention" yaml:"retention"`                             // Opt-in terminal seed retention; disabled by default
 }
 
 /////////////////////////////////////////////////
@@ -725,10 +750,41 @@ type AttributeIndexingConfig struct {
 type AttributeDefinition struct {
 	Key         string   `json:"key" yaml:"key"`                 // Attribute key (e.g., "domain", "email")
 	Path        string   `json:"path" yaml:"path"`               // JSON path (e.g., "details.scraped_data.url")
-	IndexType   string   `json:"index_type" yaml:"index_type"`   // string, integer, boolean, date, array
-	Normalizers []string `json:"normalizers" yaml:"normalizers"` // lowercase, trim, domain, etc.
+	IndexType   string   `json:"index_type" yaml:"index_type"`   // string, integer, boolean, float, date, array
+	Normalizers []string `json:"normalizers" yaml:"normalizers"` // lowercase, trim, normalize_url, etc.
 	Index       bool     `json:"index" yaml:"index"`             // Whether to index this attribute
 	RunAlso     []string `json:"run_also" yaml:"run_also"`       // List of other attribute keys to run if this one is found
+}
+
+// supportedAttributeIndexTypes mirrors the index_type enum in the configuration
+// schema. The runtime persists the value as the attribute_type column, so these
+// are the types accepted at the configuration boundary.
+var supportedAttributeIndexTypes = map[string]struct{}{
+	"string":  {},
+	"integer": {},
+	"boolean": {},
+	"float":   {},
+	"date":    {},
+	"array":   {},
+}
+
+// supportedAttributeNormalizers mirrors the normalizers implemented by
+// pkg/crawler.ApplyNormalizers. Keep the two lists and the configuration schema
+// normalizers enum in sync so configuration validation never rejects a
+// normalizer the runtime supports.
+var supportedAttributeNormalizers = map[string]struct{}{
+	"":                   {},
+	"lowercase":          {},
+	"uppercase":          {},
+	"trim":               {},
+	"collapse_spaces":    {},
+	"remove_punctuation": {},
+	"normalize_url":      {},
+	"normalize_email":    {},
+	"fix_utf8":           {},
+	"normalize_unicode":  {},
+	"sanitize_string":    {},
+	"unix_to_datetime":   {},
 }
 
 // IsCommandPath checks if the Path field is a command (e.g., "cmd(some_command)")
@@ -749,27 +805,42 @@ func (a *AttributeDefinition) ParseCommand() string {
 	return strings.TrimSpace(tmp)
 }
 
-// IsValid checks if the attribute definition is valid (e.g., has a key, path, and valid index type and normalizer)
+// IsValid checks if the attribute definition is valid (e.g., has a key, path,
+// supported index type, and supported normalizer names).
 func (a *AttributeDefinition) IsValid() bool {
-	if a.Key == "" || a.Path == "" {
-		return false
-	}
+	return a.validationError() == nil
+}
 
-	switch a.IndexType {
-	case "string", "integer", "boolean", "date", "array":
-	default:
-		return false
+func (a *AttributeDefinition) normalize() {
+	a.IndexType = strings.ToLower(strings.TrimSpace(a.IndexType))
+	if len(a.Normalizers) == 0 {
+		return
 	}
+	normalizers := make([]string, 0, len(a.Normalizers))
+	for _, normalizer := range a.Normalizers {
+		normalizers = append(normalizers, strings.ToLower(strings.TrimSpace(normalizer)))
+	}
+	a.Normalizers = normalizers
+}
 
-	for _, n := range a.Normalizers {
-		switch n {
-		case "", "lowercase", "uppercase", "trim":
-		default:
-			return false
+func (a *AttributeDefinition) validationError() error {
+	if strings.TrimSpace(a.Key) == "" {
+		return fmt.Errorf("key is required")
+	}
+	if strings.TrimSpace(a.Path) == "" {
+		return fmt.Errorf("path is required")
+	}
+	indexType := strings.ToLower(strings.TrimSpace(a.IndexType))
+	if _, ok := supportedAttributeIndexTypes[indexType]; !ok {
+		return fmt.Errorf("unsupported index_type %q", a.IndexType)
+	}
+	for _, normalizer := range a.Normalizers {
+		name := strings.ToLower(strings.TrimSpace(normalizer))
+		if _, ok := supportedAttributeNormalizers[name]; !ok {
+			return fmt.Errorf("unsupported normalizer %q", normalizer)
 		}
 	}
-
-	return true
+	return nil
 }
 
 // IsEmpty checks if the AttributeIndexingConfig has no attribute definitions.
@@ -807,9 +878,15 @@ func (c *AttributeIndexingConfig) Validate() []error {
 	var errs []error
 
 	check := func(list []AttributeDefinition, group string) {
-		for _, a := range list {
-			if !a.IsValid() {
-				errs = append(errs, fmt.Errorf("invalid attribute in %s: %s", group, a.Key))
+		for index := range list {
+			attribute := &list[index]
+			attribute.normalize()
+			if err := attribute.validationError(); err != nil {
+				key := strings.TrimSpace(attribute.Key)
+				if key == "" {
+					key = "<unnamed>"
+				}
+				errs = append(errs, fmt.Errorf("attributes_indexing.%s[%d] (%s): %w", group, index, key, err))
 			}
 		}
 	}
@@ -874,6 +951,9 @@ type Config struct {
 	// Rules configuration
 	RulesetsSchemaPath string          `json:"rulesets_schema_path" yaml:"rulesets_schema_path"` // Path to the JSON schema file for rulesets
 	Rulesets           []RulesetConfig `json:"rulesets" yaml:"rulesets"`
+
+	// MCP operator-controlled server inventory
+	MCP MCPConfig `json:"mcp" yaml:"mcp"`
 
 	// Agents configuration
 	Agents []AgentsConfig `json:"agents" yaml:"agents"`
@@ -967,6 +1047,76 @@ type CrawlingConfig struct {
 	RetriesOnRedirect int      `json:"retries_on_redirect,omitempty" yaml:"retries_on_redirect,omitempty"` // Number of retries on redirect
 	UnwantedURLs      []string `json:"unwanted_urls,omitempty" yaml:"unwanted_urls,omitempty"`             // Unwanted URLs patterns that trigger a redirect detection
 	SourceType        string   `json:"source_type" yaml:"source_type"`                                     // Type of the source (website, api, file, db, email)
+	// Incognito overrides the private-browsing default for this source only.
+	// nil preserves the historical behaviour (private for Chrome/Chromium).
+	// It is ignored by browsers that have no equivalent private mode flag.
+	// A JSON null is rejected: only an omitted key means "inherit".
+	Incognito *bool `json:"incognito,omitempty" yaml:"incognito,omitempty"`
+	// FollowRedirects overrides http_headers.follow_redirects for this source
+	// only. nil inherits the global value. A JSON null is rejected: only an
+	// omitted key means "inherit".
+	FollowRedirects *bool `json:"follow_redirects,omitempty" yaml:"follow_redirects,omitempty"`
+}
+
+// UnmarshalJSON decodes a crawling configuration and enforces the documented
+// contract for the two optional source-scoped booleans.
+//
+// The authoritative schema declares both as `type: boolean` with
+// `additionalProperties: false`. `encoding/json` would happily decode an
+// explicit `null` into a nil pointer, silently turning "null" into "inherit".
+// The release contract is stricter and identical on every path (API request,
+// stored document reload, tests): the key may be omitted, or it may be `true` or
+// `false`. An explicit `null`, a string, a number, an array or an object is a
+// malformed document and is rejected, so a bad value can never silently change
+// the browser mode or the redirect policy.
+func (c *CrawlingConfig) UnmarshalJSON(data []byte) error {
+	type plain CrawlingConfig
+	aux := struct {
+		*plain
+		Incognito       json.RawMessage `json:"incognito"`
+		FollowRedirects json.RawMessage `json:"follow_redirects"`
+	}{plain: (*plain)(c)}
+
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+
+	incognito, err := parseOptionalStrictBool(aux.Incognito, "crawling_config.incognito")
+	if err != nil {
+		return err
+	}
+	followRedirects, err := parseOptionalStrictBool(aux.FollowRedirects, "crawling_config.follow_redirects")
+	if err != nil {
+		return err
+	}
+	// The embedded alias never receives these two keys: the outer fields have
+	// the same JSON names at a shallower depth and therefore win the decoder's
+	// conflict resolution.
+	c.Incognito = incognito
+	c.FollowRedirects = followRedirects
+	return nil
+}
+
+// parseOptionalStrictBool decodes one optional strict boolean. An absent value
+// (empty raw message) yields nil; `null` and any non-boolean scalar or compound
+// value is an error.
+func parseOptionalStrictBool(raw json.RawMessage, field string) (*bool, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	value := strings.TrimSpace(string(raw))
+	switch value {
+	case "true":
+		result := true
+		return &result, nil
+	case "false":
+		result := false
+		return &result, nil
+	case "null":
+		return nil, fmt.Errorf("%s must be a JSON boolean; null is not accepted (omit the key to inherit the default)", field)
+	default:
+		return nil, fmt.Errorf("%s must be a JSON boolean, got %.64s", field, value)
+	}
 }
 
 // IsEmpty returns true if the CrawlingConfig is empty

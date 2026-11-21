@@ -15,9 +15,12 @@ Backend-specific functions, procedures, triggers, indexes, constraints, and tran
 should be used where they improve correctness, atomicity, consistency, or performance, provided that
 the externally observable CROWler semantics remain consistent across supported database backends.
 
-Database portability does not imply lowest-common-denominator SQL. PostgreSQL, MySQL/MariaDB, and
-SQLite are expected to use the mechanisms that best fit their respective capabilities and intended
-deployment models.
+Database portability does not imply lowest-common-denominator SQL. Runtime
+support in 2.3.0 is PostgreSQL (primary) and SQLite. MySQL/MariaDB setup and
+migration SQL is retained for reference and schema-contract work, but the 2.3.0
+runtime does not construct a MySQL handler: `pkg/database.NewHandler()` rejects
+`database.type: mysql`. See [Database migrations](../database-migrations.md) for
+the operator matrix.
 
 ## `pkg/database`
 
@@ -48,6 +51,9 @@ or query mechanics should remain behind the abstractions exposed by `pkg/databas
 
 - `docs/database/database_architecture.md` — schema layout and migration
   coverage.
-- `docs/database/high_churn_hardening.md` — schema v1.16: bounded
-  transactions (`transaction_timeout`), `ObjectAttributes` autovacuum tuning,
-  and statement-level artifact cleanup triggers.
+- `docs/database/high_churn_hardening.md` — historical schema v1.16 hardening:
+  bounded transactions (`transaction_timeout`), `ObjectAttributes` autovacuum
+  tuning, and statement-level artifact cleanup triggers.
+- `docs/database/database_architecture.md` — current schema v1.17, durable crawl
+  approvals, verified source-ownership provenance, and Information Seed claim
+  leases/fencing/retry metadata.

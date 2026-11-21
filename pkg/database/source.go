@@ -18,7 +18,6 @@ package database
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
@@ -28,14 +27,39 @@ import (
 )
 
 // GetSourceByID retrieves a source from the database by its ID.
+//
+// This compatibility wrapper intentionally keeps the historical "not found"
+// error text. Callers that must distinguish a missing source from a database
+// failure should use GetSourceByIDContext.
 func GetSourceByID(db *Handler, sourceID uint64) (*Source, error) {
-	source := &Source{}
-
-	// Query the database
-	err := (*db).QueryRow(`SELECT source_id, source_uid, url, name, priority,
-        sub_priority, category_id, usr_id, restricted, flags, config FROM Sources WHERE source_id = $1`, sourceID).Scan(&source.ID, &source.UID, &source.URL, &source.Name, &source.Priority, &source.SubPriority, &source.CategoryID, &source.UsrID, &source.Restricted, &source.Flags, &source.Config)
+	source, err := GetSourceByIDContext(context.Background(), db, sourceID)
 	if err != nil {
 		return nil, fmt.Errorf("no source found with ID %d", sourceID)
+	}
+	return source, nil
+}
+
+// GetSourceByIDContext retrieves a source using the caller's context and
+// preserves the underlying lookup error. A missing row remains detectable with
+// errors.Is(err, sql.ErrNoRows); connection, timeout and query failures retain
+// their original cause. The database handler is checked before use so callers
+// can fail closed without a panic.
+func GetSourceByIDContext(ctx context.Context, db *Handler, sourceID uint64) (*Source, error) {
+	if db == nil || *db == nil {
+		return nil, fmt.Errorf("get source %d: database handler is nil", sourceID)
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("get source %d: %w", sourceID, err)
+	}
+
+	source := &Source{}
+	err := (*db).QueryRowContext(ctx, `SELECT source_id, source_uid, url, name, priority,
+        sub_priority, category_id, usr_id, restricted, flags, config FROM Sources WHERE source_id = $1`, sourceID).Scan(&source.ID, &source.UID, &source.URL, &source.Name, &source.Priority, &source.SubPriority, &source.CategoryID, &source.UsrID, &source.Restricted, &source.Flags, &source.Config)
+	if err != nil {
+		return nil, fmt.Errorf("get source %d: %w", sourceID, err)
 	}
 
 	return source, nil
@@ -55,17 +79,11 @@ func CreateSourceContext(ctx context.Context, db *Handler, source *Source, confi
 		return 0, fmt.Errorf("source is nil")
 	}
 
-	// Validate source config
-	if !config.IsEmpty() {
-		if err := validateSourceConfig(config); err != nil {
-			return 0, fmt.Errorf("invalid source configuration: %v", err)
-		}
-	}
-
-	// Marshal config JSON
-	details, err := json.Marshal(config)
+	// A zero-value SourceConfig marshals to a non-empty object because several
+	// fields are intentionally not omitempty. Treat it as absent instead.
+	details, _, err := sourceConfigJSON(config)
 	if err != nil {
-		return 0, fmt.Errorf("failed to marshal source configuration: %v", err)
+		return 0, err
 	}
 
 	prepared := preparedSourceInsert{
@@ -215,11 +233,10 @@ func createSourcePostgres(ctx context.Context, db *Handler, source preparedSourc
                 ELSE Sources.category_id
             END,
 
-            usr_id = CASE
-                WHEN Sources.status <> 'processing'
-                THEN EXCLUDED.usr_id
-                ELSE Sources.usr_id
-            END,
+            -- Ownership is immutable through the generic source upsert.
+            -- Reassignment requires an explicit administrative migration or
+            -- ownership transfer contract.
+            usr_id = Sources.usr_id,
 
             restricted = CASE
                 WHEN Sources.status <> 'processing'
@@ -305,11 +322,8 @@ func createSourceSQLite(ctx context.Context, db *Handler, source preparedSourceI
 				THEN excluded.category_id
 				ELSE Sources.category_id
 			END,
-			usr_id = CASE
-				WHEN Sources.status <> 'processing'
-				THEN excluded.usr_id
-				ELSE Sources.usr_id
-			END,
+			-- Ownership is immutable through the generic source upsert.
+			usr_id = Sources.usr_id,
 			restricted = CASE
 				WHEN Sources.status <> 'processing'
 				THEN excluded.restricted
@@ -384,11 +398,8 @@ func createSourceMySQL(ctx context.Context, db *Handler, source preparedSourceIn
 				THEN VALUES(category_id)
 				ELSE category_id
 			END,
-			usr_id = CASE
-				WHEN status <> 'processing'
-				THEN VALUES(usr_id)
-				ELSE usr_id
-			END,
+			-- Ownership is immutable through the generic source upsert.
+			usr_id = usr_id,
 			restricted = CASE
 				WHEN status <> 'processing'
 				THEN VALUES(restricted)
@@ -479,12 +490,15 @@ func validateURL(site string) error {
 
 // UpdateSource updates an existing source in the database by ID.
 func UpdateSource(db *Handler, source *Source) error {
+	// Ownership is deliberately excluded. It is established at creation and
+	// may only change through an explicit administrative ownership-transfer
+	// contract, not through a generic source update.
 	query := `
         UPDATE Sources
-        SET url = $1, name = $2, category_id = $3, usr_id = $4, restricted = $5, flags = $6, config = $7, last_updated_at = NOW()
-        WHERE source_id = $8
+        SET url = $1, name = $2, category_id = $3, restricted = $4, flags = $5, config = $6, last_updated_at = NOW()
+        WHERE source_id = $7
     `
-	_, err := (*db).Exec(query, NormalizeSourceURL(source.URL), source.Name, source.CategoryID, source.UsrID, source.Restricted, source.Flags, source.Config, source.ID)
+	_, err := (*db).Exec(query, NormalizeSourceURL(source.URL), source.Name, source.CategoryID, source.Restricted, source.Flags, source.Config, source.ID)
 	if err != nil {
 		return fmt.Errorf("failed to update source with ID %d: %v", source.ID, err)
 	}

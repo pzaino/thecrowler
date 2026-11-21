@@ -60,6 +60,9 @@ import (
 
 // ConnectToVDI is responsible for connecting to the CROWler VDI Instance
 func (ctx *ProcessContext) ConnectToVDI(sel vdi.SeleniumInstance) error {
+	if err := ctx.checkCrawlFence(); err != nil {
+		return err
+	}
 	var err error
 	var browserType int
 	if ctx.config.Crawler.Platform == optBrowsingMobile {
@@ -79,10 +82,13 @@ func (ctx *ProcessContext) ConnectToVDI(sel vdi.SeleniumInstance) error {
 
 // RefreshVDIConnection is responsible for refreshing the Selenium connection
 func (ctx *ProcessContext) RefreshVDIConnection(sel vdi.SeleniumInstance) error {
+	if err := ctx.checkCrawlFence(); err != nil {
+		return err
+	}
 	if (ctx.Status.DetectedState.Load() & 0x01) != 0 {
 		// Stale-Processing detected, we need to abort the process
 		err := errors.New("stale-processing detected")
-		UpdateSourceState(*ctx.db, ctx.source.URL, err)
+		ctx.updateSourceState(err)
 		cmn.DebugMsg(cmn.DbgLvlError, "Stale-Processing detected, aborting the process.")
 		return err
 	}
@@ -96,7 +102,7 @@ func (ctx *ProcessContext) RefreshVDIConnection(sel vdi.SeleniumInstance) error 
 		if err != nil {
 			// Return the Selenium instance to the channel
 			// and update the source state in the database
-			UpdateSourceState(*ctx.db, ctx.source.URL, err)
+			ctx.updateSourceState(err)
 			//(*ctx.sel) <- sel
 			cmn.DebugMsg(cmn.DbgLvlError, "re-"+vdi.VDIConnError, err)
 			return err
@@ -901,6 +907,10 @@ func (ctx *ProcessContext) tryAlternativeLinksLocked(
 	wid string,
 	origErr error,
 ) (vdi.WebDriver, string, error) {
+	if err := ctx.checkCrawlFence(); err != nil {
+		return nil, "", err
+	}
+
 	wd := ctx.wd
 	docType := ""
 	err := origErr
@@ -956,6 +966,9 @@ func (ctx *ProcessContext) tryAlternativeLinksLocked(
 func (ctx *ProcessContext) crawlInitialURLVDI(wid string) (*PageInfo, string, string, []LinkItem, error) {
 	ctx.getURLMutex.Lock()
 	defer ctx.getURLMutex.Unlock()
+	if err := ctx.checkCrawlFence(); err != nil {
+		return nil, "", "", nil, err
+	}
 
 	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: Crawling Source: %d", wid, ctx.source.ID)
 	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: Crawling URL: %s", wid, ctx.source.URL)
@@ -965,7 +978,7 @@ func (ctx *ProcessContext) crawlInitialURLVDI(wid string) (*PageInfo, string, st
 		// try alternative links (still under the mutex, since it uses ctx.wd)
 		pageSource, docType, err = ctx.tryAlternativeLinksLocked(wid, err)
 		if err != nil {
-			UpdateSourceState(*ctx.db, ctx.source.URL, err)
+			ctx.updateSourceState(err)
 			return nil, "", "", nil, err
 		}
 	}
@@ -977,13 +990,13 @@ func (ctx *ProcessContext) crawlInitialURLVDI(wid string) (*PageInfo, string, st
 
 	url, err := ctx.wd.CurrentURL()
 	if err != nil {
-		UpdateSourceState(*ctx.db, ctx.source.URL, err)
+		ctx.updateSourceState(err)
 		return nil, "", "", nil, err
 	}
 
 	pageInfo, currentURL, htmlContent, err := collectLoadedWebPage(ctx, pageSource, url, docType)
 	if err != nil {
-		UpdateSourceState(*ctx.db, ctx.source.URL, err)
+		ctx.updateSourceState(err)
 		return pageInfo, currentURL, htmlContent, nil, err
 	}
 	pageInfo.HTTPInfo = ctx.hi
@@ -1020,7 +1033,12 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 	ctx.fpIdx, err = ctx.IndexPage(pageInfo)
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "indexing page: %v", err)
-		UpdateSourceState(*ctx.db, ctx.source.URL, err)
+		ctx.updateSourceState(err)
+		if ctx.sourceCrawl != nil {
+			// A fenced crawl must not report completion when its initial page
+			// was not indexed.
+			return ctx.wd, htmlContent, initialLinks, err
+		}
 	}
 
 	// visitedLinks update (make sure this is protected if used concurrently elsewhere)
@@ -1037,6 +1055,9 @@ func (ctx *ProcessContext) CrawlInitialURL(_ vdi.SeleniumInstance) (vdi.WebDrive
 }
 
 func collectLoadedWebPage(ctx *ProcessContext, wd vdi.WebDriver, pageURL string, docType string) (*PageInfo, string, string, error) {
+	if err := ctx.checkCrawlFence(); err != nil {
+		return nil, "", "", err
+	}
 	currentURL, _ := ctx.wd.CurrentURL()
 
 	pageInfo := &PageInfo{}
@@ -1188,6 +1209,9 @@ func logNavigationFailures(ctx *ProcessContext) {
 func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext, id string) (vdi.WebDriver, string, error) {
 	if ctx == nil {
 		return nil, "", errors.New("ProcessContext is nil")
+	}
+	if err := ctx.checkCrawlFence(); err != nil {
+		return wd, "", err
 	}
 	//ctx.accessVDIMutex.Lock() // Allow 1 worker per session	at the time
 	//defer ctx.accessVDIMutex.Unlock()
@@ -1442,6 +1466,17 @@ func getURLContent(url string, wd vdi.WebDriver, level int, ctx *ProcessContext,
 		currentURL, err := wd.CurrentURL()
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to get current URL after navigation: %v", err)
+		}
+		// Source-scoped redirect acceptance. The browser always follows the
+		// HTTP redirect itself, so a forbidden redirect is detected here and
+		// refused instead of being indexed as the requested page.
+		if redirectNotPermitted(url, currentURL, ctx.redirectsFollowingPermitted()) {
+			cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Worker] %s: Redirect not permitted for source: requested '%s' landed on '%s'", id, url, currentURL)
+			if retries >= maxRetries {
+				return nil, "", fmt.Errorf("redirect not permitted: %s landed on %s after %d retries", url, currentURL, maxRetries)
+			}
+			cmn.DebugMsg(cmn.DbgLvlDebug3, "[DEBUG-Worker] %s: Retrying navigation to %s (%d/%d)", id, url, retries+1, maxRetries)
+			continue
 		}
 		gotRedirectedToUURL := false
 		if ctx.compiledUURLs != nil {

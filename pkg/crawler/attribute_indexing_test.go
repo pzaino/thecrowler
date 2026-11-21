@@ -3,6 +3,8 @@ package crawler
 import (
 	"reflect"
 	"testing"
+
+	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
 
 func TestExtractSimple(t *testing.T) {
@@ -116,6 +118,20 @@ func TestApplyNormalizers(t *testing.T) {
 
 	if result != expected {
 		t.Fatalf("expected %s, got %s", expected, result)
+	}
+}
+
+func TestRuntimeNormalizersAreAcceptedByConfigurationValidation(t *testing.T) {
+	for name := range normalizers {
+		attribute := cfg.AttributeDefinition{
+			Key:         "value",
+			Path:        "details.value",
+			IndexType:   "string",
+			Normalizers: []string{name},
+		}
+		if !attribute.IsValid() {
+			t.Errorf("runtime normalizer %q was rejected by configuration validation", name)
+		}
 	}
 }
 

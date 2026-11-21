@@ -29,6 +29,23 @@ jobs:
     - name: Test
       run: go test -v ./...
 
+    - name: Set up workflow test dependencies
+      run: |
+        set -euo pipefail
+        python3 -m venv "$RUNNER_TEMP/workflow-venv"
+        "$RUNNER_TEMP/workflow-venv/bin/python" -m pip install \
+          --disable-pip-version-check --no-input 'PyYAML==6.0.2'
+
+    - name: Workflow and exact-cleanup static regressions
+      run: |
+        set -euo pipefail
+        "$RUNNER_TEMP/workflow-venv/bin/python" -m unittest discover \
+          -s tests/integration/mcp-authorization -p 'test_*.py' -v
+        bash scripts/tests/cleanup-e2e-dind.sh
+        go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 \
+          .github/workflows/mcp-authorization-e2e.yml \
+          .github/workflows/postgresql-integration.yml
+
     # Go report seems no longer working with GitHub Actions, so we are disabling it for now. See
     #- name: Go report card
     #  uses: creekorful/goreportcard-action@1f35ced8cdac2cba28c9a2f2288a16aacfd507f9 # v1.0
@@ -47,6 +64,8 @@ jobs:
           go.dev:443
           golang.org:443
           goreportcard.com:443
+          files.pythonhosted.org:443
+          pypi.org:443
           jsonplaceholder.typicode.com:443
           objects.githubusercontent.com:443
           proxy.golang.org:443

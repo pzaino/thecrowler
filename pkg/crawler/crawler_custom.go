@@ -40,9 +40,12 @@ func ProcessDataSource(args *Pars) {
 	processCtx := NewProcessContext(args)
 	if processCtx == nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "failed to create ProcessContext for data source")
-		UpdateSourceState(args.DB, args.Src.URL, errors.New("failed to create a new ProcessContext"))
+		reportFencedCrawlFailure(args, errors.New("failed to create a new ProcessContext"))
 		return
 	}
+	defer processCtx.crawlCancel()
+	stopHeartbeat := startSourceCrawlHeartbeat(processCtx, processCtx.db)
+	defer stopHeartbeat()
 
 	processCtx.Status.StartTime = time.Now()
 	processCtx.Status.PipelineRunning.Store(1)
@@ -94,7 +97,11 @@ func ProcessDataSource(args *Pars) {
 	// Finalize
 	processCtx.Status.EndTime = time.Now()
 	processCtx.Status.PipelineRunning.Store(2)
-	UpdateSourceState(args.DB, args.Src.URL, nil)
+	if processCtx.sourceCrawl != nil {
+		processCtx.reportSourceCrawlTerminal(err)
+	} else {
+		UpdateSourceState(args.DB, args.Src.URL, err)
+	}
 
 	// Emit event if configured
 	if processCtx.config.Crawler.CreateEventWhenDone {

@@ -1,9 +1,13 @@
 package infoseed
 
 import (
+	"context"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
+
+	"github.com/qri-io/jsonschema"
 
 	cfg "github.com/pzaino/thecrowler/pkg/config"
 	cdb "github.com/pzaino/thecrowler/pkg/database"
@@ -176,6 +180,29 @@ func assertNoSecret(t *testing.T, value string) {
 	}
 }
 
+func loadEventDefinitionSchema(t *testing.T, name string) *jsonschema.Schema {
+	t.Helper()
+	data, err := os.ReadFile("../../schemas/crowler-event-schema.json")
+	if err != nil {
+		t.Fatalf("read event schema: %v", err)
+	}
+	var document struct {
+		Definitions map[string]json.RawMessage `json:"definitions"`
+	}
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatalf("parse event schema: %v", err)
+	}
+	raw := document.Definitions[name]
+	if len(raw) == 0 {
+		t.Fatalf("event schema definition %q not found", name)
+	}
+	schema := &jsonschema.Schema{}
+	if err := schema.UnmarshalJSON(raw); err != nil {
+		t.Fatalf("compile event schema definition %q: %v", name, err)
+	}
+	return schema
+}
+
 func TestInformationSeedEventPayloadUsesExplicitAgentIdentity(t *testing.T) {
 	payload := informationSeedEventPayloadWithOptions(cdb.InformationSeed{ID: 7, InformationSeed: "seed"}, nil, informationSeedEventPayloadOptions{
 		AgentIdentity: AgentIdentity{
@@ -241,6 +268,114 @@ func TestInformationSeedEventPayloadRedactsWebDriverProviderDiagnostics(t *testi
 	}
 }
 
+func TestRedactedProviderConfigSchemaMatchesRuntimeDiagnostics(t *testing.T) {
+	payload := informationSeedEventPayloadWithOptions(cdb.InformationSeed{ID: 7, InformationSeed: "seed"}, nil, informationSeedEventPayloadOptions{
+		ProviderConfigs: map[string]cfg.InformationSeedProviderConfig{
+			"browser": {
+				Provider:    "browser_search",
+				Transport:   "webdriver",
+				Host:        "https://search.example.invalid/?api_token=SHOULD_NOT_LEAK",
+				Parameters:  map[string]string{"token": "SHOULD_NOT_LEAK", "q": "safe"},
+				Headers:     map[string]string{"Authorization": "Bearer SHOULD_NOT_LEAK", "X-Trace": "trace"},
+				MaxRequests: 2,
+				MaxPages:    1,
+				PageSize:    10,
+				Browser: cfg.InformationSeedBrowserConfig{
+					NavigationTimeout:      45,
+					PageReadinessTimeout:   5,
+					HBSEnabled:             true,
+					SeleniumFallback:       true,
+					InitialActions:         []string{"init"},
+					ConsentActions:         []string{"consent"},
+					QueryActions:           []string{"query"},
+					PaginationActions:      []string{"next"},
+					ScrapingRules:          []string{"extract"},
+					AllowedNavigationHosts: []string{"example.invalid"},
+					MaxPages:               1,
+					MaxRequests:            2,
+					MaxCandidates:          10,
+					ScreenshotOnError:      true,
+				},
+			},
+			"http": {
+				Provider:    "http_json",
+				Host:        "https://search.example.invalid/?api_key=SHOULD_NOT_LEAK",
+				Parameters:  map[string]string{"api_key": "SHOULD_NOT_LEAK", "q": "safe"},
+				Headers:     map[string]string{"X-Trace": "trace"},
+				MaxRequests: 1,
+				MaxPages:    1,
+				PageSize:    10,
+			},
+		},
+	})
+	providerConfigs := payload["provider_configs"].(map[string]interface{})
+	schema := loadEventDefinitionSchema(t, "RedactedProviderConfig")
+	for name, raw := range providerConfigs {
+		runtimeConfig, ok := raw.(map[string]interface{})
+		if !ok {
+			t.Fatalf("runtime provider config %q has type %T", name, raw)
+		}
+		encoded := mustJSON(t, runtimeConfig)
+		assertNoSecret(t, encoded)
+		issues, err := schema.ValidateBytes(context.Background(), []byte(encoded))
+		if err != nil {
+			t.Fatalf("validate runtime provider diagnostics for %q: %v", name, err)
+		}
+		if len(issues) != 0 {
+			t.Fatalf("runtime provider diagnostics for %q do not match schema: %v", name, issues)
+		}
+	}
+	httpConfig, ok := providerConfigs["http"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("runtime HTTP provider config has type %T", providerConfigs["http"])
+	}
+	if httpConfig["transport"] != "http" {
+		t.Fatalf("empty provider transport = %#v, want default http", httpConfig["transport"])
+	}
+	runtimeConfig, ok := providerConfigs["browser"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("runtime provider config has type %T", providerConfigs["browser"])
+	}
+
+	cloneConfig := func() map[string]interface{} {
+		clone := make(map[string]interface{}, len(runtimeConfig))
+		for key, value := range runtimeConfig {
+			clone[key] = value
+		}
+		return clone
+	}
+
+	withUnknownField := cloneConfig()
+	withUnknownField["unexpected_diagnostic"] = "value"
+	issues, err := schema.ValidateBytes(context.Background(), []byte(mustJSON(t, withUnknownField)))
+	if err != nil {
+		t.Fatalf("validate provider diagnostics with unknown field: %v", err)
+	}
+	if len(issues) == 0 {
+		t.Fatal("schema accepted an unknown provider diagnostic field")
+	}
+
+	withInvalidTransport := cloneConfig()
+	withInvalidTransport["transport"] = "browser"
+	issues, err = schema.ValidateBytes(context.Background(), []byte(mustJSON(t, withInvalidTransport)))
+	if err != nil {
+		t.Fatalf("validate provider diagnostics with invalid transport: %v", err)
+	}
+	if len(issues) == 0 {
+		t.Fatal("schema accepted an invalid provider transport")
+	}
+
+	withInvalidBrowser := cloneConfig()
+	withInvalidBrowser["browser"] = "not-an-object"
+	issues, err = schema.ValidateBytes(context.Background(), []byte(mustJSON(t, withInvalidBrowser)))
+	if err != nil {
+		t.Fatalf("validate provider diagnostics with invalid browser: %v", err)
+	}
+	if len(issues) == 0 {
+		t.Fatal("schema accepted a non-object browser diagnostic")
+	}
+}
+
 func TestInformationSeedBrowserDiagnosticsAreCountOnlyAndSecretSafe(t *testing.T) {
 	stats := newSeedDiscoveryStats()
 	stats.BrowserDiagnostics["browser"] = map[string]map[string]int{
@@ -274,5 +409,71 @@ func TestInformationSeedBrowserDiagnosticsAreCountOnlyAndSecretSafe(t *testing.T
 	}
 	if !strings.Contains(encoded, `"url_rejections":{"skipped:denied_host":2}`) {
 		t.Fatalf("event missing bounded browser diagnostics: %s", encoded)
+	}
+}
+
+func TestInformationSeedEventPayloadMatchesFullEventSchema(t *testing.T) {
+	stats := newSeedDiscoveryStats()
+	stats.addProviderFailure("provider-a", "provider returned status 404")
+	stats.CandidatesFound = 1
+	stats.CandidatesRejected = 1
+	payload := informationSeedEventPayloadWithOptions(cdb.InformationSeed{ID: 9, InformationSeed: "schema seed", Attempts: 2}, stats, informationSeedEventPayloadOptions{SourceID: 0})
+	data, err := os.ReadFile("../../schemas/crowler-event-schema.json")
+	if err != nil {
+		t.Fatalf("read event schema: %v", err)
+	}
+	var document map[string]interface{}
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatalf("parse event schema: %v", err)
+	}
+	definitions, _ := document["definitions"].(map[string]interface{})
+	detailsSchema := resolveLocalSchemaRefs(definitions["InformationSeedRunDiagnosticsDetails"], definitions)
+	compiled := &jsonschema.Schema{}
+	raw, err := json.Marshal(detailsSchema)
+	if err != nil {
+		t.Fatalf("serialize details schema: %v", err)
+	}
+	if err := compiled.UnmarshalJSON(raw); err != nil {
+		t.Fatalf("compile details schema: %v", err)
+	}
+	issues, err := compiled.ValidateBytes(context.Background(), []byte(mustJSON(t, payload)))
+	if err != nil {
+		t.Fatalf("validate details: %v", err)
+	}
+	if len(issues) != 0 {
+		t.Fatalf("information seed details do not match schema: %v", issues)
+	}
+}
+
+func resolveLocalSchemaRefs(value interface{}, definitions map[string]interface{}) interface{} {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		if reference, ok := typed["$ref"].(string); ok && strings.HasPrefix(reference, "#/definitions/") {
+			name := strings.TrimPrefix(reference, "#/definitions/")
+			return resolveLocalSchemaRefs(definitions[name], definitions)
+		}
+		resolved := make(map[string]interface{}, len(typed))
+		for key, child := range typed {
+			resolved[key] = resolveLocalSchemaRefs(child, definitions)
+		}
+		return resolved
+	case []interface{}:
+		resolved := make([]interface{}, len(typed))
+		for index, child := range typed {
+			resolved[index] = resolveLocalSchemaRefs(child, definitions)
+		}
+		return resolved
+	default:
+		return value
+	}
+}
+
+func TestProviderFailureClassificationSurvivesEventPayload(t *testing.T) {
+	stats := newSeedDiscoveryStats()
+	stats.addError(providerQueryError{SeedID: 1, Failures: []providerFailure{{Provider: "p", Class: "not_found", StatusCode: 404, Retryable: false, Summary: "provider p returned status 404"}}})
+	payload := informationSeedEventPayloadWithOptions(cdb.InformationSeed{ID: 1, InformationSeed: "schema"}, stats, informationSeedEventPayloadOptions{})
+	failures := payload["provider_failures"].([]map[string]interface{})
+	if len(failures) != 1 || failures[0]["class"] != "not_found" || failures[0]["status_code"] != 404 || failures[0]["retryable"] != false {
+		t.Fatalf("failure classification was lost: %#v", failures)
 	}
 }

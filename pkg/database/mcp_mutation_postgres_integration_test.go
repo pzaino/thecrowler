@@ -1,0 +1,815 @@
+//go:build integration
+
+package database
+
+import (
+	"context"
+	"crypto/rand"
+	"database/sql"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"net/url"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/lib/pq"
+)
+
+const (
+	mcpPostgresDisposableEnv = "CROWLER_MCP_POSTGRES_TEST_DISPOSABLE"
+	mcpPostgresDSNEnv        = "CROWLER_MCP_POSTGRES_DSN"
+)
+
+var (
+	errMCPPostgresDisposableOptInRequired = errors.New("MCP PostgreSQL integration tests require " + mcpPostgresDisposableEnv + "=1")
+	errMCPPostgresDSNRequired             = errors.New("MCP PostgreSQL integration tests require " + mcpPostgresDSNEnv)
+)
+
+// mcpPostgresDisposableTarget returns the explicitly opted-in PostgreSQL DSN.
+// A DSN alone is never enough to authorize destructive test setup.
+func mcpPostgresDisposableTarget() (*url.URL, error) {
+	if strings.TrimSpace(os.Getenv(mcpPostgresDisposableEnv)) != "1" {
+		return nil, errMCPPostgresDisposableOptInRequired
+	}
+	raw := strings.TrimSpace(os.Getenv(mcpPostgresDSNEnv))
+	if raw == "" {
+		return nil, errMCPPostgresDSNRequired
+	}
+	target, err := url.Parse(raw)
+	if err != nil {
+		return nil, fmt.Errorf("invalid %s: %w", mcpPostgresDSNEnv, err)
+	}
+	if target.Scheme != "postgres" && target.Scheme != "postgresql" {
+		return nil, fmt.Errorf("%s must be a postgres:// URL", mcpPostgresDSNEnv)
+	}
+	if strings.TrimSpace(target.Host) == "" {
+		return nil, fmt.Errorf("%s must include a host", mcpPostgresDSNEnv)
+	}
+	return target, nil
+}
+
+func mcpPostgresRandomSuffix(t *testing.T) string {
+	t.Helper()
+	raw := make([]byte, 6)
+	if _, err := rand.Read(raw); err != nil {
+		t.Fatalf("generate PostgreSQL test database suffix: %v", err)
+	}
+	return hex.EncodeToString(raw)
+}
+
+func mcpPostgresAdminURL(target *url.URL) *url.URL {
+	admin := *target
+	admin.Path = "/postgres"
+	return &admin
+}
+
+func mcpPostgresTestURL(target *url.URL, databaseName string) *url.URL {
+	testURL := *target
+	testURL.Path = "/" + databaseName
+	return &testURL
+}
+
+// newMCPPostgresDisposableDB creates a unique, throwaway database. It never
+// truncates or deletes tables in the caller-selected database; cleanup drops
+// only the database this helper created.
+func newMCPPostgresDisposableDB(t *testing.T, target *url.URL) (*sql.DB, *sql.DB, string) {
+	t.Helper()
+	adminURL := mcpPostgresAdminURL(target)
+	admin, err := sql.Open(DBPostgresStr, adminURL.String())
+	if err != nil {
+		t.Fatalf("open PostgreSQL admin database: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := admin.PingContext(ctx); err != nil {
+		fallback := *target
+		_ = admin.Close()
+		admin, err = sql.Open(DBPostgresStr, fallback.String())
+		if err != nil {
+			t.Fatalf("open PostgreSQL maintenance database: %v", err)
+		}
+		if err := admin.PingContext(ctx); err != nil {
+			_ = admin.Close()
+			t.Fatalf("ping PostgreSQL maintenance database: %v", err)
+		}
+	}
+	dbName := "crowler_mcp_test_" + mcpPostgresRandomSuffix(t)
+	if _, err := admin.ExecContext(ctx, `CREATE DATABASE `+pq.QuoteIdentifier(dbName)); err != nil {
+		_ = admin.Close()
+		t.Fatalf("create disposable PostgreSQL database: %v", err)
+	}
+	t.Cleanup(func() {
+		dropCtx, dropCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer dropCancel()
+		if _, err := admin.ExecContext(dropCtx, `DROP DATABASE IF EXISTS `+pq.QuoteIdentifier(dbName)+` WITH (FORCE)`); err != nil {
+			t.Errorf("drop disposable PostgreSQL database %s: %v", dbName, err)
+		}
+		_ = admin.Close()
+	})
+
+	testURL := mcpPostgresTestURL(target, dbName).String()
+	testDB, err := sql.Open(DBPostgresStr, testURL)
+	if err != nil {
+		t.Fatalf("open disposable PostgreSQL database: %v", err)
+	}
+	testDB.SetMaxOpenConns(4)
+	t.Cleanup(func() { _ = testDB.Close() })
+	if err := testDB.PingContext(ctx); err != nil {
+		t.Fatalf("ping disposable PostgreSQL database: %v", err)
+	}
+	return testDB, admin, testURL
+}
+
+func applyMCPMutationPostgresSQL(t *testing.T, db *sql.DB, script, user string) {
+	t.Helper()
+	scriptText := strings.ReplaceAll(script, ":CROWLER_DB_USER", pq.QuoteIdentifier(user))
+	for _, statement := range splitPostgresSQLStatements(scriptText) {
+		upper := strings.ToUpper(statement)
+		if upper == "BEGIN" || upper == "COMMIT" ||
+			strings.HasPrefix(upper, "SELECT PG_ADVISORY_XACT_LOCK") {
+			continue
+		}
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatalf("apply PostgreSQL MCP mutation migration: %v\n%s", err, statement)
+		}
+	}
+}
+
+func applyMCPMutationPostgresMigration(t *testing.T, db *sql.DB, user string) {
+	t.Helper()
+	script, err := os.ReadFile("db_migrations/postgresql-mcp-mutation-v1.17.pgsql")
+	if err != nil {
+		t.Fatalf("read PostgreSQL MCP mutation migration: %v", err)
+	}
+	applyMCPMutationPostgresSQL(t, db, string(script), user)
+}
+
+func TestMCPPostgresDisposableTargetRequiresExplicitOptIn(t *testing.T) {
+	t.Setenv(mcpPostgresDisposableEnv, "")
+	t.Setenv(mcpPostgresDSNEnv, "postgres://user:pass@127.0.0.1:5432/test")
+	if _, err := mcpPostgresDisposableTarget(); !errors.Is(err, errMCPPostgresDisposableOptInRequired) {
+		t.Fatalf("guard error = %v, want explicit opt-in error", err)
+	}
+}
+
+func TestMCPPostgresDisposableTargetRequiresDSN(t *testing.T) {
+	t.Setenv(mcpPostgresDisposableEnv, "1")
+	t.Setenv(mcpPostgresDSNEnv, "")
+	if _, err := mcpPostgresDisposableTarget(); !errors.Is(err, errMCPPostgresDSNRequired) {
+		t.Fatalf("guard error = %v, want DSN error", err)
+	}
+}
+
+// TestPostgresMCPMutationDurableStore runs against a database created by this
+// test harness. It never uses TRUNCATE or deletes rows from the caller-selected
+// database. Set CROWLER_MCP_POSTGRES_TEST_DISPOSABLE=1 and supply a DSN for a
+// deliberately disposable PostgreSQL instance.
+func TestPostgresMCPMutationDurableStore(t *testing.T) {
+	target, err := mcpPostgresDisposableTarget()
+	if errors.Is(err, errMCPPostgresDisposableOptInRequired) || errors.Is(err, errMCPPostgresDSNRequired) {
+		t.Skip(err)
+	}
+	if err != nil {
+		t.Fatalf("disposable PostgreSQL target: %v", err)
+	}
+	db, _, testDSN := newMCPPostgresDisposableDB(t, target)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	var user string
+	if err := db.QueryRowContext(ctx, `SELECT current_user`).Scan(&user); err != nil {
+		t.Fatalf("read PostgreSQL current user: %v", err)
+	}
+	applyMCPMutationPostgresMigration(t, db, user)
+	applyMCPMutationPostgresMigration(t, db, user)
+
+	var handler Handler = &PostgresHandler{db: db, dbms: DBPostgresStr, connStr: target.String()}
+	if err := CheckMCPMutationCapability(ctx, &handler); err != nil {
+		t.Fatalf("PostgreSQL MCP mutation capability: %v", err)
+	}
+	setup, err := os.ReadFile("postgresql-setup.pgsql")
+	if err != nil {
+		t.Fatalf("read PostgreSQL clean-install setup: %v", err)
+	}
+	setupText := string(setup)
+	markerIndex := strings.Index(setupText, "-- WP-04C2-B additive MCP mutation persistence capability")
+	if markerIndex < 0 {
+		t.Fatalf("PostgreSQL clean-install MCP block not found")
+	}
+	applyMCPMutationPostgresSQL(t, db, setupText[markerIndex:], user)
+	if err := CheckMCPMutationCapability(ctx, &handler); err != nil {
+		t.Fatalf("PostgreSQL clean-install MCP capability: %v", err)
+	}
+	// The sentinel lives only in the disposable database created by this test.
+	// It proves proposal/approval operations do not delete pre-existing rows;
+	// cleanup drops the whole test database, never maintenance data.
+	sentinel := "mcp_test_sentinel_" + mcpPostgresRandomSuffix(t)
+	if _, err := db.ExecContext(ctx, `CREATE TABLE `+pq.QuoteIdentifier(sentinel)+` (id INTEGER PRIMARY KEY)`); err != nil {
+		t.Fatalf("create disposable-database sentinel table: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO `+pq.QuoteIdentifier(sentinel)+` (id) VALUES (1)`); err != nil {
+		t.Fatalf("insert disposable-database sentinel row: %v", err)
+	}
+	now := time.Now().UTC()
+	proposal := mcpMutationTestProposal("postgres", "pg-run", "pg-call", now)
+	if _, inserted, err := AdmitMCPMutationProposal(ctx, &handler, proposal, 2, 2); err != nil || !inserted {
+		t.Fatalf("PostgreSQL admission inserted=%v err=%v", inserted, err)
+	}
+	loaded, found, err := GetMCPMutationProposal(ctx, &handler, proposal.ProposalID)
+	if err != nil || !found || loaded.SourceIDs[0] != 42 || string(loaded.CanonicalArguments) != string(proposal.CanonicalArguments) {
+		t.Fatalf("PostgreSQL proposal round-trip = %+v found=%v err=%v", loaded, found, err)
+	}
+	external := mcpMutationTestProposal("postgres-external", "pg-external-run", "pg-external-call", now)
+	external.SourceIDs = []uint64{}
+	external.ExternalResource = "external-resource"
+	if _, inserted, err := AdmitMCPMutationProposal(ctx, &handler, external, 2, 2); err != nil || !inserted {
+		t.Fatalf("PostgreSQL external admission inserted=%v err=%v", inserted, err)
+	}
+	externalLoaded, found, err := GetMCPMutationProposal(ctx, &handler, external.ProposalID)
+	if err != nil || !found || len(externalLoaded.SourceIDs) != 0 || externalLoaded.ExternalResource != "external-resource" {
+		t.Fatalf("PostgreSQL external round-trip = %+v found=%v err=%v", externalLoaded, found, err)
+	}
+	if _, err := db.ExecContext(ctx, `CREATE TABLE SourceOwnership (source_id BIGINT PRIMARY KEY, user_id BIGINT NOT NULL)`); err != nil {
+		t.Fatalf("create test source ownership table: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO SourceOwnership (source_id, user_id) VALUES (42, 7)`); err != nil {
+		t.Fatalf("insert test source ownership: %v", err)
+	}
+	ownerList, err := ListMCPMutationProposals(ctx, &handler, MCPMutationProposalFilter{
+		State: MCPMutationStateApprovalRequired, Limit: 10, ViewerUserID: 7,
+	})
+	if err != nil || len(ownerList) != 1 || ownerList[0].ProposalID != proposal.ProposalID {
+		t.Fatalf("PostgreSQL owner-visible list = %+v err=%v", ownerList, err)
+	}
+	otherList, err := ListMCPMutationProposals(ctx, &handler, MCPMutationProposalFilter{
+		State: MCPMutationStateApprovalRequired, Limit: 10, ViewerUserID: 8,
+	})
+	if err != nil || len(otherList) != 0 {
+		t.Fatalf("PostgreSQL cross-tenant list = %+v err=%v", otherList, err)
+	}
+
+	approval := MCPMutationApprovalRow{
+		ApprovalID:       mcpMutationTestHash("approval:postgres"),
+		ProposalID:       proposal.ProposalID,
+		ApprovedByUserID: 9,
+		ApprovedBy:       "admin-1",
+		ApprovedByIssuer: "test-issuer",
+		ApprovedAt:       now.Add(time.Minute),
+		ExpiresAt:        now.Add(30 * time.Minute),
+		MaxExecutions:    1,
+		LastUpdatedAt:    now.Add(time.Minute),
+	}
+	issued, inserted, err := issueMCPMutationApprovalForTest(ctx, &handler, approval, proposal.ProposalSHA256, now.Add(time.Minute))
+	if err != nil || !inserted || issued.State != "active" {
+		t.Fatalf("PostgreSQL approval = %+v inserted=%v err=%v", issued, inserted, err)
+	}
+	if active, found, err := GetActiveMCPMutationApprovalByProposal(ctx, &handler, proposal.ProposalSHA256, now.Add(2*time.Minute)); err != nil || !found || active.ApprovalID != issued.ApprovalID {
+		t.Fatalf("PostgreSQL usable approval lookup = %+v found=%v err=%v", active, found, err)
+	}
+	revoked, transitioned, err := revokeMCPMutationApprovalForTest(ctx, &handler, issued.ApprovalID, 9, "admin-1", "integration revoke", now.Add(2*time.Minute))
+	if err != nil || !transitioned || revoked.State != "revoked" {
+		t.Fatalf("PostgreSQL revocation = %+v transitioned=%v err=%v", revoked, transitioned, err)
+	}
+	if active, found, err := GetActiveMCPMutationApprovalByProposal(ctx, &handler, proposal.ProposalSHA256, now.Add(2*time.Minute)); err != nil || found {
+		t.Fatalf("PostgreSQL active approval after revoke = %+v found=%v err=%v", active, found, err)
+	}
+	list, err := ListMCPMutationProposals(ctx, &handler, MCPMutationProposalFilter{
+		State: MCPMutationStateApproved, Limit: 10, ViewerAdmin: true,
+	})
+	if err != nil || len(list) != 0 {
+		t.Fatalf("PostgreSQL proposal list after revoke = %+v err=%v", list, err)
+	}
+	// Capability detection must fail closed when a required index or unique
+	// constraint is missing, and when the marker is stale.
+	if _, err := db.ExecContext(ctx, `DROP INDEX idx_mcp_proposals_pending`); err != nil {
+		t.Fatalf("drop capability index: %v", err)
+	}
+	if err := CheckMCPMutationCapability(ctx, &handler); !errors.Is(err, ErrMCPMutationSchemaUnavailable) {
+		t.Fatalf("missing index capability error = %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_mcp_proposals_pending ON MCPMutationProposals (state, expires_at)`); err != nil {
+		t.Fatalf("restore capability index: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `ALTER TABLE MCPMutationProposals DROP CONSTRAINT uq_mcp_proposal_logical_call`); err != nil {
+		t.Fatalf("drop capability unique constraint: %v", err)
+	}
+	if err := CheckMCPMutationCapability(ctx, &handler); !errors.Is(err, ErrMCPMutationSchemaUnavailable) {
+		t.Fatalf("missing unique constraint capability error = %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `ALTER TABLE MCPMutationProposals ADD CONSTRAINT uq_mcp_proposal_logical_call UNIQUE (run_id, effective_call_id)`); err != nil {
+		t.Fatalf("restore capability unique constraint: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE SchemaCapabilities SET checksum=$1 WHERE capability=$2`,
+		strings.Repeat("0", 64), MCPMutationCapability); err != nil {
+		t.Fatalf("stale capability marker: %v", err)
+	}
+	if err := CheckMCPMutationCapability(ctx, &handler); !errors.Is(err, ErrMCPMutationSchemaUnavailable) {
+		t.Fatalf("stale marker capability error = %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE SchemaCapabilities SET checksum=$1 WHERE capability=$2`,
+		MCPMutationCapabilityChecksum, MCPMutationCapability); err != nil {
+		t.Fatalf("restore capability marker: %v", err)
+	}
+	if err := CheckMCPMutationCapability(ctx, &handler); err != nil {
+		t.Fatalf("capability after restore: %v", err)
+	}
+
+	// Separate pools exercise concurrent admissions and issue/revoke races on
+	// independent PostgreSQL connections.
+	secondPool, err := sql.Open(DBPostgresStr, testDSN)
+	if err != nil {
+		t.Fatalf("open second PostgreSQL pool: %v", err)
+	}
+	secondPool.SetMaxOpenConns(2)
+	t.Cleanup(func() { _ = secondPool.Close() })
+	if err := secondPool.PingContext(ctx); err != nil {
+		t.Fatalf("ping second PostgreSQL pool: %v", err)
+	}
+	var secondHandler Handler = &PostgresHandler{db: secondPool, dbms: DBPostgresStr, connStr: testDSN}
+	concurrentA := mcpMutationTestProposal("pg-concurrent-a", "pg-concurrent-run", "pg-concurrent-a", now)
+	concurrentB := mcpMutationTestProposal("pg-concurrent-b", "pg-concurrent-run", "pg-concurrent-b", now)
+	results := make(chan error, 2)
+	go func() {
+		_, _, err := AdmitMCPMutationProposalAt(ctx, &handler, concurrentA, 1, 10, now)
+		results <- err
+	}()
+	go func() {
+		_, _, err := AdmitMCPMutationProposalAt(ctx, &secondHandler, concurrentB, 1, 10, now)
+		results <- err
+	}()
+	successes := 0
+	for i := 0; i < 2; i++ {
+		err := <-results
+		if err == nil {
+			successes++
+		} else if !errors.Is(err, ErrMCPMutationQuotaReached) && !errors.Is(err, ErrMCPMutationProposalConflict) {
+			t.Fatalf("concurrent admission error = %v", err)
+		}
+	}
+	if successes != 1 {
+		t.Fatalf("concurrent admission successes = %d, want 1", successes)
+	}
+	var concurrentRows, concurrentQuota int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM MCPMutationProposals WHERE run_id='pg-concurrent-run'`).Scan(&concurrentRows); err != nil {
+		t.Fatalf("count concurrent proposals: %v", err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT active_count FROM MCPMutationRunQuota WHERE run_id='pg-concurrent-run'`).Scan(&concurrentQuota); err != nil {
+		t.Fatalf("read concurrent quota: %v", err)
+	}
+	if concurrentRows != 1 || concurrentQuota != 1 {
+		t.Fatalf("concurrent proposal rows=%d quota=%d", concurrentRows, concurrentQuota)
+	}
+
+	raceProposal := mcpMutationTestProposal("pg-approval-race", "pg-approval-race-run", "pg-approval-race-call", now)
+	if _, inserted, err := AdmitMCPMutationProposalAt(ctx, &handler, raceProposal, 2, 10, now); err != nil || !inserted {
+		t.Fatalf("admit approval race proposal inserted=%v err=%v", inserted, err)
+	}
+	approvalA := MCPMutationApprovalRow{
+		ApprovalID: mcpMutationTestHash("pg-approval-race-a"), ProposalID: raceProposal.ProposalID,
+		ApprovedByUserID: 9, ApprovedBy: "admin-1", ApprovedByIssuer: "test-issuer",
+		ApprovedAt: now.Add(time.Minute), ExpiresAt: now.Add(20 * time.Minute),
+		MaxExecutions: 1, LastUpdatedAt: now.Add(time.Minute),
+	}
+	approvalB := approvalA
+	approvalB.ApprovalID = mcpMutationTestHash("pg-approval-race-b")
+	approvalResults := make(chan error, 2)
+	go func() {
+		_, _, err := issueMCPMutationApprovalForTest(ctx, &handler, approvalA, raceProposal.ProposalSHA256, now.Add(time.Minute))
+		approvalResults <- err
+	}()
+	go func() {
+		_, _, err := issueMCPMutationApprovalForTest(ctx, &secondHandler, approvalB, raceProposal.ProposalSHA256, now.Add(time.Minute))
+		approvalResults <- err
+	}()
+	for i := 0; i < 2; i++ {
+		if err := <-approvalResults; err != nil {
+			t.Fatalf("concurrent approval error = %v", err)
+		}
+	}
+	var activeApprovals int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM MCPMutationApprovals WHERE proposal_sha256=$1 AND state='active'`, raceProposal.ProposalSHA256).Scan(&activeApprovals); err != nil {
+		t.Fatalf("count concurrent approvals: %v", err)
+	}
+	if activeApprovals != 1 {
+		t.Fatalf("concurrent active approvals = %d, want 1", activeApprovals)
+	}
+
+	revokeRaceProposal := mcpMutationTestProposal("pg-issue-revoke-race", "pg-issue-revoke-run", "pg-issue-revoke-call", now)
+	if _, inserted, err := AdmitMCPMutationProposalAt(ctx, &handler, revokeRaceProposal, 2, 10, now); err != nil || !inserted {
+		t.Fatalf("admit issue/revoke race proposal inserted=%v err=%v", inserted, err)
+	}
+	initial := approvalA
+	initial.ApprovalID = mcpMutationTestHash("pg-issue-revoke-initial")
+	initial.ProposalID = revokeRaceProposal.ProposalID
+	initial.ApprovedAt = now.Add(2 * time.Minute)
+	initial.ExpiresAt = now.Add(20 * time.Minute)
+	initial.LastUpdatedAt = now.Add(2 * time.Minute)
+	issuedInitial, _, err := issueMCPMutationApprovalForTest(ctx, &handler, initial, revokeRaceProposal.ProposalSHA256, now.Add(2*time.Minute))
+	if err != nil {
+		t.Fatalf("issue initial race approval: %v", err)
+	}
+	replacement := approvalA
+	replacement.ApprovalID = mcpMutationTestHash("pg-issue-revoke-replacement")
+	replacement.ApprovedAt = now.Add(3 * time.Minute)
+	replacement.ExpiresAt = now.Add(20 * time.Minute)
+	replacement.LastUpdatedAt = now.Add(3 * time.Minute)
+	issueRevokeResults := make(chan error, 2)
+	go func() {
+		_, _, err := issueMCPMutationApprovalForTest(ctx, &handler, replacement, revokeRaceProposal.ProposalSHA256, now.Add(3*time.Minute))
+		issueRevokeResults <- err
+	}()
+	go func() {
+		_, _, err := revokeMCPMutationApprovalForTest(ctx, &secondHandler, issuedInitial.ApprovalID, 9, "admin-1", "race revoke", now.Add(3*time.Minute))
+		issueRevokeResults <- err
+	}()
+	for i := 0; i < 2; i++ {
+		err := <-issueRevokeResults
+		if err != nil && !errors.Is(err, ErrMCPMutationProposalConflict) &&
+			!errors.Is(err, ErrMCPMutationApprovalConflict) &&
+			!errors.Is(err, ErrMCPMutationApprovalExpired) &&
+			!errors.Is(err, ErrMCPMutationApprovalRevoked) {
+			t.Fatalf("issue/revoke race error = %v", err)
+		}
+	}
+	var finalActive int
+	var finalProposalState string
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM MCPMutationApprovals WHERE proposal_sha256=$1 AND state='active'`, revokeRaceProposal.ProposalSHA256).Scan(&finalActive); err != nil {
+		t.Fatalf("count final active approvals: %v", err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT state FROM MCPMutationProposals WHERE proposal_id=$1`, revokeRaceProposal.ProposalID).Scan(&finalProposalState); err != nil {
+		t.Fatalf("read final proposal state: %v", err)
+	}
+	if finalActive > 1 {
+		t.Fatalf("issue/revoke race left %d active approvals", finalActive)
+	}
+	if finalActive == 1 && finalProposalState != MCPMutationStateApproved {
+		t.Fatalf("active approval with proposal state %q", finalProposalState)
+	}
+	if finalActive == 0 && finalProposalState != MCPMutationStateApprovalRequired {
+		t.Fatalf("no active approval with proposal state %q", finalProposalState)
+	}
+
+	var sentinelRows int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+pq.QuoteIdentifier(sentinel)).Scan(&sentinelRows); err != nil || sentinelRows != 1 {
+		t.Fatalf("disposable-database sentinel rows = %d err=%v, pre-existing rows were affected", sentinelRows, err)
+	}
+
+	// A wrong critical column type must not be certified by the marker.
+	if _, err := db.ExecContext(ctx, `ALTER TABLE MCPMutationProposals
+		ALTER COLUMN canonical_arguments TYPE TEXT USING encode(canonical_arguments, 'hex')`); err != nil {
+		t.Fatalf("alter canonical argument type: %v", err)
+	}
+	if err := CheckMCPMutationCapability(ctx, &handler); !errors.Is(err, ErrMCPMutationSchemaUnavailable) {
+		t.Fatalf("wrong column type capability error = %v", err)
+	}
+}
+
+func TestPostgresMCPMutationApprovalAuthorityLockOrder(t *testing.T) {
+	target, err := mcpPostgresDisposableTarget()
+	if errors.Is(err, errMCPPostgresDisposableOptInRequired) || errors.Is(err, errMCPPostgresDSNRequired) {
+		t.Skip(err)
+	}
+	if err != nil {
+		t.Fatalf("disposable PostgreSQL target: %v", err)
+	}
+	db, _, _ := newMCPPostgresDisposableDB(t, target)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	var user string
+	if err := db.QueryRowContext(ctx, `SELECT current_user`).Scan(&user); err != nil {
+		t.Fatalf("read current user: %v", err)
+	}
+	applyMCPMutationPostgresMigration(t, db, user)
+	for _, statement := range []string{
+		`CREATE TABLE Users (user_id BIGINT PRIMARY KEY, username TEXT NOT NULL, disabled BOOLEAN NOT NULL DEFAULT FALSE, deleted_at TIMESTAMPTZ)`,
+		`CREATE TABLE AuthRoles (role_id BIGINT PRIMARY KEY, name TEXT NOT NULL UNIQUE)`,
+		`CREATE TABLE UserRoles (user_id BIGINT NOT NULL, role_id BIGINT NOT NULL, PRIMARY KEY (user_id, role_id))`,
+		`CREATE TABLE Sources (source_id BIGINT PRIMARY KEY, usr_id BIGINT, deleted_at TIMESTAMPTZ, last_updated_at TIMESTAMPTZ)`,
+		`CREATE TABLE SourceOwnership (source_id BIGINT PRIMARY KEY, user_id BIGINT NOT NULL, verified_at TIMESTAMPTZ NOT NULL, verified_by_user_id BIGINT NOT NULL, verified_by TEXT NOT NULL, verification_method TEXT NOT NULL, verification_reason TEXT, last_updated_at TIMESTAMPTZ)`,
+		`INSERT INTO Users(user_id, username) VALUES (7, 'owner-1'), (8, 'other-owner'), (9, 'admin-1')`,
+		`INSERT INTO AuthRoles(role_id, name) VALUES (1, 'admin'), (2, 'user')`,
+		`INSERT INTO UserRoles(user_id, role_id) VALUES (7, 2), (8, 2), (9, 1)`,
+		`INSERT INTO Sources(source_id, usr_id) VALUES (42, 7)`,
+		`INSERT INTO SourceOwnership(source_id, user_id, verified_at, verified_by_user_id, verified_by, verification_method) VALUES (42, 7, CURRENT_TIMESTAMP, 9, 'admin-1', 'test')`,
+	} {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			t.Fatalf("setup approval authority schema: %v\n%s", err, statement)
+		}
+	}
+	var handler Handler = &PostgresHandler{db: db, dbms: DBPostgresStr, connStr: target.String()}
+	now := time.Now().UTC()
+	proposal := mcpMutationTestProposal("approval-lock", "approval-lock-run", "approval-lock-call", now)
+	if _, inserted, err := AdmitMCPMutationProposal(ctx, &handler, proposal, 4, 8); err != nil || !inserted {
+		t.Fatalf("admit approval-lock proposal inserted=%v err=%v", inserted, err)
+	}
+	makeApproval := func(seed string) MCPMutationApprovalRow {
+		return MCPMutationApprovalRow{
+			ApprovalID:       mcpMutationTestHash("approval-lock:" + seed),
+			ProposalID:       proposal.ProposalID,
+			ApprovedByUserID: 9,
+			ApprovedBy:       "admin-1",
+			ApprovedByIssuer: "test-issuer",
+			ApprovedAt:       now.Add(time.Minute),
+			ExpiresAt:        now.Add(20 * time.Minute),
+			MaxExecutions:    1,
+			LastUpdatedAt:    now.Add(time.Minute),
+		}
+	}
+	authority := func(txCtx context.Context, tx *sql.Tx, row MCPMutationProposalRow) error {
+		return AuthorizeMCPMutationApprovalTx(txCtx, tx, handler, MCPMutationApprovalAuthorityRequest{
+			SourceIDs: row.SourceIDs, ApproverUserID: 9, ProposalPrincipalID: row.PrincipalUserID,
+		})
+	}
+
+	// Transfer holds the source row first; approval must wait, then fail closed
+	// because the proposal principal no longer owns the source.
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin transfer transaction: %v", err)
+	}
+	if _, err := lockSourceOwnerTx(ctx, tx, handler, 42); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("lock source for transfer: %v", err)
+	}
+	transferFirst := make(chan error, 1)
+	go func() {
+		_, _, err := IssueMCPMutationApprovalAuthorized(ctx, &handler, makeApproval("transfer-first"), proposal.ProposalSHA256, now.Add(time.Minute), authority)
+		transferFirst <- err
+	}()
+	time.Sleep(250 * time.Millisecond)
+	if _, err := tx.ExecContext(ctx, `UPDATE Sources SET usr_id=8, last_updated_at=CURRENT_TIMESTAMP WHERE source_id=42`); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("update source owner: %v", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE SourceOwnership SET user_id=8, verified_at=CURRENT_TIMESTAMP WHERE source_id=42`); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("update source provenance: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit transfer: %v", err)
+	}
+	if err := <-transferFirst; !errors.Is(err, ErrMCPMutationProposalPrincipalForbidden) {
+		t.Fatalf("approval after transfer-first error = %v, want forbidden", err)
+	}
+	var approvals int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM MCPMutationApprovals WHERE proposal_id=$1`, proposal.ProposalID).Scan(&approvals); err != nil || approvals != 0 {
+		t.Fatalf("approvals after transfer-first = %d err=%v", approvals, err)
+	}
+
+	// Restore the owner and let approval hold the source lock first. Transfer
+	// must wait for the approval transaction, then commit normally. The
+	// resulting approval is historical: future dispatch must recheck ownership.
+	if _, err := db.ExecContext(ctx, `UPDATE Sources SET usr_id=7 WHERE source_id=42`); err != nil {
+		t.Fatalf("restore source owner: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE SourceOwnership SET user_id=7 WHERE source_id=42`); err != nil {
+		t.Fatalf("restore provenance: %v", err)
+	}
+	locked := make(chan struct{})
+	release := make(chan struct{})
+	approvalFirst := make(chan error, 1)
+	go func() {
+		appAuthority := func(txCtx context.Context, tx *sql.Tx, row MCPMutationProposalRow) error {
+			if err := authority(txCtx, tx, row); err != nil {
+				return err
+			}
+			close(locked)
+			<-release
+			return nil
+		}
+		_, _, err := IssueMCPMutationApprovalAuthorized(ctx, &handler, makeApproval("approval-first"), proposal.ProposalSHA256, now.Add(time.Minute), appAuthority)
+		approvalFirst <- err
+	}()
+	<-locked
+	transferDone := make(chan error, 1)
+	go func() {
+		_, err := VerifySourceOwnershipContext(ctx, &handler, SourceOwnershipVerification{
+			SourceID: 42, UserID: 8, VerifiedByUserID: 9, VerifiedBy: "admin-1",
+			VerificationMethod: "test",
+		})
+		transferDone <- err
+	}()
+	time.Sleep(250 * time.Millisecond)
+	close(release)
+	if err := <-approvalFirst; err != nil {
+		t.Fatalf("approval-first error: %v", err)
+	}
+	if err := <-transferDone; err != nil {
+		t.Fatalf("transfer after approval-first error: %v", err)
+	}
+	var owner uint64
+	if err := db.QueryRowContext(ctx, `SELECT usr_id FROM Sources WHERE source_id=42`).Scan(&owner); err != nil || owner != 8 {
+		t.Fatalf("final source owner = %d err=%v", owner, err)
+	}
+
+	// Administrative role revocation waits for the approval transaction and
+	// must make the approval fail after the delete commits.
+	if _, err := db.ExecContext(ctx, `UPDATE Sources SET usr_id=7 WHERE source_id=42`); err != nil {
+		t.Fatalf("restore owner for role race: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE SourceOwnership SET user_id=7 WHERE source_id=42`); err != nil {
+		t.Fatalf("restore provenance for role race: %v", err)
+	}
+	roleProposal := mcpMutationTestProposal("approval-role-race", "approval-role-run", "approval-role-call", now)
+	if _, inserted, err := AdmitMCPMutationProposal(ctx, &handler, roleProposal, 4, 8); err != nil || !inserted {
+		t.Fatalf("admit role-race proposal inserted=%v err=%v", inserted, err)
+	}
+	roleTx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin role revocation transaction: %v", err)
+	}
+	if _, err := roleTx.ExecContext(ctx, `DELETE FROM UserRoles WHERE user_id=9 AND role_id=1`); err != nil {
+		_ = roleTx.Rollback()
+		t.Fatalf("delete admin role: %v", err)
+	}
+	roleApproval := makeApproval("role-race")
+	roleApproval.ProposalID = roleProposal.ProposalID
+	roleApproval.ApprovedAt = now.Add(time.Minute)
+	roleResult := make(chan error, 1)
+	go func() {
+		_, _, err := IssueMCPMutationApprovalAuthorized(ctx, &handler, roleApproval, roleProposal.ProposalSHA256, now.Add(time.Minute), authority)
+		roleResult <- err
+	}()
+	time.Sleep(250 * time.Millisecond)
+	if err := roleTx.Commit(); err != nil {
+		t.Fatalf("commit role revocation: %v", err)
+	}
+	if err := <-roleResult; !errors.Is(err, ErrMCPMutationApproverForbidden) {
+		t.Fatalf("approval after role revocation error = %v, want approver forbidden", err)
+	}
+	var roleApprovals int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM MCPMutationApprovals WHERE proposal_id=$1`, roleProposal.ProposalID).Scan(&roleApprovals); err != nil || roleApprovals != 0 {
+		t.Fatalf("approvals after role revocation = %d err=%v", roleApprovals, err)
+	}
+
+	// Restore the admin grant and source owner for deny/revoke authority tests.
+	if _, err := db.ExecContext(ctx, `INSERT INTO UserRoles(user_id, role_id) VALUES (9, 1) ON CONFLICT DO NOTHING`); err != nil {
+		t.Fatalf("restore admin role: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE Sources SET usr_id=7 WHERE source_id=42`); err != nil {
+		t.Fatalf("restore source owner: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE SourceOwnership SET user_id=7 WHERE source_id=42`); err != nil {
+		t.Fatalf("restore source provenance: %v", err)
+	}
+	adminAuthority := func(actorID uint64) MCPMutationAdministrationAuthority {
+		return func(txCtx context.Context, tx *sql.Tx, proposal MCPMutationProposalRow) error {
+			return AuthorizeMCPMutationAdministrationTx(txCtx, tx, handler, MCPMutationAdministrationAuthorityRequest{
+				SourceIDs: proposal.SourceIDs, ActorUserID: actorID,
+			})
+		}
+	}
+
+	denyProposal := mcpMutationTestProposal("admin-deny-after-transfer", "admin-deny-run", "admin-deny-call", now)
+	if _, inserted, err := AdmitMCPMutationProposal(ctx, &handler, denyProposal, 4, 8); err != nil || !inserted {
+		t.Fatalf("admit deny proposal inserted=%v err=%v", inserted, err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE Sources SET usr_id=8 WHERE source_id=42`); err != nil {
+		t.Fatalf("transfer source for admin deny: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE SourceOwnership SET user_id=8 WHERE source_id=42`); err != nil {
+		t.Fatalf("transfer provenance for admin deny: %v", err)
+	}
+	denied, transitioned, err := DenyMCPMutationProposalAuthorized(ctx, &handler, denyProposal.ProposalID, 9, "admin-1", "emergency deny", now.Add(2*time.Minute), adminAuthority(9))
+	if err != nil || !transitioned || denied.State != MCPMutationStateDenied {
+		t.Fatalf("admin deny after transfer = %+v transitioned=%v err=%v", denied, transitioned, err)
+	}
+	unauthorizedDeny := mcpMutationTestProposal("unauthorized-deny", "unauthorized-deny-run", "unauthorized-deny-call", now)
+	if _, inserted, err := AdmitMCPMutationProposal(ctx, &handler, unauthorizedDeny, 4, 8); err != nil || !inserted {
+		t.Fatalf("admit unauthorized deny proposal inserted=%v err=%v", inserted, err)
+	}
+	if _, _, err := DenyMCPMutationProposalAuthorized(ctx, &handler, unauthorizedDeny.ProposalID, 7, "owner-1", "unauthorized deny", now.Add(2*time.Minute), adminAuthority(7)); !errors.Is(err, ErrMCPMutationAdministrationForbidden) {
+		t.Fatalf("non-admin deny after transfer error = %v, want administration forbidden", err)
+	}
+
+	// Admin revoke remains available after the proposal principal is disabled.
+	if _, err := db.ExecContext(ctx, `UPDATE Sources SET usr_id=7 WHERE source_id=42`); err != nil {
+		t.Fatalf("restore owner for revoke: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE SourceOwnership SET user_id=7 WHERE source_id=42`); err != nil {
+		t.Fatalf("restore provenance for revoke: %v", err)
+	}
+	revokeProposal := mcpMutationTestProposal("admin-revoke-disabled-principal", "admin-revoke-run", "admin-revoke-call", now)
+	if _, inserted, err := AdmitMCPMutationProposal(ctx, &handler, revokeProposal, 4, 8); err != nil || !inserted {
+		t.Fatalf("admit revoke proposal inserted=%v err=%v", inserted, err)
+	}
+	revokeApproval := makeApproval("admin-revoke")
+	revokeApproval.ProposalID = revokeProposal.ProposalID
+	revokeApproval.ApprovedAt = now.Add(time.Minute)
+	issuedRevoke, _, err := IssueMCPMutationApprovalAuthorized(ctx, &handler, revokeApproval, revokeProposal.ProposalSHA256, now.Add(time.Minute), authority)
+	if err != nil {
+		t.Fatalf("issue approval for revoke test: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE Users SET disabled=TRUE WHERE user_id=7`); err != nil {
+		t.Fatalf("disable proposal principal: %v", err)
+	}
+	revokedRow, transitioned, err := RevokeMCPMutationApprovalAuthorized(ctx, &handler, issuedRevoke.ApprovalID, 9, "admin-1", "emergency revoke", now.Add(2*time.Minute), adminAuthority(9))
+	if err != nil || !transitioned || revokedRow.State != "revoked" {
+		t.Fatalf("admin revoke after principal disable = %+v transitioned=%v err=%v", revokedRow, transitioned, err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE Users SET disabled=FALSE WHERE user_id=7`); err != nil {
+		t.Fatalf("re-enable principal: %v", err)
+	}
+
+	// Role revocation contends with deny and must fail closed after commit.
+	denyRoleProposal := mcpMutationTestProposal("deny-role-race", "deny-role-run", "deny-role-call", now)
+	if _, inserted, err := AdmitMCPMutationProposal(ctx, &handler, denyRoleProposal, 4, 8); err != nil || !inserted {
+		t.Fatalf("admit deny-role proposal inserted=%v err=%v", inserted, err)
+	}
+	denyRoleTx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin deny role transaction: %v", err)
+	}
+	if _, err := denyRoleTx.ExecContext(ctx, `DELETE FROM UserRoles WHERE user_id=9 AND role_id=1`); err != nil {
+		_ = denyRoleTx.Rollback()
+		t.Fatalf("delete admin role for deny: %v", err)
+	}
+	denyRoleResult := make(chan error, 1)
+	go func() {
+		_, _, err := DenyMCPMutationProposalAuthorized(ctx, &handler, denyRoleProposal.ProposalID, 9, "admin-1", "role race deny", now.Add(2*time.Minute), adminAuthority(9))
+		denyRoleResult <- err
+	}()
+	time.Sleep(250 * time.Millisecond)
+	if err := denyRoleTx.Commit(); err != nil {
+		t.Fatalf("commit deny role revocation: %v", err)
+	}
+	if err := <-denyRoleResult; !errors.Is(err, ErrMCPMutationAdministrationForbidden) {
+		t.Fatalf("deny after role revocation error = %v, want administration forbidden", err)
+	}
+	var denyState string
+	if err := db.QueryRowContext(ctx, `SELECT state FROM MCPMutationProposals WHERE proposal_id=$1`, denyRoleProposal.ProposalID).Scan(&denyState); err != nil || denyState != MCPMutationStateApprovalRequired {
+		t.Fatalf("deny after role revocation state = %q err=%v", denyState, err)
+	}
+	var attempts int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM MCPMutationDispatchAttempts`).Scan(&attempts); err != nil || attempts != 0 {
+		t.Fatalf("dispatch attempts after administration tests = %d err=%v", attempts, err)
+	}
+}
+
+func TestPostgresMCPMutationAdminRoleCascadeContention(t *testing.T) {
+	target, err := mcpPostgresDisposableTarget()
+	if errors.Is(err, errMCPPostgresDisposableOptInRequired) || errors.Is(err, errMCPPostgresDSNRequired) {
+		t.Skip(err)
+	}
+	if err != nil {
+		t.Fatalf("disposable PostgreSQL target: %v", err)
+	}
+	db, _, _ := newMCPPostgresDisposableDB(t, target)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	for _, statement := range []string{
+		`CREATE TABLE Users (user_id BIGINT PRIMARY KEY, username TEXT NOT NULL, disabled BOOLEAN NOT NULL DEFAULT FALSE, deleted_at TIMESTAMPTZ)`,
+		`CREATE TABLE AuthRoles (role_id BIGINT PRIMARY KEY, name TEXT NOT NULL UNIQUE)`,
+		`CREATE TABLE UserRoles (user_id BIGINT NOT NULL, role_id BIGINT NOT NULL REFERENCES AuthRoles(role_id) ON DELETE CASCADE, PRIMARY KEY (user_id, role_id))`,
+		`INSERT INTO Users(user_id, username) VALUES (9, 'admin-1')`,
+		`INSERT INTO AuthRoles(role_id, name) VALUES (1, 'admin')`,
+		`INSERT INTO UserRoles(user_id, role_id) VALUES (9, 1)`,
+	} {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			t.Fatalf("setup cascade contention schema: %v\n%s", err, statement)
+		}
+	}
+	deleteTx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin role delete transaction: %v", err)
+	}
+	if _, err := deleteTx.ExecContext(ctx, `SET LOCAL lock_timeout='2s'`); err != nil {
+		_ = deleteTx.Rollback()
+		t.Fatalf("set delete lock timeout: %v", err)
+	}
+	if _, err := deleteTx.ExecContext(ctx, `DELETE FROM AuthRoles WHERE role_id=1`); err != nil {
+		_ = deleteTx.Rollback()
+		t.Fatalf("delete role for contention: %v", err)
+	}
+	lockResult := make(chan error, 1)
+	go func() {
+		lockTx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			lockResult <- err
+			return
+		}
+		defer func() { _ = lockTx.Rollback() }()
+		if _, err := lockTx.ExecContext(ctx, `SET LOCAL lock_timeout='2s'`); err != nil {
+			lockResult <- err
+			return
+		}
+		handler := Handler(&PostgresHandler{db: db, dbms: DBPostgresStr})
+		lockResult <- lockUserAdminRoleTx(ctx, lockTx, handler, 9)
+	}()
+	time.Sleep(250 * time.Millisecond)
+	commitErr := deleteTx.Commit()
+	lockErr := <-lockResult
+	if commitErr == nil && lockErr == nil {
+		t.Fatalf("role deletion and admin lock both succeeded without contention")
+	}
+	if commitErr != nil && lockErr != nil {
+		t.Logf("role deletion and lock both blocked: delete=%v lock=%v", commitErr, lockErr)
+		return
+	}
+	if commitErr == nil && !errors.Is(lockErr, ErrSourceMutationForbidden) {
+		t.Fatalf("role deletion committed but lock error = %v, want forbidden", lockErr)
+	}
+	t.Logf("role cascade contention outcome: delete=%v lock=%v", commitErr, lockErr)
+}

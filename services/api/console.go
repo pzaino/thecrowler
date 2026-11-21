@@ -65,6 +65,10 @@ func performAddInformationSeed(query string, qType int, db *cdb.Handler) (Inform
 }
 
 func performAddInformationSeedContext(ctx context.Context, query string, qType int, db *cdb.Handler) (InformationSeedResponse, error) {
+	return performAddInformationSeedForAccessContext(ctx, query, qType, db, sourceMutationAccess{})
+}
+
+func performAddInformationSeedForAccessContext(ctx context.Context, query string, qType int, db *cdb.Handler, access sourceMutationAccess) (InformationSeedResponse, error) {
 	var params informationSeedAddRequest
 	if qType == getQuery {
 		params.InformationSeed = strings.TrimSpace(query)
@@ -91,6 +95,12 @@ func performAddInformationSeedContext(ctx context.Context, query string, qType i
 	}
 	if params.UsrID == 0 && params.UserID != 0 {
 		params.UsrID = params.UserID
+	}
+	if access.Authenticated {
+		if !access.Admin && params.UsrID != 0 && params.UsrID != access.UserID {
+			return InformationSeedResponse{Message: "Information seed owner is not authorized"}, errInformationSeedForbidden
+		}
+		params.UsrID = access.UserID
 	}
 	if params.Status == "" {
 		params.Status = "new"
@@ -429,9 +439,16 @@ func performRetryInformationSeed(query string, db *cdb.Handler) (InformationSeed
 	return performRetryInformationSeedContext(context.Background(), query, db)
 }
 func performRetryInformationSeedContext(ctx context.Context, query string, db *cdb.Handler) (InformationSeedResponse, error) {
+	return performRetryInformationSeedForAccessContext(ctx, query, db, sourceMutationAccess{})
+}
+
+func performRetryInformationSeedForAccessContext(ctx context.Context, query string, db *cdb.Handler, access sourceMutationAccess) (InformationSeedResponse, error) {
 	id, err := parseInformationSeedIDFromJSON(query)
 	if err != nil {
 		return InformationSeedResponse{Message: "Invalid information seed retry request"}, err
+	}
+	if _, err := loadAuthorizedInformationSeedContext(ctx, db, id, access); err != nil {
+		return InformationSeedResponse{Message: "Information seed retry is not authorized"}, err
 	}
 	return performRerunInformationSeedByIDContext(ctx, id, db)
 }
@@ -454,9 +471,16 @@ func performDisableInformationSeed(query string, db *cdb.Handler) (InformationSe
 	return performDisableInformationSeedContext(context.Background(), query, db)
 }
 func performDisableInformationSeedContext(ctx context.Context, query string, db *cdb.Handler) (InformationSeedResponse, error) {
+	return performDisableInformationSeedForAccessContext(ctx, query, db, sourceMutationAccess{})
+}
+
+func performDisableInformationSeedForAccessContext(ctx context.Context, query string, db *cdb.Handler, access sourceMutationAccess) (InformationSeedResponse, error) {
 	id, err := parseInformationSeedIDFromJSON(query)
 	if err != nil {
 		return InformationSeedResponse{Message: "Invalid information seed disable request"}, err
+	}
+	if _, err := loadAuthorizedInformationSeedContext(ctx, db, id, access); err != nil {
+		return InformationSeedResponse{Message: "Information seed disable is not authorized"}, err
 	}
 	return performDisableInformationSeedByIDContext(ctx, id, db)
 }
@@ -787,12 +811,19 @@ func performAddSourceContext(ctx context.Context, query string, qType int, db *c
 		params.Config = cfg.SourceConfig{} // empty/default
 	} else {
 		// extract AddSource parameters from JSON
-		extractAddSourceParams(query, &params)
+		if err := extractAddSourceParams(query, &params); err != nil {
+			return ConsoleResponse{Message: "Invalid source request"}, err
+		}
 
 		params.URL = cdb.NormalizeSourceURL(params.URL)
 		if params.URL == "" {
 			return ConsoleResponse{Message: "Invalid URL"}, fmt.Errorf("invalid URL")
 		}
+	}
+
+	identity, authenticated, err := resolveSourceMutationIdentity(ctx, *db)
+	if err != nil {
+		return ConsoleResponse{Message: "Source mutation is not authorized"}, err
 	}
 
 	// Validate & reformat config (same as your logic)
@@ -816,12 +847,29 @@ func performAddSourceContext(ctx context.Context, query string, qType int, db *c
 		// Status is intentionally NOT set from console
 	}
 
-	// Use your new SAFE CreateSource() logic
-	sourceID, err := cdb.CreateSourceContext(ctx, db, &dbSource, params.Config)
-	if err != nil {
-		return ConsoleResponse{
-			Message: "Failed to add the source",
-		}, err
+	var sourceID uint64
+	if authenticated {
+		access, err := sourceMutationAccessFromIdentity(identity)
+		if err != nil {
+			return ConsoleResponse{Message: "Source mutation is not authorized"}, err
+		}
+		// The authenticated path performs the insert-or-authorize decision and
+		// the source mutation in a single transaction. A caller-supplied usr_id
+		// is never used here.
+		sourceID, _, err = cdb.UpsertAuthenticatedSourceContext(
+			ctx, db, &dbSource, params.Config, access.UserID, access.Username, access.Admin,
+		)
+		if err != nil {
+			return ConsoleResponse{Message: "Failed to add the source"}, sourceMutationError(err)
+		}
+	} else {
+		// Legacy unauthenticated deployments retain the historical behavior,
+		// including a request-supplied usr_id. Such ownership has no verified
+		// provenance and is not eligible for agent scheduling.
+		sourceID, err = cdb.CreateSourceContext(ctx, db, &dbSource, params.Config)
+		if err != nil {
+			return ConsoleResponse{Message: "Failed to add the source"}, err
+		}
 	}
 
 	msg := fmt.Sprintf("Website inserted successfully with ID: %d", sourceID)
@@ -832,13 +880,19 @@ func performAddSourceContext(ctx context.Context, query string, qType int, db *c
 	return resp, nil
 }
 
-func extractAddSourceParams(query string, params *addSourceRequest) {
+// extractAddSourceParams decodes the POST body into params.
+//
+// A decode failure is returned to the caller instead of being logged and
+// ignored: silently continuing would create a source with a different (usually
+// empty) configuration than the operator submitted. The error is classified as
+// an invalid source configuration so the HTTP layer answers 400.
+func extractAddSourceParams(query string, params *addSourceRequest) error {
 	params.Restricted = -1
 
 	// Unmarshal query into params
-	err := json.Unmarshal([]byte(query), &params)
-	if err != nil {
+	if err := json.Unmarshal([]byte(query), params); err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling the query: %v", err)
+		return fmt.Errorf("%w: %v", errInvalidSourceConfig, err)
 	}
 
 	// Check for missing parameters
@@ -871,8 +925,10 @@ func extractAddSourceParams(query string, params *addSourceRequest) {
 		}
 		if err := json.Unmarshal(configJSONChecked, &params.Config); err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "unmarshalling the Config field: %v", err)
+			return fmt.Errorf("%w: %v", errInvalidSourceConfig, err)
 		}
 	}
+	return nil
 }
 
 /*
@@ -929,6 +985,19 @@ func performRemoveSourceContext(ctx context.Context, query string, qType int, db
 		return ConsoleResponse{Message: "Invalid request"}, nil
 	}
 
+	sourceURL = cdb.NormalizeSourceURL(sourceURL)
+	identity, authenticated, err := resolveSourceMutationIdentity(ctx, *db)
+	if err != nil {
+		return ConsoleResponse{Message: "Source mutation is not authorized"}, err
+	}
+	var access sourceMutationAccess
+	if authenticated {
+		access, err = sourceMutationAccessFromIdentity(identity)
+		if err != nil {
+			return ConsoleResponse{Message: "Source mutation is not authorized"}, err
+		}
+	}
+
 	// Start a transaction bounded by database.transaction_timeout; the HTTP
 	// request context (when present) cancels it even sooner.
 	txCtx, cancelTx := cdb.TransactionContext(ctx, &config)
@@ -945,8 +1014,14 @@ func performRemoveSourceContext(ctx context.Context, query string, qType int, db
 		cdb.LogTransactionOutcome("removeSource", txStarted, retErr)
 	}()
 
+	if authenticated {
+		if _, err := authorizeSourceMutationByURLTx(txCtx, tx, *db, sourceURL, access); err != nil {
+			return ConsoleResponse{Message: "Source mutation is not authorized"}, err
+		}
+	}
+
 	// Proceed with deleting the source using the obtained source_id
-	results, err = removeSourceContext(ctx, tx, sourceURL)
+	results, err = removeSourceContext(txCtx, tx, sourceURL)
 	if err != nil {
 		return ConsoleResponse{Message: "Failed to remove source and related data"}, err
 	}
@@ -1211,7 +1286,7 @@ func performUpdateSource(query string, qType int, db *cdb.Handler) (ConsoleRespo
 	return performUpdateSourceContext(context.Background(), query, qType, db)
 }
 
-func performUpdateSourceContext(ctx context.Context, query string, qType int, db *cdb.Handler) (ConsoleResponse, error) {
+func performUpdateSourceContext(ctx context.Context, query string, qType int, db *cdb.Handler) (consoleResponse ConsoleResponse, retErr error) {
 	var sqlParams updateSourceRequest
 	var sourceConfig *string
 	var sourceDetails *string
@@ -1245,25 +1320,72 @@ func performUpdateSourceContext(ctx context.Context, query string, qType int, db
 		requestedConfig = &validated
 	}
 
-	// Resolve sourceID if only URL is provided
-	if sqlParams.SourceID == 0 && sqlParams.URL != nil {
-		sourceID, err := cdb.GetSourceIDContext(ctx, cdb.SourceFilter{URL: *sqlParams.URL}, db)
-		if err != nil {
-			return ConsoleResponse{Message: "Failed to resolve Source ID"}, err
+	identity, authenticated, err := resolveSourceMutationIdentity(ctx, *db)
+	if err != nil {
+		return ConsoleResponse{Message: "Source mutation is not authorized"}, err
+	}
+
+	// Legacy unauthenticated callers keep the historical URL-to-ID resolution.
+	// Authenticated callers resolve and lock by URL inside the transaction so a
+	// concurrent URL change cannot redirect the update.
+	if !authenticated && sqlParams.SourceID == 0 && sqlParams.URL != nil {
+		sourceID, resolveErr := cdb.GetSourceIDContext(ctx, cdb.SourceFilter{URL: *sqlParams.URL}, db)
+		if resolveErr != nil {
+			return ConsoleResponse{Message: "Failed to resolve Source ID"}, resolveErr
 		}
 		sqlParams.SourceID = int64(sourceID) //nolint:gosec // This is a controlled value
-	} else if sqlParams.SourceID == 0 {
+	}
+	if sqlParams.SourceID == 0 && sqlParams.URL == nil {
 		return ConsoleResponse{Message: "Source ID or URL must be provided"}, fmt.Errorf("missing Source ID or URL")
 	}
 
-	// Retrieve existing data for the source
+	var access sourceMutationAccess
+	if authenticated {
+		access, err = sourceMutationAccessFromIdentity(identity)
+		if err != nil {
+			return ConsoleResponse{Message: "Source mutation is not authorized"}, err
+		}
+	}
+
+	txCtx, cancelTx := cdb.TransactionContextForHandler(ctx, db)
+	defer cancelTx()
+	tx, err := (*db).BeginTx(txCtx, nil)
+	if err != nil {
+		return ConsoleResponse{Message: errFailedToStartTransaction}, cdb.NormalizeTransactionError(txCtx, err)
+	}
+	txStarted := time.Now()
+	defer func() {
+		_ = tx.Rollback()
+		retErr = cdb.NormalizeTransactionError(txCtx, retErr)
+		cdb.LogTransactionOutcome("updateSource", txStarted, retErr)
+	}()
+
+	if authenticated {
+		var owner cdb.SourceOwner
+		if sqlParams.SourceID != 0 {
+			owner, err = authorizeSourceMutationTx(txCtx, tx, *db, uint64(sqlParams.SourceID), access)
+		} else {
+			owner, err = authorizeSourceMutationByURLTx(txCtx, tx, *db, *sqlParams.URL, access)
+		}
+		if err != nil {
+			return ConsoleResponse{Message: "Source mutation is not authorized"}, err
+		}
+		sqlParams.SourceID = int64(owner.SourceID) //nolint:gosec // This is a controlled value
+	} else if sqlParams.SourceID == 0 {
+		if err := tx.QueryRowContext(txCtx, `SELECT source_id FROM Sources WHERE url = $1`, cdb.NormalizeSourceURL(*sqlParams.URL)).Scan(&sqlParams.SourceID); err != nil {
+			return ConsoleResponse{Message: "Failed to resolve Source ID"}, err
+		}
+	}
+
+	// Retrieve existing data for the source inside the same transaction that
+	// will perform the mutation.
 	var existingData cdb.UpdateSourceRequest
 	selectQuery := `
         SELECT url, sub_priority, status, restricted, disabled, flags, config, details
         FROM Sources
         WHERE source_id = $1
     `
-	err := (*db).QueryRowContext(ctx, selectQuery, sqlParams.SourceID).Scan(
+	if err := tx.QueryRowContext(txCtx, selectQuery, sqlParams.SourceID).Scan(
 		&existingData.URL,
 		&existingData.SubPriority,
 		&existingData.Status,
@@ -1272,8 +1394,7 @@ func performUpdateSourceContext(ctx context.Context, query string, qType int, db
 		&existingData.Flags,
 		&sourceConfig,
 		&sourceDetails,
-	)
-	if err != nil {
+	); err != nil {
 		return ConsoleResponse{Message: "Failed to retrieve source data"}, fmt.Errorf("error querying existing source data: %w", err)
 	}
 	// extract free JSON form Details:
@@ -1337,7 +1458,7 @@ func performUpdateSourceContext(ctx context.Context, query string, qType int, db
 		configParam = []byte(*sourceConfig)
 	}
 
-	// Perform the update
+	// Perform the update. Ownership is deliberately excluded from the SET list.
 	updateQuery := `
         UPDATE Sources
         SET url = $1,
@@ -1353,7 +1474,7 @@ func performUpdateSourceContext(ctx context.Context, query string, qType int, db
 	if (*db).DBMS() == cdb.DBSQLiteStr {
 		updateQuery = strings.ReplaceAll(updateQuery, "::jsonb", "")
 	}
-	_, err = (*db).ExecContext(ctx, updateQuery,
+	if _, err := tx.ExecContext(txCtx, updateQuery,
 		mergedData.URL,
 		mergedData.SubPriority,
 		mergedData.Status,
@@ -1363,9 +1484,11 @@ func performUpdateSourceContext(ctx context.Context, query string, qType int, db
 		configParam,
 		mergedData.Details,
 		mergedData.SourceID,
-	)
-	if err != nil {
+	); err != nil {
 		return ConsoleResponse{Message: "Failed to update source"}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ConsoleResponse{Message: errFailedToCommitTransaction}, cdb.NormalizeTransactionError(txCtx, err)
 	}
 
 	return ConsoleResponse{Message: "Source updated successfully"}, nil
@@ -1389,14 +1512,27 @@ func performVacuumSourceContext(ctx context.Context, query string, qType int, db
 		}
 	}
 
-	// Resolve sourceID if only URL is provided
-	if filter.SourceID == 0 && filter.URL != "" {
+	identity, authenticated, err := resolveSourceMutationIdentity(ctx, *db)
+	if err != nil {
+		return ConsoleResponse{Message: "Source mutation is not authorized"}, err
+	}
+	var access sourceMutationAccess
+	if authenticated {
+		access, err = sourceMutationAccessFromIdentity(identity)
+		if err != nil {
+			return ConsoleResponse{Message: "Source mutation is not authorized"}, err
+		}
+	}
+	// Legacy unauthenticated callers keep the historical resolution. The
+	// authenticated path resolves and locks by URL inside the transaction.
+	if !authenticated && filter.SourceID == 0 && filter.URL != "" {
 		sourceID, err := cdb.GetSourceIDContext(ctx, filter, db)
 		if err != nil {
 			return ConsoleResponse{Message: "Failed to resolve Source ID"}, err
 		}
 		filter.SourceID = int64(sourceID) //nolint:gosec // This is a controlled value
-	} else if filter.SourceID == 0 {
+	}
+	if filter.SourceID == 0 && filter.URL == "" {
 		return ConsoleResponse{Message: "Source ID or URL must be provided"}, fmt.Errorf("missing Source ID or URL")
 	}
 
@@ -1416,6 +1552,23 @@ func performVacuumSourceContext(ctx context.Context, query string, qType int, db
 		cdb.LogTransactionOutcome("vacuumSource", txStarted, retErr)
 	}()
 
+	if authenticated {
+		var owner cdb.SourceOwner
+		if filter.SourceID != 0 {
+			owner, err = authorizeSourceMutationTx(txCtx, tx, *db, uint64(filter.SourceID), access)
+		} else {
+			owner, err = authorizeSourceMutationByURLTx(txCtx, tx, *db, filter.URL, access)
+		}
+		if err != nil {
+			return ConsoleResponse{Message: "Source mutation is not authorized"}, err
+		}
+		filter.SourceID = int64(owner.SourceID) //nolint:gosec // This is a controlled value
+	} else if filter.SourceID == 0 {
+		if err := tx.QueryRowContext(txCtx, `SELECT source_id FROM Sources WHERE url = $1`, cdb.NormalizeSourceURL(filter.URL)).Scan(&filter.SourceID); err != nil {
+			return ConsoleResponse{Message: "Failed to resolve Source ID"}, err
+		}
+	}
+
 	// Deleting indexed data
 	queries := []string{
 		"DELETE FROM KeywordIndex WHERE index_id IN (SELECT index_id FROM SourceSearchIndex WHERE source_id = $1)",
@@ -1427,7 +1580,7 @@ func performVacuumSourceContext(ctx context.Context, query string, qType int, db
 	}
 
 	for _, query := range queries {
-		_, err = tx.ExecContext(ctx, query, filter.SourceID)
+		_, err = tx.ExecContext(txCtx, query, filter.SourceID)
 		if err != nil {
 			err2 := tx.Rollback() // Rollback if any query fails
 			if err2 != nil {
@@ -1672,6 +1825,10 @@ func performUpdateInformationSeed(query string, _ int, db *cdb.Handler) (Informa
 	return performUpdateInformationSeedContext(context.Background(), query, 0, db)
 }
 func performUpdateInformationSeedContext(ctx context.Context, query string, _ int, db *cdb.Handler) (InformationSeedResponse, error) {
+	return performUpdateInformationSeedForAccessContext(ctx, query, db, sourceMutationAccess{})
+}
+
+func performUpdateInformationSeedForAccessContext(ctx context.Context, query string, db *cdb.Handler, access sourceMutationAccess) (InformationSeedResponse, error) {
 	if err := rejectInformationSeedRequestCredentials([]byte(query)); err != nil {
 		return InformationSeedResponse{Message: "Provider credentials are not accepted in information seed requests"}, err
 	}
@@ -1682,9 +1839,22 @@ func performUpdateInformationSeedContext(ctx context.Context, query string, _ in
 	if req.InformationSeedID == 0 {
 		return InformationSeedResponse{Message: "Information seed ID is required"}, fmt.Errorf("information_seed_id is required")
 	}
-	existing, err := cdb.GetInformationSeedByIDContext(ctx, db, req.InformationSeedID)
+	seeds, err := cdb.ListInformationSeedsWithStatsContext(ctx, db, cdb.InformationSeedFilter{ID: req.InformationSeedID, Limit: 1})
 	if err != nil {
 		return InformationSeedResponse{Message: "Failed to load information seed"}, err
+	}
+	if len(seeds) == 0 {
+		return InformationSeedResponse{Message: "Information seed not found"}, errInformationSeedNotFound
+	}
+	existing := &seeds[0].InformationSeed
+	if err := authorizeInformationSeedAccess(*existing, access); err != nil {
+		return InformationSeedResponse{Message: "Information seed update is not authorized"}, err
+	}
+	if access.Authenticated && !access.Admin {
+		if (req.UsrID != nil && *req.UsrID != access.UserID) ||
+			(req.UserID != nil && *req.UserID != access.UserID) {
+			return InformationSeedResponse{Message: "Information seed ownership cannot be changed"}, errInformationSeedForbidden
+		}
 	}
 	if req.CategoryID != nil {
 		existing.CategoryID = *req.CategoryID
@@ -1738,9 +1908,16 @@ func performRemoveInformationSeed(query string, _ int, db *cdb.Handler) (Console
 	return performRemoveInformationSeedContext(context.Background(), query, 0, db)
 }
 func performRemoveInformationSeedContext(ctx context.Context, query string, _ int, db *cdb.Handler) (ConsoleResponse, error) {
+	return performRemoveInformationSeedForAccessContext(ctx, query, db, sourceMutationAccess{})
+}
+
+func performRemoveInformationSeedForAccessContext(ctx context.Context, query string, db *cdb.Handler, access sourceMutationAccess) (ConsoleResponse, error) {
 	id, err := parseInformationSeedIDFromJSON(query)
 	if err != nil {
 		return ConsoleResponse{Message: "Invalid information seed remove request"}, err
+	}
+	if _, err := loadAuthorizedInformationSeedContext(ctx, db, id, access); err != nil {
+		return ConsoleResponse{Message: "Information seed removal is not authorized"}, err
 	}
 	if err := cdb.RemoveInformationSeedContext(ctx, db, id); err != nil {
 		return ConsoleResponse{Message: "Failed to remove information seed"}, err

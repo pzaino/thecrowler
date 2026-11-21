@@ -620,7 +620,13 @@ async function audioProbe(world) {
     })();
 
     // Raw-intact: reads do not corrupt the live store. Snapshot, read, compare.
+    // Use a small float32 baseline before the legacy control: the legacy patch
+    // adds sub-1e-7 noise, which is below float32 resolution at 1.0 and can
+    // round back to the same value, making the negative control nondeterministic.
     out.audioRawIntact = (function () {
+      const stable = new F32(300);
+      for (let i = 0; i < stable.length; i++) stable[i] = REFBASE;
+      buf.copyToChannel(stable, 0);
       const snap = new F32(300);
       buf.copyFromChannel(snap, 0);
       // Read three times (a read-only patch leaves the store unchanged; a

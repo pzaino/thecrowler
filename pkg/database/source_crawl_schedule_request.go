@@ -1,0 +1,1320 @@
+package database
+
+import (
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// CrawlOperationType is the only operation accepted by the WP-03B1
+// scheduling foundation. It is not exposed as a model-facing tool.
+const CrawlOperationType = "crawl"
+
+// CrawlOperationState describes the durable scheduling request. It is
+// deliberately separate from the source's observed crawl execution state.
+type CrawlOperationState string
+
+const (
+	CrawlOperationProposed       CrawlOperationState = "proposed"
+	CrawlOperationDenied         CrawlOperationState = "denied"
+	CrawlOperationAccepted       CrawlOperationState = "accepted"
+	CrawlOperationAlreadyPending CrawlOperationState = "already_pending"
+	CrawlOperationProcessing     CrawlOperationState = "processing"
+	CrawlOperationCompleted      CrawlOperationState = "completed"
+	CrawlOperationFailed         CrawlOperationState = "failed"
+	CrawlOperationCancelled      CrawlOperationState = "cancelled"
+	CrawlOperationExpired        CrawlOperationState = "expired"
+	CrawlOperationDisabled       CrawlOperationState = "disabled"
+	CrawlOperationNotFound       CrawlOperationState = "not_found"
+	CrawlOperationConflict       CrawlOperationState = "conflict"
+	CrawlOperationUnsupported    CrawlOperationState = "unsupported"
+	CrawlOperationUncertain      CrawlOperationState = "uncertain"
+)
+
+// CrawlSourceState describes the source row observed during scheduling. It is
+// evidence of state, not proof that a particular crawl completed.
+type CrawlSourceState string
+
+const (
+	CrawlSourceUnknown    CrawlSourceState = "unknown"
+	CrawlSourceNew        CrawlSourceState = "new"
+	CrawlSourcePending    CrawlSourceState = "pending"
+	CrawlSourceProcessing CrawlSourceState = "processing"
+	CrawlSourceCompleted  CrawlSourceState = "completed"
+	CrawlSourceError      CrawlSourceState = "error"
+	CrawlSourceDisabled   CrawlSourceState = "disabled"
+	CrawlSourceMissing    CrawlSourceState = "missing"
+)
+
+// Stable scheduling reason codes. They are safe for audit and caller logic;
+// they never contain database errors or configuration data.
+const (
+	CrawlReasonScheduled                 = "crawl_scheduled"
+	CrawlReasonAlreadyPending            = "crawl_already_pending"
+	CrawlReasonProcessing                = "crawl_processing"
+	CrawlReasonDisabled                  = "crawl_source_disabled"
+	CrawlReasonNotFound                  = "crawl_source_not_found"
+	CrawlReasonExpired                   = "crawl_request_expired"
+	CrawlReasonConflict                  = "crawl_request_conflict"
+	CrawlReasonInvalid                   = "crawl_request_invalid"
+	CrawlReasonCancelled                 = "crawl_request_cancelled"
+	CrawlReasonTransactionTimeout        = "crawl_transaction_timeout"
+	CrawlReasonDatabase                  = "crawl_database_error"
+	CrawlReasonUnsupported               = "crawl_store_unsupported"
+	CrawlReasonIncompleteOperation       = "crawl_operation_incomplete"
+	CrawlReasonBudgetExhausted           = "crawl_request_budget_exhausted"
+	CrawlReasonSourceScopeRequired       = "crawl_source_scope_required"
+	CrawlReasonSourceOutOfScope          = "crawl_source_out_of_scope"
+	CrawlReasonApprovalRejected          = "crawl_approval_rejected"
+	CrawlReasonApprovalUnavailable       = "crawl_approval_unavailable"
+	CrawlReasonOwnershipRejected         = "crawl_source_ownership_rejected"
+	CrawlReasonCommitUncertain           = "crawl_commit_uncertain"
+	CrawlReasonProposalInconsistent      = "crawl_proposal_inconsistent"
+	CrawlReasonOperationConflict         = "crawl_operation_conflict"
+	CrawlReasonOperationMetadataInvalid  = "crawl_operation_metadata_invalid"
+	CrawlReasonOperationStateInvalid     = "crawl_operation_state_invalid"
+	CrawlReasonOperationStoreUnavailable = "crawl_operation_store_unavailable"
+)
+
+var (
+	// ErrCrawlSchedulingUnsupported means the backend has no durable operation
+	// store. The foundation fails closed instead of pretending to be idempotent.
+	ErrCrawlSchedulingUnsupported = errors.New("durable crawl scheduling is unsupported by this database backend")
+	// ErrCrawlSchedulingFailed is a sanitized operational failure. Underlying
+	// database errors are deliberately not returned to callers or models.
+	ErrCrawlSchedulingFailed = errors.New("crawl scheduling failed")
+	// ErrCrawlSchedulingUncertain means the commit outcome could not be
+	// determined. Callers must retry and reconcile against the durable operation
+	// record rather than reporting a definite failure.
+	ErrCrawlSchedulingUncertain = errors.New("crawl scheduling commit outcome is uncertain")
+	// ErrCrawlOperationConflict means a durable operation exists under the
+	// expected identity but its stored authorization details do not match the
+	// proposal. It is never a successful reuse.
+	ErrCrawlOperationConflict = errors.New("crawl operation conflicts with the durable proposal")
+	// ErrCrawlOperationMetadataInvalid means the durable operation metadata
+	// cannot be decoded or lacks required fields.
+	ErrCrawlOperationMetadataInvalid = errors.New("crawl operation metadata is invalid")
+	// ErrCrawlOperationStateInvalid means the durable operation status is not a
+	// recognized/inspectable scheduling state.
+	ErrCrawlOperationStateInvalid = errors.New("crawl operation state is invalid")
+	// ErrCrawlOperationStoreUnavailable means the operation store could not be
+	// read. It does not prove that no operation exists.
+	ErrCrawlOperationStoreUnavailable = errors.New("crawl operation store is unavailable")
+)
+
+// CrawlOperationReconciliationOutcome is the closed result of an operation
+// reconciliation attempt. Callers must branch on the outcome, never on a
+// boolean that collapses errors and absence.
+type CrawlOperationReconciliationOutcome string
+
+const (
+	CrawlOperationReconciliationFound           CrawlOperationReconciliationOutcome = "found"
+	CrawlOperationReconciliationNotFound        CrawlOperationReconciliationOutcome = "not_found"
+	CrawlOperationReconciliationConflict        CrawlOperationReconciliationOutcome = "conflict"
+	CrawlOperationReconciliationInvalidMetadata CrawlOperationReconciliationOutcome = "invalid_metadata"
+	CrawlOperationReconciliationInvalidState    CrawlOperationReconciliationOutcome = "invalid_state"
+	CrawlOperationReconciliationUnavailable     CrawlOperationReconciliationOutcome = "unavailable"
+	CrawlOperationReconciliationCancelled       CrawlOperationReconciliationOutcome = "cancelled"
+	CrawlOperationReconciliationDeadline        CrawlOperationReconciliationOutcome = "deadline_exceeded"
+	CrawlOperationReconciliationUncertain       CrawlOperationReconciliationOutcome = "uncertain"
+)
+
+// CrawlOperationReconciliation is the structured result of reconciliation.
+// Result is populated only for Found and for a conflict that has an
+// authoritative conflict result. Outcome is always meaningful.
+type CrawlOperationReconciliation struct {
+	Outcome CrawlOperationReconciliationOutcome
+	Result  CrawlScheduleResult
+}
+
+// Trusted scheduling bounds. The exported API uses the runtime clock; tests use
+// the package-internal clock-injected path. Agent-originated requests must
+// always carry a positive quota.
+const (
+	maxCrawlRequestLifetime = 24 * time.Hour
+	maxCrawlRequests        = 100
+	maxCrawlBudgetWindow    = 24 * time.Hour
+)
+
+// CrawlScheduleRequest is the trusted internal request for an idempotent
+// scheduling operation. Approval fields must be produced by the trusted
+// proposal/approval layer; they are never model arguments.
+type CrawlScheduleRequest struct {
+	RequestID        string
+	RunID            string
+	PrincipalUserID  uint64
+	AgentID          string
+	Owner            string
+	SourceID         uint64
+	AllowedSources   []uint64
+	OperationType    string
+	ParametersSHA256 string
+	ApprovalID       string
+	ApprovalSHA256   string
+	ApprovedBy       string
+	ApprovedByUserID uint64
+	ApprovedAt       time.Time
+	ExpiresAt        time.Time
+	MaxRequests      int
+	BudgetWindow     time.Duration
+}
+
+// CrawlScheduleResult is the structured scheduling outcome.
+type CrawlScheduleResult struct {
+	OperationID      string
+	RequestID        string
+	RunID            string
+	PrincipalUserID  uint64
+	AgentID          string
+	Owner            string
+	SourceID         uint64
+	AllowedSources   []uint64
+	OperationType    string
+	State            CrawlOperationState
+	ReasonCode       string
+	SourceState      CrawlSourceState
+	SourceObservedAt time.Time
+	ExpiresAt        time.Time
+	Reused           bool
+}
+
+type crawlOperationDetails struct {
+	RequestID         string `json:"request_id"`
+	RunID             string `json:"run_id"`
+	PrincipalUserID   uint64 `json:"principal_user_id"`
+	AgentID           string `json:"agent_id"`
+	Owner             string `json:"owner"`
+	SourceID          uint64 `json:"source_id"`
+	OperationType     string `json:"operation_type"`
+	ParametersSHA256  string `json:"parameters_sha256"`
+	ApprovalID        string `json:"approval_id,omitempty"`
+	ApprovalSHA256    string `json:"approval_sha256"`
+	ApprovedBy        string `json:"approved_by,omitempty"`
+	ApprovedByUserID  uint64 `json:"approved_by_user_id,omitempty"`
+	ApprovedAt        string `json:"approved_at,omitempty"`
+	ExpiresAt         string `json:"expires_at"`
+	SourceStateBefore string `json:"source_state_before,omitempty"`
+	ReasonCode        string `json:"reason_code,omitempty"`
+}
+
+type crawlOperationRow struct {
+	Status  string
+	Details crawlOperationDetails
+}
+
+// ScheduleSourceCrawlRequest performs an idempotent, approved scheduling
+// request. It only marks an eligible source pending; it never waits for a
+// crawler, starts a crawler, or reports crawl completion.
+func ScheduleSourceCrawlRequest(ctx context.Context, db *Handler, req CrawlScheduleRequest) (CrawlScheduleResult, error) {
+	return scheduleSourceCrawlRequest(ctx, db, req, time.Now().UTC())
+}
+
+// ScheduleSourceCrawlRequestForProposal performs the same scheduling operation
+// while holding the durable proposal row lock and atomically transitioning the
+// proposal to submitted before the transaction commits. If an authoritative
+// operation already exists, it reconciles an expired or pending proposal to
+// submitted instead of scheduling new work.
+func ScheduleSourceCrawlRequestForProposal(ctx context.Context, db *Handler, req CrawlScheduleRequest, proposalRequestID, proposalSHA256 string) (CrawlScheduleResult, error) {
+	return scheduleSourceCrawlRequestForProposal(ctx, db, req, proposalRequestID, proposalSHA256, time.Now().UTC())
+}
+
+func scheduleSourceCrawlRequest(ctx context.Context, db *Handler, req CrawlScheduleRequest, now time.Time) (CrawlScheduleResult, error) {
+	req, result, ok, err := prepareCrawlScheduleRequest(ctx, db, req, now)
+	if !ok {
+		return result, err
+	}
+	key := crawlOperationID(req)
+	result.OperationID = key
+	txCtx, cancel := TransactionContextForHandler(ctx, db)
+	defer cancel()
+	tx, err := (*db).BeginTx(txCtx, nil)
+	if err != nil {
+		result.State = CrawlOperationFailed
+		result.ReasonCode = CrawlReasonDatabase
+		return result, ErrCrawlSchedulingFailed
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err = scheduleSourceCrawlRequestTx(txCtx, tx, *db, req, result, now)
+	if err != nil {
+		return result, err
+	}
+	return commitCrawlScheduleTx(txCtx, tx, result)
+}
+
+var crawlScheduleProposalLockedHook func()
+
+func scheduleSourceCrawlRequestForProposal(ctx context.Context, db *Handler, req CrawlScheduleRequest, proposalRequestID, proposalSHA256 string, now time.Time) (CrawlScheduleResult, error) {
+	if strings.TrimSpace(proposalRequestID) == "" || strings.TrimSpace(proposalSHA256) == "" {
+		return CrawlScheduleResult{State: CrawlOperationDenied, ReasonCode: CrawlReasonProposalInconsistent}, ErrCrawlProposalStateConflict
+	}
+	req, result, ok, err := prepareCrawlScheduleRequest(ctx, db, req, now)
+	if !ok {
+		return result, err
+	}
+	key := crawlOperationID(req)
+	result.OperationID = key
+	txCtx, cancel := TransactionContextForHandler(ctx, db)
+	defer cancel()
+	tx, err := (*db).BeginTx(txCtx, nil)
+	if err != nil {
+		result.State = CrawlOperationFailed
+		result.ReasonCode = CrawlReasonDatabase
+		return result, ErrCrawlSchedulingFailed
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	proposal, found, err := lockCrawlProposalTx(txCtx, tx, *db, proposalRequestID)
+	if err != nil {
+		return crawlOperationFailure(result, txCtx, err)
+	}
+	if !found {
+		return CrawlScheduleResult{State: CrawlOperationUncertain, ReasonCode: CrawlReasonProposalInconsistent}, ErrCrawlProposalRowNotFound
+	}
+	if crawlScheduleProposalLockedHook != nil {
+		crawlScheduleProposalLockedHook()
+	}
+	if err := validateProposalScheduleBinding(proposal, req, proposalSHA256); err != nil {
+		return CrawlScheduleResult{State: CrawlOperationUncertain, ReasonCode: CrawlReasonProposalInconsistent}, err
+	}
+	if proposal.State == CrawlProposalStateDenied {
+		return CrawlScheduleResult{State: CrawlOperationDenied, ReasonCode: CrawlReasonApprovalRejected}, nil
+	}
+
+	existing, found, err := readCrawlOperation(txCtx, tx, *db, key)
+	if err != nil {
+		return crawlOperationFailure(result, txCtx, err)
+	}
+	if found {
+		if !sameCrawlOperation(existing.Details, req) {
+			return CrawlScheduleResult{State: CrawlOperationConflict, ReasonCode: CrawlReasonConflict}, nil
+		}
+		result, err = resolveExistingCrawlOperation(txCtx, tx, *db, req, result, existing, now)
+		if err != nil {
+			return result, err
+		}
+		if crawlOperationCommitted(result.State) {
+			transition, transitionErr := transitionCrawlProposalLockedTx(txCtx, tx, *db, proposal,
+				CrawlProposalStateSubmitted, result.OperationID, now, true)
+			if transitionErr != nil {
+				result.State = CrawlOperationUncertain
+				result.ReasonCode = CrawlReasonProposalInconsistent
+				return result, transitionErr
+			}
+			_ = transition
+		}
+		return commitCrawlScheduleTx(txCtx, tx, result)
+	}
+
+	switch proposal.State {
+	case CrawlProposalStateSubmitted:
+		return CrawlScheduleResult{State: CrawlOperationUncertain, ReasonCode: CrawlReasonProposalInconsistent}, ErrCrawlProposalStateConflict
+	case CrawlProposalStateExpired:
+		return CrawlScheduleResult{State: CrawlOperationExpired, ReasonCode: CrawlReasonExpired}, nil
+	case CrawlProposalStatePending:
+		if !proposal.ExpiresAt.After(now) {
+			if _, transitionErr := transitionCrawlProposalLockedTx(txCtx, tx, *db, proposal,
+				CrawlProposalStateExpired, "", time.Time{}, false); transitionErr != nil {
+				return crawlOperationFailure(result, txCtx, transitionErr)
+			}
+			if err := tx.Commit(); err != nil {
+				return CrawlScheduleResult{State: CrawlOperationUncertain, ReasonCode: CrawlReasonCommitUncertain}, ErrCrawlSchedulingUncertain
+			}
+			result.State = CrawlOperationExpired
+			result.ReasonCode = CrawlReasonExpired
+			result.OperationID = ""
+			return result, nil
+		}
+	default:
+		return CrawlScheduleResult{State: CrawlOperationUncertain, ReasonCode: CrawlReasonProposalInconsistent}, ErrCrawlProposalStateConflict
+	}
+
+	result, err = scheduleSourceCrawlRequestTx(txCtx, tx, *db, req, result, now)
+	if err != nil {
+		return result, err
+	}
+	if crawlOperationCommitted(result.State) {
+		if _, transitionErr := transitionCrawlProposalLockedTx(txCtx, tx, *db, proposal,
+			CrawlProposalStateSubmitted, result.OperationID, now, false); transitionErr != nil {
+			result.State = CrawlOperationUncertain
+			result.ReasonCode = CrawlReasonProposalInconsistent
+			return result, transitionErr
+		}
+	}
+	return commitCrawlScheduleTx(txCtx, tx, result)
+}
+
+func validateProposalScheduleBinding(proposal CrawlProposalRow, req CrawlScheduleRequest, proposalSHA256 string) error {
+	if proposal.RequestID != req.RequestID ||
+		proposal.RunID != req.RunID ||
+		proposal.AgentID != req.AgentID ||
+		proposal.Owner != req.Owner ||
+		proposal.PrincipalUserID != req.PrincipalUserID ||
+		proposal.SourceID != req.SourceID ||
+		proposal.OperationType != req.OperationType ||
+		proposal.ProposalSHA256 != proposalSHA256 {
+		return ErrCrawlProposalStateConflict
+	}
+	if proposal.ProposalSHA256 != req.ParametersSHA256 {
+		return ErrCrawlProposalStateConflict
+	}
+	return nil
+}
+
+func crawlOperationCommitted(state CrawlOperationState) bool {
+	switch state {
+	case CrawlOperationAccepted, CrawlOperationAlreadyPending,
+		CrawlOperationProcessing, CrawlOperationCompleted:
+		return true
+	default:
+		return false
+	}
+}
+
+func commitCrawlScheduleTx(ctx context.Context, tx *sql.Tx, result CrawlScheduleResult) (CrawlScheduleResult, error) {
+	if err := tx.Commit(); err != nil {
+		if ctx != nil && ctx.Err() != nil {
+			result.State = CrawlOperationUncertain
+			result.ReasonCode = CrawlReasonCommitUncertain
+			return result, ErrCrawlSchedulingUncertain
+		}
+		result.State = CrawlOperationUncertain
+		result.ReasonCode = CrawlReasonCommitUncertain
+		return result, ErrCrawlSchedulingUncertain
+	}
+	return result, nil
+}
+
+func prepareCrawlScheduleRequest(ctx context.Context, db *Handler, req CrawlScheduleRequest, now time.Time) (CrawlScheduleRequest, CrawlScheduleResult, bool, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	if !req.ExpiresAt.IsZero() {
+		req.ExpiresAt = req.ExpiresAt.UTC().Truncate(time.Microsecond)
+	}
+	if !req.ApprovedAt.IsZero() {
+		req.ApprovedAt = req.ApprovedAt.UTC().Truncate(time.Microsecond)
+	}
+	result := newCrawlScheduleResult(req, "", now)
+	if err := validateCrawlScheduleRequest(req, now); err != nil {
+		result.State = CrawlOperationDenied
+		result.ReasonCode = CrawlReasonInvalid
+		return req, result, false, nil
+	}
+	if len(req.AllowedSources) == 0 {
+		result.State = CrawlOperationDenied
+		result.ReasonCode = CrawlReasonSourceScopeRequired
+		return req, result, false, nil
+	}
+	if !crawlSourceAllowed(req.AllowedSources, req.SourceID) {
+		result.State = CrawlOperationDenied
+		result.ReasonCode = CrawlReasonSourceOutOfScope
+		return req, result, false, nil
+	}
+	if db == nil || *db == nil {
+		result.State = CrawlOperationFailed
+		result.ReasonCode = CrawlReasonDatabase
+		return req, result, false, ErrCrawlSchedulingFailed
+	}
+	if !supportsCrawlOperationStore(*db) {
+		result.State = CrawlOperationUnsupported
+		result.ReasonCode = CrawlReasonUnsupported
+		return req, result, false, ErrCrawlSchedulingUnsupported
+	}
+	if err := ctx.Err(); err != nil {
+		result.State = CrawlOperationCancelled
+		result.ReasonCode = CrawlReasonCancelled
+		return req, result, false, err
+	}
+	if req.ExpiresAt.IsZero() || !req.ExpiresAt.After(now) {
+		result.State = CrawlOperationExpired
+		result.ReasonCode = CrawlReasonExpired
+		return req, result, false, nil
+	}
+	return req, result, true, nil
+}
+
+// scheduleSourceCrawlRequestTx runs inside a caller-owned transaction. It
+// never commits; the caller applies the proposal transition and commits both
+// records together.
+func scheduleSourceCrawlRequestTx(ctx context.Context, tx *sql.Tx, db Handler, req CrawlScheduleRequest, result CrawlScheduleResult, now time.Time) (CrawlScheduleResult, error) {
+	key := result.OperationID
+	existing, found, err := readCrawlOperation(ctx, tx, db, key)
+	if err != nil {
+		return crawlOperationFailure(result, ctx, err)
+	}
+	if found {
+		return resolveExistingCrawlOperation(ctx, tx, db, req, result, existing, now)
+	}
+	if err := lockCrawlSource(ctx, tx, db, req.SourceID); err != nil {
+		return crawlOperationFailure(result, ctx, err)
+	}
+	// Re-read after taking the source lock. A concurrent identical request may
+	// have committed its operation while this transaction waited, and its
+	// quota consumption must not turn a legitimate retry into a budget denial.
+	existing, found, err = readCrawlOperation(ctx, tx, db, key)
+	if err != nil {
+		return crawlOperationFailure(result, ctx, err)
+	}
+	if found {
+		return resolveExistingCrawlOperation(ctx, tx, db, req, result, existing, now)
+	}
+	approvalReason, err := validateCrawlApprovalForScheduling(ctx, tx, db, req, now)
+	if err != nil {
+		return crawlOperationFailure(result, ctx, err)
+	}
+	if approvalReason != "" {
+		result.State = CrawlOperationDenied
+		result.ReasonCode = approvalReason
+		return result, nil
+	}
+	withinBudget, err := crawlRequestWithinBudget(ctx, tx, db, req, now)
+	if err != nil {
+		return crawlOperationFailure(result, ctx, err)
+	}
+	if !withinBudget {
+		result.State = CrawlOperationDenied
+		result.ReasonCode = CrawlReasonBudgetExhausted
+		return result, nil
+	}
+
+	details, err := crawlOperationDetailsFor(req)
+	if err != nil {
+		result.State = CrawlOperationFailed
+		result.ReasonCode = CrawlReasonDatabase
+		return result, ErrCrawlSchedulingFailed
+	}
+	inserted, err := insertCrawlOperation(ctx, tx, db, key, details)
+	if err != nil {
+		return crawlOperationFailure(result, ctx, err)
+	}
+	if !inserted {
+		existing, found, err = readCrawlOperation(ctx, tx, db, key)
+		if err != nil {
+			return crawlOperationFailure(result, ctx, err)
+		}
+		if !found {
+			result.State = CrawlOperationFailed
+			result.ReasonCode = CrawlReasonIncompleteOperation
+			return result, ErrCrawlSchedulingFailed
+		}
+		return resolveExistingCrawlOperation(ctx, tx, db, req, result, existing, now)
+	}
+
+	sourceState, disabled, found, err := readCrawlSourceState(ctx, tx, db, req.SourceID)
+	if err != nil {
+		return crawlOperationFailure(result, ctx, err)
+	}
+	if !found {
+		return finishCrawlOperation(ctx, tx, db, req, result, CrawlOperationNotFound, CrawlReasonNotFound, CrawlSourceMissing, now)
+	}
+	if disabled {
+		return finishCrawlOperation(ctx, tx, db, req, result, CrawlOperationDisabled, CrawlReasonDisabled, CrawlSourceDisabled, now)
+	}
+	switch sourceState {
+	case CrawlSourceProcessing:
+		return finishCrawlOperation(ctx, tx, db, req, result, CrawlOperationProcessing, CrawlReasonProcessing, sourceState, now)
+	case CrawlSourcePending:
+		return finishCrawlOperation(ctx, tx, db, req, result, CrawlOperationAlreadyPending, CrawlReasonAlreadyPending, sourceState, now)
+	}
+
+	updated, err := markCrawlSourcePending(ctx, tx, db, req.SourceID)
+	if err != nil {
+		return crawlOperationFailure(result, ctx, err)
+	}
+	if updated {
+		return finishCrawlOperation(ctx, tx, db, req, result, CrawlOperationAccepted, CrawlReasonScheduled, CrawlSourcePending, now)
+	}
+
+	// A concurrent request changed the source between the observation and the
+	// conditional update. Re-read and report the actual unchanged state.
+	sourceState, disabled, found, err = readCrawlSourceState(ctx, tx, db, req.SourceID)
+	if err != nil {
+		return crawlOperationFailure(result, ctx, err)
+	}
+	switch {
+	case !found:
+		return finishCrawlOperation(ctx, tx, db, req, result, CrawlOperationNotFound, CrawlReasonNotFound, CrawlSourceMissing, now)
+	case disabled:
+		return finishCrawlOperation(ctx, tx, db, req, result, CrawlOperationDisabled, CrawlReasonDisabled, CrawlSourceDisabled, now)
+	case sourceState == CrawlSourceProcessing:
+		return finishCrawlOperation(ctx, tx, db, req, result, CrawlOperationProcessing, CrawlReasonProcessing, sourceState, now)
+	case sourceState == CrawlSourcePending:
+		return finishCrawlOperation(ctx, tx, db, req, result, CrawlOperationAlreadyPending, CrawlReasonAlreadyPending, sourceState, now)
+	default:
+		result.State = CrawlOperationFailed
+		result.ReasonCode = CrawlReasonIncompleteOperation
+		return result, ErrCrawlSchedulingFailed
+	}
+}
+
+// ReconcileCrawlProposalOperation inspects the authoritative durable operation
+// record for a proposal without scheduling new work. The typed outcome makes
+// absence, conflict, invalid metadata, unavailability and cancellation
+// distinct; callers must not treat any non-NotFound outcome as absence.
+func ReconcileCrawlProposalOperation(ctx context.Context, db *Handler, proposal CrawlProposalRow) (CrawlOperationReconciliation, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if db == nil || *db == nil {
+		return CrawlOperationReconciliation{Outcome: CrawlOperationReconciliationUnavailable,
+			Result: CrawlScheduleResult{State: CrawlOperationUncertain, ReasonCode: CrawlReasonOperationStoreUnavailable}}, ErrCrawlOperationStoreUnavailable
+	}
+	if !supportsCrawlOperationStore(*db) {
+		return CrawlOperationReconciliation{Outcome: CrawlOperationReconciliationUnavailable}, ErrCrawlSchedulingUnsupported
+	}
+	now := time.Now().UTC()
+	txCtx, cancel := TransactionContextForHandler(ctx, db)
+	defer cancel()
+	tx, err := (*db).BeginTx(txCtx, nil)
+	if err != nil {
+		return reconciliationError(txCtx, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	locked, found, err := lockCrawlProposalTx(txCtx, tx, *db, proposal.RequestID)
+	if err != nil {
+		return reconciliationError(txCtx, err)
+	}
+	if !found {
+		return CrawlOperationReconciliation{Outcome: CrawlOperationReconciliationConflict}, ErrCrawlProposalRowNotFound
+	}
+	if locked.ProposalSHA256 != proposal.ProposalSHA256 ||
+		locked.RunID != proposal.RunID || locked.AgentID != proposal.AgentID ||
+		locked.Owner != proposal.Owner || locked.SourceID != proposal.SourceID ||
+		locked.OperationType != proposal.OperationType {
+		return CrawlOperationReconciliation{Outcome: CrawlOperationReconciliationConflict}, ErrCrawlOperationConflict
+	}
+	req := CrawlScheduleRequest{
+		RequestID: locked.RequestID, RunID: locked.RunID,
+		PrincipalUserID: locked.PrincipalUserID, AgentID: locked.AgentID,
+		Owner: locked.Owner, SourceID: locked.SourceID,
+		AllowedSources: []uint64{locked.SourceID}, OperationType: locked.OperationType,
+		ParametersSHA256: locked.ProposalSHA256, ExpiresAt: locked.ExpiresAt.UTC(),
+	}
+	key := crawlOperationID(req)
+	existing, found, err := readCrawlOperation(txCtx, tx, *db, key)
+	if err != nil {
+		return reconciliationError(txCtx, err)
+	}
+	if !found {
+		return CrawlOperationReconciliation{Outcome: CrawlOperationReconciliationNotFound}, nil
+	}
+	if !sameProposalOperation(existing.Details, locked) {
+		return CrawlOperationReconciliation{
+			Outcome: CrawlOperationReconciliationConflict,
+			Result: CrawlScheduleResult{OperationID: key, RequestID: locked.RequestID,
+				SourceID: locked.SourceID, State: CrawlOperationConflict, ReasonCode: CrawlReasonConflict},
+		}, ErrCrawlOperationConflict
+	}
+	state := CrawlOperationState(existing.Status)
+	switch state {
+	case CrawlOperationAccepted, CrawlOperationAlreadyPending, CrawlOperationProcessing,
+		CrawlOperationCompleted, CrawlOperationDenied, CrawlOperationExpired,
+		CrawlOperationDisabled, CrawlOperationNotFound, CrawlOperationFailed,
+		CrawlOperationCancelled:
+	case CrawlOperationConflict:
+		return CrawlOperationReconciliation{
+			Outcome: CrawlOperationReconciliationConflict,
+			Result: CrawlScheduleResult{OperationID: key, RequestID: locked.RequestID,
+				SourceID: locked.SourceID, State: state, ReasonCode: CrawlReasonConflict},
+		}, ErrCrawlOperationConflict
+	case CrawlOperationUncertain:
+		return CrawlOperationReconciliation{
+			Outcome: CrawlOperationReconciliationUncertain,
+			Result: CrawlScheduleResult{OperationID: key, RequestID: locked.RequestID,
+				SourceID: locked.SourceID, State: state, ReasonCode: CrawlReasonCommitUncertain},
+		}, ErrCrawlSchedulingUncertain
+	default:
+		return CrawlOperationReconciliation{Outcome: CrawlOperationReconciliationInvalidState}, ErrCrawlOperationStateInvalid
+	}
+	if err := validateOperationApprovalBindingTx(txCtx, tx, *db, locked, existing.Details); err != nil {
+		return reconciliationError(txCtx, err)
+	}
+	result := newCrawlScheduleResult(req, key, now)
+	result.State = state
+	result.ReasonCode = existing.Details.ReasonCode
+	result.Reused = true
+	result.ExpiresAt = parseCrawlTime(existing.Details.ExpiresAt)
+	sourceState, disabled, sourceFound, sourceErr := readCrawlSourceState(txCtx, tx, *db, locked.SourceID)
+	if sourceErr != nil {
+		return reconciliationError(txCtx, sourceErr)
+	}
+	switch {
+	case !sourceFound:
+		result.SourceState = CrawlSourceMissing
+	case disabled:
+		result.SourceState = CrawlSourceDisabled
+	default:
+		result.SourceState = sourceState
+	}
+	if crawlOperationCommitted(result.State) {
+		if _, transitionErr := transitionCrawlProposalLockedTx(txCtx, tx, *db, locked,
+			CrawlProposalStateSubmitted, key, now, true); transitionErr != nil {
+			return reconciliationError(txCtx, transitionErr)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return CrawlOperationReconciliation{Outcome: CrawlOperationReconciliationUncertain, Result: result}, ErrCrawlSchedulingUncertain
+	}
+	return CrawlOperationReconciliation{Outcome: CrawlOperationReconciliationFound, Result: result}, nil
+}
+
+func reconciliationError(ctx context.Context, err error) (CrawlOperationReconciliation, error) {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return CrawlOperationReconciliation{Outcome: CrawlOperationReconciliationCancelled}, context.Canceled
+	case errors.Is(err, context.DeadlineExceeded):
+		return CrawlOperationReconciliation{Outcome: CrawlOperationReconciliationDeadline}, context.DeadlineExceeded
+	case errors.Is(err, ErrCrawlOperationMetadataInvalid):
+		return CrawlOperationReconciliation{Outcome: CrawlOperationReconciliationInvalidMetadata,
+			Result: CrawlScheduleResult{State: CrawlOperationConflict, ReasonCode: CrawlReasonOperationMetadataInvalid}}, ErrCrawlOperationMetadataInvalid
+	case errors.Is(err, ErrCrawlOperationStateInvalid):
+		return CrawlOperationReconciliation{Outcome: CrawlOperationReconciliationInvalidState,
+			Result: CrawlScheduleResult{State: CrawlOperationConflict, ReasonCode: CrawlReasonOperationStateInvalid}}, ErrCrawlOperationStateInvalid
+	case errors.Is(err, ErrCrawlOperationConflict), errors.Is(err, ErrCrawlProposalStateConflict):
+		return CrawlOperationReconciliation{Outcome: CrawlOperationReconciliationConflict,
+			Result: CrawlScheduleResult{State: CrawlOperationConflict, ReasonCode: CrawlReasonOperationConflict}}, ErrCrawlOperationConflict
+	case errors.Is(err, ErrCrawlProposalRowNotFound):
+		return CrawlOperationReconciliation{Outcome: CrawlOperationReconciliationConflict}, ErrCrawlProposalRowNotFound
+	case errors.Is(err, ErrCrawlSchedulingUncertain):
+		return CrawlOperationReconciliation{Outcome: CrawlOperationReconciliationUncertain}, ErrCrawlSchedulingUncertain
+	default:
+		if ctx != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				if errors.Is(ctxErr, context.DeadlineExceeded) {
+					return CrawlOperationReconciliation{Outcome: CrawlOperationReconciliationDeadline}, context.DeadlineExceeded
+				}
+				return CrawlOperationReconciliation{Outcome: CrawlOperationReconciliationCancelled}, context.Canceled
+			}
+		}
+		return CrawlOperationReconciliation{Outcome: CrawlOperationReconciliationUnavailable,
+			Result: CrawlScheduleResult{State: CrawlOperationUncertain, ReasonCode: CrawlReasonOperationStoreUnavailable}}, ErrCrawlOperationStoreUnavailable
+	}
+}
+
+func getCrawlApprovalByIDTx(ctx context.Context, tx *sql.Tx, db Handler, approvalID string) (CrawlApprovalRow, bool, error) {
+	query := `SELECT ` + crawlApprovalColumns() + ` FROM CrawlApprovals
+		WHERE approval_id = ` + crawlApprovalPlaceholder(db, 1)
+	row, err := scanCrawlApprovalRow(tx.QueryRowContext(ctx, query, strings.TrimSpace(approvalID)))
+	if errors.Is(err, sql.ErrNoRows) {
+		return CrawlApprovalRow{}, false, nil
+	}
+	if err != nil {
+		return CrawlApprovalRow{}, false, err
+	}
+	return row, true, nil
+}
+
+// validateOperationApprovalBindingTx verifies that the approval identity
+// embedded in the operation row still matches the durable approval and proposal.
+// A revoked approval remains a valid historical binding; revocation blocks new
+// submissions, not observation of already committed work.
+func validateOperationApprovalBindingTx(ctx context.Context, tx *sql.Tx, db Handler, proposal CrawlProposalRow, details crawlOperationDetails) error {
+	if strings.TrimSpace(details.ApprovalID) == "" ||
+		strings.TrimSpace(details.ApprovalSHA256) == "" ||
+		strings.TrimSpace(details.ApprovedBy) == "" || details.ApprovedByUserID == 0 {
+		return ErrCrawlOperationMetadataInvalid
+	}
+	approval, found, err := getCrawlApprovalByIDTx(ctx, tx, db, details.ApprovalID)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return ErrCrawlOperationConflict
+	}
+	if approval.ProposalSHA256 != proposal.ProposalSHA256 ||
+		approval.RequestID != proposal.RequestID ||
+		approval.RunID != proposal.RunID ||
+		approval.AgentID != proposal.AgentID ||
+		approval.Owner != proposal.Owner ||
+		approval.PrincipalUserID != proposal.PrincipalUserID ||
+		approval.SourceID != proposal.SourceID ||
+		approval.OperationType != proposal.OperationType ||
+		approval.ApprovalSHA256 != details.ApprovalSHA256 ||
+		approval.ApprovedBy != details.ApprovedBy ||
+		approval.ApprovedByUserID != details.ApprovedByUserID {
+		return ErrCrawlOperationConflict
+	}
+	approvedAt, err := time.Parse(time.RFC3339Nano, details.ApprovedAt)
+	if err != nil || approvedAt.IsZero() {
+		return ErrCrawlOperationMetadataInvalid
+	}
+	if !approvedAt.Equal(approval.ApprovedAt.UTC().Truncate(time.Microsecond)) {
+		return ErrCrawlOperationConflict
+	}
+	expectedExpiry := proposal.ExpiresAt.UTC()
+	if approval.ExpiresAt.Before(expectedExpiry) {
+		expectedExpiry = approval.ExpiresAt.UTC()
+	}
+	operationExpiry, err := time.Parse(time.RFC3339Nano, details.ExpiresAt)
+	if err != nil || operationExpiry.IsZero() {
+		return ErrCrawlOperationMetadataInvalid
+	}
+	if !operationExpiry.Equal(expectedExpiry.Truncate(time.Microsecond)) {
+		return ErrCrawlOperationConflict
+	}
+	return nil
+}
+
+func sameProposalOperation(details crawlOperationDetails, proposal CrawlProposalRow) bool {
+	return details.RequestID == proposal.RequestID &&
+		details.RunID == proposal.RunID &&
+		details.PrincipalUserID == proposal.PrincipalUserID &&
+		details.AgentID == proposal.AgentID &&
+		details.Owner == proposal.Owner &&
+		details.SourceID == proposal.SourceID &&
+		details.OperationType == proposal.OperationType &&
+		details.ParametersSHA256 == proposal.ProposalSHA256
+}
+
+func newCrawlScheduleResult(req CrawlScheduleRequest, key string, now time.Time) CrawlScheduleResult {
+	return CrawlScheduleResult{
+		OperationID:      key,
+		RequestID:        req.RequestID,
+		RunID:            req.RunID,
+		PrincipalUserID:  req.PrincipalUserID,
+		AgentID:          req.AgentID,
+		Owner:            req.Owner,
+		SourceID:         req.SourceID,
+		OperationType:    req.OperationType,
+		SourceState:      CrawlSourceUnknown,
+		SourceObservedAt: now,
+		ExpiresAt:        req.ExpiresAt,
+	}
+}
+
+func validateCrawlScheduleRequest(req CrawlScheduleRequest, now time.Time) error {
+	for field, value := range map[string]string{
+		"request_id": req.RequestID, "run_id": req.RunID,
+		"agent_id": req.AgentID, "owner": req.Owner,
+		"approval_id": req.ApprovalID, "approved_by": req.ApprovedBy,
+	} {
+		if err := validateCrawlIdentifier(field, value, 128); err != nil {
+			return err
+		}
+	}
+	if req.SourceID == 0 {
+		return fmt.Errorf("source_id is required")
+	}
+	if req.PrincipalUserID == 0 {
+		return fmt.Errorf("principal_user_id is required")
+	}
+	if req.ApprovedByUserID == 0 {
+		return fmt.Errorf("approved_by_user_id is required")
+	}
+	if req.OperationType != CrawlOperationType {
+		return fmt.Errorf("operation_type must be %q", CrawlOperationType)
+	}
+	if !validSHA256Hex(req.ParametersSHA256) || !validSHA256Hex(req.ApprovalSHA256) {
+		return fmt.Errorf("parameters_sha256 and approval_sha256 must be lowercase SHA-256 digests")
+	}
+	if req.ApprovedAt.IsZero() || req.ApprovedAt.After(now) {
+		return fmt.Errorf("approved_at must be a valid past timestamp")
+	}
+	if req.ApprovedAt.Before(now.Add(-maxCrawlRequestLifetime)) {
+		return fmt.Errorf("approval is older than the supported request lifetime")
+	}
+	if req.ExpiresAt.IsZero() {
+		return fmt.Errorf("expires_at is required")
+	}
+	if req.ExpiresAt.After(now.Add(maxCrawlRequestLifetime)) {
+		return fmt.Errorf("expires_at exceeds the supported request lifetime")
+	}
+	if !req.ExpiresAt.After(req.ApprovedAt) ||
+		req.ExpiresAt.After(req.ApprovedAt.Add(maxCrawlRequestLifetime)) {
+		return fmt.Errorf("expires_at exceeds the approval-bound request lifetime")
+	}
+	if req.MaxRequests <= 0 || req.MaxRequests > maxCrawlRequests {
+		return fmt.Errorf("max_requests must be 1..%d", maxCrawlRequests)
+	}
+	if req.BudgetWindow <= 0 || req.BudgetWindow > maxCrawlBudgetWindow {
+		return fmt.Errorf("budget_window must be within the supported range")
+	}
+	return nil
+}
+
+func crawlSourceAllowed(allowed []uint64, sourceID uint64) bool {
+	for _, id := range allowed {
+		if id == sourceID {
+			return true
+		}
+	}
+	return false
+}
+
+func validateCrawlIdentifier(field, value string, max int) error {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > max {
+		return fmt.Errorf("%s must be 1..%d characters", field, max)
+	}
+	for _, r := range value {
+		if r <= 0x20 || r == 0x7f {
+			return fmt.Errorf("%s contains an invalid character", field)
+		}
+	}
+	return nil
+}
+
+func validSHA256Hex(value string) bool {
+	if len(value) != 64 || value != strings.ToLower(value) {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
+}
+
+func crawlOperationID(req CrawlScheduleRequest) string {
+	return CrawlOperationKey(req.Owner, req.AgentID, req.SourceID, req.OperationType, req.RequestID)
+}
+
+// CrawlOperationKey returns the deterministic durable operation identity for a
+// trusted request. It is exposed for reconciliation diagnostics and tests; it
+// does not by itself authorize or establish that an operation exists.
+func CrawlOperationKey(owner, agentID string, sourceID uint64, operationType, requestID string) string {
+	h := sha256.New()
+	for _, part := range []string{
+		owner, agentID, strconv.FormatUint(sourceID, 10), operationType, requestID,
+	} {
+		_, _ = fmt.Fprintf(h, "%d:%s|", len(part), part)
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func crawlOperationDetailsFor(req CrawlScheduleRequest) (crawlOperationDetails, error) {
+	details := crawlOperationDetails{
+		RequestID: req.RequestID, RunID: req.RunID,
+		PrincipalUserID: req.PrincipalUserID,
+		AgentID:         req.AgentID, Owner: req.Owner,
+		SourceID: req.SourceID, OperationType: req.OperationType,
+		ParametersSHA256: req.ParametersSHA256, ApprovalID: req.ApprovalID,
+		ApprovalSHA256: req.ApprovalSHA256, ApprovedBy: req.ApprovedBy,
+		ApprovedByUserID: req.ApprovedByUserID,
+		ExpiresAt:        req.ExpiresAt.UTC().Format(time.RFC3339Nano),
+	}
+	if !req.ApprovedAt.IsZero() {
+		details.ApprovedAt = req.ApprovedAt.UTC().Format(time.RFC3339Nano)
+	}
+	return details, nil
+}
+
+func supportsCrawlOperationStore(db Handler) bool {
+	switch normalizeInformationSeedDBMS(db.DBMS()) {
+	case DBPostgresStr, DBSQLiteStr:
+		return true
+	default:
+		return false
+	}
+}
+
+func crawlOperationFailure(result CrawlScheduleResult, ctx context.Context, err error) (CrawlScheduleResult, error) {
+	if ctx != nil && ctx.Err() != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			result.State = CrawlOperationCancelled
+			result.ReasonCode = CrawlReasonTransactionTimeout
+		} else {
+			result.State = CrawlOperationCancelled
+			result.ReasonCode = CrawlReasonCancelled
+		}
+		return result, ctx.Err()
+	}
+	result.State = CrawlOperationFailed
+	result.ReasonCode = CrawlReasonDatabase
+	return result, ErrCrawlSchedulingFailed
+}
+
+func resolveExistingCrawlOperation(ctx context.Context, tx *sql.Tx, db Handler, req CrawlScheduleRequest, result CrawlScheduleResult, existing crawlOperationRow, now time.Time) (CrawlScheduleResult, error) {
+	if !sameCrawlOperation(existing.Details, req) {
+		result.State = CrawlOperationConflict
+		result.ReasonCode = CrawlReasonConflict
+		return result, nil
+	}
+	state := CrawlOperationState(existing.Status)
+	if state == "" || state == "scheduling" {
+		state = CrawlOperationFailed
+		result.ReasonCode = CrawlReasonIncompleteOperation
+	} else {
+		result.ReasonCode = existing.Details.ReasonCode
+	}
+	result.State = state
+	result.Reused = true
+	result.SourceObservedAt = now
+	result.ExpiresAt = parseCrawlTime(existing.Details.ExpiresAt)
+	sourceState, disabled, found, err := readCrawlSourceState(ctx, tx, db, req.SourceID)
+	if err != nil {
+		return crawlOperationFailure(result, ctx, err)
+	}
+	switch {
+	case !found:
+		result.SourceState = CrawlSourceMissing
+	case disabled:
+		result.SourceState = CrawlSourceDisabled
+	default:
+		result.SourceState = sourceState
+	}
+	return result, nil
+}
+
+func sameCrawlOperation(details crawlOperationDetails, req CrawlScheduleRequest) bool {
+	return details.RequestID == req.RequestID &&
+		details.RunID == req.RunID &&
+		details.PrincipalUserID == req.PrincipalUserID &&
+		details.AgentID == req.AgentID &&
+		details.Owner == req.Owner &&
+		details.SourceID == req.SourceID &&
+		details.OperationType == req.OperationType &&
+		details.ParametersSHA256 == req.ParametersSHA256 &&
+		details.ApprovalID == req.ApprovalID &&
+		details.ApprovalSHA256 == req.ApprovalSHA256 &&
+		details.ApprovedBy == req.ApprovedBy &&
+		details.ApprovedByUserID == req.ApprovedByUserID &&
+		details.ApprovedAt == req.ApprovedAt.UTC().Format(time.RFC3339Nano) &&
+		details.ExpiresAt == req.ExpiresAt.UTC().Format(time.RFC3339Nano)
+}
+
+func parseCrawlTime(value string) time.Time {
+	if value == "" {
+		return time.Time{}
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return time.Time{}
+	}
+	return parsed
+}
+
+func finishCrawlOperation(ctx context.Context, tx *sql.Tx, db Handler, req CrawlScheduleRequest, result CrawlScheduleResult, state CrawlOperationState, reason string, sourceState CrawlSourceState, now time.Time) (CrawlScheduleResult, error) {
+	result.State = state
+	result.ReasonCode = reason
+	result.SourceState = sourceState
+	result.SourceObservedAt = now
+	details, err := crawlOperationDetailsFor(req)
+	if err != nil {
+		return result, ErrCrawlSchedulingFailed
+	}
+	details.SourceStateBefore = string(sourceState)
+	details.ReasonCode = reason
+	if err := updateCrawlOperation(ctx, tx, db, result.OperationID, state, details); err != nil {
+		return crawlOperationFailure(result, ctx, err)
+	}
+	return result, nil
+}
+
+// validateCrawlApprovalForScheduling revalidates the authoritative approval
+// and source ownership inside the same transaction that mutates the source.
+// This closes the check-to-mutation race: a revocation or ownership transfer
+// that commits before this transaction takes its locks is observed and denied.
+// On PostgreSQL the approval row is locked after the source row, giving a
+// consistent lock order (source, then approval).
+func validateCrawlApprovalForScheduling(ctx context.Context, tx *sql.Tx, db Handler, req CrawlScheduleRequest, now time.Time) (string, error) {
+	if req.ApprovalID == "" || req.ApprovalSHA256 == "" || req.ParametersSHA256 == "" {
+		return CrawlReasonApprovalRejected, nil
+	}
+	if !supportsCrawlApprovalStore(db) {
+		return CrawlReasonApprovalUnavailable, nil
+	}
+	p := func(n int) string { return crawlPlaceholder(db, n) }
+	query := `SELECT proposal_sha256, request_id, run_id, agent_id, owner,
+		principal_user_id, source_id, operation_type, approval_sha256,
+		issued_by_user_id, approved_by, approved_by_user_id,
+		proposal_expires_at, approved_at, expires_at, revoked_at
+		FROM CrawlApprovals WHERE approval_id = ` + p(1)
+	if normalizeInformationSeedDBMS(db.DBMS()) == DBPostgresStr {
+		query += ` FOR UPDATE`
+	}
+	var (
+		proposalSHA256, requestID, runID, agentID, owner string
+		operationType, approvalSHA256, approvedBy        string
+		principalUserID, sourceID, approvedByUserID      uint64
+		issuedByUserID                                   uint64
+		proposalExpiresAt, approvedAt, expiresAt         time.Time
+		revokedAt                                        sql.NullTime
+	)
+	err := tx.QueryRowContext(ctx, query, req.ApprovalID).Scan(
+		&proposalSHA256, &requestID, &runID, &agentID, &owner,
+		&principalUserID, &sourceID, &operationType, &approvalSHA256,
+		&issuedByUserID, &approvedBy, &approvedByUserID,
+		&proposalExpiresAt, &approvedAt, &expiresAt, &revokedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return CrawlReasonApprovalRejected, nil
+	}
+	if err != nil {
+		if errors.Is(err, ErrCrawlApprovalSchemaUnavailable) ||
+			strings.Contains(strings.ToLower(err.Error()), "no such table") ||
+			strings.Contains(strings.ToLower(err.Error()), "does not exist") {
+			return CrawlReasonApprovalUnavailable, nil
+		}
+		return "", err
+	}
+	if revokedAt.Valid ||
+		proposalSHA256 != req.ParametersSHA256 ||
+		requestID != req.RequestID ||
+		runID != req.RunID ||
+		agentID != req.AgentID ||
+		owner != req.Owner ||
+		principalUserID != req.PrincipalUserID ||
+		sourceID != req.SourceID ||
+		operationType != req.OperationType ||
+		approvalSHA256 != req.ApprovalSHA256 ||
+		approvedBy != req.ApprovedBy ||
+		approvedByUserID != req.ApprovedByUserID ||
+		proposalExpiresAt.IsZero() || !proposalExpiresAt.After(now) ||
+		approvedAt.IsZero() || approvedAt.After(now) ||
+		!expiresAt.After(now) ||
+		req.ExpiresAt.After(expiresAt) ||
+		req.ExpiresAt.After(proposalExpiresAt) ||
+		req.ExpiresAt.After(approvedAt.Add(maxCrawlRequestLifetime)) ||
+		expiresAt.Sub(approvedAt) > maxCrawlRequestLifetime {
+		return CrawlReasonApprovalRejected, nil
+	}
+
+	// The principal, approver and issuer must still be active. Lock their
+	// Users rows now so disablement/deletion cannot commit between this check
+	// and the scheduling mutation. If the approver is not the principal, lock
+	// the current administrative grant rows as well.
+	if approvedByUserID == 0 || issuedByUserID == 0 {
+		return CrawlReasonApprovalRejected, nil
+	}
+	if err := lockActiveUsersTx(ctx, tx, db, principalUserID, approvedByUserID, issuedByUserID); err != nil {
+		if errors.Is(err, ErrSourceMutationForbidden) {
+			return CrawlReasonApprovalRejected, nil
+		}
+		return "", err
+	}
+	if approvedByUserID != principalUserID {
+		if err := lockUserAdminRoleTx(ctx, tx, db, approvedByUserID); err != nil {
+			if errors.Is(err, ErrSourceMutationForbidden) {
+				return CrawlReasonApprovalRejected, nil
+			}
+			return "", err
+		}
+	}
+
+	// Source ownership is revalidated under the source row lock already held by
+	// the caller. Verified provenance is required; a legacy nonzero usr_id is
+	// not sufficient. A missing source is left to the normal not-found path.
+	ownerQuery := `SELECT usr_id, deleted_at FROM Sources WHERE source_id = ` + p(1)
+	var ownerID uint64
+	var deletedAt sql.NullTime
+	if err := tx.QueryRowContext(ctx, ownerQuery, req.SourceID).Scan(&ownerID, &deletedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return "", err
+	}
+	if deletedAt.Valid || ownerID == 0 || ownerID != req.PrincipalUserID {
+		return CrawlReasonOwnershipRejected, nil
+	}
+	provenanceQuery := `SELECT user_id FROM SourceOwnership WHERE source_id = ` + p(1)
+	var verifiedUserID uint64
+	if err := tx.QueryRowContext(ctx, provenanceQuery, req.SourceID).Scan(&verifiedUserID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return CrawlReasonOwnershipRejected, nil
+		}
+		return "", err
+	}
+	if verifiedUserID != ownerID || verifiedUserID != req.PrincipalUserID {
+		return CrawlReasonOwnershipRejected, nil
+	}
+	return "", nil
+}
+
+// lockCrawlSource serializes scheduling decisions for one source on
+// PostgreSQL, so budget checks and conditional updates cannot race. SQLite
+// already serializes writes through its transaction.
+func lockCrawlSource(ctx context.Context, tx *sql.Tx, db Handler, sourceID uint64) error {
+	query := `SELECT source_id FROM Sources WHERE source_id = ` + crawlPlaceholder(db, 1)
+	if normalizeInformationSeedDBMS(db.DBMS()) == DBPostgresStr {
+		query += ` FOR UPDATE`
+	}
+	var id uint64
+	err := tx.QueryRowContext(ctx, query, sourceID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	return err
+}
+
+func crawlRequestWithinBudget(ctx context.Context, tx *sql.Tx, db Handler, req CrawlScheduleRequest, now time.Time) (bool, error) {
+	if req.MaxRequests <= 0 {
+		return false, fmt.Errorf("crawl request budget is required")
+	}
+	ownerExpr := "details->>'owner'"
+	malformedExpr := `(details->'owner' IS NULL OR jsonb_typeof(details->'owner') <> 'string' OR TRIM(details->>'owner') = '')`
+	if normalizeInformationSeedDBMS(db.DBMS()) == DBSQLiteStr {
+		ownerExpr = "json_extract(details, '$.owner')"
+		malformedExpr = `(json_extract(details, '$.owner') IS NULL OR typeof(json_extract(details, '$.owner')) <> 'text' OR TRIM(json_extract(details, '$.owner')) = '')`
+	}
+	// Detect malformed or owner-less operation rows before applying LIMIT. A
+	// malformed record must fail closed rather than silently disappear.
+	malformedQuery := `SELECT COUNT(*) FROM Status
+		WHERE agent_id = ` + crawlPlaceholder(db, 1) + `
+		  AND source_id = ` + crawlPlaceholder(db, 2) + `
+		  AND operation_type = ` + crawlPlaceholder(db, 3) + `
+		  AND created_at >= ` + crawlPlaceholder(db, 4) + `
+		  AND ` + malformedExpr
+	var malformed int
+	if err := tx.QueryRowContext(ctx, malformedQuery, req.AgentID, req.SourceID, req.OperationType,
+		now.Add(-req.BudgetWindow)).Scan(&malformed); err != nil {
+		return false, err
+	}
+	if malformed > 0 {
+		return false, fmt.Errorf("malformed crawl operation record")
+	}
+	query := `SELECT status, details FROM Status
+		WHERE agent_id = ` + crawlPlaceholder(db, 1) + `
+		  AND source_id = ` + crawlPlaceholder(db, 2) + `
+		  AND operation_type = ` + crawlPlaceholder(db, 3) + `
+		  AND created_at >= ` + crawlPlaceholder(db, 4) + `
+		  AND status IN ('accepted', 'already_pending', 'processing')
+		  AND ` + ownerExpr + ` = ` + crawlPlaceholder(db, 5) + `
+		ORDER BY created_at DESC LIMIT ` + crawlPlaceholder(db, 6)
+	rows, err := tx.QueryContext(ctx, query, req.AgentID, req.SourceID, req.OperationType,
+		now.Add(-req.BudgetWindow), req.Owner, req.MaxRequests+1)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close() //nolint:errcheck
+	count := 0
+	for rows.Next() {
+		var status string
+		var raw []byte
+		if err := rows.Scan(&status, &raw); err != nil {
+			return false, err
+		}
+		var details crawlOperationDetails
+		if err := json.Unmarshal(raw, &details); err != nil {
+			return false, err
+		}
+		switch CrawlOperationState(status) {
+		case CrawlOperationAccepted, CrawlOperationAlreadyPending, CrawlOperationProcessing:
+			count++
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	return count < req.MaxRequests, nil
+}
+
+func readCrawlSourceState(ctx context.Context, tx *sql.Tx, db Handler, sourceID uint64) (CrawlSourceState, bool, bool, error) {
+	query := `SELECT status, disabled FROM Sources WHERE source_id = ` + crawlPlaceholder(db, 1)
+	var status sql.NullString
+	var disabled bool
+	err := tx.QueryRowContext(ctx, query, sourceID).Scan(&status, &disabled)
+	if errors.Is(err, sql.ErrNoRows) {
+		return CrawlSourceMissing, false, false, nil
+	}
+	if err != nil {
+		return CrawlSourceUnknown, false, false, err
+	}
+	return crawlSourceStateFromStatus(status.String), disabled, true, nil
+}
+
+func crawlSourceStateFromStatus(status string) CrawlSourceState {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "new", "":
+		return CrawlSourceNew
+	case "pending":
+		return CrawlSourcePending
+	case "processing":
+		return CrawlSourceProcessing
+	case "completed":
+		return CrawlSourceCompleted
+	case "error":
+		return CrawlSourceError
+	default:
+		return CrawlSourceUnknown
+	}
+}
+
+func markCrawlSourcePending(ctx context.Context, tx *sql.Tx, db Handler, sourceID uint64) (bool, error) {
+	query := `UPDATE Sources
+		SET status = 'pending'
+		WHERE source_id = ` + crawlPlaceholder(db, 1) + `
+		  AND disabled = FALSE
+		  AND COALESCE(LOWER(TRIM(status)), '') NOT IN ('processing', 'pending')`
+	result, err := tx.ExecContext(ctx, query, sourceID)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rows > 0, nil
+}
+
+func readCrawlOperation(ctx context.Context, tx *sql.Tx, db Handler, key string) (crawlOperationRow, bool, error) {
+	query := `SELECT status, details FROM Status WHERE status_sha256 = ` + crawlPlaceholder(db, 1)
+	var row crawlOperationRow
+	var raw []byte
+	if err := tx.QueryRowContext(ctx, query, key).Scan(&row.Status, &raw); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return crawlOperationRow{}, false, nil
+		}
+		return crawlOperationRow{}, false, err
+	}
+	if err := json.Unmarshal(raw, &row.Details); err != nil {
+		return crawlOperationRow{}, false, fmt.Errorf("%w: %v", ErrCrawlOperationMetadataInvalid, err)
+	}
+	return row, true, nil
+}
+
+func insertCrawlOperation(ctx context.Context, tx *sql.Tx, db Handler, key string, details crawlOperationDetails) (bool, error) {
+	raw, err := json.Marshal(details)
+	if err != nil {
+		return false, err
+	}
+	var query string
+	if normalizeInformationSeedDBMS(db.DBMS()) == DBPostgresStr {
+		query = `INSERT INTO Status
+			(status_sha256, agent_id, source_id, operation_type, status, details)
+			VALUES ($1, $2, $3, $4, 'scheduling', $5::jsonb)
+			ON CONFLICT (status_sha256) DO NOTHING`
+	} else {
+		query = `INSERT OR IGNORE INTO Status
+			(status_sha256, agent_id, source_id, operation_type, status, details)
+			VALUES (?, ?, ?, ?, 'scheduling', ?)`
+	}
+	result, err := tx.ExecContext(ctx, query, key, details.AgentID, details.SourceID, details.OperationType, string(raw))
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rows > 0, nil
+}
+
+func updateCrawlOperation(ctx context.Context, tx *sql.Tx, db Handler, key string, state CrawlOperationState, details crawlOperationDetails) error {
+	raw, err := json.Marshal(details)
+	if err != nil {
+		return err
+	}
+	var query string
+	if normalizeInformationSeedDBMS(db.DBMS()) == DBPostgresStr {
+		query = `UPDATE Status SET status = $1, last_updated_at = CURRENT_TIMESTAMP, details = $2::jsonb WHERE status_sha256 = $3`
+	} else {
+		query = `UPDATE Status SET status = ?, last_updated_at = CURRENT_TIMESTAMP, details = ? WHERE status_sha256 = ?`
+	}
+	_, err = tx.ExecContext(ctx, query, string(state), string(raw), key)
+	return err
+}
+
+func crawlPlaceholder(db Handler, position int) string {
+	if normalizeInformationSeedDBMS(db.DBMS()) == DBPostgresStr {
+		return "$" + strconv.Itoa(position)
+	}
+	return "?"
+}

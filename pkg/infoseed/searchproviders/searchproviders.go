@@ -19,6 +19,7 @@ package searchproviders
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -34,6 +35,7 @@ const (
 	ProviderHTTPJSON = "http_json"
 	ProviderBrave    = "brave_search"
 	ProviderBing     = "bing_web_search"
+	ProviderGDELTDOC = "gdelt_doc"
 
 	braveDefaultHost     = "https://api.search.brave.com"
 	braveDefaultEndpoint = "/res/v1/web/search"
@@ -113,6 +115,8 @@ func NewProvider(name, provider string) Provider {
 		return &RSSFeedProvider{ProviderName: stableName}
 	case ProviderCommonCrawlIndex:
 		return &CommonCrawlIndexProvider{ProviderName: stableName}
+	case ProviderGDELTDOC:
+		return &GDELTDOCProvider{ProviderName: stableName}
 	default:
 		return &JSONProvider{ProviderName: stableName}
 	}
@@ -131,6 +135,8 @@ func normalizeProviderName(values ...string) string {
 			return ProviderRSSFeed
 		case "common_crawl", "common_crawl_index", "cc_index", "commoncrawl":
 			return ProviderCommonCrawlIndex
+		case "gdelt", "gdelt_doc", "gdelt_doc_search", "gdelt_doc_api":
+			return ProviderGDELTDOC
 		case "", "json", "http_json", "generic_json":
 			continue
 		}
@@ -554,14 +560,8 @@ func (l *providerLimiter) wait(ctx context.Context) error {
 }
 
 func doJSONRequest(ctx context.Context, providerName string, client HTTPClient, req *http.Request, timeout time.Duration, rateLimit string, budget *requestBudget) ([]byte, error) {
-	if timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
-		req = req.WithContext(ctx)
-	}
 	if client == nil {
-		client = &http.Client{Timeout: timeout}
+		client = &http.Client{}
 	}
 	limiter := limiterFor(providerName, rateLimit)
 	attempts := defaultRetryAttempts
@@ -573,12 +573,21 @@ func doJSONRequest(ctx context.Context, providerName string, client HTTPClient, 
 	}
 	var lastErr error
 	for attempt := 1; attempt <= attempts; attempt++ {
+		// Politeness waiting is not HTTP work. Create the request timeout only
+		// after the limiter grants a slot so a 60s rate limit cannot consume a
+		// 10s HTTP timeout.
 		if err := limiter.wait(ctx); err != nil {
 			return nil, safeProviderError(providerName, err)
 		}
+		attemptCtx := ctx
+		cancel := func() {}
+		if timeout > 0 {
+			attemptCtx, cancel = context.WithTimeout(ctx, timeout)
+		}
 		budget.consume()
-		resp, err := client.Do(req.Clone(ctx))
+		resp, err := client.Do(req.Clone(attemptCtx))
 		if err != nil {
+			cancel()
 			lastErr = safeProviderError(providerName, err)
 			if attempt >= attempts || !budget.canRetry() || ctx.Err() != nil {
 				return nil, lastErr
@@ -590,6 +599,7 @@ func doJSONRequest(ctx context.Context, providerName string, client HTTPClient, 
 		}
 		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 		_ = resp.Body.Close()
+		cancel()
 		if readErr != nil {
 			return nil, safeProviderError(providerName, readErr)
 		}
@@ -777,7 +787,7 @@ func findResultItems(payload interface{}) []interface{} {
 	case []interface{}:
 		return typed
 	case map[string]interface{}:
-		for _, key := range []string{"results", "items", "webPages", "organic_results"} {
+		for _, key := range []string{"results", "items", "webPages", "organic_results", "articles"} {
 			if value, ok := typed[key]; ok {
 				if key == "webPages" {
 					if nested, ok := value.(map[string]interface{}); ok {
@@ -921,12 +931,66 @@ func safeProviderError(providerName string, err error) error {
 	return fmt.Errorf("provider %s request failed: %s", providerName, redactSensitive(err.Error()))
 }
 
+// ProviderStatusError preserves the HTTP status and a low-cardinality failure
+// class for runner diagnostics without exposing response bodies.
+type ProviderStatusError struct {
+	Provider   string
+	StatusCode int
+	Class      string
+	Retryable  bool
+	Message    string
+}
+
+func (e *ProviderStatusError) Error() string {
+	if strings.TrimSpace(e.Message) == "" {
+		return fmt.Sprintf("provider %s returned status %d", e.Provider, e.StatusCode)
+	}
+	return fmt.Sprintf("provider %s returned status %d: %s", e.Provider, e.StatusCode, e.Message)
+}
+
 func providerStatusError(providerName string, statusCode int, body []byte) error {
 	message := providerErrorMessage(body)
-	if message == "" {
-		return fmt.Errorf("provider %s returned status %d", providerName, statusCode)
+	class := "client_error"
+	retryable := false
+	switch {
+	case statusCode == http.StatusUnauthorized:
+		class = "authentication"
+	case statusCode == http.StatusForbidden:
+		class = "forbidden"
+	case statusCode == http.StatusNotFound:
+		class = "not_found"
+	case statusCode == http.StatusTooManyRequests:
+		class, retryable = "rate_limited", true
+	case statusCode >= http.StatusInternalServerError:
+		class, retryable = "server_error", retryableStatus(statusCode)
 	}
-	return fmt.Errorf("provider %s returned status %d: %s", providerName, statusCode, message)
+	return &ProviderStatusError{Provider: providerName, StatusCode: statusCode, Class: class, Retryable: retryable, Message: message}
+}
+
+// ClassifyProviderError returns a bounded class, HTTP status (when available)
+// and retryability for diagnostics. It never returns raw response text.
+func ClassifyProviderError(err error) (string, int, bool) {
+	if err == nil {
+		return "", 0, false
+	}
+	var statusErr *ProviderStatusError
+	if errors.As(err, &statusErr) {
+		return statusErr.Class, statusErr.StatusCode, statusErr.Retryable
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "timeout", 0, true
+	}
+	if errors.Is(err, context.Canceled) {
+		return "cancelled", 0, false
+	}
+	message := strings.ToLower(err.Error())
+	if strings.Contains(message, "deadline exceeded") {
+		return "timeout", 0, true
+	}
+	if strings.Contains(message, "context canceled") || strings.Contains(message, "context cancelled") {
+		return "cancelled", 0, false
+	}
+	return "transport", 0, true
 }
 
 func providerErrorMessage(body []byte) string {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -231,13 +232,16 @@ func TestDocumentedAPIEndpointsAreRegistered(t *testing.T) {
 	}
 	for _, ref := range documented {
 		t.Run(ref.method+" "+ref.path, func(t *testing.T) {
-			requestPath := strings.ReplaceAll(ref.path, "{id}", "123")
-			_, pattern := http.DefaultServeMux.Handler(httptest.NewRequest(ref.method, requestPath, nil))
-			if pattern == "" {
-				// check if ref.path contains {id} and if so, ignore the error
-				if !strings.Contains(ref.path, "{id}") {
-					t.Fatalf("documented endpoint %s %s is not registered", ref.method, ref.path)
-				}
+			requestPath := documentedEndpointRequestPath(ref.path)
+			req := httptest.NewRequest(ref.method, requestPath, nil)
+			handler, pattern := http.DefaultServeMux.Handler(req)
+			wantUnqualified := ref.path
+			wantMethodQualified := ref.method + " " + ref.path
+			if pattern != wantUnqualified && pattern != wantMethodQualified {
+				rec := httptest.NewRecorder()
+				handler.ServeHTTP(rec, req)
+				t.Fatalf("documented endpoint %s %s resolved to pattern %q (status %d, Allow %q), want %q or %q",
+					ref.method, ref.path, pattern, rec.Code, rec.Header().Get("Allow"), wantUnqualified, wantMethodQualified)
 			}
 		})
 	}
@@ -249,31 +253,56 @@ type documentedEndpointRef struct {
 }
 
 func documentedAPIEndpointRefs(markdown string) []documentedEndpointRef {
+	tableEndpointRE := regexp.MustCompile("(?m)^\\s*\\|\\s*(GET/POST|GET|POST|PUT|PATCH|DELETE)\\s*\\|\\s*`(/v1/[^` ?]+)`")
 	endpointRE := regexp.MustCompile("`(?:(GET/POST|GET|POST|PUT|PATCH|DELETE)\\s+)?(/v1/[^` ?]+)")
 	seen := map[string]bool{}
+	pathSeen := map[string]bool{}
 	var refs []documentedEndpointRef
+	addRef := func(method, path string) {
+		path = strings.TrimSpace(path)
+		if path == "" || strings.HasSuffix(path, "/*") {
+			return
+		}
+		key := method + " " + path
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		pathSeen[path] = true
+		refs = append(refs, documentedEndpointRef{method: method, path: path})
+	}
+
+	// Table rows keep the method in its own cell, so parse those before the
+	// inline code spans used elsewhere in the documentation.
+	for _, match := range tableEndpointRE.FindAllStringSubmatch(markdown, -1) {
+		for _, method := range documentedEndpointMethods(match[1]) {
+			addRef(method, match[2])
+		}
+	}
 	for _, match := range endpointRE.FindAllStringSubmatch(markdown, -1) {
-		methods := []string{match[1]}
-		if match[1] == "" {
-			methods = []string{http.MethodGet}
-		}
-		if match[1] == "GET/POST" {
-			methods = []string{http.MethodGet, http.MethodPost}
-		}
-		path := strings.TrimSpace(match[2])
-		if strings.HasSuffix(path, "/*") {
+		if match[1] == "" && pathSeen[strings.TrimSpace(match[2])] {
 			continue
 		}
-		for _, method := range methods {
-			key := method + " " + path
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			refs = append(refs, documentedEndpointRef{method: method, path: path})
+		for _, method := range documentedEndpointMethods(match[1]) {
+			addRef(method, match[2])
 		}
 	}
 	return refs
+}
+
+func documentedEndpointMethods(method string) []string {
+	switch method {
+	case "":
+		return []string{http.MethodGet}
+	case "GET/POST":
+		return []string{http.MethodGet, http.MethodPost}
+	default:
+		return []string{method}
+	}
+}
+
+func documentedEndpointRequestPath(path string) string {
+	return strings.NewReplacer("{id}", "123", "{name}", "example").Replace(path)
 }
 
 func TestInformationSeedPathActionsAppearAsPostInOpenAPI(t *testing.T) {
@@ -294,19 +323,155 @@ func TestInformationSeedPathActionsAppearAsPostInOpenAPI(t *testing.T) {
 
 	initAPIv1()
 	spec := cmn.BuildOpenAPISpec(cmn.GetAPIRoutes(), cmn.OpenAPIOptions{Title: "test", Version: "v1"})
-	for _, path := range []string{
-		"/v1/information_seed/{id}/rerun",
-		"/v1/information_seed/{id}/disable",
-		"/v1/information_seed/{id}/enable",
+	for _, test := range []struct {
+		path        string
+		expectsBody bool
+	}{
+		{path: "/v1/information_seed/{id}/rerun"},
+		{path: "/v1/information_seed/{id}/disable"},
+		{path: "/v1/information_seed/{id}/enable", expectsBody: true},
 	} {
-		operations := spec.Paths[path]
-		if _, ok := operations["get"]; !ok {
-			t.Errorf("OpenAPI specification is missing GET %s", path)
+		operations := spec.Paths[test.path]
+		operation, ok := operations["post"]
+		if !ok {
+			t.Errorf("OpenAPI specification is missing POST %s", test.path)
+			continue
 		}
-		if _, ok := operations["post"]; ok {
-			t.Errorf("OpenAPI specification incorrectly exposes POST %s", path)
+		if _, ok := operations["get"]; ok {
+			t.Errorf("OpenAPI specification incorrectly exposes GET %s", test.path)
+		}
+		pathParameter := false
+		for _, parameter := range operation.Parameters {
+			if parameter.Name == "id" && parameter.In == "path" && parameter.Required {
+				pathParameter = true
+			}
+		}
+		if !pathParameter {
+			t.Errorf("OpenAPI POST %s is missing required path parameter id", test.path)
+		}
+		if test.expectsBody {
+			if operation.RequestBody == nil {
+				t.Errorf("OpenAPI POST %s is missing its request body", test.path)
+			} else if schema, ok := operation.RequestBody.Content["application/json"].Schema.(cmn.OpenAPISchema); !ok {
+				t.Errorf("OpenAPI POST %s request body schema has type %T", test.path, operation.RequestBody.Content["application/json"].Schema)
+			} else if _, ok := schema.Properties["queue_pending"]; !ok {
+				t.Errorf("OpenAPI POST %s request body is missing queue_pending", test.path)
+			}
+		} else if operation.RequestBody != nil {
+			t.Errorf("OpenAPI POST %s unexpectedly advertises a request body", test.path)
 		}
 	}
+}
+
+func TestInformationSeedPathActionRoutesDispatchPOST(t *testing.T) {
+	mux := setupInformationSeedRouteTestMux(t, true)
+	routesByPath := map[string][]cmn.APIRoute{}
+	for _, route := range cmn.GetAPIRoutes() {
+		routesByPath[route.Path] = append(routesByPath[route.Path], route)
+	}
+
+	actions := []struct {
+		name string
+		path string
+	}{
+		{name: "rerun", path: "/v1/information_seed/{id}/rerun"},
+		{name: "disable", path: "/v1/information_seed/{id}/disable"},
+		{name: "enable", path: "/v1/information_seed/{id}/enable"},
+	}
+	for _, action := range actions {
+		t.Run(action.name, func(t *testing.T) {
+			requestPath := strings.ReplaceAll(action.path, "{id}", "123")
+			req := httptest.NewRequest(http.MethodPost, requestPath, nil)
+			_, pattern := mux.Handler(req)
+			wantPattern := http.MethodPost + " " + action.path
+			if pattern != wantPattern {
+				t.Fatalf("POST %s resolved to pattern %q, want %q", requestPath, pattern, wantPattern)
+			}
+
+			getReq := httptest.NewRequest(http.MethodGet, requestPath, nil)
+			handler, _ := mux.Handler(getReq)
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, getReq)
+			if rec.Code != http.StatusMethodNotAllowed {
+				t.Fatalf("GET %s status = %d, want %d", requestPath, rec.Code, http.StatusMethodNotAllowed)
+			}
+			if allow := rec.Header().Get("Allow"); allow != http.MethodPost {
+				t.Fatalf("GET %s Allow = %q, want %q", requestPath, allow, http.MethodPost)
+			}
+
+			routes := routesByPath[action.path]
+			if len(routes) == 0 {
+				t.Fatalf("route %s was not registered in the API registry", action.path)
+			}
+			for _, route := range routes {
+				if methods := strings.Join(route.Methods, ","); methods != http.MethodPost {
+					t.Fatalf("API registry methods for %s = %q, want %q", action.path, methods, http.MethodPost)
+				}
+			}
+		})
+	}
+}
+
+func TestInformationSeedPathActionRoutesRejectInvalidID(t *testing.T) {
+	mux := setupInformationSeedRouteTestMux(t, true)
+	for _, action := range []string{"rerun", "disable", "enable"} {
+		t.Run(action, func(t *testing.T) {
+			requestPath := "/v1/information_seed/not-a-number/" + action
+			req := httptest.NewRequest(http.MethodPost, requestPath, nil)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("POST %s status = %d, want %d: %s", requestPath, rec.Code, http.StatusBadRequest, rec.Body.String())
+			}
+			var response cmn.StdAPIError
+			if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+				t.Fatalf("decode invalid-id response: %v", err)
+			}
+			if response.ErrCode != http.StatusBadRequest {
+				t.Fatalf("invalid-id response error code = %d, want %d", response.ErrCode, http.StatusBadRequest)
+			}
+		})
+	}
+}
+
+func TestInformationSeedPathActionRoutesAreAbsentWithoutConsole(t *testing.T) {
+	mux := setupInformationSeedRouteTestMux(t, false)
+	for _, action := range []string{"rerun", "disable", "enable"} {
+		t.Run(action, func(t *testing.T) {
+			requestPath := "/v1/information_seed/123/" + action
+			req := httptest.NewRequest(http.MethodPost, requestPath, nil)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("POST %s without console status = %d, want %d: %s", requestPath, rec.Code, http.StatusNotFound, rec.Body.String())
+			}
+			if _, pattern := mux.Handler(req); pattern != "" {
+				t.Fatalf("console-disabled route %s resolved to pattern %q", requestPath, pattern)
+			}
+		})
+	}
+}
+
+func setupInformationSeedRouteTestMux(t *testing.T, consoleEnabled bool) *http.ServeMux {
+	t.Helper()
+	oldMux := http.DefaultServeMux
+	oldLimiter := limiter
+	oldConfig := config
+	mux := http.NewServeMux()
+	http.DefaultServeMux = mux
+	limiter = rate.NewLimiter(rate.Inf, 0)
+	config = cfg.Config{}
+	config.API.DisableDefault = false
+	config.API.EnableConsole = consoleEnabled
+	config.API.EnableAPIDocs = false
+	config.API.Plugins.Enabled = false
+	t.Cleanup(func() {
+		http.DefaultServeMux = oldMux
+		limiter = oldLimiter
+		config = oldConfig
+	})
+	initAPIv1()
+	return mux
 }
 
 func TestSearchFunctionOpenAPIQueryParametersMatchDatabaseFunctions(t *testing.T) {

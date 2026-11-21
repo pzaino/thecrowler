@@ -96,6 +96,13 @@ func executeRuleCall(ctx *ProcessContext, wd *vdi.WebDriver, req RuleCallRequest
 		ignoreOnError   = "ignore"
 	)
 	result := RuleCallResult{Kind: req.Kind, Success: false, Metadata: map[string]interface{}{"caller": req.Caller}}
+	if ctx != nil {
+		if err := ctx.checkCrawlFence(); err != nil {
+			result.Error = err.Error()
+			result.Metadata["status"] = "denied"
+			return result
+		}
+	}
 	if ctx != nil && ctx.ruleCallState == nil {
 		ctx.ruleCallState = newRuleCallRuntimeState()
 	}

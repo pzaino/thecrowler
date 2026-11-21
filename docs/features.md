@@ -445,7 +445,7 @@ See [API documentation](api.md) and [WebSocket API endpoints](api/websockets.md)
 - **Current-State or Historical Collection Policies**: `refresh_content` can replace current page data, while disabled refresh preserves repeated collections for history and change analysis.
   - *Benefits*: Supports both snapshot-style indexes and longitudinal datasets.
 
-- **Primary and Portable Database Backends**: PostgreSQL is the primary production backend; database setup and selected subsystems also support MySQL or MariaDB and SQLite.
+- **Primary and Portable Database Backends**: PostgreSQL is the primary production backend and SQLite is supported. MySQL/MariaDB setup and migration SQL is retained for reference and schema-contract work, but the 2.3.0 runtime does not enable the MySQL backend (`NewHandler` rejects `database.type: mysql`).
   - *Benefits*: Provides a scalable default and lighter-weight options for development, testing, or constrained deployments.
 
 ## (Features Group 18) Time-Series Analytics

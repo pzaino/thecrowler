@@ -976,12 +976,52 @@
         },
         "retry_interval": {
           "title": "Information Seed Retry Interval",
-          "description": "Seconds to wait before retrying failed seed discovery work.",
+          "description": "Base delay in seconds before retrying failed seed discovery work. Automatic retries use exponential backoff from this value unless the worker classifies the failure as permanent.",
           "type": "integer",
           "minimum": 1,
           "maximum": 86400,
           "examples": [
             60
+          ]
+        },
+        "retry_backoff_max": {
+          "title": "Information Seed Maximum Retry Backoff",
+          "description": "Upper bound in seconds for exponential automatic retry backoff.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400,
+          "examples": [
+            3600
+          ]
+        },
+        "max_attempts": {
+          "title": "Information Seed Maximum Attempts",
+          "description": "Maximum automatic claim attempts before a seed is marked exhausted. Manual authorized rerun resets the accounting. Values default to 5.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "examples": [
+            5
+          ]
+        },
+        "heartbeat_interval": {
+          "title": "Information Seed Claim Heartbeat Interval",
+          "description": "Seconds between live claim lease heartbeats. Must be shorter than lease_duration.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 300,
+          "examples": [
+            20
+          ]
+        },
+        "lease_duration": {
+          "title": "Information Seed Claim Lease Duration",
+          "description": "Seconds after the last heartbeat before a processing seed becomes reclaimable by another worker.",
+          "type": "integer",
+          "minimum": 30,
+          "maximum": 3600,
+          "examples": [
+            120
           ]
         },
         "processing_timeout": {
@@ -1002,7 +1042,34 @@
             "properties": {
               "provider": {
                 "type": "string",
-                "description": "Provider identifier."
+                "description": "Provider identifier. Use gdelt_doc for the GDELT DOC 2.0 article-list adapter."
+              },
+              "transport": {
+                "type": "string",
+                "enum": ["http", "webdriver"],
+                "description": "Provider transport. Defaults to http; webdriver must be selected explicitly."
+              },
+              "browser": {
+                "type": "object",
+                "description": "Bounded non-privileged browser settings used only by the webdriver transport.",
+                "properties": {
+                  "vdi_allow_list": { "type": "array", "items": { "type": "string" } },
+                  "navigation_timeout": { "type": "integer", "minimum": 1, "maximum": 300 },
+                  "page_readiness_timeout": { "type": "integer", "minimum": 1, "maximum": 60 },
+                  "hbs_enabled": { "type": "boolean" },
+                  "selenium_fallback": { "type": "boolean" },
+                  "initial_actions": { "type": "array", "items": { "type": "string" } },
+                  "consent_actions": { "type": "array", "items": { "type": "string" } },
+                  "query_actions": { "type": "array", "items": { "type": "string" } },
+                  "pagination_actions": { "type": "array", "items": { "type": "string" } },
+                  "scraping_rules": { "type": "array", "items": { "type": "string" } },
+                  "allowed_navigation_hosts": { "type": "array", "items": { "type": "string" } },
+                  "max_pages": { "type": "integer", "minimum": 1, "maximum": 10 },
+                  "max_requests": { "type": "integer", "minimum": 1, "maximum": 100 },
+                  "max_candidates": { "type": "integer", "minimum": 1, "maximum": 1000 },
+                  "screenshot_on_error": { "type": "boolean" }
+                },
+                "additionalProperties": false
               },
               "host": {
                 "type": "string",
@@ -1102,6 +1169,20 @@
             "type": "string"
           }
         },
+        "retention": {
+          "title": "Information Seed Retention",
+          "description": "Opt-in terminal seed retention. Deletion is disabled by default and never removes new, pending, actively leased processing, or retry-eligible error seeds.",
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean", "default": false },
+            "completed_days": { "type": "integer", "minimum": 1, "maximum": 3650, "default": 30 },
+            "disabled_days": { "type": "integer", "minimum": 1, "maximum": 3650, "default": 30 },
+            "exhausted_days": { "type": "integer", "minimum": 1, "maximum": 3650, "default": 90 },
+            "batch_size": { "type": "integer", "minimum": 1, "maximum": 1000, "default": 100 },
+            "dry_run": { "type": "boolean", "default": false }
+          },
+          "additionalProperties": false
+        },
         "plugin_limits": {
           "title": "Information Seed Plugin Limits",
           "description": "Timeout and output-size limits for information seed plugins.",
@@ -1189,8 +1270,14 @@
                     "lowercase",
                     "uppercase",
                     "trim",
-                    "fix_utf8",
                     "collapse_spaces",
+                    "remove_punctuation",
+                    "normalize_url",
+                    "normalize_email",
+                    "fix_utf8",
+                    "normalize_unicode",
+                    "sanitize_string",
+                    "unix_to_datetime",
                     ""
                   ]
                 },
@@ -1212,6 +1299,11 @@
                 "description": "This is a flag that tells the CROWler to index this web object attribute in the database. This is required in order to implement data correlation features."
               }
             },
+            "required": [
+              "key",
+              "path",
+              "index_type"
+            ],
             "additionalProperties": false
           }
         },
@@ -1247,6 +1339,7 @@
                   "string",
                   "integer",
                   "boolean",
+                  "float",
                   "date",
                   "array"
                 ],
@@ -1264,7 +1357,16 @@
                   "enum": [
                     "lowercase",
                     "uppercase",
-                    "trim"
+                    "trim",
+                    "collapse_spaces",
+                    "remove_punctuation",
+                    "normalize_url",
+                    "normalize_email",
+                    "fix_utf8",
+                    "normalize_unicode",
+                    "sanitize_string",
+                    "unix_to_datetime",
+                    ""
                   ]
                 },
                 "examples": [
@@ -1273,11 +1375,23 @@
                   "trim"
                 ]
               },
+              "run_also": {
+                "type": "array",
+                "description": "if this key matches, then also run the ones in this List",
+                "items": {
+                  "type": "string"
+                }
+              },
               "index": {
                 "type": "boolean",
                 "description": "This is a flag that tells the CROWler to index this net info attribute in the database. This is required in order to implement data correlation features."
               }
             },
+            "required": [
+              "key",
+              "path",
+              "index_type"
+            ],
             "additionalProperties": false
           }
         },
@@ -1311,6 +1425,7 @@
                   "string",
                   "integer",
                   "boolean",
+                  "float",
                   "date",
                   "array"
                 ],
@@ -1328,7 +1443,16 @@
                   "enum": [
                     "lowercase",
                     "uppercase",
-                    "trim"
+                    "trim",
+                    "collapse_spaces",
+                    "remove_punctuation",
+                    "normalize_url",
+                    "normalize_email",
+                    "fix_utf8",
+                    "normalize_unicode",
+                    "sanitize_string",
+                    "unix_to_datetime",
+                    ""
                   ]
                 },
                 "examples": [
@@ -1337,11 +1461,23 @@
                   "trim"
                 ]
               },
+              "run_also": {
+                "type": "array",
+                "description": "if this key matches, then also run the ones in this List",
+                "items": {
+                  "type": "string"
+                }
+              },
               "index": {
                 "type": "boolean",
                 "description": "This is a flag that tells the CROWler to index this http info attribute in the database. This is required in order to implement data correlation features."
               }
             },
+            "required": [
+              "key",
+              "path",
+              "index_type"
+            ],
             "additionalProperties": false
           }
         }
@@ -2014,6 +2150,16 @@
             "1 hour",
             "1 days",
             "1 months"
+          ]
+        },
+        "mcp_mutation_audit_retention": {
+          "title": "CROWler Events Manager MCP Mutation Audit Retention",
+          "description": "Retention period for durable MCP mutation admission, registration, proposal and approval audit rows. If empty or not specified, the default is 90 days. Values below 24 hours are raised to 24 hours. Cleanup is bounded and targets the known MCP mutation audit event types; unknown event families are retained.",
+          "type": "string",
+          "examples": [
+            "2160h",
+            "90 days",
+            "30 days"
           ]
         },
         "websocket": {
@@ -3497,6 +3643,26 @@
           "default": []
         }
       }
+    },
+    "mcp": {
+      "title": "CROWler MCP Operator Configuration",
+      "description": "Operator-owned MCP server inventory and optional mutation proposal policy. The mutation policy is disabled by default and grants no production proposal authority until separately approved.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "servers": {
+          "type": "array",
+          "description": "Approved MCP server inventory. Existing read-only and mutation-tool classification fields remain operator-owned.",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "default": []
+        },
+        "mutation_policy": {
+          "$ref": "#/definitions/mcpMutationPolicy"
+        }
+      }
     }
   },
   "definitions": {
@@ -3936,6 +4102,224 @@
                   }
                 }
               }
+            }
+          }
+        }
+      ]
+    },
+    "mcpMutationPolicy": {
+      "title": "CROWler MCP Mutation Proposal Policy",
+      "description": "Default-disabled operator policy for inert MCP mutation proposals. It binds exact server/tool operations and never authorizes remote execution.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "policy_id": {
+          "type": "string",
+          "description": "Required when enabled."
+        },
+        "version": {
+          "type": "string",
+          "description": "Required when enabled."
+        },
+        "operations": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/definitions/mcpMutationPolicyOperation"
+          },
+          "default": []
+        }
+      }
+    },
+    "mcpMutationPolicyOperation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "server_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,31}$"
+        },
+        "tool_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "allowed_agents": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "required_capabilities": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "min_trust_level": {
+          "type": "string",
+          "enum": [
+            "trusted",
+            "medium",
+            "privileged",
+            "high",
+            "internal",
+            "system"
+          ]
+        },
+        "allowed_sources": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "allowed_resources": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "required_argument_fields": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "allowed_argument_fields": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "destructive": {
+          "type": "boolean"
+        },
+        "proposal_ttl": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Go duration string within 1s..1h."
+        },
+        "max_proposals_per_run": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16
+        },
+        "max_pending_proposals": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "max_input_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65536
+        },
+        "max_output_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65536
+        },
+        "require_approval": {
+          "type": "boolean",
+          "enum": [
+            true
+          ]
+        },
+        "execution_backend": {
+          "type": "string",
+          "enum": [
+            "none"
+          ]
+        },
+        "allowed_transports": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "stdio",
+              "streamable_http"
+            ]
+          }
+        },
+        "audit_required": {
+          "type": "boolean",
+          "enum": [
+            true
+          ]
+        }
+      },
+      "required": [
+        "server_id",
+        "tool_name",
+        "allowed_agents",
+        "required_capabilities",
+        "min_trust_level",
+        "proposal_ttl",
+        "max_proposals_per_run",
+        "max_pending_proposals",
+        "max_input_bytes",
+        "max_output_bytes",
+        "require_approval",
+        "execution_backend",
+        "allowed_transports",
+        "audit_required"
+      ],
+      "oneOf": [
+        {
+          "required": [
+            "allowed_sources"
+          ],
+          "properties": {
+            "allowed_sources": {
+              "minItems": 1
+            },
+            "allowed_resources": {
+              "maxItems": 0
+            }
+          }
+        },
+        {
+          "required": [
+            "allowed_resources"
+          ],
+          "properties": {
+            "allowed_resources": {
+              "minItems": 1
+            },
+            "allowed_sources": {
+              "maxItems": 0
             }
           }
         }

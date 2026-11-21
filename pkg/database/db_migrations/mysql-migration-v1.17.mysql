@@ -1,0 +1,121 @@
+-- ============================================================================
+-- CROWler schema migration: 1.16 -> 1.17 (MySQL / MariaDB)
+-- ============================================================================
+-- Target: schema 1.17, writer generation verified-ownership-v1.17.
+-- Source: an existing 1.16 database, or 1.17 for a repeatable re-run.
+-- Prerequisite: every earlier MySQL migration, in order (1.08, 1.09, 1.11,
+-- 1.13, 1.14, 1.15, 1.16). This file alone does not upgrade an older database.
+--
+-- RUNTIME SUPPORT: NOT AVAILABLE in 2.3.0. pkg/database.NewHandler() rejects
+-- database.type "mysql", and the MySQL handler is commented out in this source
+-- tree for licensing reasons. These scripts are shipped for reference and
+-- future work: do not deploy 2.3.0 on MySQL or MariaDB. The migration SQL
+-- itself was validated on MySQL 8.0 against a minimal 1.17-compatible schema;
+-- the shipped fresh-install script mysql-setup.mysql is not loadable as-is on
+-- MySQL 8.0 (reserved word `rank`) or MariaDB 11 (functional index).
+--
+-- Engine: MySQL 8.0 was used for the SQL validation. Legacy feature limits
+-- apply: durable crawl approvals, agent-goal persistence and the MCP capability
+-- are PostgreSQL/SQLite-only.
+--
+-- No PostgreSQL-style transactional DDL: MySQL commits each DDL statement
+-- implicitly. A failure can leave a partially upgraded schema (verified: an
+-- interrupted run left SourceOwnership and the five columns in place while
+-- DBSchemaVersion stayed 1.16). Back up first and replay deliberately; the
+-- guards and IF NOT EXISTS clauses converge on the complete file.
+-- Requires: an account that can create tables/procedures and alter
+-- InformationSeed (normally the database owner or an administrator).
+-- There is no :CROWLER_DB_USER token in this file.
+--
+-- CLI (preferred): the mysql client understands DELIMITER.
+--   mysql --defaults-extra-file=<option file> <database> < mysql-migration-v1.17.mysql
+--
+-- GUI: many raw-SQL panels send one statement at a time and do not understand
+-- DELIMITER. Use a script runner that supports DELIMITER, or execute each
+-- CREATE PROCEDURE ... BEGIN ... END block as ONE statement without the
+-- DELIMITER lines, then run the CALL/DROP statements in the original order.
+-- Do not let a console split a routine across statements.
+--
+-- Postchecks: DBSchemaVersion = 1.17; DatabaseWriterCompatibility =
+-- verified-ownership-v1.17; SourceOwnership exists; the five InformationSeed
+-- columns and three indexes exist.
+--
+-- Full guide: docs/database-migrations.md
+-- ============================================================================
+
+-- Version 1.17 adds verified source ownership provenance and Information Seed
+-- claim leases, fencing, heartbeat and retry metadata. Durable crawl approvals
+-- are PostgreSQL/SQLite-only in this release; MySQL keeps the ownership
+-- provenance contract but reports the approval store as unsupported.
+-- The migration is additive and safe to re-run.
+CREATE TABLE IF NOT EXISTS SourceOwnership (
+    source_id BIGINT PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    verified_at TIMESTAMP NOT NULL,
+    verified_by_user_id BIGINT NOT NULL,
+    verified_by VARCHAR(255) NOT NULL,
+    verification_method VARCHAR(64) NOT NULL,
+    verification_reason TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (user_id > 0),
+    CHECK (verified_by_user_id > 0),
+    INDEX idx_sourceownership_user (user_id)
+) ENGINE=InnoDB;
+
+-- Information Seed claim leases, fencing, heartbeat and retry metadata are part
+-- of the existing 1.17 schema contract. Guarded procedures keep this migration
+-- additive and safe to re-run.
+DROP PROCEDURE IF EXISTS add_informationseed_v117_column_if_missing;
+DROP PROCEDURE IF EXISTS add_informationseed_v117_index_if_missing;
+
+DELIMITER //
+CREATE PROCEDURE add_informationseed_v117_column_if_missing(IN p_column_name VARCHAR(64), IN p_column_ddl TEXT)
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'InformationSeed' AND COLUMN_NAME = p_column_name
+    ) THEN
+        SET @add_informationseed_v117_column_sql = CONCAT('ALTER TABLE InformationSeed ADD COLUMN ', p_column_ddl);
+        PREPARE add_informationseed_v117_column_stmt FROM @add_informationseed_v117_column_sql;
+        EXECUTE add_informationseed_v117_column_stmt;
+        DEALLOCATE PREPARE add_informationseed_v117_column_stmt;
+    END IF;
+END//
+
+CREATE PROCEDURE add_informationseed_v117_index_if_missing(IN p_index_name VARCHAR(64), IN p_index_ddl TEXT)
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM INFORMATION_SCHEMA.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'InformationSeed' AND INDEX_NAME = p_index_name
+    ) THEN
+        SET @add_informationseed_v117_index_sql = p_index_ddl;
+        PREPARE add_informationseed_v117_index_stmt FROM @add_informationseed_v117_index_sql;
+        EXECUTE add_informationseed_v117_index_stmt;
+        DEALLOCATE PREPARE add_informationseed_v117_index_stmt;
+    END IF;
+END//
+DELIMITER ;
+
+CALL add_informationseed_v117_column_if_missing('claim_token', 'claim_token VARCHAR(64)');
+CALL add_informationseed_v117_column_if_missing('fencing_token', 'fencing_token BIGINT DEFAULT 0 NOT NULL');
+CALL add_informationseed_v117_column_if_missing('lease_expires_at', 'lease_expires_at TIMESTAMP NULL');
+CALL add_informationseed_v117_column_if_missing('heartbeat_at', 'heartbeat_at TIMESTAMP NULL');
+CALL add_informationseed_v117_column_if_missing('next_retry_at', 'next_retry_at TIMESTAMP NULL');
+
+CALL add_informationseed_v117_index_if_missing('idx_informationseed_lease_expiry', 'CREATE INDEX idx_informationseed_lease_expiry ON InformationSeed(status, disabled, lease_expires_at)');
+CALL add_informationseed_v117_index_if_missing('idx_informationseed_next_retry', 'CREATE INDEX idx_informationseed_next_retry ON InformationSeed(status, disabled, next_retry_at)');
+CALL add_informationseed_v117_index_if_missing('idx_informationseed_claim_token', 'CREATE INDEX idx_informationseed_claim_token ON InformationSeed(claim_token)');
+
+DROP PROCEDURE IF EXISTS add_informationseed_v117_column_if_missing;
+DROP PROCEDURE IF EXISTS add_informationseed_v117_index_if_missing;
+
+
+UPDATE DBSchemaVersion SET is_current=FALSE;
+INSERT INTO DBSchemaVersion(version,description,is_current)
+VALUES('1.17','CROWler DB schema version 1.17',TRUE)
+ON DUPLICATE KEY UPDATE description=VALUES(description),is_current=TRUE;
+
+INSERT INTO DatabaseWriterCompatibility(lock_id,writer_generation)
+VALUES(1,'verified-ownership-v1.17')
+ON DUPLICATE KEY UPDATE writer_generation=VALUES(writer_generation);

@@ -36,6 +36,10 @@ const (
 )
 
 func processActionRules(wd *vdi.WebDriver, ctx *ProcessContext, url string) {
+	if err := ctx.checkCrawlFence(); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlWarn, "skipping action rules after crawl fence loss: %v", err)
+		return
+	}
 	cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ProcActionRules] Starting to search and process CROWler Action rules...")
 	// Run Action Rules if any
 	if ctx.source.Config != nil {
@@ -88,6 +92,10 @@ func processURLRules(wd *vdi.WebDriver, ctx *ProcessContext, url string) {
 func executeActionRules(ctx *ProcessContext, actionRules []rules.ActionRule, wd *vdi.WebDriver) {
 	runtime := newActionRuntime(ctx, wd)
 	for i := range actionRules {
+		if err := ctx.checkCrawlFence(); err != nil {
+			cmn.DebugMsg(cmn.DbgLvlWarn, "stopping action rules after crawl fence loss: %v", err)
+			return
+		}
 		currentCrowlerMeta(ctx).AddObjectType(actionRules[i].ObjectType...)
 		if err := browseractions.ExecuteRule(context.Background(), runtime, &actionRules[i]); err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "executing action rule: %v", err)
@@ -253,6 +261,10 @@ func DefaultActionConfig(url string) cfg.SourceConfig {
 }
 
 func runDefaultActionRules(wd *vdi.WebDriver, ctx *ProcessContext) {
+	if err := ctx.checkCrawlFence(); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlWarn, "skipping default action rules after crawl fence loss: %v", err)
+		return
+	}
 	// Execute the default scraping rules
 	cmn.DebugMsg(cmn.DbgLvlDebug, "Executing default action rules...")
 

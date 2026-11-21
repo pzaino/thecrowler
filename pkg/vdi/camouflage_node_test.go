@@ -899,3 +899,17 @@ func TestCamouflageControlsDetectLegacyDefects(t *testing.T) {
 		t.Error("control failed: fixed registry does not share MimeType instances across the graph")
 	}
 }
+
+// TestCamouflageLegacyAudioControlIsDeterministic guards the float32-resolution
+// precondition of the legacy AudioBuffer negative control. The legacy patch
+// adds sub-1e-7 noise; at a 1.0 sample the increment can round back to the same
+// float32 value, making the control nondeterministic. The probe now uses a
+// small baseline where the defect is always observable.
+func TestCamouflageLegacyAudioControlIsDeterministic(t *testing.T) {
+	for i := 0; i < 5; i++ {
+		legacy := runCamouflageNode(t, "audio", legacyAudioPatch)
+		if mustBool(t, legacy.Values["audioRawIntact"]) {
+			t.Fatalf("iteration %d: legacy AudioBuffer defect was not detected", i)
+		}
+	}
+}

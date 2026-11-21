@@ -15,6 +15,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -34,9 +35,24 @@ type AgentToolLoopAction struct{}
 // Name returns the name of the action.
 func (a *AgentToolLoopAction) Name() string { return "AgentToolLoop" }
 
-// Execute runs the tool loop for one job-group attempt.
+// Execute runs the tool loop with no caller context. Framework callers use
+// ExecuteContext so HTTP cancellation reaches MCP and model operations.
 func (a *AgentToolLoopAction) Execute(params map[string]interface{}) (map[string]interface{}, error) {
+	return a.ExecuteContext(context.Background(), params)
+}
+
+// ExecuteContext runs the tool loop for one job-group attempt using the
+// trusted job-engine context.
+func (a *AgentToolLoopAction) ExecuteContext(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	rval := map[string]interface{}{StrResponse: nil, StrConfig: nil}
+	if err := ctx.Err(); err != nil {
+		rval[StrStatus] = StatusError
+		rval[StrMessage] = "tool loop cancelled: " + err.Error()
+		return rval, err
+	}
 
 	config, err := getConfig(params)
 	if err != nil {
@@ -64,7 +80,7 @@ func (a *AgentToolLoopAction) Execute(params map[string]interface{}) (map[string
 		return rval, err
 	}
 
-	loopConfig, err := normalizeToolLoopConfig(params, config, ictx, identity)
+	loopConfig, err := normalizeToolLoopConfigWithContext(ctx, params, config, ictx, identity)
 	if err != nil {
 		rval[StrStatus] = StatusError
 		rval[StrMessage] = err.Error()
@@ -106,10 +122,18 @@ func toolLoopResultMap(result ToolLoopResult) map[string]any {
 // must be statically declared: any input-reference marker in their raw
 // values is rejected so model-influenced data can never widen authority.
 func normalizeToolLoopConfig(params, config map[string]interface{}, ictx InputContext, identity AgentIdentity) (ToolLoopConfig, error) {
+	return normalizeToolLoopConfigWithContext(context.Background(), params, config, ictx, identity)
+}
+
+func normalizeToolLoopConfigWithContext(parent context.Context, params, config map[string]interface{}, ictx InputContext, identity AgentIdentity) (ToolLoopConfig, error) {
+	if parent == nil {
+		parent = context.Background()
+	}
 	loop := ToolLoopConfig{
 		Identity:    identity,
 		Enforcement: true,
 		Limits:      DefaultToolLoopLimits(),
+		Principal:   mcpMutationPrincipalFromRuntimeConfig(config),
 	}
 	if runID, ok := toolLoopRunField(params, "run_id"); ok {
 		loop.RunID = runID
@@ -122,6 +146,15 @@ func normalizeToolLoopConfig(params, config map[string]interface{}, ictx InputCo
 	}
 	if loop.TraceID == "" {
 		loop.TraceID = uuid.NewString()
+	}
+
+	// Endpoint and credential selection are authority-bearing. They must be
+	// statically declared in the manifest so neither a prior model response
+	// ($response), event data, nor an inherited step config can steer
+	// inference. Environment interpolation (${VAR}) already happened at
+	// manifest load time.
+	if err := rejectLoopProviderMarkers(params, config); err != nil {
+		return loop, err
 	}
 
 	// Provider endpoint triple, resolved with normal dataflow (never from
@@ -188,6 +221,9 @@ func normalizeToolLoopConfig(params, config map[string]interface{}, ictx InputCo
 		return loop, err
 	}
 	loop.Allowlist = allowlist
+	if err := denyMCPMutationAliasesWithoutPrincipal(loop.Allowlist, loop.Principal); err != nil {
+		return loop, err
+	}
 
 	// Optional source scope: static integers only.
 	sources, err := normalizeLoopSources(params, config)
@@ -234,10 +270,88 @@ func normalizeToolLoopConfig(params, config map[string]interface{}, ictx InputCo
 		loop.GroupDeadline = deadline
 	}
 
+	// Establish one authoritative execution deadline before any MCP server is
+	// started. Initialization and provider execution share this context; it is
+	// never reset to a fresh full allowance after setup.
+	deadline := time.Now().Add(loop.Limits.Timeout)
+	if !loop.GroupDeadline.IsZero() {
+		if !time.Now().Before(loop.GroupDeadline) {
+			return loop, fmt.Errorf("tool loop denied: group deadline exceeded")
+		}
+		if loop.GroupDeadline.Before(deadline) {
+			deadline = loop.GroupDeadline
+		}
+	}
+	runCtx, runCancel := context.WithDeadline(parent, deadline)
+	if err := runCtx.Err(); err != nil {
+		runCancel()
+		return loop, fmt.Errorf("tool loop denied: %w", err)
+	}
+	keepContext := false
+	defer func() {
+		if !keepContext {
+			runCancel()
+		}
+	}()
+
 	registry, err := DefaultToolRegistry()
 	if err != nil {
 		return loop, err
 	}
+	mutation, err := normalizeMutationPolicy(params, config)
+	if err != nil {
+		return loop, fmt.Errorf("tool loop denied: %v", err)
+	}
+	if mutation != nil && mutation.Enabled {
+		if !containsString(loop.Allowlist, crawlRequestToolName) {
+			return loop, fmt.Errorf("tool loop denied: %s must be in the explicit tool allowlist when mutation is enabled", crawlRequestToolName)
+		}
+		crawlRuntime, err := BuildCrawlRequestToolRuntime(runCtx, CrawlRequestToolRuntimeConfig{
+			Enabled:           true,
+			DB:                dbHandler,
+			Identity:          identity,
+			AllowedOperations: mutation.AllowedOperations,
+			AllowedSources:    loop.AllowedSources,
+			MaxRequests:       mutation.MaxRequests,
+			BudgetWindow:      mutation.BudgetWindow,
+			Issuer:            mutation.Issuer,
+			ProposalTTL:       mutation.ProposalTTL,
+		})
+		if err != nil {
+			return loop, fmt.Errorf("tool loop denied: %v", err)
+		}
+		if err := RegisterCrawlRequestTool(registry, crawlRuntime); err != nil {
+			return loop, fmt.Errorf("tool loop denied: %v", err)
+		}
+		loop.CrawlRuntime = crawlRuntime
+		loop.MutationAllowed = true
+		loop.AllowedOperations = mutation.OperationsSet()
+	}
+	mcpManager, err := NewMCPToolManager(runCtx, CurrentMCPOperatorConfig(), identity, loop.Allowlist, loop.AllowedSources)
+	if err != nil {
+		return loop, fmt.Errorf("tool loop denied: %v", err)
+	}
+	if mcpManager != nil {
+		if err := mcpManager.Register(registry); err != nil {
+			_ = mcpManager.Close()
+			return loop, fmt.Errorf("tool loop denied: %v", err)
+		}
+		mcpAllowed, err := registerMCPMutationProposalTools(
+			runCtx, mcpManager, registry, CurrentMCPMutationPolicy(),
+			identity, loop.Principal, loop.Allowlist, loop.AllowedSources, dbHandler,
+			loop.RunID, loop.TraceID,
+		)
+		if err != nil {
+			_ = mcpManager.Close()
+			return loop, fmt.Errorf("tool loop denied: %v", err)
+		}
+		loop.MCPMutationAllowed = len(mcpAllowed) > 0
+		loop.MCPAllowedOperations = mcpAllowed
+		loop.MCPManager = mcpManager
+	}
+	loop.Ctx = runCtx
+	loop.cancel = runCancel
+	keepContext = true
 	loop.Registry = registry
 	return loop, nil
 }
@@ -340,6 +454,42 @@ func rejectInputMarkers(value any) error {
 	default:
 		return nil
 	}
+}
+
+// loopProviderPolicyFields are the fields that select the inference endpoint
+// and its credential. They are authorization-relevant and therefore static.
+var loopProviderPolicyFields = []string{"provider", "url", "auth", "model"}
+
+// rejectLoopProviderMarkers refuses dataflow references in provider
+// selection so a prior model response, an event, or an inherited step config
+// cannot choose the endpoint or credential. Direct step params and the
+// config.ai fallback used by resolveLoopString are both checked.
+func rejectLoopProviderMarkers(params, config map[string]interface{}) error {
+	if params != nil {
+		for _, key := range loopProviderPolicyFields {
+			raw, ok := params[key]
+			if !ok || raw == nil {
+				continue
+			}
+			if err := rejectInputMarkers(raw); err != nil {
+				return fmt.Errorf("tool loop denied: %s must be statically declared", key)
+			}
+		}
+	}
+	if len(config) == 0 {
+		return nil
+	}
+	aiSection := mapStringAny(config["ai"])
+	for _, key := range loopProviderPolicyFields {
+		raw, ok := aiSection[key]
+		if !ok || raw == nil {
+			continue
+		}
+		if err := rejectInputMarkers(raw); err != nil {
+			return fmt.Errorf("tool loop denied: ai.%s must be statically declared", key)
+		}
+	}
+	return nil
 }
 
 // normalizeLoopAllowlist reads the explicit trusted tool allowlist.

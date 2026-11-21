@@ -52,8 +52,10 @@ func (handler *SQLiteHandler) TransactionTimeoutSeconds() int {
 // Connect connects to an SQLite database
 func (handler *SQLiteHandler) Connect(c cfg.Config) error {
 	handler.transactionTimeout = normalizedTransactionTimeoutSeconds(c.Database.TransactionTimeout)
-	// Construct the connection string from the Config struct
-	connectionString := fmt.Sprintf("file:%s?cache=shared&mode=rwc", c.Database.DBName)
+	// Construct the connection string from the Config struct.
+	// G3: every pooled runtime connection must enforce the declared foreign
+	// keys, not only the setup/migration connection.
+	connectionString := fmt.Sprintf("file:%s?cache=shared&mode=rwc&_foreign_keys=on", c.Database.DBName)
 
 	var err error
 	handler.db, err = sql.Open("sqlite3", connectionString)
@@ -205,6 +207,11 @@ var sqliteInformationSeedLifecycleMigrations = []sqliteColumnMigration{
 	{column: "last_error_at", statement: "ALTER TABLE InformationSeed ADD COLUMN last_error_at TIMESTAMP"},
 	{column: "disabled", statement: "ALTER TABLE InformationSeed ADD COLUMN disabled BOOLEAN DEFAULT FALSE"},
 	{column: "attempts", statement: "ALTER TABLE InformationSeed ADD COLUMN attempts INTEGER DEFAULT 0 NOT NULL"},
+	{column: "claim_token", statement: "ALTER TABLE InformationSeed ADD COLUMN claim_token VARCHAR(64)"},
+	{column: "fencing_token", statement: "ALTER TABLE InformationSeed ADD COLUMN fencing_token INTEGER DEFAULT 0 NOT NULL"},
+	{column: "lease_expires_at", statement: "ALTER TABLE InformationSeed ADD COLUMN lease_expires_at TIMESTAMP"},
+	{column: "heartbeat_at", statement: "ALTER TABLE InformationSeed ADD COLUMN heartbeat_at TIMESTAMP"},
+	{column: "next_retry_at", statement: "ALTER TABLE InformationSeed ADD COLUMN next_retry_at TIMESTAMP"},
 }
 
 var sqliteInformationSeedLifecycleIndexes = []string{
@@ -216,6 +223,9 @@ var sqliteInformationSeedLifecycleIndexes = []string{
 	"CREATE INDEX IF NOT EXISTS idx_informationseed_processing_stale ON InformationSeed(status, disabled, last_processed_at)",
 	"CREATE INDEX IF NOT EXISTS idx_informationseed_claim_queue ON InformationSeed(disabled, status, priority, created_at, information_seed_id)",
 	"CREATE INDEX IF NOT EXISTS idx_informationseed_engine_status ON InformationSeed(engine, status, last_processed_at)",
+	"CREATE INDEX IF NOT EXISTS idx_informationseed_lease_expiry ON InformationSeed(status, disabled, lease_expires_at)",
+	"CREATE INDEX IF NOT EXISTS idx_informationseed_next_retry ON InformationSeed(status, disabled, next_retry_at)",
+	"CREATE INDEX IF NOT EXISTS idx_informationseed_claim_token ON InformationSeed(claim_token)",
 }
 
 func ensureSQLiteInformationSeedSchema(db *sql.DB) error {
@@ -504,7 +514,7 @@ func NewHandler(c cfg.Config) (Handler, error) {
 		handler := &PostgresHandler{}
 		handler.dbms = dbms
 		return handler, nil
-	case DBSQLiteStr:
+	case DBSQLiteStr, "sqlite":
 		handler := &SQLiteHandler{}
 		handler.dbms = dbms
 		return handler, nil

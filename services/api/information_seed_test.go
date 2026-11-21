@@ -936,6 +936,7 @@ func setupInformationSeedAPITestDB(t *testing.T) (cdb.Handler, func()) {
 		CREATE TABLE InformationSeed (
 			information_seed_id INTEGER PRIMARY KEY AUTOINCREMENT,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			deleted_at TIMESTAMP,
 			last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			category_id INTEGER DEFAULT 0 NOT NULL,
 			usr_id INTEGER DEFAULT 0 NOT NULL,
@@ -949,6 +950,11 @@ func setupInformationSeedAPITestDB(t *testing.T) (cdb.Handler, func()) {
 			last_error_at TIMESTAMP,
 			disabled BOOLEAN DEFAULT FALSE,
 			attempts INTEGER DEFAULT 0 NOT NULL,
+			claim_token VARCHAR(64),
+			fencing_token INTEGER DEFAULT 0 NOT NULL,
+			lease_expires_at TIMESTAMP,
+			heartbeat_at TIMESTAMP,
+			next_retry_at TIMESTAMP,
 			config TEXT
 		);
 		CREATE TABLE InformationSeedCandidate (
@@ -970,9 +976,11 @@ func setupInformationSeedAPITestDB(t *testing.T) (cdb.Handler, func()) {
 		);
 		CREATE TABLE Sources (
 			source_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			source_uid VARCHAR(64) NOT NULL,
 			name VARCHAR(255),
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
 			last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			deleted_at TIMESTAMP,
 			usr_id INTEGER DEFAULT 0 NOT NULL,
 			category_id INTEGER DEFAULT 0 NOT NULL,
 			url TEXT NOT NULL UNIQUE,
@@ -983,6 +991,17 @@ func setupInformationSeedAPITestDB(t *testing.T) (cdb.Handler, func()) {
 			disabled BOOLEAN DEFAULT FALSE,
 			flags INTEGER DEFAULT 0 NOT NULL,
 			config TEXT
+		);
+		CREATE TABLE SourceOwnership (
+			source_id INTEGER PRIMARY KEY,
+			user_id INTEGER NOT NULL,
+			verified_at TIMESTAMP NOT NULL,
+			verified_by_user_id INTEGER NOT NULL,
+			verified_by TEXT NOT NULL,
+			verification_method TEXT NOT NULL,
+			verification_reason TEXT,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
 		);
 		CREATE TABLE SourceInformationSeedIndex (
 			source_information_seed_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1027,7 +1046,7 @@ func createInformationSeedAPITestSeed(t *testing.T, handler *cdb.Handler, text, 
 
 func insertInformationSeedAPITestSource(t *testing.T, db *sql.DB, sourceURL, name string) uint64 {
 	t.Helper()
-	result, err := db.Exec(`INSERT INTO Sources (url, name, priority, category_id, usr_id, restricted, flags, config, disabled) VALUES (?, ?, 'medium', 7, 11, 2, 3, '{}', FALSE)`, sourceURL, name)
+	result, err := db.Exec(`INSERT INTO Sources (source_uid, url, name, priority, category_id, usr_id, restricted, flags, config, disabled, status) VALUES (?, ?, ?, 'medium', 7, 11, 2, 3, '{}', FALSE, 'new')`, cdb.CalculateSourceUID(name, sourceURL), sourceURL, name)
 	if err != nil {
 		t.Fatalf("insert source: %v", err)
 	}

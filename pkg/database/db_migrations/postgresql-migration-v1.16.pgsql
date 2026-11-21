@@ -1,3 +1,6 @@
+-- CROWler schema migration chain: read docs/database-migrations.md before running.
+-- Target version: 1.16. Apply every earlier migration first; do not run out of order.
+
 -- Version 1.16 raises autovacuum aggressiveness for the high-churn
 -- ObjectAttributes table (and its TOAST) so refresh_content replacements do
 -- not pin the MVCC horizon behind long-lived dead-tuple chains, and replaces

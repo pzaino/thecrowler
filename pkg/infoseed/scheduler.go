@@ -5,6 +5,7 @@ package infoseed
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -42,11 +43,29 @@ func StartScheduler(parent context.Context, db *cdb.Handler, config cfg.Informat
 		scheduler.Engine = "infoseed"
 	}
 	wakeups, stopWakeups := cdb.SubscribeInformationSeedWakeups()
-	go scheduler.listenForDatabaseWakeups(ctx)
-	go scheduler.Run(ctx, wakeups)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		scheduler.listenForDatabaseWakeups(ctx)
+	}()
+	go func() {
+		defer wg.Done()
+		scheduler.Run(ctx, wakeups)
+	}()
 	return func() {
 		cancel()
 		stopWakeups()
+		done := make(chan struct{})
+		go func() {
+			wg.Wait()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(30 * time.Second):
+			cmn.DebugMsg(cmn.DbgLvlWarn, "information seed scheduler shutdown timed out")
+		}
 	}
 }
 
@@ -67,6 +86,8 @@ func (s Scheduler) Run(ctx context.Context, wakeups <-chan struct{}) {
 	if limit < 1 {
 		limit = 1
 	}
+	leaseDuration := time.Duration(s.Config.LeaseDuration) * time.Second
+	maxAttempts := s.Config.MaxAttempts
 	ticker := time.NewTicker(queryTimer)
 	defer ticker.Stop()
 	for {
@@ -77,7 +98,15 @@ func (s Scheduler) Run(ctx context.Context, wakeups <-chan struct{}) {
 		case <-wakeups:
 		}
 		drainWakeups(wakeups)
-		s.runOnce(ctx, limit, processingTimeout, retryAfter)
+		s.runOnce(ctx, limit, processingTimeout, retryAfter, leaseDuration, maxAttempts)
+		if s.Config.Retention.Enabled {
+			if result, err := cdb.PurgeInformationSeedRetentionContext(ctx, s.DB, s.Config.Retention); err != nil {
+				cmn.DebugMsg(cmn.DbgLvlWarn, "information seed retention: %v", redactInformationSeedError(err.Error()))
+			} else if result.Considered > 0 {
+				recordInformationSeedRetentionDeleted(result.Deleted)
+				cmn.DebugMsg(cmn.DbgLvlInfo, "information seed retention considered=%d deleted=%d dry_run=%t", result.Considered, result.Deleted, result.DryRun)
+			}
+		}
 	}
 }
 
@@ -131,14 +160,22 @@ func drainWakeups(wakeups <-chan struct{}) {
 	}
 }
 
-func (s Scheduler) runOnce(ctx context.Context, limit int, processingTimeout, retryAfter time.Duration) {
+func (s Scheduler) runOnce(ctx context.Context, limit int, processingTimeout, retryAfter, leaseDuration time.Duration, maxAttempts int) {
 	if s.DB == nil || s.Runner == nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "information seed scheduler is not configured")
 		return
 	}
-	seeds, err := cdb.ClaimInformationSeeds(s.DB, limit, s.Priority, s.Engine, processingTimeout, retryAfter)
+	if ctx.Err() != nil {
+		return
+	}
+	if err := cdb.ExhaustExpiredInformationSeedClaimsContext(ctx, s.DB, maxAttempts); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlWarn, "exhausting expired information seed claims: %v", redactInformationSeedError(err.Error()))
+	}
+	seeds, err := cdb.ClaimInformationSeedsContext(ctx, s.DB, limit, s.Priority, s.Engine, "", processingTimeout, retryAfter, leaseDuration, maxAttempts)
 	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "claiming information seeds: %v", redactInformationSeedError(err.Error()))
+		if ctx.Err() == nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "claiming information seeds: %v", redactInformationSeedError(err.Error()))
+		}
 		return
 	}
 	if len(seeds) == 0 {
@@ -149,6 +186,7 @@ func (s Scheduler) runOnce(ctx context.Context, limit int, processingTimeout, re
 	sem := make(chan struct{}, limit)
 	for _, seed := range seeds {
 		if seed.Disabled || strings.EqualFold(seed.Status, "disabled") {
+			s.releaseClaim(seed)
 			continue
 		}
 		wg.Add(1)
@@ -158,14 +196,33 @@ func (s Scheduler) runOnce(ctx context.Context, limit int, processingTimeout, re
 			case sem <- struct{}{}:
 				defer func() { <-sem }()
 			case <-ctx.Done():
+				s.releaseClaim(seed)
 				return
 			}
 			if _, err := s.Runner.RunSeed(ctx, seed); err != nil {
-				cmn.DebugMsg(cmn.DbgLvlError, "processing information seed %d: %v", seed.ID, redactInformationSeedError(err.Error()))
+				if ctx.Err() == nil {
+					cmn.DebugMsg(cmn.DbgLvlError, "processing information seed %d: %v", seed.ID, redactInformationSeedError(err.Error()))
+				}
 			}
 		}(seed)
 	}
 	wg.Wait()
+}
+
+func (s Scheduler) releaseClaim(seed cdb.InformationSeed) {
+	if seed.ClaimToken == "" || s.DB == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := cdb.ReleaseInformationSeedClaimContext(ctx, s.DB, seed.ID, seed.ClaimToken, seed.FencingToken, "pending", "", nil); err != nil {
+		if !errors.Is(err, cdb.ErrInformationSeedClaimLost) {
+			cmn.DebugMsg(cmn.DbgLvlWarn, "releasing information seed claim %d: %v", seed.ID, redactInformationSeedError(err.Error()))
+		}
+		recordInformationSeedClaimFailure("release")
+	} else {
+		recordInformationSeedClaimRelease("shutdown")
+	}
 }
 
 // ParseDurationOrDefault parses Go duration strings and human-readable values

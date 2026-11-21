@@ -26,6 +26,9 @@ function moveFile() {
     find "$src_dir" -maxdepth 1 -iname "$src_file" -exec mv {} "$dest" \;
 }
 
+# SQLite runtime support uses the CGO-backed go-sqlite3 driver.
+# The caller controls CGO_ENABLED: Docker builders set it to 1, while the
+# static cross-build workflow sets it to 0.
 # Check if the go command is installed
 which go
 checkError "Go is not installed!"
@@ -40,7 +43,7 @@ if  [ "${build_objs}" == "all" ] ||
     [ "${build_objs}" == "" ];
 then
     cmd_name="thecrowler"
-    CGO_ENABLED=0 go build ./cmd/${cmd_name}
+    go build ./cmd/${cmd_name}
     rval=$?
     if [ "${rval}" == "0" ]; then
         echo "${cmd_name} command line tool built successfully!"
@@ -57,7 +60,7 @@ if  [ "${build_objs}" == "all" ] ||
     [ "${build_objs}" == "" ];
 then
     cmd_name="rebuildTimeSeriesCardinality"
-    CGO_ENABLED=0 go build ./cmd/${cmd_name}
+    go build ./cmd/${cmd_name}
     rval=$?
     if [ "${rval}" == "0" ]; then
         echo "${cmd_name} command line tool built successfully!"
@@ -74,7 +77,7 @@ if  [ "${build_objs}" == "all" ] ||
     [ "${build_objs}" == "" ];
 then
     cmd_name="addSource"
-    CGO_ENABLED=0 go build ./cmd/${cmd_name}
+    go build ./cmd/${cmd_name}
     rval=$?
     if [ "${rval}" == "0" ]; then
         echo "${cmd_name} command line tool built successfully!"
@@ -91,7 +94,7 @@ if  [ "${build_objs}" == "all" ] ||
     [ "${build_objs}" == "" ];
 then
     cmd_name="updateSourceStatus"
-    CGO_ENABLED=0 go build ./cmd/${cmd_name}
+    go build ./cmd/${cmd_name}
     rval=$?
     if [ "${rval}" == "0" ]; then
         echo "${cmd_name} command line tool built successfully!"
@@ -108,7 +111,7 @@ if  [ "${build_objs}" == "all" ] ||
     [ "${build_objs}" == "" ];
 then
     cmd_name="addCategory"
-    CGO_ENABLED=0 go build ./cmd/${cmd_name}
+    go build ./cmd/${cmd_name}
     rval=$?
     if [ "${rval}" == "0" ]; then
         echo "${cmd_name} command line tool built successfully!"
@@ -125,7 +128,7 @@ if  [ "${build_objs}" == "all" ] ||
     [ "${build_objs}" == "" ];
 then
     cmd_name="exportSources"
-    CGO_ENABLED=0 go build ./cmd/${cmd_name}
+    go build ./cmd/${cmd_name}
     rval=$?
     if [ "${rval}" == "0" ]; then
         echo "${cmd_name} command line tool built successfully!"
@@ -142,7 +145,7 @@ if  [ "${build_objs}" == "all" ] ||
     [ "${build_objs}" == "" ];
 then
     cmd_name="removeSource"
-    CGO_ENABLED=0 go build ./cmd/${cmd_name}
+    go build ./cmd/${cmd_name}
     rval=$?
     if [ "${rval}" == "0" ]; then
         echo "${cmd_name} command line tool built successfully!"
@@ -159,7 +162,7 @@ if  [ "${build_objs}" == "all" ] ||
     [ "${build_objs}" == "" ];
 then
     cmd_name="crowler-agt"
-    CGO_ENABLED=0 go build ./cmd/${cmd_name}
+    go build ./cmd/${cmd_name}
     rval=$?
     if [ "${rval}" == "0" ]; then
         echo "${cmd_name} command line tool built successfully!"
@@ -175,7 +178,7 @@ if  [ "${build_objs}" == "all" ] ||
     [ "${build_objs}" == "" ];
 then
     cmd_name="api"
-    CGO_ENABLED=0 go build ./services/${cmd_name}
+    go build ./services/${cmd_name}
     rval=$?
     if [ "${rval}" == "0" ]; then
         echo "${cmd_name} command line tool built successfully!"
@@ -191,7 +194,24 @@ if  [ "${build_objs}" == "all" ] ||
     [ "${build_objs}" == "" ];
 then
     cmd_name="events"
-    CGO_ENABLED=0 go build ./services/${cmd_name}
+    go build ./services/${cmd_name}
+    rval=$?
+    if [ "${rval}" == "0" ]; then
+        echo "${cmd_name} command line tool built successfully!"
+        moveFile ${cmd_name} ./bin
+    else
+        echo "${cmd_name} command line tool build failed!"
+        exit $rval
+    fi
+fi
+
+if  [ "${build_objs}" == "all" ] ||
+    [ "${build_objs}" == "dbDeploy" ] ||
+    [ "${build_objs}" == "dd" ] ||
+    [ "${build_objs}" == "" ];
+then
+    cmd_name="dbDeploy"
+    go build ./cmd/${cmd_name}
     rval=$?
     if [ "${rval}" == "0" ]; then
         echo "${cmd_name} command line tool built successfully!"
@@ -208,7 +228,7 @@ if  [ "${build_objs}" == "all" ] ||
     [ "${build_objs}" == "" ];
 then
     cmd_name="healthCheck"
-    CGO_ENABLED=0 go build ./cmd/${cmd_name}
+    go build ./cmd/${cmd_name}
     rval=$?
     if [ "${rval}" == "0" ]; then
         echo "${cmd_name} command line tool built successfully!"

@@ -41,6 +41,9 @@ func (jc *JobConfig) NormalizeToAgentDefinition(source AgentSourceMetadata) (*Ag
 	if jc == nil {
 		return nil, fmt.Errorf("nil job config")
 	}
+	if err := jc.freezeGoalSpecs(); err != nil {
+		return nil, err
+	}
 	clone := *jc
 	if jc.AgentIdentity != nil {
 		clone.AgentIdentity = cloneAgentIdentity(jc.AgentIdentity)
@@ -206,4 +209,21 @@ func (ar *AgentRegistry) GetByTrigger(triggerType, triggerName string) []*AgentD
 	out := make([]*AgentDefinition, len(agents))
 	copy(out, agents)
 	return out
+}
+
+// ManualJobConfig returns a copy containing only jobs explicitly marked with a
+// manual trigger. The authenticated manual-run endpoint must never execute an
+// event-triggered job out of band.
+func (ad *AgentDefinition) ManualJobConfig() (*JobConfig, bool) {
+	if ad == nil {
+		return nil, false
+	}
+	out := ad.toJobConfig()
+	out.Jobs = nil
+	for _, job := range ad.Jobs {
+		if strings.EqualFold(strings.TrimSpace(job.TriggerType), "manual") {
+			out.Jobs = append(out.Jobs, job)
+		}
+	}
+	return out, len(out.Jobs) > 0
 }

@@ -1,3 +1,6 @@
+-- CROWler schema migration chain: read docs/database-migrations.md before running.
+-- Target version: 1.10. Apply every earlier migration first; do not run out of order.
+
 -- PostgreSQL upgrade migration for atomic Information Seed claims.
 -- Safe to run on existing databases; the function definition is idempotent.
 

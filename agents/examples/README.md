@@ -18,6 +18,31 @@ carry the `delegate` capability, and `CreateEvent` steps use numeric sources.
   the `https://api.openai.com/...` URLs and `${...}` placeholders are
   intentionally non-functional without them.
 
+## Local Ollama examples
+
+- `tool-loop-reader.agent.yaml` uses `provider: ollama` with a base URL and
+  the vetted read-tool catalog. Attest tool-capable models with
+  `CROWLER_OLLAMA_TOOL_MODELS` before relying on tool execution.
+- `ai-tool-calling-probe.agent.yaml` uses `provider: ollama` for inert
+  tool-call proposals. Nothing it returns is executed.
+- `tool-loop-mcp-reader.agent.yaml` shows an approved read-only stdio MCP tool
+  used alongside the native `get_source_status` tool.
+- `tool-loop-mcp-http-reader.agent.yaml` shows an approved read-only Streamable
+  HTTP MCP tool alongside the native tool. The operator must configure the
+  `mcp.servers` inventory, endpoint policy and any TLS/auth material before
+  either manifest can run.
+- `tool-loop-crawl-requester.agent.yaml` is a disabled-by-default controlled
+  crawl requester. It records a durable `request_source_crawl` proposal but
+  cannot approve or schedule it; an authenticated operator must issue the exact
+  approval and submit it through the console API.
+- `goal-source-reader.agent.yaml`, `goal-source-any.agent.yaml` and
+  `goal-crawl-metadata-reader.agent.yaml` show evidence-verified
+  `AgentGoalRun` goals. The latter uses `get_source_crawl_status`,
+  `find_scraped_field_metadata` and `find_artifact_metadata`. A model's final
+  text is never proof; the deterministic verifier decides completion.
+- See `docs/crowler-agents/local-llm-providers.md` for endpoint rules,
+  capability reporting and the live smoke test.
+
 ## New advanced scenarios
 
 - `soc-autonomous-triage-v2.agent.yaml`
@@ -52,9 +77,13 @@ Use the CLI to lint and validate examples:
 crowler-agt agents lint agents/examples/soc-autonomous-triage-v2.agent.yaml
 crowler-agt agents lint agents/examples/compliance-evidence-fabric-v2.agent.yaml
 crowler-agt agents lint agents/examples/revenue-growth-experiment-lab-v2.agent.yaml
+crowler-agt agents lint agents/examples/goal-source-reader.agent.yaml
+crowler-agt agents lint agents/examples/goal-source-any.agent.yaml
 
 # strict validation
 crowler-agt agents validate --strict agents/examples/soc-autonomous-triage-v2.agent.yaml
 crowler-agt agents validate --strict agents/examples/compliance-evidence-fabric-v2.agent.yaml
 crowler-agt agents validate --strict agents/examples/revenue-growth-experiment-lab-v2.agent.yaml
+crowler-agt agents validate --strict agents/examples/goal-source-reader.agent.yaml
+crowler-agt agents validate --strict agents/examples/goal-source-any.agent.yaml
 ```

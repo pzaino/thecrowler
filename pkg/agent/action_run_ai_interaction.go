@@ -16,6 +16,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -29,8 +30,17 @@ func (a *AIInteractionAction) Name() string {
 	return "AIInteraction"
 }
 
-// Execute sends a request to an AI provider.
+// Execute sends a request to an AI provider without a caller context.
 func (a *AIInteractionAction) Execute(params map[string]interface{}) (map[string]interface{}, error) {
+	return a.ExecuteContext(context.Background(), params)
+}
+
+// ExecuteContext sends a request to an AI provider with the trusted caller
+// context so HTTP cancellation reaches the model transport.
+func (a *AIInteractionAction) ExecuteContext(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	rval := map[string]interface{}{StrResponse: nil, StrConfig: nil}
 
 	config, err := getConfig(params)
@@ -80,7 +90,7 @@ func (a *AIInteractionAction) Execute(params map[string]interface{}) (map[string
 		return rval, err
 	}
 
-	responseMap, err := provider.Execute(resolved)
+	responseMap, err := executeProviderCall(provider, ctx, resolved)
 	if err != nil {
 		rval[StrStatus] = StatusError
 		rval[StrMessage] = err.Error()
@@ -402,7 +412,7 @@ func matchAIContractToken(token string, req LLMRequest) error {
 	case normalized == "aiinteraction":
 		return fmt.Errorf("AI policy denied: agent contract forbids AIInteraction")
 	case strings.HasPrefix(normalized, "provider:"):
-		if matchesPolicyPattern(strings.TrimPrefix(normalized, "provider:"), strings.ToLower(req.Provider)) {
+		if matchesPolicyPattern(canonicalLLMProviderName(strings.TrimPrefix(normalized, "provider:")), canonicalLLMProviderName(req.Provider)) {
 			return fmt.Errorf("AI policy denied provider %q by contract", req.Provider)
 		}
 	case strings.HasPrefix(normalized, "model:"):
@@ -432,7 +442,7 @@ func enforceAIUsagePolicy(config map[string]interface{}, req LLMRequest) error {
 		case normalized == "aiinteraction":
 			return fmt.Errorf("AI policy denied: agent contract forbids AIInteraction")
 		case strings.HasPrefix(normalized, "provider:"):
-			if matchesPolicyPattern(strings.TrimPrefix(normalized, "provider:"), strings.ToLower(req.Provider)) {
+			if matchesPolicyPattern(canonicalLLMProviderName(strings.TrimPrefix(normalized, "provider:")), canonicalLLMProviderName(req.Provider)) {
 				return fmt.Errorf("AI policy denied provider %q by contract", req.Provider)
 			}
 		case strings.HasPrefix(normalized, "model:"):

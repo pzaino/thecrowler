@@ -127,14 +127,14 @@ CREATE TABLE IF NOT EXISTS DBSchemaVersion (
 DO $$
 BEGIN
     IF NOT EXISTS (
-        SELECT 1 FROM DBSchemaVersion WHERE version = '1.16'
+        SELECT 1 FROM DBSchemaVersion WHERE version = '1.17'
     ) THEN
         INSERT INTO DBSchemaVersion (version, description)
-        VALUES ('1.16', 'CROWler DB schema version 1.16');
+        VALUES ('1.17', 'CROWler DB schema version 1.17');
     END IF;
 END
 $$;
-UPDATE DBSchemaVersion SET is_current = (version = '1.16');
+UPDATE DBSchemaVersion SET is_current = (version = '1.17');
 CREATE UNIQUE INDEX IF NOT EXISTS uq_dbschemaversion_one_current
     ON DBSchemaVersion (is_current) WHERE is_current = TRUE;
 ----------------------------------------------------------------
@@ -208,6 +208,135 @@ $$;
 
 
 ----------------------------------------------------------------
+
+----------------------------------------------------------------
+-- Durable operator approvals for the crawl-request authorization path.
+-- The table is an immutable audit record plus a revocation state. It is
+-- intentionally not foreign-keyed to Sources/Users so historical approvals
+-- survive source/user lifecycle changes; issuance validates those references
+-- while they are live.
+CREATE TABLE IF NOT EXISTS CrawlApprovals (
+    approval_id CHAR(64) PRIMARY KEY,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    proposal_sha256 CHAR(64) NOT NULL,
+    request_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    owner TEXT NOT NULL,
+    principal_user_id BIGINT NOT NULL,
+    source_id BIGINT NOT NULL,
+    operation_type TEXT NOT NULL,
+
+    issuer TEXT NOT NULL,
+    issued_by_user_id BIGINT NOT NULL,
+    issued_by TEXT NOT NULL,
+    issued_by_issuer TEXT NOT NULL,
+    approved_by_user_id BIGINT NOT NULL,
+    approved_by TEXT NOT NULL,
+    approved_by_issuer TEXT NOT NULL,
+    approval_sha256 CHAR(64) NOT NULL,
+
+    proposal_expires_at TIMESTAMPTZ NOT NULL,
+    approved_at TIMESTAMPTZ NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+
+    revoked_at TIMESTAMPTZ,
+    revoked_by_user_id BIGINT,
+    revoked_by TEXT,
+    revocation_reason TEXT,
+
+    CONSTRAINT uq_crawlapprovals_logical UNIQUE
+        (request_id, run_id, principal_user_id, source_id, operation_type),
+    CONSTRAINT chk_crawlapprovals_hashes CHECK (
+        approval_id ~ '^[0-9a-f]{64}$' AND
+        proposal_sha256 ~ '^[0-9a-f]{64}$' AND
+        approval_sha256 ~ '^[0-9a-f]{64}$'
+    ),
+    CONSTRAINT chk_crawlapprovals_lifetime CHECK (expires_at > approved_at),
+    CONSTRAINT chk_crawlapprovals_max_lifetime
+        CHECK (expires_at <= approved_at + INTERVAL '24 hours')
+);
+
+CREATE INDEX IF NOT EXISTS idx_crawlapprovals_source
+ON CrawlApprovals(source_id, expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_crawlapprovals_principal
+ON CrawlApprovals(principal_user_id, expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_crawlapprovals_request
+ON CrawlApprovals(run_id, request_id);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_update_crawlapprovals_last_updated_before_update') THEN
+        CREATE TRIGGER trg_update_crawlapprovals_last_updated_before_update
+        BEFORE UPDATE ON CrawlApprovals
+        FOR EACH ROW
+        EXECUTE FUNCTION update_last_updated_at_column();
+    END IF;
+END
+$$;
+
+
+----------------------------------------------------------------
+-- Durable crawl proposals. A proposal is created by the trusted agent
+-- runtime before any scheduling mutation and is the restart-safe anchor used
+-- by operator approval and submission. Approval state remains in
+-- CrawlApprovals; this table records proposal provenance and lifecycle.
+CREATE TABLE IF NOT EXISTS CrawlProposals (
+    request_id CHAR(64) PRIMARY KEY,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    run_id TEXT NOT NULL,
+    tool_call_id TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    owner TEXT NOT NULL,
+    principal_user_id BIGINT NOT NULL,
+    source_id BIGINT NOT NULL,
+    operation_type TEXT NOT NULL,
+    proposal_sha256 CHAR(64) NOT NULL,
+    trace_id TEXT NOT NULL DEFAULT '',
+    max_requests INTEGER NOT NULL,
+    budget_window_seconds BIGINT NOT NULL,
+    policy_json TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'pending',
+    expires_at TIMESTAMPTZ NOT NULL,
+    submitted_at TIMESTAMPTZ,
+    operation_id TEXT,
+
+    CONSTRAINT uq_crawlproposals_logical UNIQUE
+        (run_id, tool_call_id, source_id, operation_type),
+    CONSTRAINT chk_crawlproposals_hashes CHECK (
+        request_id ~ '^[0-9a-f]{64}$' AND proposal_sha256 ~ '^[0-9a-f]{64}$'
+    ),
+    CONSTRAINT chk_crawlproposals_state CHECK (
+        state IN ('pending', 'submitted', 'expired', 'denied')
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_crawlproposals_run_request
+ON CrawlProposals(run_id, request_id);
+
+CREATE INDEX IF NOT EXISTS idx_crawlproposals_principal
+ON CrawlProposals(principal_user_id, expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_crawlproposals_source
+ON CrawlProposals(source_id, expires_at);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_update_crawlproposals_last_updated_before_update') THEN
+        CREATE TRIGGER trg_update_crawlproposals_last_updated_before_update
+        BEFORE UPDATE ON CrawlProposals
+        FOR EACH ROW
+        EXECUTE FUNCTION update_last_updated_at_column();
+    END IF;
+END
+$$;
+
 -- InformationSeeds table stores the seed information for the crawler
 CREATE TABLE IF NOT EXISTS InformationSeed (
     information_seed_id BIGSERIAL PRIMARY KEY,
@@ -234,6 +363,11 @@ ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS last_error TEXT;
 ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS last_error_at TIMESTAMPTZ;
 ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS disabled BOOLEAN DEFAULT FALSE;
 ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS attempts INTEGER DEFAULT 0 NOT NULL;
+ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS claim_token VARCHAR(64);
+ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS fencing_token BIGINT DEFAULT 0 NOT NULL;
+ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ;
+ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ;
+ALTER TABLE InformationSeed ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMPTZ;
 
 -- InformationSeedCandidate stores durable audit evidence for every accepted or
 -- rejected candidate decision. Rejected rows are intentionally persisted here
@@ -312,6 +446,40 @@ CREATE TABLE IF NOT EXISTS Sources (
 
 CREATE INDEX IF NOT EXISTS idx_sources_priority_sub_priority
 ON Sources(priority, sub_priority DESC, source_id ASC);
+
+----------------------------------------------------------------
+-- SourceOwnership records verified, authoritative source ownership.
+-- Sources.usr_id remains the persisted owner identifier, but a source is only
+-- eligible for authenticated owner mutations and agent scheduling when this
+-- table contains a matching verified row. Historical rows without a provenance
+-- record remain legacy/unverified until an administrator verifies them.
+CREATE TABLE IF NOT EXISTS SourceOwnership (
+    source_id BIGINT PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    verified_at TIMESTAMPTZ NOT NULL,
+    verified_by_user_id BIGINT NOT NULL,
+    verified_by TEXT NOT NULL,
+    verification_method TEXT NOT NULL,
+    verification_reason TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_sourceownership_user CHECK (user_id > 0),
+    CONSTRAINT chk_sourceownership_verifier CHECK (verified_by_user_id > 0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sourceownership_user
+ON SourceOwnership(user_id);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_update_sourceownership_last_updated_before_update') THEN
+        CREATE TRIGGER trg_update_sourceownership_last_updated_before_update
+        BEFORE UPDATE ON SourceOwnership
+        FOR EACH ROW
+        EXECUTE FUNCTION update_last_updated_at_column();
+    END IF;
+END
+$$;
 
 --------------------------------------------------------------------------------
 
@@ -1212,6 +1380,12 @@ CREATE INDEX IF NOT EXISTS idx_informationseed_claim_queue
     ON InformationSeed(disabled, status, priority, created_at, information_seed_id);
 CREATE INDEX IF NOT EXISTS idx_informationseed_engine_status
     ON InformationSeed(engine, status, last_processed_at);
+CREATE INDEX IF NOT EXISTS idx_informationseed_lease_expiry
+    ON InformationSeed(status, disabled, lease_expires_at);
+CREATE INDEX IF NOT EXISTS idx_informationseed_next_retry
+    ON InformationSeed(status, disabled, next_retry_at);
+CREATE INDEX IF NOT EXISTS idx_informationseed_claim_token
+    ON InformationSeed(claim_token);
 
 
 -- Indexes for the Sources table -----------------------------------------------
@@ -2283,7 +2457,7 @@ CREATE TABLE IF NOT EXISTS TimeSeriesDimensionSlots (
 CREATE TABLE IF NOT EXISTS DatabaseWriterCompatibility (
     lock_id INTEGER PRIMARY KEY CHECK(lock_id = 1), writer_generation TEXT NOT NULL
 );
-INSERT INTO DatabaseWriterCompatibility(lock_id,writer_generation) VALUES (1,'reservation-v1.15')
+INSERT INTO DatabaseWriterCompatibility(lock_id,writer_generation) VALUES (1,'verified-ownership-v1.17')
 ON CONFLICT (lock_id) DO UPDATE SET writer_generation=EXCLUDED.writer_generation;
 
 CREATE TABLE IF NOT EXISTS TimeSeriesAggregates (
@@ -2607,95 +2781,121 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Function to handle the deletion of shared entities when no longer linked to any Source.
+--
+-- Concurrency contract (WP-REL230-RC2 / RC2-A), unchanged by RC5: the parent
+-- artifact row is locked FOR UPDATE before the remaining links are counted.
+-- Without that lock, READ COMMITTED hides an uncommitted link from the count,
+-- the DELETE waits on the inserter's foreign-key row lock and then proceeds
+-- once it commits; because the link tables cascade from the parent, the other
+-- page's just-committed link would silently disappear.
+--
+-- The trigger runs once per DELETE statement. For every distinct parent
+-- referenced by the deleted rows it takes the same FOR UPDATE row lock the RC2
+-- integrity fix introduced, re-counts the remaining links and deletes the
+-- parent only when none remain. FOR UPDATE conflicts with the KEY SHARE lock a
+-- concurrent link INSERT needs for its foreign key, so a reference committed
+-- while the statement was running is always seen by the re-count.
+--
+-- Parents are processed in ascending ID order. Two concurrent multi-parent
+-- deletions therefore acquire the same locks in the same order and cannot form
+-- a lock cycle, and one statement locks each parent once instead of once per
+-- deleted link.
 CREATE OR REPLACE FUNCTION handle_shared_entity_deletion()
 RETURNS TRIGGER AS $$
+DECLARE
+    target_id BIGINT;
 BEGIN
     IF TG_TABLE_NAME = 'metatagsindex' THEN
-        IF (SELECT COUNT(*) FROM MetaTagsIndex WHERE metatag_id = OLD.metatag_id) = 0 THEN
-            DELETE FROM MetaTags WHERE metatag_id = OLD.metatag_id;
-        END IF;
+        FOR target_id IN SELECT DISTINCT metatag_id FROM deleted_links ORDER BY metatag_id LOOP
+            PERFORM 1 FROM MetaTags WHERE metatag_id = target_id FOR UPDATE;
+            IF FOUND THEN
+                IF NOT EXISTS (SELECT 1 FROM MetaTagsIndex WHERE metatag_id = target_id) THEN
+                    DELETE FROM MetaTags WHERE metatag_id = target_id;
+                END IF;
+            END IF;
+        END LOOP;
     ELSIF TG_TABLE_NAME = 'webobjectsindex' THEN
-        IF (SELECT COUNT(*) FROM WebObjectsIndex WHERE object_id = OLD.object_id) = 0 THEN
-            DELETE FROM WebObjects WHERE object_id = OLD.object_id;
-        END IF;
+        FOR target_id IN SELECT DISTINCT object_id FROM deleted_links ORDER BY object_id LOOP
+            PERFORM 1 FROM WebObjects WHERE object_id = target_id FOR UPDATE;
+            IF FOUND THEN
+                IF NOT EXISTS (SELECT 1 FROM WebObjectsIndex WHERE object_id = target_id) THEN
+                    DELETE FROM WebObjects WHERE object_id = target_id;
+                END IF;
+            END IF;
+        END LOOP;
     ELSIF TG_TABLE_NAME = 'keywordindex' THEN
-        IF (SELECT COUNT(*) FROM KeywordIndex WHERE keyword_id = OLD.keyword_id) = 0 THEN
-            DELETE FROM Keywords WHERE keyword_id = OLD.keyword_id;
-        END IF;
+        FOR target_id IN SELECT DISTINCT keyword_id FROM deleted_links ORDER BY keyword_id LOOP
+            PERFORM 1 FROM Keywords WHERE keyword_id = target_id FOR UPDATE;
+            IF FOUND THEN
+                IF NOT EXISTS (SELECT 1 FROM KeywordIndex WHERE keyword_id = target_id) THEN
+                    DELETE FROM Keywords WHERE keyword_id = target_id;
+                END IF;
+            END IF;
+        END LOOP;
     ELSIF TG_TABLE_NAME = 'netinfoindex' THEN
-        IF (SELECT COUNT(*) FROM NetInfoIndex WHERE netinfo_id = OLD.netinfo_id) = 0 THEN
-            DELETE FROM NetInfo WHERE netinfo_id = OLD.netinfo_id;
-        END IF;
+        FOR target_id IN SELECT DISTINCT netinfo_id FROM deleted_links ORDER BY netinfo_id LOOP
+            PERFORM 1 FROM NetInfo WHERE netinfo_id = target_id FOR UPDATE;
+            IF FOUND THEN
+                IF NOT EXISTS (SELECT 1 FROM NetInfoIndex WHERE netinfo_id = target_id) THEN
+                    DELETE FROM NetInfo WHERE netinfo_id = target_id;
+                END IF;
+            END IF;
+        END LOOP;
     ELSIF TG_TABLE_NAME = 'httpinfoindex' THEN
-        IF (SELECT COUNT(*) FROM HTTPInfoIndex WHERE httpinfo_id = OLD.httpinfo_id) = 0 THEN
-            DELETE FROM HTTPInfo WHERE httpinfo_id = OLD.httpinfo_id;
-        END IF;
+        FOR target_id IN SELECT DISTINCT httpinfo_id FROM deleted_links ORDER BY httpinfo_id LOOP
+            PERFORM 1 FROM HTTPInfo WHERE httpinfo_id = target_id FOR UPDATE;
+            IF FOUND THEN
+                IF NOT EXISTS (SELECT 1 FROM HTTPInfoIndex WHERE httpinfo_id = target_id) THEN
+                    DELETE FROM HTTPInfo WHERE httpinfo_id = target_id;
+                END IF;
+            END IF;
+        END LOOP;
     END IF;
-    RETURN OLD;
+    RETURN NULL;
 END;
 $$ LANGUAGE plpgsql;
 
 -- Triggers to handle the deletion of shared entities.
+--
+-- One AFTER DELETE FOR EACH STATEMENT trigger per link table. The transition
+-- table exposes the deleted links so the function can deduplicate parent IDs
+-- and lock each parent once. DROP + CREATE keeps fresh installs and repeated
+-- migrations converging on the same definition.
 
--- Creates a trigger to handle the deletion of shared entities when no longer linked to any Source.
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_after_delete_metatagsindex') THEN
-        CREATE TRIGGER trg_after_delete_metatagsindex
-        AFTER DELETE ON MetaTagsIndex
-        FOR EACH ROW
-        EXECUTE FUNCTION handle_shared_entity_deletion();
-    END IF;
-END
-$$;
+DROP TRIGGER IF EXISTS trg_after_delete_metatagsindex ON MetaTagsIndex;
+CREATE TRIGGER trg_after_delete_metatagsindex
+AFTER DELETE ON MetaTagsIndex
+REFERENCING OLD TABLE AS deleted_links
+FOR EACH STATEMENT
+EXECUTE FUNCTION handle_shared_entity_deletion();
 
--- Creates a trigger to handle the deletion of shared entities when no longer linked to any Source.
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_after_delete_webobjectsindex') THEN
-        CREATE TRIGGER trg_after_delete_webobjectsindex
-        AFTER DELETE ON WebObjectsIndex
-        FOR EACH ROW
-        EXECUTE FUNCTION handle_shared_entity_deletion();
-    END IF;
-END
-$$;
+DROP TRIGGER IF EXISTS trg_after_delete_webobjectsindex ON WebObjectsIndex;
+CREATE TRIGGER trg_after_delete_webobjectsindex
+AFTER DELETE ON WebObjectsIndex
+REFERENCING OLD TABLE AS deleted_links
+FOR EACH STATEMENT
+EXECUTE FUNCTION handle_shared_entity_deletion();
 
--- Creates a trigger to handle the deletion of shared entities when no longer linked to any Source.
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_after_delete_keywordindex') THEN
-        CREATE TRIGGER trg_after_delete_keywordindex
-        AFTER DELETE ON KeywordIndex
-        FOR EACH ROW
-        EXECUTE FUNCTION handle_shared_entity_deletion();
-    END IF;
-END
-$$;
+DROP TRIGGER IF EXISTS trg_after_delete_keywordindex ON KeywordIndex;
+CREATE TRIGGER trg_after_delete_keywordindex
+AFTER DELETE ON KeywordIndex
+REFERENCING OLD TABLE AS deleted_links
+FOR EACH STATEMENT
+EXECUTE FUNCTION handle_shared_entity_deletion();
 
--- Creates a trigger to handle the deletion of shared entities when no longer linked to any Source.
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_after_delete_netinfoindex') THEN
-        CREATE TRIGGER trg_after_delete_netinfoindex
-        AFTER DELETE ON NetInfoIndex
-        FOR EACH ROW
-        EXECUTE FUNCTION handle_shared_entity_deletion();
-    END IF;
-END
-$$;
+DROP TRIGGER IF EXISTS trg_after_delete_netinfoindex ON NetInfoIndex;
+CREATE TRIGGER trg_after_delete_netinfoindex
+AFTER DELETE ON NetInfoIndex
+REFERENCING OLD TABLE AS deleted_links
+FOR EACH STATEMENT
+EXECUTE FUNCTION handle_shared_entity_deletion();
 
--- Creates a trigger to handle the deletion of shared entities when no longer linked to any Source.
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_after_delete_httpinfoindex') THEN
-        CREATE TRIGGER trg_after_delete_httpinfoindex
-        AFTER DELETE ON HTTPInfoIndex
-        FOR EACH ROW
-        EXECUTE FUNCTION handle_shared_entity_deletion();
-    END IF;
-END
-$$;
+DROP TRIGGER IF EXISTS trg_after_delete_httpinfoindex ON HTTPInfoIndex;
+CREATE TRIGGER trg_after_delete_httpinfoindex
+AFTER DELETE ON HTTPInfoIndex
+REFERENCING OLD TABLE AS deleted_links
+FOR EACH STATEMENT
+EXECUTE FUNCTION handle_shared_entity_deletion();
 
 -- Function to handle the deletion of SearchIndex entries when no longer linked to any Source.
 CREATE OR REPLACE FUNCTION handle_searchindex_deletion()
@@ -2757,13 +2957,19 @@ ALTER TABLE httpinfoindex ADD CONSTRAINT httpinfoindex_index_id_fkey FOREIGN KEY
 
 -- Atomically claims InformationSeed work for one crowler-engine replica. The
 -- row locks and lifecycle update happen in the same statement so concurrent
--- engines cannot receive the same seed.
+-- engines cannot receive the same seed. Remove the legacy five-argument
+-- signature so old writers cannot claim without token/lease/fencing semantics.
+DROP FUNCTION IF EXISTS update_informationseed(integer, varchar, varchar, varchar, varchar);
+
 CREATE OR REPLACE FUNCTION update_informationseed(
     limit_val INTEGER,
     p_priority VARCHAR,
     p_engineID VARCHAR,
     p_processing_timeout VARCHAR,
-    p_retry_after VARCHAR
+    p_retry_after VARCHAR,
+    p_lease_duration VARCHAR,
+    p_max_attempts INTEGER,
+    p_claim_token VARCHAR
 )
 RETURNS TABLE(
     information_seed_id BIGINT,
@@ -2780,6 +2986,11 @@ RETURNS TABLE(
     last_error_at TIMESTAMPTZ,
     disabled BOOLEAN,
     attempts INTEGER,
+    claim_token VARCHAR,
+    fencing_token BIGINT,
+    lease_expires_at TIMESTAMPTZ,
+    heartbeat_at TIMESTAMPTZ,
+    next_retry_at TIMESTAMPTZ,
     config JSONB
 ) AS
 $$
@@ -2792,15 +3003,23 @@ BEGIN
     p_engineID := COALESCE(TRIM(p_engineID), '');
     p_processing_timeout := COALESCE(TRIM(p_processing_timeout), '');
     p_retry_after := COALESCE(TRIM(p_retry_after), '');
+    p_lease_duration := COALESCE(TRIM(p_lease_duration), '');
+    p_claim_token := COALESCE(TRIM(p_claim_token), '');
 
     IF p_engineID = '' THEN
         RAISE EXCEPTION 'engine ID is required to claim information seeds';
+    END IF;
+    IF p_claim_token = '' THEN
+        RAISE EXCEPTION 'claim token is required to claim information seeds';
     END IF;
     IF p_processing_timeout = '' THEN
         p_processing_timeout := '30 minutes';
     END IF;
     IF p_retry_after = '' THEN
         p_retry_after := '1 minute';
+    END IF;
+    IF p_lease_duration = '' THEN
+        p_lease_duration := p_processing_timeout;
     END IF;
 
     IF p_priority <> '' THEN
@@ -2817,6 +3036,7 @@ BEGIN
         SELECT seed.information_seed_id
         FROM InformationSeed AS seed
         WHERE COALESCE(seed.disabled, FALSE) = FALSE
+          AND (COALESCE(p_max_attempts, 0) = 0 OR COALESCE(seed.attempts, 0) < p_max_attempts)
           AND (
                 NOT use_priority_filter
                 OR LOWER(TRIM(seed.priority)) = ANY(priority_list)
@@ -2826,19 +3046,41 @@ BEGIN
                 OR (
                     LOWER(TRIM(seed.status)) = 'processing'
                     AND (
-                        seed.last_processed_at IS NULL
-                        OR seed.last_processed_at < NOW() - p_processing_timeout::INTERVAL
+                        (seed.lease_expires_at IS NOT NULL AND seed.lease_expires_at < NOW())
+                        OR (
+                            seed.lease_expires_at IS NULL
+                            AND (
+                                seed.last_processed_at IS NULL
+                                OR seed.last_processed_at < NOW() - p_processing_timeout::INTERVAL
+                            )
+                        )
                     )
                 )
                 OR (
                     LOWER(TRIM(seed.status)) = 'error'
                     AND (
-                        seed.last_error_at IS NULL
-                        OR seed.last_error_at < NOW() - p_retry_after::INTERVAL
+                        (seed.next_retry_at IS NOT NULL AND seed.next_retry_at <= NOW())
+                        OR (
+                            seed.next_retry_at IS NULL
+                            AND (
+                                seed.last_error_at IS NULL
+                                OR seed.last_error_at < NOW() - p_retry_after::INTERVAL
+                            )
+                        )
                     )
                 )
               )
-        ORDER BY seed.created_at ASC, seed.information_seed_id ASC
+        ORDER BY CASE
+                WHEN LOWER(TRIM(seed.status)) IN ('new', 'pending') THEN 0
+                WHEN LOWER(TRIM(seed.status)) = 'processing' THEN 1
+                ELSE 2
+            END ASC,
+            CASE
+                WHEN LOWER(TRIM(seed.status)) = 'error' THEN seed.next_retry_at
+                ELSE seed.created_at
+            END ASC,
+            seed.created_at ASC,
+            seed.information_seed_id ASC
         FOR UPDATE SKIP LOCKED
         LIMIT limit_val
     )
@@ -2846,7 +3088,12 @@ BEGIN
     SET status = 'processing',
         engine = p_engineID,
         last_processed_at = NOW(),
-        attempts = COALESCE(claimed_seed.attempts, 0) + 1
+        attempts = COALESCE(claimed_seed.attempts, 0) + 1,
+        claim_token = p_claim_token,
+        fencing_token = COALESCE(claimed_seed.fencing_token, 0) + 1,
+        lease_expires_at = NOW() + p_lease_duration::INTERVAL,
+        heartbeat_at = NOW(),
+        next_retry_at = NULL
     FROM selected_seeds
     WHERE claimed_seed.information_seed_id = selected_seeds.information_seed_id
     RETURNING claimed_seed.information_seed_id,
@@ -2863,6 +3110,11 @@ BEGIN
               claimed_seed.last_error_at,
               claimed_seed.disabled,
               claimed_seed.attempts,
+              claimed_seed.claim_token,
+              claimed_seed.fencing_token,
+              claimed_seed.lease_expires_at,
+              claimed_seed.heartbeat_at,
+              claimed_seed.next_retry_at,
               claimed_seed.config;
 END;
 $$
@@ -2901,7 +3153,19 @@ $$
 DECLARE
     priority_list TEXT[];
     use_priority_filter BOOLEAN := FALSE;
+    policy_mode TEXT;
 BEGIN
+    -- Fenced mode belongs to the operator-owned attempt cutover. Take the
+    -- shared advisory lock so an operator mode change waits for in-flight
+    -- legacy claims, while legacy claimers do not serialize each other.
+    PERFORM pg_advisory_xact_lock_shared(hashtext('crowler:source-crawl-claim-policy'));
+    SELECT mode INTO policy_mode
+      FROM SourceCrawlClaimPolicy
+     WHERE policy_id = 1;
+    IF policy_mode = 'fenced' THEN
+        RETURN;
+    END IF;
+
     -- Handle nulls and defaults
     p_priority := COALESCE(TRIM(p_priority), '');
     p_last_ok_update := COALESCE(TRIM(p_last_ok_update));
@@ -3741,6 +4005,9 @@ ALTER TABLE httpinfo OWNER TO :CROWLER_DB_USER;
 ALTER TABLE webobjects OWNER TO :CROWLER_DB_USER;
 ALTER TABLE metatags OWNER TO :CROWLER_DB_USER;
 ALTER TABLE sources OWNER TO :CROWLER_DB_USER;
+ALTER TABLE sourceownership OWNER TO :CROWLER_DB_USER;
+ALTER TABLE crawlapprovals OWNER TO :CROWLER_DB_USER;
+ALTER TABLE crawlproposals OWNER TO :CROWLER_DB_USER;
 ALTER TABLE owners OWNER TO :CROWLER_DB_USER;
 ALTER TABLE screenshots OWNER TO :CROWLER_DB_USER;
 ALTER TABLE keywords OWNER TO :CROWLER_DB_USER;
@@ -3800,3 +4067,778 @@ ALTER SYSTEM SET max_wal_size = :'DB_MAX_WAL_SIZE';
 ALTER SYSTEM SET max_connections = :'DB_MAX_CONNECTIONS';
 
 SELECT pg_reload_conf();
+
+--------------------------------------------------------------------------------
+-- BEGIN SOURCE CRAWL ATTEMPT (schema 1.17)
+-- Fenced source-crawl attempt ownership. Internal state only; no prompts,
+-- cookies, secrets, HTML, model text or unbounded errors are stored here.
+
+CREATE TABLE IF NOT EXISTS SchemaCapabilities (
+    capability              TEXT PRIMARY KEY,
+    applied_at              TIMESTAMPTZ NOT NULL,
+    applied_by              TEXT NOT NULL,
+    checksum                CHAR(64) NOT NULL,
+    details                 JSONB NOT NULL DEFAULT '{}',
+    CONSTRAINT chk_schema_capabilities_checksum
+        CHECK (checksum ~ '^[0-9a-f]{64}$')
+);
+
+CREATE TABLE IF NOT EXISTS SourceCrawlAttempts (
+    attempt_id       CHAR(64) PRIMARY KEY,
+    claim_request_id CHAR(64) NOT NULL,
+    source_id        BIGINT NOT NULL,
+    generation       BIGINT NOT NULL CHECK (generation > 0),
+    engine_id        TEXT NOT NULL CHECK (length(engine_id) BETWEEN 1 AND 256),
+    state            TEXT NOT NULL CHECK (state IN (
+                         'claimed','superseded','expired','abandoned',
+                         'completed','failed','cancelled')),
+    claimed_at       TIMESTAMPTZ(6) NOT NULL,
+    lease_expires_at TIMESTAMPTZ(6) NOT NULL,
+    superseded_by_generation BIGINT,
+    terminal_at      TIMESTAMPTZ(6),
+    reason_code      VARCHAR(64),
+    operation_id     CHAR(64),
+    request_id       CHAR(64),
+    run_id           TEXT,
+    agent_id         TEXT,
+    owner            TEXT,
+    principal_user_id BIGINT,
+    approval_id      CHAR(64),
+    approval_sha256  CHAR(64),
+    created_at       TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_updated_at  TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_source_crawl_attempt_generation UNIQUE (source_id, generation),
+    CONSTRAINT uq_source_crawl_attempt_exact_identity UNIQUE (source_id, generation, attempt_id),
+    CONSTRAINT uq_source_crawl_attempt_request_source UNIQUE (claim_request_id, source_id),
+    CONSTRAINT chk_source_crawl_attempt_request CHECK (claim_request_id ~ '^[a-f0-9]{64}$'),
+    CONSTRAINT chk_source_crawl_attempt_id CHECK (attempt_id ~ '^[a-f0-9]{64}$'),
+    CONSTRAINT chk_source_crawl_attempt_lease CHECK (lease_expires_at > claimed_at),
+    CONSTRAINT chk_source_crawl_attempt_binding CHECK (
+        (operation_id IS NULL AND request_id IS NULL AND run_id IS NULL AND
+         agent_id IS NULL AND owner IS NULL AND principal_user_id IS NULL AND
+         approval_id IS NULL AND approval_sha256 IS NULL)
+        OR
+        (operation_id IS NOT NULL AND request_id IS NOT NULL AND run_id IS NOT NULL AND
+         agent_id IS NOT NULL AND owner IS NOT NULL AND principal_user_id > 0 AND
+         approval_id IS NOT NULL AND approval_sha256 IS NOT NULL)
+    ),
+    CONSTRAINT chk_source_crawl_attempt_state CHECK (
+        (state = 'claimed' AND superseded_by_generation IS NULL AND terminal_at IS NULL)
+        OR (state = 'superseded' AND superseded_by_generation IS NOT NULL AND
+            superseded_by_generation > generation AND terminal_at IS NOT NULL)
+        OR (state IN ('expired','abandoned','completed','failed','cancelled') AND terminal_at IS NOT NULL)
+    ),
+    CONSTRAINT chk_source_crawl_attempt_reason CHECK (
+        reason_code IS NULL OR reason_code ~ '^[a-z][a-z0-9_]{0,63}$'
+    )
+);
+CREATE INDEX IF NOT EXISTS idx_source_crawl_attempts_source
+    ON SourceCrawlAttempts (source_id, generation DESC);
+CREATE INDEX IF NOT EXISTS idx_source_crawl_attempts_request
+    ON SourceCrawlAttempts (claim_request_id, source_id);
+CREATE INDEX IF NOT EXISTS idx_source_crawl_attempts_lease
+    ON SourceCrawlAttempts (state, lease_expires_at);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_source_crawl_attempts_active_operation
+    ON SourceCrawlAttempts (operation_id)
+    WHERE operation_id IS NOT NULL AND state = 'claimed';
+
+CREATE TABLE IF NOT EXISTS SourceCrawlClaims (
+    source_id        BIGINT PRIMARY KEY,
+    attempt_id       CHAR(64) NOT NULL UNIQUE,
+    claim_request_id CHAR(64) NOT NULL,
+    generation       BIGINT NOT NULL CHECK (generation > 0),
+    engine_id        TEXT NOT NULL CHECK (length(engine_id) BETWEEN 1 AND 256),
+    claimed_at       TIMESTAMPTZ(6) NOT NULL,
+    lease_expires_at TIMESTAMPTZ(6) NOT NULL,
+    last_updated_at  TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_source_crawl_claim_generation UNIQUE (source_id, generation),
+    CONSTRAINT fk_source_crawl_claim_source
+        FOREIGN KEY (source_id) REFERENCES Sources(source_id) ON DELETE CASCADE,
+    CONSTRAINT fk_source_crawl_claim_exact_attempt
+        FOREIGN KEY (source_id, generation, attempt_id)
+        REFERENCES SourceCrawlAttempts(source_id, generation, attempt_id)
+        DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT chk_source_crawl_claim_request CHECK (claim_request_id ~ '^[a-f0-9]{64}$'),
+    CONSTRAINT chk_source_crawl_claim_lease CHECK (lease_expires_at > claimed_at)
+);
+CREATE INDEX IF NOT EXISTS idx_source_crawl_claims_attempt
+    ON SourceCrawlClaims (attempt_id);
+CREATE INDEX IF NOT EXISTS idx_source_crawl_claims_request
+    ON SourceCrawlClaims (claim_request_id);
+
+CREATE TABLE IF NOT EXISTS SourceCrawlClaimPolicy (
+    policy_id  SMALLINT PRIMARY KEY CHECK (policy_id = 1),
+    mode       TEXT NOT NULL CHECK (mode IN ('legacy','fenced')),
+    updated_at TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+INSERT INTO SourceCrawlClaimPolicy(policy_id, mode)
+VALUES (1, 'legacy') ON CONFLICT (policy_id) DO NOTHING;
+
+-- Operator-only mode switch. Runtime claimers take the shared advisory lock;
+-- this function takes the exclusive lock and therefore waits for in-flight
+-- legacy or fenced claims. Use this function instead of a direct table UPDATE.
+CREATE OR REPLACE FUNCTION set_source_crawl_claim_mode(new_mode TEXT)
+RETURNS TEXT AS $$
+BEGIN
+    IF new_mode NOT IN ('legacy', 'fenced') THEN
+        RAISE EXCEPTION 'source crawl claim mode must be legacy or fenced';
+    END IF;
+    PERFORM pg_advisory_xact_lock(hashtext('crowler:source-crawl-claim-policy'));
+    UPDATE SourceCrawlClaimPolicy
+       SET mode = new_mode, updated_at = CURRENT_TIMESTAMP
+     WHERE policy_id = 1;
+    RETURN new_mode;
+END;
+$$ LANGUAGE plpgsql;
+ALTER FUNCTION set_source_crawl_claim_mode(TEXT) OWNER TO CURRENT_USER;
+REVOKE ALL ON FUNCTION set_source_crawl_claim_mode(TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION set_source_crawl_claim_mode(TEXT) FROM :CROWLER_DB_USER;
+
+
+INSERT INTO SchemaCapabilities (capability, applied_at, applied_by, checksum, details)
+VALUES ('source-crawl-attempt-v1', CURRENT_TIMESTAMP, 'migration',
+        'f545b987f0d77fcaac8219deefb70a9c00a354cf90ceef3aca4d3949c830206e',
+        '{"schema_version":"1.17"}'::jsonb)
+ON CONFLICT (capability) DO UPDATE
+    SET applied_at = EXCLUDED.applied_at,
+        applied_by = EXCLUDED.applied_by,
+        checksum = EXCLUDED.checksum,
+        details = EXCLUDED.details;
+-- END SOURCE CRAWL ATTEMPT (schema 1.17)
+GRANT SELECT, INSERT, UPDATE ON SourceCrawlAttempts TO :CROWLER_DB_USER;
+GRANT SELECT, INSERT, UPDATE ON SourceCrawlClaims TO :CROWLER_DB_USER;
+GRANT SELECT ON SourceCrawlClaimPolicy TO :CROWLER_DB_USER;
+REVOKE INSERT, UPDATE, DELETE ON SourceCrawlClaimPolicy FROM :CROWLER_DB_USER;
+REVOKE DELETE ON SourceCrawlAttempts, SourceCrawlClaims FROM :CROWLER_DB_USER;
+
+
+-- WP-04C2-B additive MCP mutation persistence capability (schema 1.17).
+-- This block is idempotent and does not change the schema version.
+--------------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS MCPMutationProposals (
+    proposal_id             CHAR(64) PRIMARY KEY,
+    proposal_sha256         CHAR(64) NOT NULL UNIQUE,
+    identity_version        INTEGER NOT NULL CHECK (identity_version >= 1),
+
+    run_id                  TEXT NOT NULL,
+    trace_id                TEXT NOT NULL DEFAULT '',
+    effective_call_id       TEXT NOT NULL,
+    agent_id                TEXT NOT NULL,
+    owner                   TEXT NOT NULL,
+
+    principal_user_id       BIGINT NOT NULL CHECK (principal_user_id > 0),
+    principal_username      TEXT NOT NULL,
+    principal_issuer        TEXT NOT NULL,
+
+    server_id               TEXT NOT NULL,
+    raw_tool_name           TEXT NOT NULL,
+    tool_alias              TEXT NOT NULL,
+    transport               TEXT NOT NULL CHECK (transport IN ('stdio', 'streamable_http')),
+    transport_identity      TEXT NOT NULL,
+    schema_sha256           CHAR(64) NOT NULL,
+
+    canonical_arguments     BYTEA NOT NULL,
+    arguments_sha256        CHAR(64) NOT NULL,
+    policy_id               TEXT NOT NULL,
+    policy_version          TEXT NOT NULL,
+    policy_sha256           CHAR(64) NOT NULL,
+    policy_snapshot         JSONB NOT NULL,
+
+    source_ids              BIGINT[] NOT NULL DEFAULT '{}',
+    external_resource       TEXT,
+    destructive             BOOLEAN NOT NULL DEFAULT FALSE,
+    approval_required       BOOLEAN NOT NULL DEFAULT TRUE,
+    execution_backend       TEXT NOT NULL DEFAULT 'none'
+                            CHECK (execution_backend IN ('none', 'single_submission')),
+
+    state                   TEXT NOT NULL CHECK (state IN (
+        'proposed', 'approval_required', 'approved', 'denied', 'expired',
+        'dispatching', 'succeeded', 'failed', 'uncertain',
+        'reconciliation_required')),
+
+    created_at              TIMESTAMPTZ NOT NULL,
+    last_updated_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at              TIMESTAMPTZ NOT NULL,
+    approved_at             TIMESTAMPTZ,
+    terminal_at             TIMESTAMPTZ,
+    terminal_reason         TEXT,
+
+    CONSTRAINT uq_mcp_proposal_logical_call UNIQUE (run_id, effective_call_id),
+    CONSTRAINT chk_mcp_proposal_hashes CHECK (
+        proposal_id ~ '^[0-9a-f]{64}$' AND
+        proposal_sha256 ~ '^[0-9a-f]{64}$' AND
+        schema_sha256 ~ '^[0-9a-f]{64}$' AND
+        arguments_sha256 ~ '^[0-9a-f]{64}$' AND
+        policy_sha256 ~ '^[0-9a-f]{64}$'
+    ),
+    CONSTRAINT chk_mcp_proposal_canonical_bytes CHECK (
+        octet_length(canonical_arguments) BETWEEN 2 AND 1048576
+    ),
+    CONSTRAINT chk_mcp_proposal_policy_snapshot CHECK (
+        jsonb_typeof(policy_snapshot) = 'object'
+    ),
+    CONSTRAINT chk_mcp_proposal_scope CHECK (
+        (cardinality(source_ids) > 0 AND external_resource IS NULL) OR
+        (cardinality(source_ids) = 0 AND external_resource IS NOT NULL)
+    ),
+    CONSTRAINT chk_mcp_proposal_source_ids CHECK (0 <> ALL (source_ids)),
+    CONSTRAINT chk_mcp_proposal_expiry CHECK (expires_at > created_at),
+    CONSTRAINT chk_mcp_proposal_approval_time CHECK (
+        approved_at IS NULL OR approved_at >= created_at
+    ),
+    CONSTRAINT chk_mcp_proposal_terminal_time CHECK (
+        (state IN ('denied', 'expired', 'succeeded', 'failed') AND terminal_at IS NOT NULL) OR
+        (state NOT IN ('denied', 'expired', 'succeeded', 'failed') AND terminal_at IS NULL)
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_mcp_proposals_pending
+    ON MCPMutationProposals (state, expires_at);
+CREATE INDEX IF NOT EXISTS idx_mcp_proposals_principal
+    ON MCPMutationProposals (principal_user_id, state, created_at);
+CREATE INDEX IF NOT EXISTS idx_mcp_proposals_run
+    ON MCPMutationProposals (run_id, state);
+CREATE INDEX IF NOT EXISTS idx_mcp_proposals_expiry
+    ON MCPMutationProposals (expires_at)
+    WHERE state IN ('proposed', 'approval_required', 'approved', 'dispatching',
+                    'uncertain', 'reconciliation_required');
+
+CREATE TABLE IF NOT EXISTS MCPMutationApprovals (
+    approval_id             CHAR(64) PRIMARY KEY,
+    proposal_id             CHAR(64) NOT NULL
+                            REFERENCES MCPMutationProposals (proposal_id)
+                            ON DELETE RESTRICT,
+    proposal_sha256         CHAR(64) NOT NULL
+                            REFERENCES MCPMutationProposals (proposal_sha256)
+                            ON DELETE RESTRICT,
+
+    run_id                  TEXT NOT NULL,
+    agent_id                TEXT NOT NULL,
+    server_id               TEXT NOT NULL,
+    tool_alias              TEXT NOT NULL,
+    arguments_sha256        CHAR(64) NOT NULL,
+    policy_sha256           CHAR(64) NOT NULL,
+
+    approved_by_user_id     BIGINT NOT NULL CHECK (approved_by_user_id > 0),
+    approved_by             TEXT NOT NULL,
+    approved_by_issuer      TEXT NOT NULL,
+
+    approved_at             TIMESTAMPTZ NOT NULL,
+    expires_at              TIMESTAMPTZ NOT NULL,
+    state                   TEXT NOT NULL DEFAULT 'active'
+                            CHECK (state IN ('active', 'revoked', 'expired', 'exhausted')),
+
+    revoked_at              TIMESTAMPTZ,
+    revoked_by_user_id      BIGINT,
+    revoked_by              TEXT,
+    revocation_reason       TEXT,
+
+    max_executions          INTEGER NOT NULL CHECK (max_executions > 0),
+    executions_started      INTEGER NOT NULL DEFAULT 0 CHECK (executions_started >= 0),
+    last_updated_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT chk_mcp_approval_hashes CHECK (
+        approval_id ~ '^[0-9a-f]{64}$' AND
+        proposal_sha256 ~ '^[0-9a-f]{64}$' AND
+        arguments_sha256 ~ '^[0-9a-f]{64}$' AND
+        policy_sha256 ~ '^[0-9a-f]{64}$'
+    ),
+    CONSTRAINT chk_mcp_approval_expiry CHECK (expires_at > approved_at),
+    CONSTRAINT chk_mcp_approval_executions CHECK (executions_started <= max_executions),
+    CONSTRAINT chk_mcp_approval_revocation CHECK (
+        (state = 'revoked' AND revoked_at IS NOT NULL AND revoked_by_user_id IS NOT NULL) OR
+        (state <> 'revoked' AND revoked_at IS NULL)
+    ),
+    CONSTRAINT chk_mcp_approval_exhausted CHECK (
+        state <> 'exhausted' OR executions_started = max_executions
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_mcp_approvals_pending
+    ON MCPMutationApprovals (state, expires_at);
+CREATE INDEX IF NOT EXISTS idx_mcp_approvals_proposal
+    ON MCPMutationApprovals (proposal_sha256, approved_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_mcp_approvals_one_active
+    ON MCPMutationApprovals (proposal_sha256)
+    WHERE state = 'active';
+
+CREATE TABLE IF NOT EXISTS MCPMutationDispatchAttempts (
+    attempt_id              CHAR(64) PRIMARY KEY,
+    proposal_id             CHAR(64) NOT NULL
+                            REFERENCES MCPMutationProposals (proposal_id)
+                            ON DELETE RESTRICT,
+    proposal_sha256         CHAR(64) NOT NULL
+                            REFERENCES MCPMutationProposals (proposal_sha256)
+                            ON DELETE RESTRICT,
+    approval_id             CHAR(64) NOT NULL
+                            REFERENCES MCPMutationApprovals (approval_id)
+                            ON DELETE RESTRICT,
+
+    submission_identity     CHAR(64) NOT NULL,
+    claimed_by              TEXT NOT NULL,
+    claimed_at              TIMESTAMPTZ NOT NULL,
+    lease_expires_at        TIMESTAMPTZ NOT NULL,
+    backend_identity        TEXT NOT NULL,
+    external_operation_id   TEXT,
+    reconciliation_key      TEXT,
+
+    state                   TEXT NOT NULL CHECK (state IN (
+        'dispatching', 'succeeded', 'failed', 'uncertain',
+        'reconciliation_required')),
+    response_digest         CHAR(64),
+    reason_code             TEXT,
+    terminal_at             TIMESTAMPTZ,
+    last_updated_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT uq_mcp_attempt_submission UNIQUE (proposal_sha256, submission_identity),
+    CONSTRAINT chk_mcp_attempt_hashes CHECK (
+        attempt_id ~ '^[0-9a-f]{64}$' AND
+        proposal_sha256 ~ '^[0-9a-f]{64}$' AND
+        submission_identity ~ '^[0-9a-f]{64}$'
+    ),
+    CONSTRAINT chk_mcp_attempt_lease CHECK (lease_expires_at > claimed_at),
+    CONSTRAINT chk_mcp_attempt_terminal_time CHECK (
+        (state IN ('succeeded', 'failed') AND terminal_at IS NOT NULL) OR
+        (state NOT IN ('succeeded', 'failed') AND terminal_at IS NULL)
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_mcp_attempts_reconciliation
+    ON MCPMutationDispatchAttempts (state, lease_expires_at);
+CREATE INDEX IF NOT EXISTS idx_mcp_attempts_proposal
+    ON MCPMutationDispatchAttempts (proposal_sha256, claimed_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_mcp_attempts_one_unresolved
+    ON MCPMutationDispatchAttempts (proposal_sha256)
+    WHERE state IN ('dispatching', 'uncertain', 'reconciliation_required');
+
+CREATE TABLE IF NOT EXISTS MCPMutationAudit (
+    event_id                BIGSERIAL PRIMARY KEY,
+    occurred_at             TIMESTAMPTZ NOT NULL,
+    event_type              TEXT NOT NULL,
+    actor_type              TEXT NOT NULL CHECK (actor_type IN ('agent', 'operator', 'system')),
+    actor_id                TEXT NOT NULL,
+    actor_issuer            TEXT,
+    proposal_id             CHAR(64),
+    proposal_sha256         CHAR(64),
+    approval_id             CHAR(64),
+    attempt_id              CHAR(64),
+    run_id                  TEXT,
+    trace_id                TEXT,
+    agent_id                TEXT,
+    principal_user_id       BIGINT,
+    server_id               TEXT,
+    tool_alias              TEXT,
+    reason_code             TEXT,
+    redacted_detail         JSONB NOT NULL DEFAULT '{}',
+    CONSTRAINT chk_mcp_audit_detail CHECK (jsonb_typeof(redacted_detail) = 'object')
+);
+
+CREATE INDEX IF NOT EXISTS idx_mcp_audit_proposal
+    ON MCPMutationAudit (proposal_id, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_mcp_audit_type
+    ON MCPMutationAudit (event_type, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_mcp_audit_actor
+    ON MCPMutationAudit (actor_id, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_mcp_audit_run
+    ON MCPMutationAudit (run_id, occurred_at);
+
+CREATE TABLE IF NOT EXISTS MCPMutationRunQuota (
+    run_id                  TEXT PRIMARY KEY,
+    active_count            INTEGER NOT NULL DEFAULT 0 CHECK (active_count >= 0),
+    last_updated_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS MCPMutationPrincipalQuota (
+    principal_user_id       BIGINT PRIMARY KEY CHECK (principal_user_id > 0),
+    pending_count           INTEGER NOT NULL DEFAULT 0 CHECK (pending_count >= 0),
+    last_updated_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- BEGIN AGENT GOAL PERSISTENCE (schema 1.17)
+-- Asynchronous goal checkpoint persistence. This is internal agent state; it
+-- never stores prompts, model messages, raw tool arguments/results, evidence
+-- payloads or credentials. The schema contract is goal-async-v2.
+
+CREATE TABLE IF NOT EXISTS AgentGoalRuns (
+    goal_run_id                 TEXT PRIMARY KEY,
+    checkpoint_version          SMALLINT NOT NULL,
+    contract_version            TEXT NOT NULL,
+    revision                    BIGINT NOT NULL,
+    trace_id                    TEXT NOT NULL,
+    correlation_id              TEXT,
+    agent_id                    TEXT NOT NULL,
+    owner                       TEXT NOT NULL,
+    principal_kind              TEXT NOT NULL,
+    principal_user_id           BIGINT NOT NULL DEFAULT 0,
+    principal_username          TEXT NOT NULL DEFAULT '',
+    principal_issuer            TEXT NOT NULL DEFAULT '',
+    goal_id                     TEXT NOT NULL,
+    goal_spec_hash              CHAR(64) NOT NULL,
+    policy_sha256               CHAR(64) NOT NULL,
+    state                       TEXT NOT NULL,
+    slices                      INTEGER NOT NULL DEFAULT 0,
+    created_at                  TIMESTAMPTZ(6) NOT NULL,
+    updated_at                  TIMESTAMPTZ(6) NOT NULL,
+    deadline                    TIMESTAMPTZ(6) NOT NULL,
+    reason_code                 TEXT NOT NULL,
+    ledger_id                   TEXT NOT NULL,
+    run_nonce_hash              CHAR(64) NOT NULL,
+    last_transition_id          TEXT,
+    last_transition_hash        CHAR(64),
+    verification_verifier       TEXT,
+    verification_sha256         CHAR(64),
+    verified_at                 TIMESTAMPTZ(6),
+    cancel_requested_at         TIMESTAMPTZ(6),
+    cancel_requested_by_user_id BIGINT,
+    max_slices                  INTEGER NOT NULL,
+    max_model_rounds            INTEGER NOT NULL,
+    max_tool_attempts           INTEGER NOT NULL,
+    max_result_bytes            BIGINT NOT NULL,
+    max_evidence_records        INTEGER NOT NULL,
+    max_evidence_bytes          BIGINT NOT NULL,
+    max_retries                 INTEGER NOT NULL,
+    max_scheduled_work_requests INTEGER NOT NULL,
+    max_consecutive_denials     INTEGER NOT NULL,
+    max_slice_elapsed_ns        BIGINT NOT NULL,
+    used_model_rounds           INTEGER NOT NULL DEFAULT 0,
+    used_tool_attempts          INTEGER NOT NULL DEFAULT 0,
+    used_result_bytes           BIGINT NOT NULL DEFAULT 0,
+    used_evidence_records       INTEGER NOT NULL DEFAULT 0,
+    used_evidence_bytes         BIGINT NOT NULL DEFAULT 0,
+    used_retries                INTEGER NOT NULL DEFAULT 0,
+    used_scheduled_work_requests INTEGER NOT NULL DEFAULT 0,
+    used_consecutive_denials    INTEGER NOT NULL DEFAULT 0,
+    CONSTRAINT chk_agent_goal_versions CHECK (
+        checkpoint_version = 2 AND contract_version = 'goal-async-v2'
+    ),
+    CONSTRAINT chk_agent_goal_revision CHECK (revision > 0),
+    CONSTRAINT chk_agent_goal_state CHECK (state IN (
+        'created', 'running', 'awaiting_approval', 'awaiting_external_work',
+        'criteria_met', 'incomplete', 'budget_exhausted', 'cancelled',
+        'denied', 'failed'
+    )),
+    CONSTRAINT chk_agent_goal_principal CHECK (
+        (principal_kind = 'user' AND principal_user_id > 0
+            AND length(btrim(principal_username)) BETWEEN 1 AND 256
+            AND length(btrim(principal_issuer)) BETWEEN 1 AND 512)
+        OR
+        (principal_kind = 'system' AND principal_user_id = 0
+            AND principal_username = '' AND principal_issuer = '')
+    ),
+    CONSTRAINT chk_agent_goal_identity CHECK (
+        length(btrim(goal_run_id)) BETWEEN 1 AND 128
+        AND length(btrim(trace_id)) BETWEEN 1 AND 128
+        AND length(btrim(agent_id)) BETWEEN 1 AND 128
+        AND length(btrim(owner)) BETWEEN 1 AND 256
+        AND length(btrim(goal_id)) BETWEEN 1 AND 128
+        AND length(btrim(ledger_id)) BETWEEN 1 AND 128
+        AND (correlation_id IS NULL
+             OR length(btrim(correlation_id)) BETWEEN 1 AND 128)
+    ),
+    CONSTRAINT chk_agent_goal_hashes CHECK (
+        goal_spec_hash ~ '^[0-9a-f]{64}$'
+        AND policy_sha256 ~ '^[0-9a-f]{64}$'
+        AND run_nonce_hash ~ '^[0-9a-f]{64}$'
+        AND (last_transition_hash IS NULL OR last_transition_hash ~ '^[0-9a-f]{64}$')
+        AND (verification_sha256 IS NULL OR verification_sha256 ~ '^[0-9a-f]{64}$')
+    ),
+    CONSTRAINT chk_agent_goal_timestamps CHECK (
+        updated_at >= created_at
+        AND deadline > created_at
+        AND deadline <= created_at + INTERVAL '24 hours'
+    ),
+    CONSTRAINT chk_agent_goal_active_deadline CHECK (
+        state NOT IN ('created', 'running', 'awaiting_approval',
+                      'awaiting_external_work', 'criteria_met', 'incomplete')
+        OR updated_at < deadline
+    ),
+    CONSTRAINT chk_agent_goal_ceilings CHECK (
+        max_slices BETWEEN 1 AND 64
+        AND max_model_rounds BETWEEN 1 AND 8
+        AND max_tool_attempts BETWEEN 1 AND 16
+        AND max_result_bytes BETWEEN 1024 AND 65536
+        AND max_evidence_records BETWEEN 1 AND 32
+        AND max_evidence_bytes BETWEEN 1024 AND 65536
+        AND max_retries BETWEEN 0 AND 16
+        AND max_scheduled_work_requests BETWEEN 0 AND 32
+        AND max_consecutive_denials BETWEEN 1 AND 5
+        AND max_slice_elapsed_ns BETWEEN 1000000000 AND 120000000000
+    ),
+    CONSTRAINT chk_agent_goal_used CHECK (
+        slices BETWEEN 0 AND max_slices
+        AND used_model_rounds BETWEEN 0 AND max_model_rounds
+        AND used_tool_attempts BETWEEN 0 AND max_tool_attempts
+        AND used_result_bytes BETWEEN 0 AND max_result_bytes
+        AND used_evidence_records BETWEEN 0 AND max_evidence_records
+        AND used_evidence_bytes BETWEEN 0 AND max_evidence_bytes
+        AND used_retries BETWEEN 0 AND max_retries
+        AND used_scheduled_work_requests BETWEEN 0 AND max_scheduled_work_requests
+        AND used_consecutive_denials BETWEEN 0 AND max_consecutive_denials
+    ),
+    CONSTRAINT chk_agent_goal_verification CHECK (
+        (state = 'criteria_met'
+            AND verification_verifier = 'deterministic_verifier'
+            AND verification_sha256 IS NOT NULL AND verified_at IS NOT NULL)
+        OR
+        (state <> 'criteria_met'
+            AND verification_verifier IS NULL
+            AND verification_sha256 IS NULL AND verified_at IS NULL)
+    ),
+    CONSTRAINT chk_agent_goal_last_transition CHECK (
+        (revision = 1 AND last_transition_id IS NULL AND last_transition_hash IS NULL)
+        OR
+        (revision > 1 AND length(btrim(last_transition_id)) BETWEEN 1 AND 128
+            AND last_transition_hash IS NOT NULL)
+    ),
+    CONSTRAINT chk_agent_goal_cancel CHECK (
+        (cancel_requested_at IS NULL AND cancel_requested_by_user_id IS NULL)
+        OR
+        (cancel_requested_at IS NOT NULL AND cancel_requested_by_user_id > 0)
+    ),
+    CONSTRAINT chk_agent_goal_reason CHECK (
+        length(btrim(reason_code)) BETWEEN 1 AND 64
+        AND (state <> 'criteria_met'
+             OR reason_code IN ('criteria_all_met', 'criteria_any_met'))
+    )
+);
+
+CREATE TABLE IF NOT EXISTS AgentGoalRunTools (
+    goal_run_id TEXT NOT NULL,
+    tool_name   TEXT NOT NULL,
+    PRIMARY KEY (goal_run_id, tool_name),
+    CONSTRAINT fk_agent_goal_tool_run FOREIGN KEY (goal_run_id)
+        REFERENCES AgentGoalRuns (goal_run_id) ON DELETE CASCADE,
+    CONSTRAINT chk_agent_goal_tool_name CHECK (length(btrim(tool_name)) BETWEEN 1 AND 64)
+);
+
+CREATE TABLE IF NOT EXISTS AgentGoalRunSources (
+    goal_run_id TEXT NOT NULL,
+    source_id   BIGINT NOT NULL CONSTRAINT chk_agent_goal_source_id CHECK (source_id > 0),
+    PRIMARY KEY (goal_run_id, source_id),
+    CONSTRAINT fk_agent_goal_source_run FOREIGN KEY (goal_run_id)
+        REFERENCES AgentGoalRuns (goal_run_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS AgentGoalRunWork (
+    goal_run_id          TEXT NOT NULL,
+    request_id           CHAR(64) NOT NULL,
+    kind                 TEXT NOT NULL,
+    state                TEXT NOT NULL,
+    proposal_sha256      CHAR(64) NOT NULL,
+    approval_id          CHAR(64),
+    approval_sha256      CHAR(64),
+    operation_id         CHAR(64),
+    source_id            BIGINT NOT NULL,
+    proposal_expires_at  TIMESTAMPTZ(6) NOT NULL,
+    approval_expires_at  TIMESTAMPTZ(6),
+    submit_by            TIMESTAMPTZ(6),
+    accepted_at          TIMESTAMPTZ(6),
+    observed_at          TIMESTAMPTZ(6),
+    created_at           TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at           TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (goal_run_id, request_id),
+    CONSTRAINT fk_agent_goal_work_run FOREIGN KEY (goal_run_id)
+        REFERENCES AgentGoalRuns (goal_run_id) ON DELETE CASCADE,
+    CONSTRAINT fk_agent_goal_work_source FOREIGN KEY (goal_run_id, source_id)
+        REFERENCES AgentGoalRunSources (goal_run_id, source_id) ON DELETE CASCADE,
+    CONSTRAINT chk_agent_goal_work_ids CHECK (
+        request_id ~ '^[0-9a-f]{64}$'
+        AND proposal_sha256 ~ '^[0-9a-f]{64}$'
+        AND (approval_id IS NULL OR approval_id ~ '^[0-9a-f]{64}$')
+        AND (approval_sha256 IS NULL OR approval_sha256 ~ '^[0-9a-f]{64}$')
+        AND (operation_id IS NULL OR operation_id ~ '^[0-9a-f]{64}$')
+        AND source_id > 0
+    ),
+    CONSTRAINT chk_agent_goal_work_state CHECK (
+        (kind = 'crawl_proposal' AND state = 'awaiting_approval'
+            AND approval_id IS NULL AND approval_sha256 IS NULL
+            AND operation_id IS NULL AND approval_expires_at IS NULL
+            AND submit_by IS NULL AND accepted_at IS NULL AND observed_at IS NULL)
+        OR
+        (kind = 'crawl_operation' AND state IN ('scheduled', 'processing', 'completed')
+            AND approval_id IS NOT NULL AND approval_sha256 IS NOT NULL
+            AND operation_id IS NOT NULL AND approval_expires_at IS NOT NULL
+            AND submit_by IS NOT NULL AND accepted_at IS NOT NULL
+            AND ((state = 'completed' AND observed_at IS NOT NULL)
+                 OR (state <> 'completed' AND observed_at IS NULL)))
+    ),
+    CONSTRAINT chk_agent_goal_work_times CHECK (
+        updated_at >= created_at
+        AND (kind = 'crawl_proposal'
+            OR (accepted_at <= updated_at
+                AND accepted_at < submit_by
+                AND submit_by <= proposal_expires_at
+                AND submit_by <= approval_expires_at
+                AND accepted_at < proposal_expires_at
+                AND accepted_at < approval_expires_at
+                AND (observed_at IS NULL
+                    OR (observed_at >= accepted_at AND observed_at <= updated_at))))
+    )
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_goal_work_operation
+    ON AgentGoalRunWork (goal_run_id, operation_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_goal_work_approval
+    ON AgentGoalRunWork (goal_run_id, approval_id);
+CREATE INDEX IF NOT EXISTS idx_agent_goal_work_state
+    ON AgentGoalRunWork (goal_run_id, kind, state);
+
+CREATE TABLE IF NOT EXISTS AgentGoalRunEvidence (
+    goal_run_id      TEXT NOT NULL,
+    evidence_id      TEXT NOT NULL,
+    kind             TEXT NOT NULL,
+    trust_class      TEXT NOT NULL,
+    producer         TEXT NOT NULL,
+    source_ids       JSONB NOT NULL DEFAULT '[]'::jsonb,
+    observed_at      TIMESTAMPTZ(6) NOT NULL,
+    expires_at       TIMESTAMPTZ(6) NOT NULL,
+    payload_sha256   CHAR(64) NOT NULL,
+    record_sha256    CHAR(64) NOT NULL,
+    size_bytes       INTEGER NOT NULL,
+    created_at       TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (goal_run_id, evidence_id),
+    CONSTRAINT fk_agent_goal_evidence_run FOREIGN KEY (goal_run_id)
+        REFERENCES AgentGoalRuns (goal_run_id) ON DELETE CASCADE,
+    CONSTRAINT chk_agent_goal_evidence_ids CHECK (
+        evidence_id ~ '^ev_[0-9a-f]{32}$'
+        AND payload_sha256 ~ '^[0-9a-f]{64}$'
+        AND record_sha256 ~ '^[0-9a-f]{64}$'
+    ),
+    CONSTRAINT chk_agent_goal_evidence_kind CHECK (
+        kind IN ('source_status', 'source_metadata', 'indexed_page',
+                 'scraped_field', 'artifact', 'tool_observation')
+        AND trust_class IN ('system_verified', 'tool_observation')
+        AND length(btrim(producer)) BETWEEN 1 AND 256
+    ),
+    CONSTRAINT chk_agent_goal_evidence_sources CHECK (
+        jsonb_typeof(source_ids) = 'array'
+        AND jsonb_array_length(source_ids) <= 32
+    ),
+    CONSTRAINT chk_agent_goal_evidence_times CHECK (expires_at > observed_at),
+    CONSTRAINT chk_agent_goal_evidence_size CHECK (size_bytes BETWEEN 1 AND 16384)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_goal_evidence_record
+    ON AgentGoalRunEvidence (goal_run_id, record_sha256);
+CREATE INDEX IF NOT EXISTS idx_agent_goal_evidence_observed
+    ON AgentGoalRunEvidence (goal_run_id, observed_at);
+
+CREATE TABLE IF NOT EXISTS AgentGoalRunVerificationEvidence (
+    goal_run_id TEXT NOT NULL,
+    evidence_id TEXT NOT NULL,
+    created_at  TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (goal_run_id, evidence_id),
+    CONSTRAINT fk_agent_goal_verification_evidence FOREIGN KEY (goal_run_id, evidence_id)
+        REFERENCES AgentGoalRunEvidence (goal_run_id, evidence_id) ON DELETE CASCADE,
+    CONSTRAINT chk_agent_goal_verification_evidence_time CHECK (created_at IS NOT NULL)
+);
+
+CREATE TABLE IF NOT EXISTS AgentGoalRunAuditRefs (
+    goal_run_id TEXT NOT NULL,
+    audit_ref   TEXT NOT NULL,
+    created_at  TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (goal_run_id, audit_ref),
+    CONSTRAINT fk_agent_goal_audit_run FOREIGN KEY (goal_run_id)
+        REFERENCES AgentGoalRuns (goal_run_id) ON DELETE CASCADE,
+    CONSTRAINT chk_agent_goal_audit_ref CHECK (length(btrim(audit_ref)) BETWEEN 1 AND 128)
+);
+
+CREATE TABLE IF NOT EXISTS AgentGoalRunTransitions (
+    goal_run_id     TEXT NOT NULL,
+    revision        BIGINT NOT NULL,
+    operation_id    TEXT NOT NULL,
+    transition_hash CHAR(64) NOT NULL,
+    from_state      TEXT NOT NULL,
+    to_state        TEXT NOT NULL,
+    reason_code     TEXT NOT NULL,
+    created_at      TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (goal_run_id, revision),
+    CONSTRAINT fk_agent_goal_transition_run FOREIGN KEY (goal_run_id)
+        REFERENCES AgentGoalRuns (goal_run_id) ON DELETE CASCADE,
+    CONSTRAINT chk_agent_goal_transition_ids CHECK (
+        revision > 0
+        AND length(btrim(operation_id)) BETWEEN 1 AND 128
+        AND transition_hash ~ '^[0-9a-f]{64}$'
+    ),
+    CONSTRAINT chk_agent_goal_transition_states CHECK (
+        from_state IN ('created', 'running', 'awaiting_approval',
+                       'awaiting_external_work', 'criteria_met', 'incomplete',
+                       'budget_exhausted', 'cancelled', 'denied', 'failed')
+        AND to_state IN ('running', 'awaiting_approval',
+                         'awaiting_external_work', 'criteria_met', 'incomplete',
+                         'budget_exhausted', 'cancelled', 'denied', 'failed')
+        AND from_state <> to_state
+    ),
+    CONSTRAINT chk_agent_goal_transition_reason CHECK (
+        length(btrim(reason_code)) BETWEEN 1 AND 64
+    )
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_goal_transition_operation
+    ON AgentGoalRunTransitions (goal_run_id, operation_id);
+CREATE INDEX IF NOT EXISTS idx_agent_goal_transitions_created
+    ON AgentGoalRunTransitions (goal_run_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_agent_goal_runs_state_deadline
+    ON AgentGoalRuns (state, deadline);
+CREATE INDEX IF NOT EXISTS idx_agent_goal_runs_principal
+    ON AgentGoalRuns (principal_user_id, state);
+CREATE INDEX IF NOT EXISTS idx_agent_goal_runs_agent
+    ON AgentGoalRuns (agent_id, state);
+CREATE INDEX IF NOT EXISTS idx_agent_goal_runs_owner
+    ON AgentGoalRuns (owner, state);
+-- END AGENT GOAL PERSISTENCE (schema 1.17)
+
+CREATE TABLE IF NOT EXISTS SchemaCapabilities (
+    capability              TEXT PRIMARY KEY,
+    applied_at              TIMESTAMPTZ NOT NULL,
+    applied_by              TEXT NOT NULL,
+    checksum                CHAR(64) NOT NULL,
+    details                 JSONB NOT NULL DEFAULT '{}',
+    CONSTRAINT chk_schema_capabilities_checksum
+        CHECK (checksum ~ '^[0-9a-f]{64}$')
+);
+
+ALTER TABLE MCPMutationProposals OWNER TO :CROWLER_DB_USER;
+ALTER TABLE MCPMutationApprovals OWNER TO :CROWLER_DB_USER;
+ALTER TABLE MCPMutationDispatchAttempts OWNER TO :CROWLER_DB_USER;
+ALTER TABLE MCPMutationAudit OWNER TO :CROWLER_DB_USER;
+ALTER TABLE MCPMutationRunQuota OWNER TO :CROWLER_DB_USER;
+ALTER TABLE MCPMutationPrincipalQuota OWNER TO :CROWLER_DB_USER;
+ALTER TABLE SchemaCapabilities OWNER TO :CROWLER_DB_USER;
+GRANT SELECT, INSERT, UPDATE ON MCPMutationProposals TO :CROWLER_DB_USER;
+GRANT SELECT, INSERT, UPDATE ON MCPMutationApprovals TO :CROWLER_DB_USER;
+GRANT SELECT, INSERT, UPDATE ON MCPMutationDispatchAttempts TO :CROWLER_DB_USER;
+GRANT SELECT, INSERT ON MCPMutationAudit TO :CROWLER_DB_USER;
+GRANT USAGE, SELECT ON SEQUENCE MCPMutationAudit_event_id_seq TO :CROWLER_DB_USER;
+GRANT SELECT, INSERT, UPDATE ON MCPMutationRunQuota TO :CROWLER_DB_USER;
+GRANT SELECT, INSERT, UPDATE ON MCPMutationPrincipalQuota TO :CROWLER_DB_USER;
+GRANT SELECT, INSERT ON SchemaCapabilities TO :CROWLER_DB_USER;
+
+ALTER TABLE AgentGoalRuns OWNER TO :CROWLER_DB_USER;
+ALTER TABLE AgentGoalRunTools OWNER TO :CROWLER_DB_USER;
+ALTER TABLE AgentGoalRunSources OWNER TO :CROWLER_DB_USER;
+ALTER TABLE AgentGoalRunWork OWNER TO :CROWLER_DB_USER;
+ALTER TABLE AgentGoalRunEvidence OWNER TO :CROWLER_DB_USER;
+ALTER TABLE AgentGoalRunVerificationEvidence OWNER TO :CROWLER_DB_USER;
+ALTER TABLE AgentGoalRunAuditRefs OWNER TO :CROWLER_DB_USER;
+ALTER TABLE AgentGoalRunTransitions OWNER TO :CROWLER_DB_USER;
+GRANT SELECT, INSERT, UPDATE ON AgentGoalRuns TO :CROWLER_DB_USER;
+GRANT SELECT, INSERT ON AgentGoalRunTools TO :CROWLER_DB_USER;
+GRANT SELECT, INSERT ON AgentGoalRunSources TO :CROWLER_DB_USER;
+GRANT SELECT, INSERT, UPDATE, DELETE ON AgentGoalRunWork TO :CROWLER_DB_USER;
+GRANT SELECT, INSERT ON AgentGoalRunEvidence TO :CROWLER_DB_USER;
+GRANT SELECT, INSERT ON AgentGoalRunVerificationEvidence TO :CROWLER_DB_USER;
+GRANT SELECT, INSERT ON AgentGoalRunAuditRefs TO :CROWLER_DB_USER;
+GRANT SELECT, INSERT ON AgentGoalRunTransitions TO :CROWLER_DB_USER;
+
+INSERT INTO SchemaCapabilities (capability, applied_at, applied_by, checksum, details)
+VALUES ('mcp-mutation-authorization-v1', CURRENT_TIMESTAMP, 'migration',
+        '00cb16b3efc2a3a619335c4e3bc2b1c470bb34b2378d249a81e746cddc704eed',
+        '{"schema_version":"1.17"}'::jsonb)
+ON CONFLICT (capability) DO UPDATE
+    SET applied_at = EXCLUDED.applied_at,
+        applied_by = EXCLUDED.applied_by,
+        checksum = EXCLUDED.checksum,
+        details = EXCLUDED.details;

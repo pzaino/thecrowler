@@ -1,0 +1,29 @@
+{
+  "version": "1.0",
+  "format_version": "1.0.0",
+  "author": "TheCROWler",
+  "description": "Example source document showing the per-source crawling options. Both options are optional and default to the historical behaviour.",
+  "source_name": "Example site with per-source crawl options",
+  "crawling_config": {
+    "site": "https://example.com/",
+    "source_type": "website",
+    "url_referrer": "https://example.com/",
+    "retries_on_redirect": 3,
+    "unwanted_urls": [
+      "/consent",
+      "/captcha"
+    ],
+    "incognito": false,
+    "follow_redirects": true
+  },
+  "rule_parameters": {
+    "crawling": {
+      "browsing_mode": "recursive",
+      "max_depth": 2,
+      "max_links": 25
+    }
+  },
+  "custom": {
+    "created_by": "operator-example"
+  }
+}

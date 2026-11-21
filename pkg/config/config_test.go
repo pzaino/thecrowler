@@ -1338,7 +1338,7 @@ func TestConfigString(t *testing.T) {
 	}
 
 	// Define the expected string representation of the config
-	expected := "Config{Remote: {https://example.com /api 8080 us-west-1 mytoken  0  }, Database: {  0 testuser testpassword  0 0   0 0 0}, Crawler: {0 0 0 []  false false <nil>     0 0 false false 0 0 0 0 0 0  0  0 0 0  false  false     false false false false false false false false false false false false false false false false [] false 0 false false { 0 0     0 0 0}}, API: {  0 0 0 false false false false     false 0 0 0 0 false [] {false []} {false 0 []} false {false [] 0 0 0} {false     0 {false} {false   }}}, Selenium: [{    chrome  4444  false false     {0 0     0 0 0}}], RulesetsSchemaPath: path/to/schema, Rulesets: [], ImageStorageAPI: {  0    0  }, FileStorageAPI: {  0    0  }, HTTPHeaders: {false 0 false {false false false false false false false false false false false false false false false false} []}, NetworkInfo: {{false 0 } {false 0 } {false 0 } {false 0 { 0} false false false false false false  false false [] [] []    0 0 0   false 0  false  false 0 [] []} {false    0 } {  }}, OS: linux, DebugLevel: 1}"
+	expected := "Config{Remote: {https://example.com /api 8080 us-west-1 mytoken  0  }, Database: {  0 testuser testpassword  0 0   0 0 0}, Crawler: {0 0 0 []  false false <nil>     0 0 false false 0 0 0 0 0 0  0  0 0 0  false  false     <nil> false false false false false false false false false false false false false false false false [] false 0 false false { 0 0     0 0 0}}, API: {  0 0 0 false false false false     false 0 0 0 0 false [] {false []} {false 0 []} false {false [] 0 0 0} {false     0 {false} {false   }}}, Selenium: [{    chrome  4444  false false     {0 0     0 0 0}}], RulesetsSchemaPath: path/to/schema, Rulesets: [], ImageStorageAPI: {  0    0  }, FileStorageAPI: {  0    0  }, HTTPHeaders: {false 0 false {false false false false false false false false false false false false false false false false} []}, NetworkInfo: {{false 0 } {false 0 } {false 0 } {false 0 { 0} false false false false false false  false false [] [] []    0 0 0   false 0  false  false 0 [] []} {false    0 } {  }}, OS: linux, DebugLevel: 1}"
 
 	// Call the String method on the config
 	result := config.String()
@@ -1767,28 +1767,29 @@ func TestExecutionPlanItemIsEmpty(t *testing.T) {
 
 // Test IsEmpty
 func TestSourceConfigIsEmpty(t *testing.T) {
-	// Create a nil SourceConfig
-	var sc *SourceConfig
-
-	// Call the IsEmpty function with the nil SourceConfig
-	isEmpty := sc.IsEmpty()
-
-	// Check if the IsEmpty function returns true for a nil SourceConfig
-	if !isEmpty {
-		t.Errorf("%s", errExpectedTrue)
+	var nilConfig *SourceConfig
+	tests := []struct {
+		name   string
+		config *SourceConfig
+		want   bool
+	}{
+		{name: "nil", config: nilConfig, want: true},
+		{name: "zero", config: &SourceConfig{}, want: true},
+		{name: "nil execution plan", config: &SourceConfig{ExecutionPlan: nil}, want: true},
+		{name: "all-empty execution plan", config: &SourceConfig{ExecutionPlan: []ExecutionPlanItem{{}, {}}}, want: true},
+		{name: "single rules execution plan", config: &SourceConfig{ExecutionPlan: []ExecutionPlanItem{{Rules: []string{"rule"}}}}, want: false},
+		{name: "single label execution plan", config: &SourceConfig{ExecutionPlan: []ExecutionPlanItem{{Label: "label"}}}, want: false},
+		{name: "single conditions execution plan", config: &SourceConfig{ExecutionPlan: []ExecutionPlanItem{{Conditions: Condition{URLPatterns: []string{".*"}}}}}, want: false},
+		{name: "multiple empty execution plan", config: &SourceConfig{ExecutionPlan: []ExecutionPlanItem{{}, {}}}, want: true},
+		{name: "rule parameters", config: &SourceConfig{RuleParameters: RuleParameters{Action: map[string]interface{}{"key": "value"}}}, want: false},
+		{name: "other fields", config: &SourceConfig{SourceName: "name"}, want: false},
 	}
-
-	// Create a non-nil SourceConfig with a nil ExecutionPlan
-	sc = &SourceConfig{
-		ExecutionPlan: nil,
-	}
-
-	// Call the IsEmpty function with the non-nil SourceConfig
-	isEmpty = sc.IsEmpty()
-
-	// Check if the IsEmpty function returns true for a non-nil SourceConfig with a nil ExecutionPlan
-	if !isEmpty {
-		t.Errorf("%s", errExpectedTrue)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := test.config.IsEmpty(); got != test.want {
+				t.Fatalf("IsEmpty() = %t, want %t", got, test.want)
+			}
+		})
 	}
 }
 
@@ -2568,5 +2569,406 @@ func TestTransactionTimeoutSchema(t *testing.T) {
 				t.Fatalf("schema returned issues = %v, want issues = %v: %v", gotIssues, test.wantIssues, issues)
 			}
 		})
+	}
+}
+
+func TestAttributeIndexingRuntimeNormalizerContract(t *testing.T) {
+	expected := attributeNormalizerContract()
+	if len(supportedAttributeNormalizers) != len(expected) {
+		t.Fatalf("runtime normalizer contract has %d entries, want %d", len(supportedAttributeNormalizers), len(expected))
+	}
+	for _, name := range expected {
+		if _, ok := supportedAttributeNormalizers[name]; !ok {
+			t.Errorf("runtime normalizer contract is missing %q", name)
+		}
+		attribute := AttributeDefinition{
+			Key:         "value",
+			Path:        "details.value",
+			IndexType:   "string",
+			Normalizers: []string{name},
+		}
+		if !attribute.IsValid() {
+			t.Errorf("runtime normalizer %q was rejected by attribute validation", name)
+		}
+	}
+	unknownNormalizer := AttributeDefinition{Key: "value", Path: "details.value", IndexType: "string", Normalizers: []string{"not-a-normalizer"}}
+	if unknownNormalizer.IsValid() {
+		t.Fatal("unknown normalizer was accepted")
+	}
+	caseInsensitiveNormalizer := AttributeDefinition{Key: "value", Path: "details.value", IndexType: "string", Normalizers: []string{" LowerCase "}}
+	if !caseInsensitiveNormalizer.IsValid() {
+		t.Fatal("normalizer names should be matched case-insensitively after trimming, like the runtime")
+	}
+}
+
+func TestAttributeIndexingSchemaMatchesRuntimeContract(t *testing.T) {
+	expectedNormalizers := attributeNormalizerContract()
+	for _, group := range []string{"webobject", "netinfo", "httpinfo"} {
+		t.Run(group, func(t *testing.T) {
+			itemSchema := loadAttributeIndexingGroupSchema(t, group)
+			properties, ok := itemSchema["properties"].(map[string]any)
+			if !ok {
+				t.Fatalf("%s item schema has no properties", group)
+			}
+			normalizers, ok := properties["normalizers"].(map[string]any)
+			if !ok {
+				t.Fatalf("%s normalizers schema is missing", group)
+			}
+			normalizerItems, ok := normalizers["items"].(map[string]any)
+			if !ok {
+				t.Fatalf("%s normalizers items schema is missing", group)
+			}
+			enumValues, ok := normalizerItems["enum"].([]any)
+			if !ok {
+				t.Fatalf("%s normalizers schema has no enum", group)
+			}
+			gotNormalizers := make(map[string]bool, len(enumValues))
+			for _, raw := range enumValues {
+				name, ok := raw.(string)
+				if !ok {
+					t.Fatalf("%s normalizers enum contains %T", group, raw)
+				}
+				gotNormalizers[name] = true
+			}
+			if len(gotNormalizers) != len(expectedNormalizers) {
+				t.Fatalf("%s normalizer enum has %d entries, want %d", group, len(gotNormalizers), len(expectedNormalizers))
+			}
+			for _, name := range expectedNormalizers {
+				if !gotNormalizers[name] {
+					t.Errorf("%s normalizer enum is missing %q", group, name)
+				}
+			}
+
+			runAlso, ok := properties["run_also"].(map[string]any)
+			if !ok {
+				t.Fatalf("%s run_also schema is missing", group)
+			}
+			if runAlso["type"] != "array" {
+				t.Fatalf("%s run_also type = %v, want array", group, runAlso["type"])
+			}
+			items, ok := runAlso["items"].(map[string]any)
+			if !ok || items["type"] != "string" {
+				t.Fatalf("%s run_also items = %#v, want string items", group, runAlso["items"])
+			}
+
+			schema := compileJSONSubSchema(t, itemSchema)
+			valid := validAttributeFixture(expectedNormalizers)
+			issues, err := schema.ValidateBytes(context.Background(), mustMarshalJSON(t, valid))
+			if err != nil {
+				t.Fatalf("validate %s valid fixture: %v", group, err)
+			}
+			if len(issues) != 0 {
+				t.Fatalf("%s schema rejected valid runtime fields: %v", group, issues)
+			}
+
+			invalidRunAlso := validAttributeFixture(expectedNormalizers)
+			invalidRunAlso["run_also"] = "title"
+			issues, err = schema.ValidateBytes(context.Background(), mustMarshalJSON(t, invalidRunAlso))
+			if err != nil {
+				t.Fatalf("validate %s invalid run_also fixture: %v", group, err)
+			}
+			if len(issues) == 0 {
+				t.Fatalf("%s schema accepted a scalar run_also", group)
+			}
+
+			invalidNormalizer := validAttributeFixture(expectedNormalizers)
+			invalidNormalizer["normalizers"] = []string{"not-a-normalizer"}
+			issues, err = schema.ValidateBytes(context.Background(), mustMarshalJSON(t, invalidNormalizer))
+			if err != nil {
+				t.Fatalf("validate %s invalid normalizer fixture: %v", group, err)
+			}
+			if len(issues) == 0 {
+				t.Fatalf("%s schema accepted an unsupported normalizer", group)
+			}
+
+			invalidIndexType := validAttributeFixture(expectedNormalizers)
+			invalidIndexType["index_type"] = "unsupported"
+			issues, err = schema.ValidateBytes(context.Background(), mustMarshalJSON(t, invalidIndexType))
+			if err != nil {
+				t.Fatalf("validate %s invalid index_type fixture: %v", group, err)
+			}
+			if len(issues) == 0 {
+				t.Fatalf("%s schema accepted an unsupported index_type", group)
+			}
+
+			for _, missing := range []string{"key", "path", "index_type"} {
+				missingField := validAttributeFixture(expectedNormalizers)
+				delete(missingField, missing)
+				issues, err = schema.ValidateBytes(context.Background(), mustMarshalJSON(t, missingField))
+				if err != nil {
+					t.Fatalf("validate %s fixture missing %s: %v", group, missing, err)
+				}
+				if len(issues) == 0 {
+					t.Fatalf("%s schema accepted an attribute without %s", group, missing)
+				}
+			}
+		})
+	}
+}
+
+func TestParseConfigValidatesAttributeIndexing(t *testing.T) {
+	validConfig := []byte(`
+attributes_indexing:
+  webobject:
+    - key: url
+      path: details.url
+      index_type: string
+      normalizers: [lowercase, collapse_spaces, normalize_url]
+      run_also: [title]
+      index: true
+    - key: title
+      path: details.title
+      index_type: string
+  netinfo:
+    - key: ip
+      path: details.net_info.ip
+      index_type: string
+      normalizers: [trim]
+      run_also: [asn]
+      index: true
+  httpinfo:
+    - key: status_code
+      path: details.http_info.status_code
+      index_type: integer
+      index: true
+`)
+	cfg, err := ParseConfig(validConfig)
+	if err != nil {
+		t.Fatalf("ParseConfig() rejected valid attribute indexing: %v", err)
+	}
+	if len(cfg.AttributesIndexing.WebObject) != 2 || len(cfg.AttributesIndexing.NetInfo) != 1 || len(cfg.AttributesIndexing.HTTPInfo) != 1 {
+		t.Fatalf("unexpected parsed attribute indexing config: %#v", cfg.AttributesIndexing)
+	}
+
+	tests := []struct {
+		name    string
+		config  string
+		wantErr string
+	}{
+		{
+			name: "unsupported normalizer",
+			config: `
+attributes_indexing:
+  webobject:
+    - key: url
+      path: details.url
+      index_type: string
+      normalizers: [not-a-normalizer]
+`,
+			wantErr: "unsupported normalizer",
+		},
+		{
+			name: "unsupported index type",
+			config: `
+attributes_indexing:
+  webobject:
+    - key: url
+      path: details.url
+      index_type: unsupported
+`,
+			wantErr: "unsupported index_type",
+		},
+		{
+			name: "missing key",
+			config: `
+attributes_indexing:
+  webobject:
+    - path: details.url
+      index_type: string
+`,
+			wantErr: "key is required",
+		},
+		{
+			name: "missing path",
+			config: `
+attributes_indexing:
+  webobject:
+    - key: url
+      index_type: string
+`,
+			wantErr: "path is required",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := ParseConfig([]byte(test.config))
+			if err == nil {
+				t.Fatal("ParseConfig() accepted invalid attribute indexing")
+			}
+			if !strings.Contains(err.Error(), "attributes_indexing.webobject[0]") || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("ParseConfig() error = %v, want attributes_indexing.webobject[0] and %q", err, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestParseConfigNormalizesAttributeIndexingNames(t *testing.T) {
+	cfg, err := ParseConfig([]byte(`
+attributes_indexing:
+  webobject:
+    - key: url
+      path: details.url
+      index_type: " String "
+      normalizers: [" LowerCase ", "normalize_url "]
+      index: true
+`))
+	if err != nil {
+		t.Fatalf("ParseConfig() rejected normalizable attribute indexing: %v", err)
+	}
+	attribute := cfg.AttributesIndexing.WebObject[0]
+	if attribute.IndexType != "string" {
+		t.Fatalf("index_type = %q, want string", attribute.IndexType)
+	}
+	if !reflect.DeepEqual(attribute.Normalizers, []string{"lowercase", "normalize_url"}) {
+		t.Fatalf("normalizers = %#v, want canonical lowercase values", attribute.Normalizers)
+	}
+}
+
+func attributeNormalizerContract() []string {
+	return []string{
+		"",
+		"lowercase",
+		"uppercase",
+		"trim",
+		"collapse_spaces",
+		"remove_punctuation",
+		"normalize_url",
+		"normalize_email",
+		"fix_utf8",
+		"normalize_unicode",
+		"sanitize_string",
+		"unix_to_datetime",
+	}
+}
+
+func validAttributeFixture(normalizers []string) map[string]any {
+	return map[string]any{
+		"key":         "url",
+		"path":        "details.url",
+		"index_type":  "string",
+		"normalizers": normalizers,
+		"run_also":    []string{"title"},
+		"index":       true,
+	}
+}
+
+func loadAttributeIndexingGroupSchema(t *testing.T, group string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile("../../schemas/crowler-config-schema.json")
+	if err != nil {
+		t.Fatalf("read config schema: %v", err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatalf("parse config schema: %v", err)
+	}
+	rootProperties, ok := document["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("config schema has no root properties")
+	}
+	indexing, ok := rootProperties["attributes_indexing"].(map[string]any)
+	if !ok {
+		t.Fatal("attributes_indexing schema is missing")
+	}
+	groupProperties, ok := indexing["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("attributes_indexing schema has no properties")
+	}
+	groupSchema, ok := groupProperties[group].(map[string]any)
+	if !ok {
+		t.Fatalf("attributes_indexing.%s schema is missing", group)
+	}
+	itemSchema, ok := groupSchema["items"].(map[string]any)
+	if !ok {
+		t.Fatalf("attributes_indexing.%s item schema is missing", group)
+	}
+	return itemSchema
+}
+
+func compileJSONSubSchema(t *testing.T, raw any) *jsonschema.Schema {
+	t.Helper()
+	schema := &jsonschema.Schema{}
+	if err := schema.UnmarshalJSON(mustMarshalJSON(t, raw)); err != nil {
+		t.Fatalf("compile JSON sub-schema: %v", err)
+	}
+	return schema
+}
+
+func mustMarshalJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshal JSON fixture: %v", err)
+	}
+	return encoded
+}
+
+func TestInformationSeedLeaseRetryAndRetentionConfig(t *testing.T) {
+	config, err := ParseConfig([]byte(`
+information_seed:
+  max_attempts: 7
+  retry_interval: 60
+  retry_backoff_max: 30
+  heartbeat_interval: 500
+  lease_duration: 120
+  retention:
+    enabled: true
+    completed_days: 14
+    disabled_days: 15
+    exhausted_days: 16
+    batch_size: 25
+    dry_run: true
+`))
+	if err != nil {
+		t.Fatalf("ParseConfig() error = %v", err)
+	}
+	if config.InformationSeed.MaxAttempts != 7 || config.InformationSeed.RetryBackoffMax != 60 {
+		t.Fatalf("unexpected retry config: %#v", config.InformationSeed)
+	}
+	if config.InformationSeed.HeartbeatInterval != 60 {
+		t.Fatalf("heartbeat interval = %d, want lease/2", config.InformationSeed.HeartbeatInterval)
+	}
+	if !config.InformationSeed.Retention.Enabled || config.InformationSeed.Retention.CompletedDays != 14 || !config.InformationSeed.Retention.DryRun {
+		t.Fatalf("unexpected retention config: %#v", config.InformationSeed.Retention)
+	}
+
+	defaults := NewConfig()
+	if defaults.InformationSeed.Retention.Enabled || defaults.InformationSeed.Retention.CompletedDays != 30 {
+		t.Fatalf("retention must be off by default: %#v", defaults.InformationSeed.Retention)
+	}
+
+	schemaData, err := os.ReadFile("../../schemas/crowler-config-schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(schemaData, &document); err != nil {
+		t.Fatal(err)
+	}
+	informationSeed := document["properties"].(map[string]any)["information_seed"].(map[string]any)
+	properties := informationSeed["properties"].(map[string]any)
+	for _, name := range []string{"max_attempts", "heartbeat_interval", "lease_duration", "retry_backoff_max", "retention"} {
+		if _, ok := properties[name]; !ok {
+			t.Fatalf("information_seed schema missing %q", name)
+		}
+	}
+	retention := properties["retention"].(map[string]any)
+	retentionSchemaData, err := json.Marshal(retention)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := &jsonschema.Schema{}
+	if err := schema.UnmarshalJSON(retentionSchemaData); err != nil {
+		t.Fatal(err)
+	}
+	valid, _ := json.Marshal(map[string]any{"enabled": true, "completed_days": 14, "batch_size": 25, "dry_run": true})
+	issues, err := schema.ValidateBytes(context.Background(), valid)
+	if err != nil || len(issues) != 0 {
+		t.Fatalf("valid retention schema rejected: issues=%v err=%v", issues, err)
+	}
+	invalid := []byte(`{"enabled":true,"completed_days":0,"batch_size":5000}`)
+	issues, err = schema.ValidateBytes(context.Background(), invalid)
+	if err != nil || len(issues) == 0 {
+		t.Fatalf("invalid retention schema accepted: issues=%v err=%v", issues, err)
 	}
 }

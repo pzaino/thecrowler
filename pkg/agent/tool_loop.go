@@ -99,25 +99,33 @@ func ValidateLimits(limits ToolLoopLimits) error {
 // (registry, allowlist, identity, enforcement, scopes, provider endpoint)
 // comes from trusted operator configuration, never from model output.
 type ToolLoopConfig struct {
-	Provider        LLMProvider
-	ProviderName    string
-	Model           string
-	URL             string
-	Auth            string
-	Prompt          string
-	Messages        []any
-	Registry        *AgentToolRegistry
-	Allowlist       []string
-	Identity        AgentIdentity
-	Enforcement     bool
-	AllowedSources  []uint64
-	DB              cdb.Handler
-	Limits          ToolLoopLimits
-	StopOnToolError bool
-	RunID           string
-	TraceID         string
-	GroupDeadline   time.Time
-	Ctx             context.Context
+	Provider             LLMProvider
+	ProviderName         string
+	Model                string
+	URL                  string
+	Auth                 string
+	Prompt               string
+	Messages             []any
+	Registry             *AgentToolRegistry
+	Allowlist            []string
+	Identity             AgentIdentity
+	Enforcement          bool
+	AllowedSources       []uint64
+	AllowedOperations    map[string]bool
+	MutationAllowed      bool
+	MCPMutationAllowed   bool
+	MCPAllowedOperations map[string]bool
+	CrawlRuntime         *CrawlRequestToolRuntime
+	MCPManager           *MCPToolManager
+	Principal            MCPMutationPrincipal
+	DB                   cdb.Handler
+	Limits               ToolLoopLimits
+	StopOnToolError      bool
+	RunID                string
+	TraceID              string
+	GroupDeadline        time.Time
+	Ctx                  context.Context
+	cancel               context.CancelFunc
 }
 
 // ToolCallSummary is the sanitized per-call record: names, IDs, and reason
@@ -205,6 +213,16 @@ func emitToolAudit(runID, traceID, agentID, agentName, owner, tool, outcome, rea
 
 // RunToolLoop executes the bounded synchronous loop.
 func RunToolLoop(config ToolLoopConfig) (ToolLoopResult, error) {
+	if config.MCPManager != nil || config.cancel != nil {
+		defer func() {
+			if config.MCPManager != nil {
+				_ = config.MCPManager.Close()
+			}
+			if config.cancel != nil {
+				config.cancel()
+			}
+		}()
+	}
 	result := ToolLoopResult{
 		ToolCalls: []ToolCallSummary{},
 		RunID:     config.RunID,
@@ -255,14 +273,26 @@ func RunToolLoop(config ToolLoopConfig) (ToolLoopResult, error) {
 				fmt.Errorf("tool loop denied: allowlisted tool %q is not registered", name))
 		}
 	}
+	// Provider capability gate: only an explicit "unsupported" denies here.
+	// Unknown keeps historical behaviour for legacy and gateway providers;
+	// supported is an operator attestation. No HTTP request has been made.
+	if ProviderCapabilitiesFor(config.Provider, config.Model).ToolCalls == LLMCapabilityUnsupported {
+		emitToolAudit(result.RunID, result.TraceID, config.Identity.AgentID, config.Identity.Name, config.Identity.Owner, "", auditOutcomeDenied, "provider_tool_calls_unsupported")
+		return fail(ToolLoopDenied, "provider does not support tool calls",
+			fmt.Errorf("tool loop denied: provider does not support tool calls"))
+	}
 
 	auth := ToolAuthContext{
-		Identity:       config.Identity,
-		Enforcement:    config.Enforcement,
-		Allowlist:      allowlist,
-		AllowedSources: sliceToSourceSet(config.AllowedSources),
-		RunID:          result.RunID,
-		TraceID:        result.TraceID,
+		Identity:             config.Identity,
+		Enforcement:          config.Enforcement,
+		Allowlist:            allowlist,
+		AllowedSources:       sliceToSourceSet(config.AllowedSources),
+		AllowedOperations:    config.AllowedOperations,
+		MutationAllowed:      config.MutationAllowed,
+		MCPMutationAllowed:   config.MCPMutationAllowed,
+		MCPAllowedOperations: config.MCPAllowedOperations,
+		RunID:                result.RunID,
+		TraceID:              result.TraceID,
 	}
 	agentID, agentName, owner := config.Identity.AgentID, config.Identity.Name, config.Identity.Owner
 	emitToolAudit(result.RunID, result.TraceID, agentID, agentName, owner, "", auditOutcomeAllowed, "tool_loop_started")
@@ -288,14 +318,19 @@ func RunToolLoop(config ToolLoopConfig) (ToolLoopResult, error) {
 		emitToolAudit(result.RunID, result.TraceID, agentID, agentName, owner, "", auditOutcomeDenied, "run context expired")
 		return fail(ToolLoopCancelled, "run context expired", fmt.Errorf("tool loop cancelled: run context expired"))
 	}
-	loopCtx, loopCancel := context.WithDeadline(parentCtx, time.Now().Add(effectiveTimeout))
+	deadline := time.Now().Add(effectiveTimeout)
+	if inherited, ok := parentCtx.Deadline(); ok && inherited.Before(deadline) {
+		deadline = inherited
+	}
+	loopCtx, loopCancel := context.WithDeadline(parentCtx, deadline)
 	defer loopCancel()
+	actualDeadline, _ := loopCtx.Deadline()
 
 	advertised := advertiseTools(config.Registry, allowlist)
 	state = &toolLoopState{
 		messages: initialLoopMessages(config),
 		seenIDs:  map[string]bool{},
-		deadline: time.Now().Add(effectiveTimeout),
+		deadline: actualDeadline,
 		runID:    result.RunID,
 		traceID:  result.TraceID,
 	}
@@ -320,6 +355,10 @@ func RunToolLoop(config ToolLoopConfig) (ToolLoopResult, error) {
 			Tools:         advertised,
 			ToolChoice:    LLMToolChoice{Mode: "auto"},
 			HasToolChoice: true,
+		}
+		if err := loopCtx.Err(); err != nil {
+			emitToolAudit(result.RunID, result.TraceID, agentID, agentName, owner, "", auditOutcomeDenied, "loop deadline exceeded")
+			return fail(ToolLoopCancelled, "loop deadline exceeded", fmt.Errorf("tool loop cancelled: deadline exceeded"))
 		}
 		rawResponse, err := executeProviderCall(config.Provider, loopCtx, req)
 		if err != nil {
@@ -388,6 +427,20 @@ func RunToolLoop(config ToolLoopConfig) (ToolLoopResult, error) {
 // position. Any repeat — explicit-explicit, synthetic-synthetic across
 // rounds, or explicit-synthetic — denies the batch before any execution.
 func assignEffectiveIDs(calls []LLMToolCall, round int, state *toolLoopState) ([]string, error) {
+	ids, err := assignCallIDs(calls, round, state.seenIDs)
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range ids {
+		state.seenIDs[id] = true
+	}
+	return ids, nil
+}
+
+// assignCallIDs computes one unambiguous correlation ID per call without
+// mutating the run ledger. Callers commit the IDs after the whole batch is
+// accepted, so a duplicate denies the batch before any execution.
+func assignCallIDs(calls []LLMToolCall, round int, seen map[string]bool) ([]string, error) {
 	ids := make([]string, len(calls))
 	batch := map[string]bool{}
 	for i, call := range calls {
@@ -395,14 +448,11 @@ func assignEffectiveIDs(calls []LLMToolCall, round int, state *toolLoopState) ([
 		if id == "" {
 			id = fmt.Sprintf("local-r%d-c%d", round, i)
 		}
-		if state.seenIDs[id] || batch[id] {
+		if seen[id] || batch[id] {
 			return nil, denyTool(ToolDenyDuplicateCallID, "duplicate tool call ID")
 		}
 		batch[id] = true
 		ids[i] = id
-	}
-	for _, id := range ids {
-		state.seenIDs[id] = true
 	}
 	return ids, nil
 }
@@ -434,15 +484,55 @@ func processToolCall(
 
 	tool, ok := config.Registry.Get(call.Name)
 	if !ok {
+		// A model can still name an operator-policy alias that was never
+		// registered for this run. Record the denial when the alias is known,
+		// then return the same unknown-tool denial as before.
+		policy := CurrentMCPMutationPolicy()
+		if operation, found := policy.OperationByAlias(call.Name); found {
+			recordMCPAdmissionDeniedDB(loopCtx, toolRuntimeDB(config), MCPAdmissionDeniedEvent{
+				EventType:  MCPAuditEventAdmissionDenied,
+				Stage:      MCPAuditStageToolLoop,
+				RunID:      auth.RunID,
+				TraceID:    auth.TraceID,
+				CallID:     callID,
+				Identity:   auth.Identity,
+				Principal:  config.Principal,
+				ServerID:   operation.ServerID,
+				ToolAlias:  operation.ToolAlias,
+				PolicyID:   policy.PolicyID,
+				ReasonCode: ToolDenyUnknownTool,
+			})
+		}
 		return deny(ToolDenyUnknownTool)
+	}
+	auditDenied := func(code string) {
+		info, isMCPProposal := mcpMutationProposalAuditIdentity(tool)
+		if !isMCPProposal {
+			return
+		}
+		recordMCPAdmissionDeniedDB(loopCtx, toolRuntimeDB(config), MCPAdmissionDeniedEvent{
+			EventType:  MCPAuditEventAdmissionDenied,
+			Stage:      MCPAuditStageToolLoop,
+			RunID:      auth.RunID,
+			TraceID:    auth.TraceID,
+			CallID:     callID,
+			Identity:   auth.Identity,
+			Principal:  config.Principal,
+			ServerID:   info.ServerID,
+			ToolAlias:  info.ToolAlias,
+			PolicyID:   info.PolicyID,
+			ReasonCode: code,
+		})
 	}
 	// Re-resolve arguments through the Phase 2 normalizer (string forms,
 	// object copies, explicit errors) so wire shapes stay uniform.
 	args, err := normalizeToolArguments(call.Arguments)
 	if err != nil {
+		auditDenied(ToolDenyArguments)
 		return deny(ToolDenyArguments)
 	}
 	if state.toolCalls+1 > config.Limits.MaxToolCalls {
+		auditDenied(ToolDenyBudget)
 		return deny(ToolDenyBudget)
 	}
 	if err := AuthorizeToolCall(auth, tool, args); err != nil {
@@ -450,35 +540,53 @@ func processToolCall(
 		if authErr, ok := err.(*ToolAuthError); ok {
 			code = authErr.Code
 		}
+		auditDenied(code)
 		return deny(code)
 	}
 	if err := loopCtx.Err(); err != nil {
+		auditDenied(ToolDenyContext)
 		return deny(ToolDenyContext)
 	}
 
 	state.consecutiveDenials = 0
 	runtime := ToolRuntime{
-		DB:       toolRuntimeDB(config),
-		Auth:     auth,
-		Deadline: state.deadline,
+		DB:        toolRuntimeDB(config),
+		Auth:      auth,
+		Deadline:  state.deadline,
+		CallID:    callID,
+		Crawl:     config.CrawlRuntime,
+		Principal: config.Principal,
 	}
 	callCtx, callCancel := context.WithCancel(loopCtx)
 	defer callCancel()
 	handlerResult, err := tool.Execute(ContextWithToolRuntime(callCtx, runtime), args)
-	var observation map[string]any
 	status := "executed"
-	if err != nil {
+	reasonCode := ""
+	var observation map[string]any
+	if failure, failed := asToolExecutionFailure(err); failed {
+		observation = sanitizeToolResult(failure.Observation)
+		if len(observation) == 0 {
+			observation = map[string]any{"error": "tool execution failed"}
+		}
+		status = "failed"
+		reasonCode = failure.Code
+		if strings.TrimSpace(reasonCode) == "" {
+			reasonCode = "tool_execution_failed"
+		}
+	} else if err != nil {
 		observation = map[string]any{"error": sanitizeToolError(err)}
 		status = "failed"
+		reasonCode = "tool_execution_failed"
 	} else {
 		observation = sanitizeToolResult(handlerResult)
 	}
-	emitToolAudit(auth.RunID, auth.TraceID, agentID, agentName, owner, call.Name, auditOutcomeFor(status), status)
+	emitToolAudit(auth.RunID, auth.TraceID, agentID, agentName, owner, call.Name, auditOutcomeFor(status), auditReasonFor(status, reasonCode))
 	serialized, serErr := json.Marshal(observation)
 	if serErr != nil || len(serialized) > config.Limits.MaxResultBytes {
 		observation = map[string]any{"error": "result_too_large", "truncated": true}
 		serialized, _ = json.Marshal(observation)
 		status = "failed"
+		reasonCode = "result_too_large"
 	}
 	state.totalResultBytes += len(serialized)
 	if state.totalResultBytes > config.Limits.MaxTotalResultBytes {
@@ -489,7 +597,7 @@ func processToolCall(
 	state.toolCalls++
 	state.messages = append(state.messages, toolResultMessage(callID, observation))
 	summary = ToolCallSummary{Name: call.Name, ID: callID, Index: call.Index,
-		Status: status, ResultBytes: len(serialized)}
+		Status: status, ReasonCode: reasonCode, ResultBytes: len(serialized)}
 	state.summaries = append(state.summaries, summary)
 	if status == "failed" && config.StopOnToolError {
 		result := state.terminal(ToolLoopToolError, "tool execution failed")
@@ -642,6 +750,18 @@ func auditOutcomeFor(status string) string {
 		return auditOutcomeAllowed
 	}
 	return auditOutcomeError
+}
+
+// auditReasonFor keeps successful reads and tool-level failures
+// distinguishable in the audit trail.
+func auditReasonFor(status, reasonCode string) string {
+	if status == "executed" {
+		return "executed"
+	}
+	if strings.TrimSpace(reasonCode) != "" {
+		return reasonCode
+	}
+	return "tool_execution_failed"
 }
 
 // sliceToSourceSet converts an allowlist slice to a lookup set.

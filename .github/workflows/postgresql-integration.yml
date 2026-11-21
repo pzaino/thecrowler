@@ -27,7 +27,7 @@ jobs:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
         ports:
-          - 5432:5432
+          - 127.0.0.1:5432:5432
         options: >-
           --health-cmd "pg_isready -U postgres -d SitesIndex"
           --health-interval 5s
@@ -93,10 +93,75 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Install PostgreSQL client
+      - name: Install and select PostgreSQL 17 client
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes postgresql-client
+          set -euo pipefail
+          sudo install -d /usr/share/postgresql-common/pgdg
+          # The hosted runner occasionally sees a transient TLS EOF while
+          # fetching the signed PGDG key. Retry the download and package
+          # metadata a few times, but keep normal TLS and signature
+          # verification. Never use --insecure or ignore repository errors.
+          for attempt in 1 2 3; do
+            if sudo curl -fsSL \
+              --retry 3 --retry-delay 2 --retry-all-errors \
+              --connect-timeout 15 --max-time 60 \
+              https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+              -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc; then
+              break
+            fi
+            if [ "$attempt" = 3 ]; then
+              echo "failed to download the PostgreSQL signing key" >&2
+              exit 1
+            fi
+            sleep $((attempt * 2))
+          done
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          for attempt in 1 2 3; do
+            if sudo apt-get update; then
+              break
+            fi
+            if [ "$attempt" = 3 ]; then
+              echo "failed to refresh PostgreSQL package metadata" >&2
+              exit 1
+            fi
+            sleep $((attempt * 2))
+          done
+          for attempt in 1 2 3; do
+            if sudo apt-get install --yes postgresql-client-17; then
+              break
+            fi
+            if [ "$attempt" = 3 ]; then
+              echo "failed to install the PostgreSQL 17 client" >&2
+              exit 1
+            fi
+            sleep $((attempt * 2))
+          done
+
+          # Ubuntu runners may already have a newer PostgreSQL client earlier
+          # in PATH (the observed failure was 18.6). Resolve the versioned
+          # binaries and prefer them for this and all later steps.
+          pg17_bin="$(bash ./scripts/select-postgres-client-major.sh 17)"
+          echo "$pg17_bin" >>"$GITHUB_PATH"
+          export PATH="$pg17_bin:$PATH"
+          hash -r
+
+          echo "pg_dump: $(command -v pg_dump)"
+          echo "pg_restore: $(command -v pg_restore)"
+          pg_dump --version
+          pg_restore --version
+          pg_dump_major="$(pg_dump --version | awk '{print $3}' | cut -d. -f1)"
+          pg_restore_major="$(pg_restore --version | awk '{print $3}' | cut -d. -f1)"
+          test "$pg_dump_major" = "17"
+          test "$pg_restore_major" = "17"
+
+          server_version="$(
+            PGPASSWORD="$POSTGRES_PASSWORD" psql \
+              --host 127.0.0.1 --port 5432 --username "$POSTGRES_USER" \
+              --dbname "$POSTGRES_DB" -Atc 'SHOW server_version'
+          )"
+          echo "server_version: $server_version"
+          test "$(printf '%s' "$server_version" | cut -d. -f1)" = "17"
 
       - name: Create current schema
         run: |
@@ -118,7 +183,7 @@ jobs:
 
           test "$runtime_user" = "$CROWLER_DB_USER"
 
-      - name: Verify repeatable current migration
+      - name: Verify repeatable v1.17 migration
         run: |
           PGPASSWORD="$POSTGRES_PASSWORD" \
           psql \
@@ -128,7 +193,7 @@ jobs:
             --port 5432 \
             --username "$POSTGRES_USER" \
             --dbname "$POSTGRES_DB" \
-            --file pkg/database/db_migrations/postgresql-migration-v1.16.pgsql
+            --file pkg/database/db_migrations/postgresql-migration-v1.17.pgsql
 
           current_version="$(
             PGPASSWORD="$POSTGRES_PASSWORD" \
@@ -142,10 +207,410 @@ jobs:
               --command "SELECT version FROM DBSchemaVersion WHERE is_current"
           )"
 
-          test "$current_version" = "1.16"
+          test "$current_version" = "1.17"
+
+          writer_generation="$(
+            PGPASSWORD="$POSTGRES_PASSWORD" \
+            psql \
+              -v ON_ERROR_STOP=1 \
+              -At \
+              --host 127.0.0.1 \
+              --port 5432 \
+              --username "$POSTGRES_USER" \
+              --dbname "$POSTGRES_DB" \
+              --command "SELECT writer_generation FROM DatabaseWriterCompatibility WHERE lock_id = 1"
+          )"
+
+          test "$writer_generation" = "verified-ownership-v1.17"
+
+      - name: Verify v1.17 crawl-approval migration
+        run: |
+          PGPASSWORD="$POSTGRES_PASSWORD" \
+          psql \
+            -v ON_ERROR_STOP=1 \
+            --host 127.0.0.1 \
+            --port 5432 \
+            --username "$POSTGRES_USER" \
+            --dbname "$POSTGRES_DB" \
+            --command "DROP DATABASE IF EXISTS crowler_v117 WITH (FORCE)" \
+            --command "CREATE DATABASE crowler_v117"
+
+          PGPASSWORD="$POSTGRES_PASSWORD" \
+          psql \
+            -v ON_ERROR_STOP=1 \
+            -v POSTGRES_DB=crowler_v117 \
+            -v CROWLER_DB_USER="$CROWLER_DB_USER" \
+            -v CROWLER_DB_PASSWORD="$CROWLER_DB_PASSWORD" \
+            -v DB_SHARED_BUFFERS="$CROWLER_DB_SHARED_BUFFERS" \
+            -v DB_WORK_MEM="$CROWLER_DB_WORK_MEM" \
+            -v DB_MAINTENANCE_WORK_MEM="$CROWLER_DB_MAINTENANCE_WORK_MEM" \
+            -v DB_EFFECTIVE_CACHE_SIZE="$CROWLER_DB_EFFECTIVE_CACHE_SIZE" \
+            -v DB_AUTOVACUUM_WORK_MEM="$CROWLER_DB_AUTOVACUUM_WORK_MEM" \
+            -v DB_MAX_WAL_SIZE="$CROWLER_DB_MAX_WAL_SIZE" \
+            -v DB_MAX_CONNECTIONS="$CROWLER_DB_MAX_CONNECTIONS" \
+            --host 127.0.0.1 \
+            --port 5432 \
+            --username "$POSTGRES_USER" \
+            --dbname crowler_v117 \
+            --file pkg/database/postgresql-setup.pgsql
+
+          # Simulate an existing v1.16 deployment that predates v1.17.
+          PGPASSWORD="$POSTGRES_PASSWORD" \
+          psql \
+            -v ON_ERROR_STOP=1 \
+            --host 127.0.0.1 \
+            --port 5432 \
+            --username "$POSTGRES_USER" \
+            --dbname crowler_v117 \
+            --command "DROP TABLE IF EXISTS CrawlApprovals" \
+            --command "DROP TABLE IF EXISTS SourceOwnership" \
+            --command "UPDATE DBSchemaVersion SET is_current = (version = '1.16')" \
+            --command "UPDATE DatabaseWriterCompatibility SET writer_generation = 'reservation-v1.15' WHERE lock_id = 1"
+
+          PGPASSWORD="$POSTGRES_PASSWORD" \
+          psql \
+            -v ON_ERROR_STOP=1 \
+            -v CROWLER_DB_USER="$CROWLER_DB_USER" \
+            --host 127.0.0.1 \
+            --port 5432 \
+            --username "$POSTGRES_USER" \
+            --dbname crowler_v117 \
+            --file pkg/database/db_migrations/postgresql-migration-v1.17.pgsql
+
+          current_version="$(
+            PGPASSWORD="$POSTGRES_PASSWORD" \
+            psql \
+              -v ON_ERROR_STOP=1 \
+              -At \
+              --host 127.0.0.1 \
+              --port 5432 \
+              --username "$POSTGRES_USER" \
+              --dbname crowler_v117 \
+              --command "SELECT version FROM DBSchemaVersion WHERE is_current"
+          )"
+          test "$current_version" = "1.17"
+
+          table_name="$(
+            PGPASSWORD="$POSTGRES_PASSWORD" \
+            psql \
+              -v ON_ERROR_STOP=1 \
+              -At \
+              --host 127.0.0.1 \
+              --port 5432 \
+              --username "$POSTGRES_USER" \
+              --dbname crowler_v117 \
+              --command "SELECT to_regclass('public.crawlapprovals'), to_regclass('public.sourceownership')"
+          )"
+          test "$table_name" = "crawlapprovals|sourceownership"
+
+          writer_generation="$(
+            PGPASSWORD="$POSTGRES_PASSWORD" \
+            psql \
+              -v ON_ERROR_STOP=1 \
+              -At \
+              --host 127.0.0.1 \
+              --port 5432 \
+              --username "$POSTGRES_USER" \
+              --dbname crowler_v117 \
+              --command "SELECT writer_generation FROM DatabaseWriterCompatibility WHERE lock_id = 1"
+          )"
+          test "$writer_generation" = "verified-ownership-v1.17"
+
+          # Re-running the migration must converge and preserve history.
+          PGPASSWORD="$POSTGRES_PASSWORD" \
+          psql \
+            -v ON_ERROR_STOP=1 \
+            -v CROWLER_DB_USER="$CROWLER_DB_USER" \
+            --host 127.0.0.1 \
+            --port 5432 \
+            --username "$POSTGRES_USER" \
+            --dbname crowler_v117 \
+            --file pkg/database/db_migrations/postgresql-migration-v1.17.pgsql
+
+
+          # Exercise the real runtime compatibility check and API handlers
+          # against the migrated database, not only SQL queries.
+          THECROWLER_POSTGRES_INTEGRATION=1 DOCKER_POSTGRES_DB_NAME=crowler_v117 \
+          go test -tags=integration ./pkg/database -run TestPostgresV117RuntimeCompatibility -count=1
+          THECROWLER_POSTGRES_INTEGRATION=1 DOCKER_POSTGRES_DB_NAME=crowler_v117 \
+          go test -tags=integration ./services/api \
+            -run 'TestPostgresAuthenticatedSourceCreateAndUpdate|TestPostgresAdministrativeOwnershipVerification' \
+            -count=1
+
+          PGPASSWORD="$POSTGRES_PASSWORD" \
+          psql \
+            -v ON_ERROR_STOP=1 \
+            --host 127.0.0.1 \
+            --port 5432 \
+            --username "$POSTGRES_USER" \
+            --dbname "$POSTGRES_DB" \
+            --command "DROP DATABASE crowler_v117 WITH (FORCE)"
+
+      - name: Run fenced source-crawl attempt PostgreSQL integration
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          export THECROWLER_POSTGRES_INTEGRATION=1
+          log="$(mktemp)"
+          trap 'rm -f "$log"' EXIT
+          go test -tags=integration ./pkg/database -run '^TestPostgresSourceCrawl(Attempt|Result|B2R)' -count=1 -v 2>&1 | tee "$log"
+          for test in \
+            TestPostgresSourceCrawlAttemptExactHistoryFK \
+            TestPostgresSourceCrawlAttemptRuntimeCannotChangeMode \
+            TestPostgresSourceCrawlAttemptPolicyLock \
+            TestPostgresSourceCrawlAttemptLegacyModeCutoverLock \
+            TestPostgresSourceCrawlAttemptGenerationRecovery \
+            TestPostgresSourceCrawlAttemptReplayValidation \
+            TestPostgresSourceCrawlAttemptSubmittedProposalCompetition \
+            TestPostgresSourceCrawlAttemptReplayClassification \
+            TestPostgresSourceCrawlAttemptCandidateLoadFailure \
+            TestPostgresSourceCrawlAttemptDatabaseClockReconciliation \
+            TestPostgresSourceCrawlAttemptPostLockClock \
+            TestPostgresSourceCrawlAttemptFinalFreshnessAllOutcomes \
+            TestPostgresSourceCrawlAttemptAttributionFailClosed \
+            TestPostgresSourceCrawlAttemptForgedAndDuplicateDetails \
+            TestPostgresSourceCrawlAttemptWrongChronology \
+            TestPostgresSourceCrawlAttemptGenuineSchedulerBinding \
+            TestPostgresSourceCrawlAttemptRollback \
+            TestPostgresSourceCrawlAttemptSchemaAndFencedCutover \
+            TestPostgresSourceCrawlAttemptBindingAndRejections \
+            TestPostgresSourceCrawlAttemptConcurrentClaimers \
+            TestPostgresSourceCrawlAttemptAddonRepeatable \
+            TestPostgresSourceCrawlAttemptMySQLAndLegacyStartupCompatibility \
+            TestPostgresSourceCrawlResultLifecycle \
+            TestPostgresSourceCrawlResultHeartbeat \
+            TestPostgresSourceCrawlResultConcurrency \
+            TestPostgresSourceCrawlResultRestrictedRole \
+            TestPostgresSourceCrawlResultRollback \
+            TestPostgresSourceCrawlResultReplayAfterReplacement \
+            TestPostgresSourceCrawlResultConcurrentHeartbeat \
+            TestPostgresSourceCrawlResultLockTimeout \
+            TestPostgresSourceCrawlB2RFenceBoundary \
+            TestPostgresSourceCrawlB2RValidateTxSupersession \
+            TestPostgresSourceCrawlB2RUnboundOwnershipTransfer \
+            TestPostgresSourceCrawlB2RUnboundSuppressionThenTransfer \
+            TestPostgresSourceCrawlB2RProvenanceTimestampIsNotContinuity \
+            TestPostgresSourceCrawlB2RClaimBindsProcessingOperation; do
+            grep -F -- "=== RUN   ${test}" "$log"
+            grep -F -- "--- PASS: ${test}" "$log"
+          done
+          if grep -Fq -- '--- SKIP' "$log"; then
+            echo "Source-crawl attempt PostgreSQL integration was skipped" >&2
+            exit 1
+          fi
+
+      - name: Run MCP mutation PostgreSQL integration
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          export CROWLER_MCP_POSTGRES_TEST_DISPOSABLE=1
+          export CROWLER_MCP_POSTGRES_DSN="postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:5432/${POSTGRES_DB}?sslmode=disable"
+          log="$(mktemp)"
+          trap 'rm -f "$log"' EXIT
+          go test -tags=integration ./pkg/database -run '^TestPostgresMCPMutation(DurableStore|DeploymentApplyDisable|AuditAndRetention|ApprovalAuthorityLockOrder|BackupRestoreRehearsal|AdminRoleCascadeContention)$' -count=1 -v 2>&1 | tee "$log"
+          for test in \
+            TestPostgresMCPMutationDurableStore \
+            TestPostgresMCPMutationDeploymentApplyDisable \
+            TestPostgresMCPMutationAuditAndRetention \
+            TestPostgresMCPMutationApprovalAuthorityLockOrder \
+            TestPostgresMCPMutationBackupRestoreRehearsal \
+            TestPostgresMCPMutationAdminRoleCascadeContention; do
+            grep -F -- "=== RUN   ${test}" "$log"
+            grep -F -- "--- PASS: ${test}" "$log"
+          done
+          if grep -Fq -- '--- SKIP' "$log"; then
+            echo "MCP mutation PostgreSQL integration was skipped" >&2
+            exit 1
+          fi
+
+      - name: Run asynchronous goal store, observation and eligibility PostgreSQL integration
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          export THECROWLER_POSTGRES_INTEGRATION=1
+          export CROWLER_ASYNC_GOAL_POSTGRES_TEST_DISPOSABLE=1
+          export CROWLER_ASYNC_GOAL_POSTGRES_DSN="postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:5432/${POSTGRES_DB}?sslmode=disable"
+          log="$(mktemp)"
+          trap 'rm -f "$log"' EXIT
+          go test -tags=integration ./pkg/agent -run '^TestPostgresGoalAsync' -count=1 -v 2>&1 | tee "$log"
+          for test in \
+            TestPostgresGoalAsyncStoreRoundTripAfterRestart \
+            TestPostgresGoalAsyncStoreLifecycleAndConcurrency \
+            TestPostgresGoalAsyncStoreReplayOlderTransition \
+            TestPostgresGoalAsyncStoreRejectsCorruptLedger \
+            TestPostgresGoalAsyncStorePreservesAcceptanceAndLateCompletion \
+            TestPostgresGoalAsyncStoreEvidenceAndVerification \
+            TestPostgresGoalAsyncStoreCancellationBlocksTransitions \
+            TestPostgresGoalAsyncStoreRejectsCorruptTransitionLedger \
+            TestPostgresGoalAsyncObservationValidAndExpired \
+            TestPostgresGoalAsyncObservationRejectsConflict \
+            TestPostgresGoalAsyncObservationRejectsChronology \
+            TestPostgresGoalAsyncResumeEligibility \
+            TestPostgresGoalAsyncEligibilityRealScheduler; do
+            grep -F -- "=== RUN   ${test}" "$log"
+            grep -F -- "--- PASS: ${test}" "$log"
+          done
+          if grep -Fq -- '--- SKIP' "$log"; then
+            echo "Asynchronous goal store or crawl observation PostgreSQL integration was skipped" >&2
+            exit 1
+          fi
+
+      - name: Run fenced crawler handoff PostgreSQL integration
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          export THECROWLER_POSTGRES_INTEGRATION=1
+          log="$(mktemp)"
+          trap 'rm -f "$log"' EXIT
+          go test -tags=integration ./pkg/agent -run '^TestPostgresFullProposalApprovalSchedulerClaimAndObservation$' -count=1 -v 2>&1 | tee "$log"
+          for test in \
+            TestPostgresFullProposalApprovalSchedulerClaimAndObservation; do
+            grep -F -- "=== RUN   ${test}" "$log"
+            grep -F -- "--- PASS: ${test}" "$log"
+          done
+          if grep -Fq -- '--- SKIP' "$log"; then
+            echo "Fenced crawler handoff PostgreSQL integration was skipped" >&2
+            exit 1
+          fi
+
+      - name: Run fenced refresh PostgreSQL integration
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          export THECROWLER_POSTGRES_INTEGRATION=1
+          log="$(mktemp)"
+          trap 'rm -f "$log"' EXIT
+          go test -tags=integration ./pkg/crawler -run '^TestPostgresFencedRefresh' -count=1 -v 2>&1 | tee "$log"
+          for test in \
+            TestPostgresFencedRefreshAtomicReplacement \
+            TestPostgresFencedRefreshPreservesSharedObject \
+            TestPostgresFencedRefreshRefusesCrossSourcePage \
+            TestPostgresFencedRefreshRollbackRestoresOldGeneration \
+            TestPostgresFencedRefreshRejectsExpiredClaim \
+            TestPostgresFencedRefreshBatchesLargeOldGeneration \
+            TestPostgresFencedRefreshPageLockBlocksConcurrentLink \
+            TestPostgresFencedRefreshOrphanLockWaitsForInFlightReference \
+            TestPostgresFencedRefreshOrphanCleanupTriggerCharacterization \
+            TestPostgresFencedRefreshConcurrentRefreshersAndIndexer; do
+            grep -F -- "=== RUN   ${test}" "$log"
+            grep -F -- "--- PASS: ${test}" "$log"
+          done
+          if grep -Fq -- '--- SKIP' "$log"; then
+            echo "Fenced refresh PostgreSQL integration was skipped" >&2
+            exit 1
+          fi
+
+      - name: Run shared-object integrity PostgreSQL regressions
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          export THECROWLER_POSTGRES_INTEGRATION=1
+          log="$(mktemp)"
+          trap 'rm -f "$log"' EXIT
+          # RC2-A closes the orphan-trigger race; RC2-B replaces the legacy
+          # global object delete with page-scoped, orphan-only replacement.
+          # These are positive regressions: they must assert preservation, not
+          # reproduce a defect.
+          go test -tags=integration ./pkg/crawler \
+            -run '^(TestPostgresSharedObjectTriggerPreservesConcurrentReference|TestPostgresSharedObjectTriggerDeletesZeroReferenceObject|TestPostgresSharedObjectTriggerStress|TestPostgresLegacyRefresh.*|TestPostgresRefreshAndVacuumRemainConsistent)$' \
+            -count=1 -v 2>&1 | tee "$log"
+          for test in \
+            TestPostgresSharedObjectTriggerPreservesConcurrentReference \
+            TestPostgresSharedObjectTriggerDeletesZeroReferenceObject \
+            TestPostgresSharedObjectTriggerStress \
+            TestPostgresLegacyRefreshPreservesSharedObject \
+            TestPostgresLegacyRefreshRefusesCrossSourcePage \
+            TestPostgresLegacyRefreshRollbackRestoresOldGeneration \
+            TestPostgresRefreshAndVacuumRemainConsistent; do
+            grep -F -- "=== RUN   ${test}" "$log"
+            grep -F -- "--- PASS: ${test}" "$log"
+          done
+          if grep -Fq -- '--- SKIP' "$log"; then
+            echo "Shared-object integrity regressions were skipped" >&2
+            exit 1
+          fi
+
+      - name: Run shared-artifact locking PostgreSQL integration
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          export THECROWLER_POSTGRES_INTEGRATION=1
+          # The two characterization tests install a different trigger body in a
+          # throwaway child database, so they need the disposable opt-in.
+          export CROWLER_RC5_POSTGRES_TEST_DISPOSABLE=1
+          export CROWLER_RC5_POSTGRES_DSN="postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:5432/${POSTGRES_DB}?sslmode=disable"
+          log="$(mktemp)"
+          trap 'rm -f "$log"' EXIT
+          # RC5: statement-level cleanup trigger. Integrity is asserted per
+          # artifact family; the two loss shapes are asserted to still lose data
+          # so they cannot be reintroduced as an "optimisation".
+          # The contention benchmark is opt-in and not part of the gate.
+          go test -tags=integration ./pkg/database \
+            -run '^TestPostgresSharedArtifact' \
+            -skip '^TestPostgresSharedArtifactContentionBenchmark$' \
+            -count=1 -v 2>&1 | tee "$log"
+          for test in \
+            TestPostgresSharedArtifactConcurrentInsertSurvivesLastLinkDelete \
+            TestPostgresSharedArtifactConcurrentLastLinkRemovals \
+            TestPostgresSharedArtifactWideParentRemovalKeepsInserts \
+            TestPostgresSharedArtifactFinalRemovalDeletesParent \
+            TestPostgresSharedArtifactRandomOrderContention \
+            TestPostgresSharedArtifactVacuumAndCascadeKeepOtherPages \
+            TestPostgresSharedArtifactIsolationLevelIsReadCommitted \
+            TestPostgresSharedArtifactLegacyBodyLosesConcurrentLink \
+            TestPostgresSharedArtifactSingleStatementDeleteIsUnsafe \
+            TestPostgresSharedArtifactTriggerDefinitionConverges; do
+            grep -F -- "=== RUN   ${test}" "$log"
+            grep -F -- "--- PASS: ${test}" "$log"
+          done
+          if grep -Fq -- '--- SKIP' "$log"; then
+            echo "Shared-artifact locking integration was skipped" >&2
+            exit 1
+          fi
+
+      - name: Run event retention PostgreSQL integration
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          export THECROWLER_POSTGRES_INTEGRATION=1
+          log="$(mktemp)"
+          trap 'rm -f "$log"' EXIT
+          go test -tags=integration ./services/events \
+            -run '^TestPostgresEventJanitorDeletesOnlyExpiredRows$' \
+            -count=1 -v 2>&1 | tee "$log"
+          grep -F -- '=== RUN   TestPostgresEventJanitorDeletesOnlyExpiredRows' "$log"
+          grep -F -- '--- PASS: TestPostgresEventJanitorDeletesOnlyExpiredRows' "$log"
+          if grep -Fq -- '--- SKIP' "$log"; then
+            echo "Event retention PostgreSQL integration was skipped" >&2
+            exit 1
+          fi
+
+      - name: Run keyword suppression window PostgreSQL integration
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          export THECROWLER_POSTGRES_INTEGRATION=1
+          log="$(mktemp)"
+          trap 'rm -f "$log"' EXIT
+          go test -tags=integration ./pkg/crawler \
+            -run '^(TestPostgresKeywordSetPersistence|TestPostgresKeywordSuppressionWindowBranches)$' \
+            -count=1 -v 2>&1 | tee "$log"
+          for test in \
+            TestPostgresKeywordSetPersistence \
+            TestPostgresKeywordSuppressionWindowBranches; do
+            grep -F -- "=== RUN   ${test}" "$log"
+            grep -F -- "--- PASS: ${test}" "$log"
+          done
+          if grep -Fq -- '--- SKIP' "$log"; then
+            echo "Keyword suppression integration was skipped" >&2
+            exit 1
+          fi
 
       - name: Run PostgreSQL integration suite
         env:
           THECROWLER_POSTGRES_INTEGRATION: "1"
         run: |
-          go test -tags=integration ./pkg/database/... ./pkg/crawler/...
+          # Run packages serially: the keyword suppression integration test has
+          # a real 30-second database window that is sensitive to CPU/IO
+          # contention when several integration packages run at once.
+          go test -p 1 -tags=integration ./pkg/database/... ./pkg/crawler/... ./pkg/agent/... ./services/api/...

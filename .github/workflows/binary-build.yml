@@ -45,7 +45,7 @@ jobs:
           for binary in \
             thecrowler rebuildTimeSeriesCardinality addSource \
             updateSourceStatus addCategory exportSources removeSource \
-            crowler-agt api events healthCheck; do
+            crowler-agt api events healthCheck dbDeploy; do
             test -s "bin/${binary}" || { echo "Missing/empty bin/${binary}"; exit 1; }
           done
 

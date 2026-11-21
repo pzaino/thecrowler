@@ -23,7 +23,10 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"math"
@@ -101,11 +104,18 @@ var (
 // WorkBlock is a struct that holds all the necessary information to instantiate a new
 // crawling job on the pipeline. It's used to pass the information to the goroutines
 // that will perform the actual crawling.
+// claimedSource is one source plus the optional fenced attempt that owns it.
+// Handoff is nil on the legacy path.
+type claimedSource struct {
+	Source  cdb.Source
+	Handoff crowler.SourceCrawlCoordinator
+}
+
 type WorkBlock struct {
 	db cdb.Handler
 	//sel            *chan vdi.SeleniumInstance
 	sel            *vdi.Pool
-	sources        *[]cdb.Source
+	sources        *[]claimedSource
 	RulesEngine    *rules.RuleEngine
 	PipelineStatus *[]crowler.Status
 	Config         *cfg.Config
@@ -206,7 +216,138 @@ func performDBMaintenance(db cdb.Handler) error {
 }
 
 // This function simply query the database for URLs that need to be crawled
-func retrieveAvailableSources(db cdb.Handler, maxSources int) (sourcesToCrawl []cdb.Source, err error) {
+const (
+	sourceCrawlClaimLease               = 30 * time.Minute
+	sourceCrawlDefaultErrorInterval     = 15 * time.Minute
+	sourceCrawlDefaultProcessingTimeout = 24 * time.Hour
+)
+
+func newSourceCrawlClaimRequestID() (string, error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(raw), nil
+}
+
+func parseSourceCrawlConfigDuration(value string, fallback time.Duration) time.Duration {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return fallback
+	}
+	if strings.HasSuffix(value, " day") || strings.HasSuffix(value, " days") {
+		trimmed := strings.TrimSuffix(strings.TrimSuffix(value, " days"), " day")
+		if n, err := strconv.ParseFloat(strings.TrimSpace(trimmed), 64); err == nil {
+			return time.Duration(n * 24 * float64(time.Hour))
+		}
+		return fallback
+	}
+	replacements := []struct{ old, new string }{
+		{" milliseconds", "ms"}, {" millisecond", "ms"}, {" msecs", "ms"}, {" msec", "ms"},
+		{" seconds", "s"}, {" second", "s"}, {" secs", "s"}, {" sec", "s"},
+		{" minutes", "m"}, {" minute", "m"}, {" mins", "m"}, {" min", "m"},
+		{" hours", "h"}, {" hour", "h"}, {" hrs", "h"}, {" hr", "h"},
+	}
+	for _, item := range replacements {
+		if strings.HasSuffix(value, item.old) {
+			value = strings.TrimSuffix(value, item.old) + item.new
+			break
+		}
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+// retrieveAvailableSources claims work for this engine. Fenced mode uses the
+// attempt claim API and carries one handoff per source; legacy mode keeps the
+// existing update_sources path unchanged.
+func retrieveAvailableSources(db cdb.Handler, maxSources int) ([]claimedSource, error) {
+	if maxSources <= 0 {
+		maxSources = config.Crawler.MaxSources
+	}
+	// The optional attempt capability is distinct from a corrupt or
+	// unreadable fenced policy. Only a genuinely uninstalled optional schema
+	// keeps the documented legacy path; a present but unreadable or corrupt
+	// claim store fails closed so a fenced deployment cannot silently start
+	// unfenced work.
+	mode, modeErr := cdb.SourceCrawlClaimModePolicy(context.Background(), &db)
+	if modeErr != nil {
+		if errors.Is(modeErr, cdb.ErrSourceCrawlAttemptSchemaUnavailable) ||
+			errors.Is(modeErr, cdb.ErrSourceCrawlAttemptUnsupported) {
+			return retrieveLegacySources(db, maxSources)
+		}
+		return nil, fmt.Errorf("reading source crawl claim mode: %w", modeErr)
+	}
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "legacy":
+		return retrieveLegacySources(db, maxSources)
+	case "fenced":
+		sources, err := retrieveFencedSources(db, maxSources)
+		if err == nil {
+			return sources, nil
+		}
+		// The operator may have switched to legacy between the mode read and
+		// the claim. Fall through only for that explicit race.
+		if !errors.Is(err, cdb.ErrSourceCrawlClaimLegacyMode) {
+			return nil, err
+		}
+		return retrieveLegacySources(db, maxSources)
+	default:
+		return nil, fmt.Errorf("invalid source crawl claim mode %q", mode)
+	}
+}
+
+func retrieveFencedSources(db cdb.Handler, maxSources int) ([]claimedSource, error) {
+	requestID, err := newSourceCrawlClaimRequestID()
+	if err != nil {
+		return nil, fmt.Errorf("generating fenced claim request: %w", err)
+	}
+	request := cdb.SourceCrawlClaimRequest{
+		ClaimRequestID:    requestID,
+		Limit:             maxSources,
+		Priority:          config.Crawler.SourcePriority,
+		EngineID:          cmn.GetEngineID(),
+		Lease:             sourceCrawlClaimLease,
+		LastOKUpdate:      parseSourceCrawlConfigDuration(config.Crawler.CrawlingIfOk, 0),
+		LastErrorInterval: parseSourceCrawlConfigDuration(config.Crawler.CrawlingIfError, sourceCrawlDefaultErrorInterval),
+		RegularCrawling:   parseSourceCrawlConfigDuration(config.Crawler.CrawlingInterval, 0),
+		ProcessingTimeout: parseSourceCrawlConfigDuration(config.Crawler.ProcessingTimeout, sourceCrawlDefaultProcessingTimeout),
+	}
+	claims, err := cdb.ClaimSourceCrawlAttempts(context.Background(), &db, request)
+	if err != nil {
+		return nil, err
+	}
+	sources := make([]claimedSource, 0, len(claims))
+	for _, claim := range claims {
+		handoff, err := cdb.NewSourceCrawlHandoff(claim)
+		if err != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "creating fenced handoff for source %d: %v", claim.SourceID, err)
+			continue
+		}
+		src, err := cdb.GetSourceByIDContext(context.Background(), &db, claim.SourceID)
+		if err != nil || src == nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "loading fenced source %d: %v", claim.SourceID, err)
+			crowler.ReportFencedCrawlFailure(&db, handoff, 10*time.Second)
+			continue
+		}
+		if src.Disabled {
+			crowler.ReportFencedCrawlOutcome(&db, handoff,
+				cdb.SourceCrawlOutcomeCancelled, 10*time.Second)
+			continue
+		}
+		if src.Config == nil {
+			src.Config = new(json.RawMessage)
+			*src.Config = cdb.DefaultSourceCfgJSON
+		}
+		sources = append(sources, claimedSource{Source: *src, Handoff: handoff})
+	}
+	return sources, nil
+}
+
+func retrieveLegacySources(db cdb.Handler, maxSources int) (sourcesToCrawl []claimedSource, err error) {
 	// Check DB connection:
 	if err := db.CheckConnection(config); err != nil {
 		return nil, fmt.Errorf("error pinging the database: %w", err)
@@ -278,7 +419,7 @@ func retrieveAvailableSources(db cdb.Handler, maxSources int) (sourcesToCrawl []
 		}
 
 		// Append the source to the slice
-		sourcesToCrawl = append(sourcesToCrawl, src)
+		sourcesToCrawl = append(sourcesToCrawl, claimedSource{Source: src})
 		src = cdb.Source{} // Reset the source
 	}
 	err = rows.Close() // Close the rows iterator
@@ -406,7 +547,7 @@ func checkSources(db *cdb.Handler, sel *vdi.Pool, RulesEngine *rules.RuleEngine)
 		// We have completed all jobs, so we can handle signals for reloading the configuration
 		configMutex.RUnlock()
 
-		sourcesToCrawl = []cdb.Source{} // Reset the sources
+		sourcesToCrawl = []claimedSource{} // Reset the sources
 	}
 }
 
@@ -537,7 +678,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 	}()
 
 	// Create the sources' queue (channel)
-	sourceChan := make(chan cdb.Source, wb.Config.Crawler.MaxSources*2)
+	sourceChan := make(chan claimedSource, wb.Config.Crawler.MaxSources*2)
 
 	maxPipelines := len(config.Selenium) //nolint:gosec
 	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Pipeline] Max pipelines: %d", maxPipelines)
@@ -667,7 +808,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 					// We need to refill the source channel
 					need := highWater - len(sourceChan)
 
-					newSources := []cdb.Source{}
+					newSources := []claimedSource{}
 					var err error
 					if !BatchCompleted.Load() {
 						newSources, err = monitorBatchAndRefill(wb, need)
@@ -776,7 +917,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 				// This function logs vdiSlot in human readable format (starting from 1 instead
 				// of 0), this is because normally VDI instances are numbered starting from 1,
 				// so it will be more intuitive to log them starting from 1 as well.
-				var source cdb.Source
+				var source claimedSource
 				if !BatchCompleted.Load() {
 					var ok bool
 					// Fetch next available source in the queue:
@@ -811,9 +952,9 @@ func crawlSources(wb *WorkBlock) uint64 {
 
 				// check if the source starts with the `null:` prefix, if yes, skip the crawling
 				// and queue the placeholder source for deletion from the database.
-				if strings.HasPrefix(strings.ToLower(strings.TrimSpace(source.URL)), "null:") {
-					cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Pipeline] Source URL starts with 'null:', skipping crawling and deleting source ID %d on VDI slot %d", source.ID, vdiSlot+1)
-					nullSourceDeleteChan <- source.ID
+				if isNullSource(source) {
+					cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Pipeline] Source URL starts with 'null:', skipping crawling and deleting source ID %d on VDI slot %d", source.Source.ID, vdiSlot+1)
+					handleNullSourceDeletion(&wb.db, source, nullSourceDeleteChan)
 					continue
 				}
 
@@ -844,8 +985,8 @@ func crawlSources(wb *WorkBlock) uint64 {
 				now := time.Now()
 				(*wb.PipelineStatus)[statusIdx] = crowler.Status{
 					PipelineID:      uint64(statusIdx), //nolint:gosec // it's safe here.
-					Source:          source.URL,
-					SourceID:        source.ID,
+					Source:          source.Source.URL,
+					SourceID:        source.Source.ID,
 					VDIID:           "",
 					StartTime:       now,
 					EndTime:         time.Time{},
@@ -854,7 +995,7 @@ func crawlSources(wb *WorkBlock) uint64 {
 				(*wb.PipelineStatus)[statusIdx].PipelineRunning.Store(1) // Set the pipeline running status
 				statusLock.Unlock()
 
-				cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Pipeline] Received source: %s (ID: %d) for VDI slot %d on Pipeline: %d", source.URL, source.ID, vdiSlot+1, statusIdx+1)
+				cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-Pipeline] Received source: %s (ID: %d) for VDI slot %d on Pipeline: %d", source.Source.URL, source.Source.ID, vdiSlot+1, statusIdx+1)
 
 				// Start crawling the website
 				// startCrawling will spawn a crawling thread and return, so we need to wait for
@@ -883,6 +1024,11 @@ func crawlSources(wb *WorkBlock) uint64 {
 
 	RampUpRunning.Store(false) // Ramp-up phase is over
 	batchWg.Wait()
+	// Sources still queued at batch shutdown were claimed but never crawled.
+	// Release their fenced attempts without blocking the batch teardown;
+	// anything not observed within the bounded drain window remains protected
+	// by the attempt lease.
+	go drainFencedSources(&wb.db, sourceChan)
 	close(nullSourceDeleteChan)
 	nullSourceDeleteWg.Wait()
 
@@ -895,6 +1041,48 @@ func crawlSources(wb *WorkBlock) uint64 {
 	}
 
 	return TotalSources.Load() // Return the total number of sources crawled
+}
+
+// isNullSource reports whether the claimed source is the special "null:"
+// deletion marker.
+func isNullSource(source claimedSource) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(source.Source.URL)), "null:")
+}
+
+// handleNullSourceDeletion keeps the legacy deletion behavior for unbound
+// sources. A fenced attempt cannot prove that its deletion is still
+// authorized: the lease may have expired or the source may have been
+// superseded or transferred while queued. The deletion is quarantined and a
+// terminal failure is recorded instead of deleting under a stale fence.
+func handleNullSourceDeletion(db *cdb.Handler, source claimedSource,
+	deleteChan chan<- uint64) {
+	if source.Handoff != nil {
+		cmn.DebugMsg(cmn.DbgLvlWarn,
+			"[DEBUG-Pipeline] Quarantining null: source deletion for fenced source ID %d",
+			source.Source.ID)
+		crowler.ReportFencedCrawlFailure(db, source.Handoff, 10*time.Second)
+		return
+	}
+	deleteChan <- source.Source.ID
+}
+
+func drainFencedSources(db *cdb.Handler, sourceChan <-chan claimedSource) {
+	timer := time.NewTimer(20 * time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case queued, ok := <-sourceChan:
+			if !ok {
+				return
+			}
+			if queued.Handoff != nil {
+				crowler.ReportFencedCrawlOutcome(db, queued.Handoff,
+					cdb.SourceCrawlOutcomeCancelled, 10*time.Second)
+			}
+		case <-timer.C:
+			return
+		}
+	}
 }
 
 func waitSomeTime(delay float64, SessionRefresh func()) (time.Duration, error) {
@@ -924,7 +1112,7 @@ func waitSomeTime(delay float64, SessionRefresh func()) (time.Duration, error) {
 	return totalDelay, nil
 }
 
-func monitorBatchAndRefill(wb *WorkBlock, need int) ([]cdb.Source, error) {
+func monitorBatchAndRefill(wb *WorkBlock, need int) ([]claimedSource, error) {
 	if wb.sel.Available() <= 0 {
 		return nil, nil
 	}
@@ -954,7 +1142,7 @@ func getAvailableOrNewPipelineStatus(wb *WorkBlock) int {
 	return newIdx
 }
 
-func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, source cdb.Source, idx int, refresh func()) {
+func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, source claimedSource, idx int, refresh func()) {
 	if wg != nil {
 		wg.Add(1)
 	}
@@ -967,12 +1155,13 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, source cdb.Source, idx int
 	// Prepare the go routine parameters
 	args := crowler.Pars{
 		WG:                wg,
+		Context:           context.Background(),
+		SourceCrawl:       source.Handoff,
 		DB:                wb.db,
-		Src:               source,
+		Src:               source.Source,
 		Sel:               wb.sel,
 		SelIdx:            0,
 		RE:                wb.RulesEngine,
-		Sources:           wb.sources,
 		Index:             uint64(idx),                  //nolint:gosec // it's safe here.
 		Status:            &((*wb.PipelineStatus)[idx]), // Pointer to a single status element
 		Refresh:           refresh,
@@ -983,12 +1172,36 @@ func startCrawling(wb *WorkBlock, wg *sync.WaitGroup, source cdb.Source, idx int
 	go func(args *crowler.Pars, c *cfg.Config) {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-startCrawling] Waiting for available VDI instance...")
 
+		// Authoritatively revalidate the fenced claim before the possibly
+		// blocking VDI acquisition. A queued claim can expire, be superseded
+		// or lose its source while this goroutine waits for a slot.
+		if args.SourceCrawl != nil {
+			if err := crowler.ValidateFencedClaimStartup(&wb.db, args.SourceCrawl,
+				10*time.Second); err != nil {
+				cmn.DebugMsg(cmn.DbgLvlWarn,
+					"[DEBUG-startCrawling] fenced claim is not current before VDI acquisition for source %d: %v",
+					args.Src.ID, err)
+				crowler.ReportFencedCrawlOutcome(&wb.db, args.SourceCrawl,
+					cdb.SourceCrawlOutcomeFailed, 10*time.Second)
+				if wg != nil {
+					wg.Done()
+				}
+				return
+			}
+		}
+
 		// Fetch the next available Selenium instance (VDI)
 		vdiPool := args.Sel
 		index, vdiInstance, err := vdiPool.Acquire(c.Crawler.VDIName)
 		if err != nil {
 			// There are no available VDI instances right now, log and return an error
 			cmn.DebugMsg(cmn.DbgLvlWarn, "No VDI available right now: %v", err)
+			if source.Handoff != nil {
+				crowler.ReportFencedCrawlFailure(&wb.db, source.Handoff, 10*time.Second)
+			}
+			if wg != nil {
+				wg.Done()
+			}
 			return
 		}
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-startCrawling] Acquired VDI instance '%s' at index %d and host %v", vdiInstance.Config.Name, index, vdiInstance.Config.Host)
@@ -1416,6 +1629,7 @@ func main() {
 
 	// Define db before we set signal handlers
 	var db cdb.Handler
+	var stopInformationSeeds func()
 
 	// Define sel before we set signal handlers
 	//var vdiInstances chan vdi.SeleniumInstance
@@ -1435,7 +1649,10 @@ func main() {
 				// Handle SIGINT (Ctrl+C)
 				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGINT received, shutting down...")
 				setSysReady(0)
-				closeResources(db, &vdiInstances) // Release resources
+				if stopInformationSeeds != nil {
+					stopInformationSeeds()
+				}
+				closeResources(db, &vdiInstances) // Release resources after worker release
 				time.Sleep(2 * time.Second)       // Give some time for metrics to be pushed before exiting
 				os.Exit(0)
 
@@ -1443,7 +1660,10 @@ func main() {
 				// Handle SIGTERM
 				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGTERM received, shutting down...")
 				setSysReady(0)
-				closeResources(db, &vdiInstances) // Release resources
+				if stopInformationSeeds != nil {
+					stopInformationSeeds()
+				}
+				closeResources(db, &vdiInstances) // Release resources after worker release
 				time.Sleep(2 * time.Second)       // Give some time for metrics to be pushed before exiting
 				os.Exit(0)
 
@@ -1451,7 +1671,10 @@ func main() {
 				// Handle SIGQUIT
 				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGQUIT received, shutting down...")
 				setSysReady(0)
-				closeResources(db, &vdiInstances) // Release resources
+				if stopInformationSeeds != nil {
+					stopInformationSeeds()
+				}
+				closeResources(db, &vdiInstances) // Release resources after worker release
 				time.Sleep(2 * time.Second)       // Give some time for metrics to be pushed before exiting
 				os.Exit(0)
 
@@ -1533,13 +1756,14 @@ func main() {
 	// reclaims stale processing seeds through ClaimInformationSeeds.
 	infoseed.SetMetricsEnabled(config.Prometheus.Enabled)
 	seedBrowserDependencies := infoseed.NewBrowserDependencies(&vdiInstances, &config, &GRulesEngine)
-	seedRunner := infoseed.NewRunner(&db, config.InformationSeed, infoseed.RunnerOptions{Browser: seedBrowserDependencies})
+	trustedSeedOwners := config.API.Auth.Enabled && strings.ToLower(strings.TrimSpace(config.API.Auth.Mode)) != "disabled"
+	seedRunner := infoseed.NewRunner(&db, config.InformationSeed, infoseed.RunnerOptions{Browser: seedBrowserDependencies, TrustedOwners: trustedSeedOwners})
 	if seedPlugins, ok := GRulesEngine.JSPlugins.GetPluginsByEventType("information_seed_candidate"); ok {
 		for _, seedPlugin := range seedPlugins {
 			seedRunner.Processors = append(seedRunner.Processors, infoseed.JSPluginProcessor{Plugin: seedPlugin, DB: &db, Timeout: config.InformationSeed.PluginLimits.Timeout, MaxOutputSizeBytes: config.InformationSeed.PluginLimits.MaxOutputSizeBytes})
 		}
 	}
-	stopInformationSeeds := infoseed.StartScheduler(context.Background(), &db, config.InformationSeed, seedRunner, cmn.GetEngineID(), config.Crawler.SourcePriority)
+	stopInformationSeeds = infoseed.StartScheduler(context.Background(), &db, config.InformationSeed, seedRunner, cmn.GetEngineID(), config.Crawler.SourcePriority)
 	defer stopInformationSeeds()
 
 	// Start the checkSources function in a goroutine

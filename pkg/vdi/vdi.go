@@ -1037,7 +1037,12 @@ func buildLaunchArgs(browser, selType, userAgent string, crawler cfg.Crawler, ef
 	args = append(args, "--user-agent="+userAgent)
 
 	if browser == BrowserChrome || browser == BrowserChromium {
-		args = append(args, "--incognito")                              // Run in incognito mode
+		// Private browsing is the historical default and stays opt-out per
+		// source through crawling_config.incognito. The flag is Chrome/
+		// Chromium-only; Firefox never receives it.
+		if crawler.EffectiveIncognito() {
+			args = append(args, "--incognito") // Run in incognito mode
+		}
 		args = append(args, "--disable-client-side-phishing-detection") // Disable client-side phishing detection
 		args = append(args, "--disable-component-update")               // Disable component updates
 		args = append(args, "--no-first-run")

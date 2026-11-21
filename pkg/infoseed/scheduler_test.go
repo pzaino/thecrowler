@@ -175,6 +175,7 @@ func createSchedulerInformationSeedSchema(t *testing.T, handler *cdb.Handler) {
 		CREATE TABLE InformationSeed (
 			information_seed_id INTEGER PRIMARY KEY AUTOINCREMENT,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			deleted_at TIMESTAMP,
 			last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			category_id INTEGER DEFAULT 0 NOT NULL,
 			usr_id INTEGER DEFAULT 0 NOT NULL,
@@ -187,6 +188,11 @@ func createSchedulerInformationSeedSchema(t *testing.T, handler *cdb.Handler) {
 			last_error_at TIMESTAMP,
 			disabled BOOLEAN DEFAULT FALSE,
 			attempts INTEGER DEFAULT 0 NOT NULL,
+			claim_token VARCHAR(64),
+			fencing_token INTEGER DEFAULT 0 NOT NULL,
+			lease_expires_at TIMESTAMP,
+			heartbeat_at TIMESTAMP,
+			next_retry_at TIMESTAMP,
 			config TEXT
 		);
 		CREATE TABLE IF NOT EXISTS InformationSeedCandidate (

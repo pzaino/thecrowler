@@ -1,30 +1,33 @@
 # TheCROWler DB architecture
 
-The CROWler uses PostgreSQL as its primary production database, and the database
-package also carries setup/migration coverage for MySQL/MariaDB and SQLite so
-Information Seed schema changes can be validated consistently across supported
-DBMS backends.
+The CROWler uses PostgreSQL as its primary production database. The 2.3.0
+runtime supports PostgreSQL and SQLite. MySQL/MariaDB setup and migration SQL is
+retained for reference and schema-contract work, but it is not an operational
+2.3.0 backend: `pkg/database.NewHandler()` rejects `database.type: mysql` and the
+MySQL handler is commented out. See [Database migrations](../database-migrations.md)
+for the operator matrix and migration procedure.
 
 
 ## InformationSeed schema migration coverage
 
 Information Seed schema changes are represented in both fresh-install setup SQL
-and upgrade migration SQL for every supported DBMS:
+and upgrade migration SQL for every backend with shipped SQL:
 
-- PostgreSQL: `pkg/database/db_migrations/postgresql-setup.pgsql` and
-  `pkg/database/db_migrations/postgresql-migration-v1.8.pgsql`.
-- MySQL/MariaDB: `pkg/database/db_migrations/mysql-setup-v1.4.mysql` and
-  `pkg/database/db_migrations/mysql-migration-v1.8.mysql`.
-- SQLite: `pkg/database/db_migrations/sqlite-setup-v1.4.sqlite3`,
-  `pkg/database/db_migrations/sqlite-migration-v1.8.sqlite3`, and the guarded runtime
-  migrations in `pkg/database/sqlite_db.go` for SQLite versions that cannot run
-  `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`.
+- PostgreSQL: `pkg/database/postgresql-setup.pgsql` and
+  `pkg/database/db_migrations/postgresql-migration-v1.17.pgsql`.
+- MySQL/MariaDB: `pkg/database/mysql-setup.mysql` and
+  `pkg/database/db_migrations/mysql-migration-v1.17.mysql`.
+- SQLite: `pkg/database/sqlite-setup.sqlite3`,
+  `pkg/database/db_migrations/sqlite-migration-v1.17.sqlite3`, and the guarded
+  runtime migrations in `pkg/database/sqlite_db.go` for SQLite versions that
+  cannot run `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`.
 
-The v1.8 Information Seed inventory includes lifecycle fields on
+The v1.17 Information Seed inventory includes lifecycle fields on
 `InformationSeed` (`status`, `priority`, `engine`, `last_processed_at`,
-`last_error`, `last_error_at`, `disabled`, and `attempts`), durable candidate
-decision audit rows in `InformationSeedCandidate`, and per-source/seed discovery
-provenance columns on `SourceInformationSeedIndex`.
+`last_error`, `last_error_at`, `disabled`, `attempts`, `claim_token`,
+`fencing_token`, `lease_expires_at`, `heartbeat_at`, and `next_retry_at`),
+durable candidate decision audit rows in `InformationSeedCandidate`, and
+per-source/seed discovery provenance columns on `SourceInformationSeedIndex`.
 
 Read-path indexes are maintained for common seed claiming/listing filters,
 candidate audit lookups, and source/seed-link inspection. In particular,
@@ -41,12 +44,15 @@ inspection by seed and provider rank.
 
 For the full status lifecycle, finalization rules, and rerun idempotency contract, see [Information seed lifecycle](information_seed_lifecycle.md).
 
-`ClaimInformationSeeds` is implemented in the database package with explicit
-DBMS-specific branches selected by `Handler.DBMS()`. All branches skip rows where
-`disabled = true`, claim seeds in `new` or `pending`, reclaim stale `processing`
-seeds only when `last_processed_at` is older than the configured
-`processingTimeout`, and retry `error` seeds only when `last_error_at` is older
-than the configured `retryAfter`.
+`ClaimInformationSeedsContext` is implemented in the database package with
+explicit DBMS-specific branches selected by `Handler.DBMS()`. All branches skip
+rows where `disabled = true`, claim seeds in `new` or `pending` ahead of retries,
+reclaim `processing` seeds only after their lease expires (legacy rows fall back
+to `processingTimeout`/`last_processed_at`), and retry `error` seeds only when
+`next_retry_at` (or the legacy `last_error_at` delay) has elapsed. Every claim
+writes a fresh claim token, increments the fencing generation, and sets a bounded
+lease. A seed at `max_attempts` is not automatically reclaimed and terminal
+failures are marked `exhausted`.
 
 DBMS-specific behavior and limitations:
 
@@ -55,16 +61,117 @@ DBMS-specific behavior and limitations:
   locked eligible rows and receive only the rows they atomically changed.
 - **MySQL** uses the project-supported MySQL 8 style `SELECT ... FOR UPDATE SKIP
   LOCKED` inside a transaction, followed by a guarded `UPDATE` of the locked
-  primary keys and a select of rows assigned to the claiming `engine`. This
-  requires InnoDB row locks and MySQL versions that support `SKIP LOCKED`; older
-  MySQL versions may block on locked rows or require a different guarded-update
-  fallback.
+  primary keys and a select by the new claim token. This requires InnoDB row
+  locks and MySQL versions that support `SKIP LOCKED`; older MySQL versions may
+  block on locked rows or require a different guarded-update fallback. This
+  branch is not reachable in the 2.3.0 runtime, which does not enable the MySQL
+  backend.
 - **SQLite** uses a transaction-safe bounded `UPDATE InformationSeed ... WHERE
-  information_seed_id IN (SELECT ... LIMIT ...)` pattern, then selects rows
-  assigned to the same `engine` and exact claim timestamp. SQLite does not
-  provide row-level `SKIP LOCKED`, so concurrent writers are serialized by
-  SQLite's database/page-level write locking rather than skipping locked rows.
+  information_seed_id IN (SELECT ... LIMIT ...)` pattern, then selects rows by
+  the unique claim token. SQLite does not provide row-level `SKIP LOCKED`, so
+  concurrent writers are serialized by SQLite's database/page-level write
+  locking rather than skipping locked rows.
 
+Heartbeats, terminal status updates, and shutdown release use the
+`(claim_token, fencing_token)` pair. A newer claim increments the fencing
+generation, so a stale worker cannot overwrite the current owner. See
+[Information Seed claim indexes](information_seed_claim_indexes.md) for the
+index/plan verification recipe and [Information seed lifecycle](information_seed_lifecycle.md)
+for the operator-facing state machine.
+
+
+## Durable crawl approvals
+
+`CrawlApprovals` stores operator approvals for the crawl-request authorization
+path. It is an immutable approval record with a separate revocation state:
+
+- `approval_id` (64-hex primary key), proposal fingerprint, request ID, run ID,
+  agent ID, owner, principal user ID, source ID and operation type;
+- issuer and approver user IDs, usernames and authentication issuers;
+- approval fingerprint, proposal expiry, issuance time and expiry;
+- `revoked_at`, revoking user ID/name and revocation reason;
+- lifecycle timestamps.
+
+The logical key is `(request_id, run_id, principal_user_id, source_id,
+operation_type)`. It prevents a second approval from authorizing a modified
+proposal or a new substitution for the same logical request. Indexes cover
+source/expiry, principal/expiry and request lookup. The table intentionally does
+not use foreign keys to `Sources` or `Users`: historical approvals must survive
+source/user lifecycle changes, while issuance validates those references while
+they are live.
+
+Fresh-install PostgreSQL, SQLite and MySQL setup files include the v1.17
+ownership-provenance table. PostgreSQL and SQLite also include `CrawlApprovals`;
+the MySQL setup does not create that table. Because the 2.3.0 runtime does not
+enable MySQL/MariaDB, durable approvals are not reachable on that backend at
+all. The v1.17 migration files create
+`SourceOwnership` on every backend and `CrawlApprovals` on PostgreSQL/SQLite,
+then advance both `DBSchemaVersion` and `DatabaseWriterCompatibility`.
+
+`RequiredSchemaVersion` is `1.17` and `WriterGeneration` is
+`verified-ownership-v1.17`. The upgrade procedure is: stop every old writer,
+apply migrations through v1.17, verify the current version and writer generation,
+then start only v1.17-compatible services. The v1.17 migration is additive: it
+creates verified ownership/approval tables, adds Information Seed
+claim/lease/retry columns and indexes, and installs the fenced claim function.
+It does not bulk-verify historical `usr_id` values.
+
+The operator procedure and the engine-specific caveats (PostgreSQL
+`:CROWLER_DB_USER`, MySQL `DELIMITER`, SQLite runtime repair) are documented in
+[Database migrations](../database-migrations.md).
+
+Rollback is additive-only in practice: restore the previous writer and schema
+version after draining workers, or leave the new nullable columns and indexes in
+place for a later retry. Do not drop the claim columns while any worker may
+still be running.
+
+Do not apply schema migrations to an existing persistent deployment database
+without maintainer authorization.
+
+## Fenced source-crawl attempts
+
+Schema 1.17 also carries the optional `SourceCrawlClaims`,
+`SourceCrawlAttempts` and `SourceCrawlClaimPolicy` objects used by the internal
+fenced claim API. A current claim stores one source's latest attempt ID,
+claim-request ID, monotonic generation, engine and lease; the append-only
+attempt table stores the immutable operation/approval binding when one
+unambiguous scheduled operation exists. `SourceCrawlClaimPolicy.mode` defaults
+to `legacy`; while it is `fenced`, the PostgreSQL `update_sources(...)` function
+returns no rows so old workers cannot create an unfenced claim.
+
+The optional objects are absent from MySQL. They are not required by ordinary
+startup and are not applied automatically. Operators apply the same-version
+development addon manually or use a fresh v1.17 install/v1.16 -> v1.17
+migration. The capability marker is `source-crawl-attempt-v1`; no crawler or
+agent caller uses the claim API in this phase.
+
+A current claim references exactly one history row through the composite
+`(source_id, generation, attempt_id)` foreign key. `SourceCrawlClaimPolicy` is
+administrator-owned; the runtime role may read it but not update it. Operators
+switch modes with `set_source_crawl_claim_mode('legacy'|'fenced')`, which takes
+the exclusive advisory lock while claim paths take the shared lock.
+
+## Verified source ownership
+
+`Sources.usr_id` is the stored owner identifier, but only a matching
+`SourceOwnership` row with a non-null verification timestamp makes that value
+authoritative:
+
+- `source_id` primary key;
+- `user_id` must equal `Sources.usr_id` for the owner to be verified;
+- `verified_at`, `verified_by_user_id`, `verified_by`,
+  `verification_method` and `verification_reason` describe the explicit
+  verification event;
+- no row means legacy/unverified ownership, including a nonzero `usr_id`.
+
+Authenticated source creation writes provenance with method
+`authenticated_creation` in the same transaction as the source insert. Legacy
+unauthenticated creation never claims verification. The administrative
+ownership-verification endpoint locks the source row, updates `usr_id` and
+upserts provenance, recording the verifier and reason. Ordinary authenticated
+owner mutations and agent scheduling require verified provenance;
+administrators may manage unverified sources but cannot silently mark them
+verified through add/update.
 
 ## Source and information seed provenance
 
@@ -136,6 +243,11 @@ erDiagram
         TIMESTAMP last_error_at
         BOOLEAN disabled
         INTEGER attempts
+        VARCHAR claim_token
+        BIGINT fencing_token
+        TIMESTAMP lease_expires_at
+        TIMESTAMP heartbeat_at
+        TIMESTAMP next_retry_at
         JSONB config
     }
 
@@ -388,7 +500,7 @@ The backfill deliberately does **not** update `TimeSeriesAggregates`. Its result
 
 ## Time-series storage
 
-`TimeSeriesMetrics`, `TimeSeriesObservations`, `TimeSeriesAggregates`, `TimeSeriesAggregationRuns`, and `EntityObservationBackfillCheckpoints` implement the v1 analytical projection on PostgreSQL, MySQL, and SQLite. Search and discovery tables remain authoritative; aggregate rows can be rebuilt from retained observations, and entity backfill updates raw scope before explicit reaggregation.
+`TimeSeriesMetrics`, `TimeSeriesObservations`, `TimeSeriesAggregates`, `TimeSeriesAggregationRuns`, and `EntityObservationBackfillCheckpoints` implement the v1 analytical projection for PostgreSQL, MySQL and SQLite schemas (MySQL is reference-only in 2.3.0). Search and discovery tables remain authoritative; aggregate rows can be rebuilt from retained observations, and entity backfill updates raw scope before explicit reaggregation.
 
 PostgreSQL cardinality admission does not lock `TimeSeriesMetrics`. Existing
 series use lock-free active-accounting lookups; a potentially new series or
@@ -409,4 +521,4 @@ Window computation and observation reads occur outside the replacement transacti
 
 SQLite's backend lease is a no-op, so only the in-process mutex coordinates aggregation; separate SQLite-using processes are not mutually excluded and must not aggregate concurrently. MySQL has time-series schema and repository SQL, but the aggregation runner currently rejects it because a cluster-wide writer lease has not been implemented. MySQL aggregation coordination is therefore not supported or verified.
 
-PostgreSQL partitioning configuration is optional and declarative in v1; automatic partition creation is not part of the shipped startup path. MySQL and SQLite use unpartitioned tables. See [Time-series observations and aggregates](timeseries.md#storage-portability-and-postgresql-partitioning).
+PostgreSQL partitioning configuration is optional and declarative in v1; automatic partition creation is not part of the shipped startup path. SQLite uses unpartitioned tables; the MySQL SQL is unpartitioned and reference-only in 2.3.0. See [Time-series observations and aggregates](timeseries.md#storage-portability-and-postgresql-partitioning).

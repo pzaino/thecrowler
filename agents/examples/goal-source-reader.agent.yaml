@@ -1,0 +1,80 @@
+# Goal-driven read-only verification with a local Ollama model.
+#
+# The deterministic evaluator decides completion. A final model sentence
+# without trusted evidence yields `incomplete`, never success. Replace
+# OLLAMA_HOST, the model and source 7 with your deployment values.
+format_version: v2
+agent_identity:
+  agent_id: goal-source-reader
+  name: Goal Source Reader
+  agent_type: executor
+  owner: platform
+  trust_level: trusted
+  capabilities:
+    - goal_execution
+    - db_read
+    - ai_reasoning
+  memory:
+    scope: none
+  constraints:
+    max_steps: 3
+    time_budget: 3m
+jobs:
+  - name: Goal Source Reader
+    process: serial
+    trigger_type: manual
+    trigger_name: run_goal_source_reader
+    steps:
+      - action: AgentGoalRun
+        params:
+          provider: ollama
+          url: "http://OLLAMA_HOST:11434"
+          model: "tool-capable-model"
+          goal_id: source-7-indexed
+          objective: >-
+            Confirm that source 7 has completed a crawl and has at least one
+            indexed page. Use the permitted read-only tools to gather evidence.
+          prompt: >-
+            Gather the evidence needed for the objective. Do not claim success
+            without evidence.
+          allowlist:
+            - get_source_status
+            - search_indexed_pages
+          allowed_sources:
+            - 7
+          evidence:
+            allow:
+              - source_status
+              - indexed_page
+              - tool_observation
+            default_max_age: 30m
+            max_payload_bytes: 4096
+          budgets:
+            max_model_rounds: 4
+            max_tool_calls: 4
+            max_evidence_records: 16
+            max_evidence_bytes: 32768
+            max_total_result_bytes: 65536
+            max_elapsed: 90s
+            max_consecutive_denials: 3
+          acceptance:
+            mode: all
+            criteria:
+              - id: source_completed
+                description: "Source 7 reports a completed crawl."
+                freshness:
+                  max_age: 30m
+                predicate:
+                  kind: resource_status
+                  resource: source
+                  resource_id: 7
+                  status: completed
+              - id: pages_indexed
+                description: "Source 7 has at least one indexed page."
+                predicate:
+                  kind: evidence_count
+                  evidence: indexed_page
+                  where:
+                    source_id: 7
+                  op: gte
+                  value: 1

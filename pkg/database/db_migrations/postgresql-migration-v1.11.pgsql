@@ -1,3 +1,5 @@
+-- CROWler schema migration chain: read docs/database-migrations.md before running.
+-- Target version: 1.11. Apply every earlier migration first; do not run out of order.
 
 --------------------------------------------------------------------------------
 -- Durable email ingestion checkpoints and bounded message reconciliation state.

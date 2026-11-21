@@ -31,6 +31,16 @@ FROM golang@sha256:3889b425f035be855a72fb4755265311293b6d414521f0a519d819df32222
 
 RUN apk update && apk add ca-certificates && rm -rf /var/cache/apk/*
 RUN apk add --no-cache bash
+RUN apk add --no-cache gcc musl-dev
+
+# Go module source for the builder stage.
+#
+# Defaults to the public proxy, so a normal build is unchanged. A deployment or
+# CI job whose Docker network cannot reach the public proxy may pass
+# --build-arg GOPROXY=<internal proxy or file:// cache>. Checksum verification
+# against go.sum is never disabled, and neither is GOSUMDB.
+ARG GOPROXY=https://proxy.golang.org,direct
+ENV GOPROXY=${GOPROXY}
 
 WORKDIR /app
 
@@ -51,6 +61,8 @@ RUN chmod +x autobuild.sh
 RUN ls -la
 
 # Run the build script using shell
+ENV CGO_ENABLED=1
+
 RUN bash ./autobuild.sh
 
 # Run stage (using alpine:3.20)
@@ -62,7 +74,7 @@ FROM alpine@sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef
 WORKDIR /app
 
 # Add tzdata
-RUN apk add --no-cache tzdata
+RUN apk add --no-cache tzdata postgresql-client
 
 # Install necessary packages
 RUN apk update && apk add ca-certificates && rm -rf /var/cache/apk/*
@@ -119,6 +131,7 @@ RUN chown -R scanner:scannergroup /chroot/home/scanner
 
 COPY --from=builder /app/bin/thecrowler /app/
 COPY --from=builder /app/bin/healthCheck /app/
+COPY --from=builder /app/bin/dbDeploy /app/
 COPY --from=builder /app/config.yaml /app/
 COPY --from=builder /app/schemas /app/schemas
 COPY --from=builder /app/rules /app/rules
@@ -128,6 +141,7 @@ COPY --from=builder /app/support /app/support
 # Ensure the executable is runnable
 RUN chmod +x thecrowler
 RUN chmod +x healthCheck
+RUN chmod +x dbDeploy
 
 # Create the data directory and ensure correct permissions
 RUN mkdir -p /app/data/images && chown -R crowler:crowler /app

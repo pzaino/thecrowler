@@ -2,6 +2,7 @@ package infoseed
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -269,5 +270,61 @@ func TestWebDriverProviderWithoutDependenciesReturnsConfigurationError(t *testin
 		if !strings.Contains(message, expected) {
 			t.Fatalf("error %q does not contain %q", message, expected)
 		}
+	}
+}
+
+type cancelledProvider struct{}
+
+func (cancelledProvider) Name() string { return "cancelled" }
+func (cancelledProvider) Search(ctx context.Context, _ string, _ searchproviders.Options) ([]searchproviders.Result, error) {
+	return nil, ctx.Err()
+}
+
+func TestRunSeedCancellationReleasesClaimToPending(t *testing.T) {
+	handler := openInformationSeedE2ESQLiteDB(t)
+	seedConfig := json.RawMessage(`{"queries":["{{ .InformationSeed }}"],"providers":["cancelled"]}`)
+	seedID, err := cdb.CreateInformationSeed(handler, &cdb.InformationSeed{InformationSeed: "shutdown seed", UsrID: 24, Config: &seedConfig})
+	if err != nil {
+		t.Fatalf("create seed: %v", err)
+	}
+	claimed, err := cdb.ClaimInformationSeedsContext(context.Background(), handler, 1, "", "shutdown-engine", "shutdown-token", time.Hour, time.Hour, time.Minute, 5)
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claim seed: %#v err=%v", claimed, err)
+	}
+	runner := &Runner{
+		DB: handler,
+		Config: cfg.InformationSeedConfig{
+			MaxQueriesPerSeed:    1,
+			MaxCandidatesPerSeed: 10,
+			ProcessingTimeout:    "5s",
+			ProviderAllowList:    []string{"cancelled"},
+			Providers: map[string]cfg.InformationSeedProviderConfig{
+				"cancelled": {Provider: "cancelled", MaxRequests: 1, PageSize: 1, MaxPages: 1},
+			},
+		},
+		Providers: map[string]searchproviders.Provider{"cancelled": cancelledProvider{}},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := runner.RunSeed(ctx, claimed[0]); err == nil {
+		t.Fatal("expected cancelled run error")
+	}
+	seed, err := cdb.GetInformationSeedByID(handler, seedID)
+	if err != nil {
+		t.Fatalf("load seed: %v", err)
+	}
+	if seed.Status != "pending" || seed.Attempts != 0 || seed.ClaimToken != "" || seed.LeaseExpiresAt.Valid {
+		t.Fatalf("cancelled run did not release claim cleanly: %#v", seed)
+	}
+}
+
+func TestProviderFailuresArePermanentOnlyWhenAllFailuresAreNonRetryable(t *testing.T) {
+	permanent := providerQueryError{Failures: []providerFailure{{Provider: "a", Class: "not_found"}, {Provider: "b", Class: "forbidden"}}}
+	if !providerFailuresArePermanent(permanent) {
+		t.Fatal("all non-retryable failures should be treated as permanent")
+	}
+	transient := providerQueryError{Failures: []providerFailure{{Provider: "a", Class: "not_found"}, {Provider: "b", Class: "timeout", Retryable: true}}}
+	if providerFailuresArePermanent(transient) {
+		t.Fatal("mixed permanent/transient failures must remain retryable")
 	}
 }

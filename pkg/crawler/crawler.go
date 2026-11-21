@@ -89,16 +89,61 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 	processCtx := NewProcessContext(args)
 	if processCtx == nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "failed to create a new ProcessContext")
-		UpdateSourceState(args.DB, args.Src.URL, errors.New("failed to create a new ProcessContext"))
+		reportFencedCrawlFailure(args, errors.New("failed to create a new ProcessContext"))
 		args.Status.EndTime = time.Now()
 		args.Status.PipelineRunning.Store(3) // Set the pipeline status to error
 		args.Status.TotalErrors.Add(1)
 		args.Status.LastError = "failed to create a new ProcessContext"
 		cmn.DebugMsg(cmn.DbgLvlError, "Crawling process aborted for source: %s", args.Src.URL)
+		if args.WG != nil {
+			args.WG.Done()
+		}
+		select {
+		case releaseVDI <- sel:
+		default:
+		}
 		return errors.New("failed to create a new ProcessContext")
 	}
 
-	// We have process context, so we can proceed:
+	// We have process context, so we can proceed. Stop the heartbeat and
+	// cancel the crawl context when this call finishes.
+	defer processCtx.crawlCancel()
+	stopHeartbeat := startSourceCrawlHeartbeat(processCtx, processCtx.db)
+	defer stopHeartbeat()
+	if err := processCtx.checkCrawlFence(); err != nil {
+		processCtx.Status.PipelineRunning.Store(3)
+		processCtx.Status.TotalErrors.Add(1)
+		processCtx.Status.LastError = err.Error()
+		reportFencedCrawlFailure(args, err)
+		if processCtx.WG != nil {
+			processCtx.WG.Done()
+		}
+		select {
+		case releaseVDI <- sel:
+		default:
+		}
+		return err
+	}
+	// Authoritative pre-work check: the local handoff identity is not
+	// permission. Re-establish the fenced policy, current claim, generation,
+	// lease and source state before any external work starts. This is also the
+	// second check for a blocking VDI acquisition, which happens in the caller.
+	if err := processCtx.validateFencedClaim(); err != nil {
+		processCtx.Status.PipelineRunning.Store(3)
+		processCtx.Status.TotalErrors.Add(1)
+		processCtx.Status.LastError = err.Error()
+		cmn.DebugMsg(cmn.DbgLvlWarn,
+			"fenced claim is not current for source %s: %v", args.Src.URL, err)
+		reportFencedCrawlFailure(args, err)
+		if processCtx.WG != nil {
+			processCtx.WG.Done()
+		}
+		select {
+		case releaseVDI <- sel:
+		default:
+		}
+		return err
+	}
 
 	// Pipeline has started
 	processCtx.Status.StartTime = time.Now()
@@ -115,19 +160,19 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 	if contentTypeDetectionMap.IsEmpty() {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "Content type detection rules are empty, loading them...")
 		// Load the content type detection rules
-		err = loadContentTypeDetectionRules("./support/content_type_detection.yaml")
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "loading content type detection rules: %v", err)
+		if cfgErr := loadContentTypeDetectionRules("./support/content_type_detection.yaml"); cfgErr != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "loading content type detection rules: %v", cfgErr)
 		}
 	}
 
 	// Combine default configuration with the source configuration
 	if processCtx.source.Config != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-CrawlWebsite] Custom Source configuration found, proceeding to combine it with the default one for this source...")
-		processCtx.config, err = cfg.CombineConfig(processCtx.config, *processCtx.source.Config)
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "combining source configuration: %v", err)
+		combined, cfgErr := cfg.CombineConfig(processCtx.config, *processCtx.source.Config)
+		if cfgErr != nil {
+			cmn.DebugMsg(cmn.DbgLvlError, "combining source configuration: %v", cfgErr)
 		} else {
+			processCtx.config = combined
 			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-CrawlWebsite] Source configuration combined successfully.")
 		}
 	}
@@ -156,6 +201,12 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		})
 	}()
 
+	if err := processCtx.checkCrawlFence(); err != nil {
+		processCtx.Status.PipelineRunning.Store(3)
+		processCtx.Status.TotalErrors.Add(1)
+		processCtx.Status.LastError = err.Error()
+		return err
+	}
 	switch classifySourceProtocol(args.Src.URL) {
 	case SourceProtocolEmail:
 		emailArgs := *args
@@ -164,9 +215,13 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 			webQueue = &bufferedWebCrawlQueue{}
 			emailArgs.WebCrawlQueue = webQueue
 		}
-		err = crawlEmailWithResultHandler(context.Background(), &emailArgs, emailIndexResultHandler{processCtx: processCtx})
+		err = crawlEmailWithResultHandler(processCtx.crawlContext(), &emailArgs, emailIndexResultHandler{processCtx: processCtx})
 		if err == nil && webQueue != nil {
-			err = crawlEmailWebLinks(processCtx, sel, webQueue.drain())
+			if fenceErr := processCtx.checkCrawlFence(); fenceErr != nil {
+				err = fenceErr
+			} else {
+				err = crawlEmailWebLinks(processCtx, sel, webQueue.drain())
+			}
 		}
 		if err != nil {
 			processCtx.Status.PipelineRunning.Store(3)
@@ -179,16 +234,51 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		processCtx.Status.EndTime = time.Now()
 		return nil
 	case SourceProtocolNetwork:
+		if err := processCtx.checkCrawlFence(); err != nil {
+			processCtx.Status.PipelineRunning.Store(3)
+			processCtx.Status.TotalErrors.Add(1)
+			processCtx.Status.LastError = err.Error()
+			return err
+		}
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-CrawlWebsite] URL %s has no HTTP(S) or FTP(S) protocol, collecting network information only...", args.Src.URL)
 		processCtx.GetNetInfo(args.Src.URL)
-		_, indexErr := processCtx.IndexNetInfo(1)
-		if indexErr != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "indexing network information: %v", indexErr)
+		if networkInfoCollectionFailed(processCtx.Status.NetInfoRunning.Load()) {
+			// The only work of a network-only source is network-information
+			// collection. If the collector recorded a failure, the crawl must
+			// not be reported as completed just because no row insertion was
+			// attempted.
+			crawlErr := errors.New("network information collection failed")
 			processCtx.Status.PipelineRunning.Store(3)
-		} else {
-			processCtx.Status.PipelineRunning.Store(2)
+			processCtx.Status.TotalErrors.Add(1)
+			processCtx.Status.LastError = crawlErr.Error()
+			cmn.DebugMsg(cmn.DbgLvlError,
+				"network information collection failed for %s", args.Src.URL)
+			UpdateSourceStateForCrawl(processCtx, args, crawlErr)
+			processCtx.Status.EndTime = time.Now()
+			err = crawlErr
+			return err
 		}
-		UpdateSourceState(args.DB, args.Src.URL, nil)
+		_, indexErr := processCtx.IndexNetInfo(1)
+		if crawlErr := networkOnlyCrawlResult(indexErr, processCtx.crawlAborted()); crawlErr != nil {
+			// A failed network-information index is a failed crawl. Returning
+			// nil here let deferred terminal reporting record a completed
+			// operation for work that never reached the index.
+			processCtx.Status.PipelineRunning.Store(3)
+			processCtx.Status.TotalErrors.Add(1)
+			processCtx.Status.LastError = crawlErr.Error()
+			if errors.Is(crawlErr, errCrawlFenced) {
+				cmn.DebugMsg(cmn.DbgLvlWarn,
+					"network information indexing cancelled for %s: %v", args.Src.URL, indexErr)
+			} else {
+				cmn.DebugMsg(cmn.DbgLvlError, "indexing network information: %v", indexErr)
+			}
+			UpdateSourceStateForCrawl(processCtx, args, crawlErr)
+			processCtx.Status.EndTime = time.Now()
+			err = crawlErr
+			return err
+		}
+		processCtx.Status.PipelineRunning.Store(2)
+		UpdateSourceStateForCrawl(processCtx, args, nil)
 		processCtx.Status.EndTime = time.Now()
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-CrawlWebsite] Finished collecting network information for: %s", args.Src.URL)
 		return nil
@@ -198,7 +288,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 
 	// Initialize the Selenium instance
 	if err = processCtx.ConnectToVDI(sel); err != nil {
-		UpdateSourceState(args.DB, args.Src.URL, err)
+		UpdateSourceStateForCrawl(processCtx, args, err)
 		processCtx.Status.EndTime = time.Now()
 		processCtx.Status.PipelineRunning.Store(3)
 		processCtx.Status.TotalErrors.Add(1)
@@ -296,7 +386,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		)
 		pageSource, htmlContent, initialLinks, tErr := processCtx.CrawlInitialURL(sel)
 		if tErr != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "crawling initial URL: %v", err)
+			cmn.DebugMsg(cmn.DbgLvlError, "crawling initial URL: %v", tErr)
 			processCtx.Status.EndTime = time.Now()
 			processCtx.Status.CrawlingRunning.Store(3)
 			processCtx.Status.PipelineRunning.Store(3)
@@ -445,23 +535,40 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 				processCtx.wg.Wait()
 				close(errChan)
 
-				// Handle any errors from workers
-				for err = range errChan {
-					if err != nil {
+				// Handle any errors from workers. This goroutine deliberately
+				// does not write the outer crawl error: that variable is read
+				// by the deferred terminal reporter after the select and must
+				// only be written by the CrawlWebsite goroutine.
+				for workerErr := range errChan {
+					if workerErr != nil {
 						// Log the error
-						cmn.DebugMsg(cmn.DbgLvlError, "Worker error: %v", err)
+						cmn.DebugMsg(cmn.DbgLvlError, "Worker error: %v", workerErr)
+
+						// A fenced crawl must fail when an in-scope page could
+						// not be indexed, even if the failure is not marked
+						// critical for the legacy path.
+						if fencedIndexingFailure(processCtx.sourceCrawl, workerErr) {
+							processCtx.Status.EndTime = time.Now()
+							processCtx.Status.CrawlingRunning.Store(3)
+							processCtx.Status.PipelineRunning.Store(3)
+							processCtx.Status.TotalErrors.Add(1)
+							processCtx.Status.LastError = workerErr.Error()
+							cmn.DebugMsg(cmn.DbgLvlError,
+								"fenced crawl failed on page indexing: %v", workerErr)
+							return
+						}
 
 						// Check if the error contains errCriticalError
-						if strings.Contains(err.Error(), errCriticalError) {
+						if strings.Contains(workerErr.Error(), errCriticalError) {
 							// Update source with error state
 							processCtx.Status.EndTime = time.Now()
 							processCtx.Status.CrawlingRunning.Store(3)
 							processCtx.Status.PipelineRunning.Store(3)
 							processCtx.Status.TotalErrors.Add(1)
-							processCtx.Status.LastError = err.Error()
+							processCtx.Status.LastError = workerErr.Error()
 
 							// Log the critical error and return to stop processing
-							cmn.DebugMsg(cmn.DbgLvlError, "encountered "+errCriticalError+": %v. Stopping crawling for Source: %d", err, processCtx.source.ID)
+							cmn.DebugMsg(cmn.DbgLvlError, "encountered "+errCriticalError+": %v. Stopping crawling for Source: %d", workerErr, processCtx.source.ID)
 							return
 						}
 					}
@@ -525,13 +632,23 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 	// Wait for the crawling process to finish or timeout
 	select {
 	case <-timeoutTimer.C:
-		// Timeout hit
+		// Timeout hit. Record one stable reason, stop admission of new work,
+		// then wait a bounded interval for the worker and its indexing
+		// transactions to quiesce. Never return a VDI session to the pool while
+		// an old worker may still be operating on it.
 		cmn.DebugMsg(cmn.DbgLvlError, "Crawling timed out for source: %s", args.Src.URL)
 		processCtx.Status.PipelineRunning.Store(3)
 		processCtx.Status.CrawlingRunning.Store(3)
-		processCtx.Status.LastError = "timeout during crawling"
-		UpdateSourceState(args.DB, args.Src.URL, errors.New("timeout during crawling"))
-		err = errors.New("timeout")
+		processCtx.Status.TotalErrors.Add(1)
+		// Status.LastError is a plain field the crawl worker may still write
+		// while it drains. The stable timeout reason is carried by the abort
+		// state and the terminal result instead of racing that field.
+		processCtx.abortCrawl("timeout")
+		if !awaitCrawlQuiescence(done, crawlShutdownGrace) {
+			processCtx.quarantineSession("timeout: crawl worker did not quiesce")
+		}
+		UpdateSourceStateForCrawl(processCtx, args, errCrawlTimeout)
+		err = errCrawlTimeout
 		return err
 	case <-done:
 		if processCtx.Status.LastError != "" ||
@@ -670,10 +787,11 @@ func closeSession(ctx *ProcessContext,
 	ctx.closeSession.Lock()
 	defer ctx.closeSession.Unlock()
 
-	if ctx.pStatus != 1 {
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-closeSession] Pipeline already completed for source: %v", ctx.source.ID)
+	if ctx.sessionFinalized {
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-closeSession] Pipeline already finalized for source: %v", ctx.source.ID)
 		return
 	}
+	ctx.sessionFinalized = true
 
 	// Allow a new sources batch job to be processed (if any)
 	// in the caller:
@@ -685,38 +803,86 @@ func closeSession(ctx *ProcessContext,
 		}
 	}
 
-	// Release VDI connection
-	// (this allows the next source to be processed, if any, in this batch job)
-	vdi.ReturnVDIInstance(args.WG, ctx, sel, releaseVDI)
-	ctx.SetVDIReturnedFlag(true)
+	// Release VDI connection (this allows the next source to be processed, if
+	// any, in this batch job). A quarantined session is deliberately neither
+	// returned nor closed: a worker may still be inside an uninterruptible
+	// WebDriver call, and reusing the session would let it race the next crawl.
+	if !ctx.sessionIsQuarantined() {
+		vdi.ReturnVDIInstance(args.WG, ctx, sel, releaseVDI)
+		ctx.SetVDIReturnedFlag(true)
+	} else {
+		cmn.DebugMsg(cmn.DbgLvlWarn,
+			"leaving quarantined VDI session for source %d out of the pool", ctx.source.ID)
+	}
 
 	// Signal pipeline completion
 	if ctx.Status.PipelineRunning.Load() == 1 || err != nil {
 		ctx.Status.PipelineRunning.Store(3)
 	}
 	cmn.DebugMsg(cmn.DbgLvlInfo, "Pipeline completed for source: %v", ctx.source.ID)
-	ctx.Status.EndTime = time.Now()
-	UpdateSourceState(args.DB, args.Src.URL, err)
+	// A quarantined worker may still be writing Status, maps and session
+	// state. The finalizer must not race it, clear memory it still uses, or
+	// mark the pipeline state it may later update.
+	quarantined := ctx.sessionIsQuarantined()
+	if !quarantined {
+		ctx.Status.EndTime = time.Now()
+	}
+	emitCompletionEvent := false
+	if ctx.sourceCrawl != nil {
+		// A fenced crawl's source/operation status is written only by the
+		// terminal reporter, inside its own transaction. The legacy URL-based
+		// update is intentionally skipped so a stale worker cannot overwrite
+		// the source row.
+		outcome := decideCrawlTerminalOutcome(err, ctx.crawlAborted())
+		result := ctx.reportSourceCrawlTerminal(err)
+		// The configured completion-event behavior is preserved for fenced
+		// crawls, but only an applied, genuinely completed terminal result can
+		// emit a "crawl_completed" event. A failed or cancelled attempt is not
+		// a completion, and a replay is not a new event. The event remains an
+		// audit hint, not completion proof.
+		emitCompletionEvent = shouldEmitCrawlCompletedEvent(
+			ctx.config.Crawler.CreateEventWhenDone, true,
+			result.Result == cdb.SourceCrawlResultApplied &&
+				outcome == cdb.SourceCrawlOutcomeCompleted)
+	} else {
+		UpdateSourceState(args.DB, args.Src.URL, err)
+		emitCompletionEvent = shouldEmitCrawlCompletedEvent(
+			ctx.config.Crawler.CreateEventWhenDone, false, false)
+	}
+	if ctx.sessionIsQuarantined() {
+		// A quarantined worker may still be writing Status fields; emitting an
+		// event would read them concurrently and would also be misleading.
+		emitCompletionEvent = false
+	}
 
-	// Create a database event to indicate the crawl has completed
-	if ctx.config.Crawler.CreateEventWhenDone {
+	// Create a database event to indicate the crawl has completed.
+	if emitCompletionEvent {
 		err := CreateCrawlCompletedEvent(*ctx.db, ctx.source.ID, ctx.Status)
 		if err != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "Failed to create crawl completed event in DB: %v", err)
 		}
 	}
 
-	// Optionally clean up session-specific data
-	cmn.KVStore.CleanSession(ctx.GetContextID())
+	if !quarantined {
+		// Optionally clean up session-specific data
+		cmn.KVStore.CleanSession(ctx.GetContextID())
 
-	// Release other resources in ctx
-	ctx.linksMutex.Lock()
-	defer ctx.linksMutex.Unlock()
-	ctx.newLinks = nil         // Clear the slice to release memory
-	ctx.visitedLinks = nil     // Clear the map to release memory
-	ctx.CollectedCookies = nil // Clear cookies
+		// Release other resources in ctx. A quarantined worker may still append
+		// to or read these structures; clearing them would be a data race and
+		// could make an unconditional map write panic on a nil map.
+		func() {
+			ctx.linksMutex.Lock()
+			defer ctx.linksMutex.Unlock()
+			ctx.newLinks = nil         // Clear the slice to release memory
+			ctx.visitedLinks = nil     // Clear the map to release memory
+			ctx.CollectedCookies = nil // Clear cookies
+		}()
 
-	ctx.pStatus = 10 // Processing completed
+		ctx.pStatus = 10 // Processing completed
+	} else {
+		cmn.DebugMsg(cmn.DbgLvlWarn,
+			"skipping session cleanup for quarantined source %d", ctx.source.ID)
+	}
 	cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-closeSession] Returning from crawling a source.")
 }
 
@@ -787,14 +953,22 @@ func NewProcessContext(args *Pars) *ProcessContext {
 	if config.IsEmpty() {
 		config = *cfg.NewConfig()
 	}
+	parent := args.Context
+	if parent == nil {
+		parent = context.Background()
+	}
+	crawlCtx, crawlCancel := context.WithCancel(parent)
 	newPCtx := ProcessContext{
-		source: &args.Src,
-		db:     &args.DB,
-		sel:    args.Sel,
-		re:     args.RE,
-		SelID:  args.SelIdx,
-		Status: args.Status,
-		WG:     args.WG,
+		source:      &args.Src,
+		db:          &args.DB,
+		sel:         args.Sel,
+		re:          args.RE,
+		SelID:       args.SelIdx,
+		Status:      args.Status,
+		WG:          args.WG,
+		crawlCtx:    crawlCtx,
+		crawlCancel: crawlCancel,
+		sourceCrawl: args.SourceCrawl,
 	}
 	newPCtx.config = *cfg.DeepCopyConfig(&config)
 	newPCtx.visitedLinks = make(map[string]bool)
@@ -824,6 +998,10 @@ func resetPageInfo(p *PageInfo) {
 
 // GetNetInfo is responsible for gathering network information for a Source
 func (ctx *ProcessContext) GetNetInfo(_ string) {
+	if err := ctx.checkCrawlFence(); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlWarn, "skipping network information after crawl fence loss: %v", err)
+		return
+	}
 	ctx.Status.NetInfoRunning.Store(1)
 
 	// Create a new NetInfo instance
@@ -890,7 +1068,7 @@ func (ctx *ProcessContext) GetHTTPInfo(url string, htmlContent string) {
 
 // IndexPage is responsible for indexing a crawled page in the database
 func (ctx *ProcessContext) IndexPage(pageInfo *PageInfo) (uint64, error) {
-	return ctx.IndexPageContext(context.Background(), pageInfo)
+	return ctx.IndexPageContext(ctx.crawlContext(), pageInfo)
 }
 
 // IndexPageContext synchronously indexes a page. Cancellation can stop a page
@@ -909,6 +1087,9 @@ func (ctx *ProcessContext) IndexPageContext(waitCtx context.Context, pageInfo *P
 
 // IndexNetInfo indexes the network information of a source in the database
 func (ctx *ProcessContext) IndexNetInfo(flags int) (uint64, error) {
+	if err := ctx.checkCrawlFence(); err != nil {
+		return 0, err
+	}
 	pageInfo := PageInfo{}
 	pageInfo.HTTPInfo = ctx.hi
 	pageInfo.NetInfo = ctx.ni
@@ -929,7 +1110,7 @@ func (ctx *ProcessContext) IndexNetInfo(flags int) (uint64, error) {
 			CrowlerMeta(pageInfo.HTTPInfo.CrowlerMeta).EnsureSourceUID(ctx.source)
 		}
 	}
-	return indexNetInfo(*ctx.db, ctx.source.URL, &pageInfo, flags)
+	return indexNetInfo(*ctx.db, ctx.source.URL, &pageInfo, flags, ctx.validateIndexingFence)
 }
 
 // UpdateSourceState is responsible for updating the state of a Source in
@@ -966,19 +1147,7 @@ func UpdateSourceState(db cdb.Handler, sourceURL string, crawlError error) {
 // The permit spans the transaction and post-commit keyword writes so callers never
 // observe reordered or incomplete per-page change chains.
 func indexPage(ctx *ProcessContext, url string, pageInfo *PageInfo) (uint64, error) {
-	return indexPageContext(context.Background(), ctx, url, pageInfo)
-}
-
-func getIndexIDForURL(db *cdb.Handler, url string) (uint64, error) {
-	var indexID uint64
-	err := (*db).QueryRow(`SELECT index_id FROM SearchIndex WHERE page_url = $1`, url).Scan(&indexID)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return 0, nil
-		}
-		return 0, err
-	}
-	return indexID, nil
+	return indexPageContext(ctx.crawlContext(), ctx, url, pageInfo)
 }
 
 func indexPageContext(
@@ -987,6 +1156,11 @@ func indexPageContext(
 	url string,
 	pageInfo *PageInfo,
 ) (resultIndexID uint64, retErr error) {
+	defer func() {
+		if retErr != nil && !errors.Is(retErr, errIndexingFailure) {
+			retErr = fmt.Errorf("%w: %w", errIndexingFailure, retErr)
+		}
+	}()
 	if pageInfo == nil {
 		return 0, errors.New("pageInfo cannot be nil")
 	}
@@ -995,6 +1169,9 @@ func indexPageContext(
 	}
 	if strings.TrimSpace(url) == "" {
 		return 0, errors.New("url cannot be empty")
+	}
+	if err := ctx.checkCrawlFence(); err != nil {
+		return 0, err
 	}
 
 	pageInfo.URL = url
@@ -1029,35 +1206,19 @@ func indexPageContext(
 
 	var indexID uint64
 
-	// Refresh existing WebObjects when configured.
-	if ctx.config.Crawler.RefreshContent {
-		indexID, err = getIndexIDForURL(ctx.db, url)
-		if err != nil {
-			cmn.DebugMsg(
-				cmn.DbgLvlError,
-				"checking existing indexID for URL %s: %v",
-				url,
-				err,
-			)
-			return 0, err
-		}
-
-		if indexID != 0 {
-			if err = deleteWebObjects(
-				waitCtx,
-				ctx.db,
-				indexID,
-			); err != nil {
-				cmn.DebugMsg(
-					cmn.DbgLvlError,
-					"deleting existing WebObjects for indexID %d: %v",
-					indexID,
-					err,
-				)
-				return 0, err
-			}
-		}
-	}
+	// Refresh existing content when configured.
+	//
+	// Both refresh paths now share one implementation: the page row is locked,
+	// a page linked to more than one source is refused, only this page's object
+	// links are replaced, and an object row is deleted only when no page
+	// references it. The whole replacement runs inside the main indexing
+	// transaction, so a failure or a lost fence cannot leave the old generation
+	// deleted.
+	//
+	// This supersedes the historical legacy behaviour, which deleted the page's
+	// objects in a separate transaction and removed globally hash-shared object
+	// rows that other pages still referenced (WP-REL230-RC2 / RC2-B).
+	refreshContent := ctx.config.Crawler.RefreshContent
 
 	var sourceID uint64
 	if ctx.source != nil {
@@ -1079,6 +1240,36 @@ func indexPageContext(
 	tx, err := db.BeginTx(txCtx, nil)
 	if err != nil {
 		return 0, cdb.NormalizeTransactionError(txCtx, err)
+	}
+	if err := ctx.validateIndexingFence(tx); err != nil {
+		_ = tx.Rollback()
+		return 0, err
+	}
+
+	// Refresh keeps the page lock, the cross-source decision and every
+	// destructive write inside this transaction, for both the legacy and the
+	// fenced path, so a rollback restores the old generation completely.
+	dbms := db.DBMS()
+	var refreshIndexID uint64
+	var refreshPageExists bool
+	if refreshContent {
+		if err := acquireFencedRefreshSerializationTx(txCtx, tx, dbms); err != nil {
+			_ = tx.Rollback()
+			return 0, err
+		}
+		refreshIndexID, refreshPageExists, err =
+			lockFencedRefreshPageTx(txCtx, tx, dbms, url)
+		if err != nil {
+			_ = tx.Rollback()
+			return 0, err
+		}
+		if refreshPageExists {
+			if err := ensureFencedRefreshSingleSourceTx(txCtx, tx, dbms,
+				refreshIndexID, sourceID); err != nil {
+				_ = tx.Rollback()
+				return 0, err
+			}
+		}
 	}
 
 	txStarted := time.Now()
@@ -1146,9 +1337,33 @@ func indexPageContext(
 		return 0, err
 	}
 
+	// Fenced refresh: replace the page's old object links with the object just
+	// written, then delete only objects that no page references any more. The
+	// old generation is restored by rollback if anything below fails or the
+	// fence is lost before commit.
+	if refreshContent {
+		if refreshPageExists && refreshIndexID != indexID {
+			rollbackTransaction(tx)
+			return 0, fmt.Errorf(
+				"refresh page identity mismatch: locked=%d upserted=%d",
+				refreshIndexID, indexID)
+		}
+		if refreshPageExists {
+			if err := replaceFencedPageObjectsTx(txCtx, tx, dbms, indexID,
+				uint64(objID)); err != nil {
+				rollbackTransaction(tx)
+				return 0, err
+			}
+		}
+	}
+
 	// Commit the main page transaction.
 	phase = "commit"
 
+	if err = ctx.validateIndexingFence(tx); err != nil {
+		rollbackTransaction(tx)
+		return 0, err
+	}
 	if err = commitTransaction(tx); err != nil {
 		rollbackTransaction(tx)
 		return 0, err
@@ -1169,11 +1384,12 @@ func indexPageContext(
 	phase = "post_commit_keywords"
 
 	if pageInfo.Config.Crawler.CollectKeywords {
-		err = insertKeywordsWithTimeSeries(
+		err = insertKeywordsWithTimeSeriesWithFence(
 			db,
 			indexID,
 			pageInfo,
 			pageInfo.Config,
+			ctx.validateIndexingFence,
 		)
 		if err != nil {
 			cmn.DebugMsg(
@@ -1203,6 +1419,11 @@ func indexPageContext(
 		tx4Started := time.Now()
 
 		tx4, tx4Err := db.BeginTx(tx4Ctx, nil)
+		if tx4Err == nil {
+			if fenceErr := ctx.validateIndexingFence(tx4); fenceErr != nil {
+				tx4Err = fenceErr
+			}
+		}
 		if tx4Err == nil {
 			tx4Err = insertMetaTagsOnly(
 				tx4,
@@ -1280,6 +1501,11 @@ func indexPageContext(
 			indexID,
 			err,
 		)
+	} else if fenceErr := ctx.validateIndexingFence(tx2); fenceErr != nil {
+		_ = tx2.Rollback()
+		err = fenceErr
+		cmn.DebugMsg(cmn.DbgLvlError,
+			"ObjectAttributes indexing fenced out for indexID %d: %v", indexID, err)
 	} else {
 		tx2Started := time.Now()
 		tx2Committed := false
@@ -1350,6 +1576,11 @@ func indexPageContext(
 			indexID,
 			err,
 		)
+	} else if fenceErr := ctx.validateIndexingFence(tx3); fenceErr != nil {
+		_ = tx3.Rollback()
+		err = fenceErr
+		cmn.DebugMsg(cmn.DbgLvlError,
+			"Time Series emission fenced out for indexID %d: %v", indexID, err)
 	} else {
 		tx3Started := time.Now()
 		tx3Committed := false
@@ -1660,7 +1891,8 @@ func insertObjectAttribute(
 }
 
 // indexNetInfo indexes the network information of a source in the database
-func indexNetInfo(db cdb.Handler, url string, pageInfo *PageInfo, flags int) (resultIndexID uint64, retErr error) {
+func indexNetInfo(db cdb.Handler, url string, pageInfo *PageInfo, flags int,
+	fence func(*sql.Tx) error) (resultIndexID uint64, retErr error) {
 	// Acquire a lock to ensure that only one goroutine is accessing the database
 	//indexPageMutex.Lock()
 	//defer indexPageMutex.Unlock()
@@ -1683,6 +1915,12 @@ func indexNetInfo(db cdb.Handler, url string, pageInfo *PageInfo, flags int) (re
 	if err != nil {
 		cmn.DebugMsg(cmn.DbgLvlError, "starting transaction: %v", err)
 		return 0, cdb.NormalizeTransactionError(txCtx, err)
+	}
+	if fence != nil {
+		if fenceErr := fence(tx); fenceErr != nil {
+			_ = tx.Rollback()
+			return 0, fenceErr
+		}
 	}
 	txStarted := time.Now()
 	defer func() {
@@ -1804,86 +2042,6 @@ func strLeft(s string, x int) string {
 		return s
 	}
 	return string(runes[:x])
-}
-
-const webObjectCleanupTimeout = 15 * time.Minute
-
-// deleteWebObjects removes all WebObjects currently associated with indexID.
-//
-// Refresh-content cleanup deliberately runs in its own transaction so that
-// potentially expensive WebObject/ObjectAttributes cleanup does not consume
-// the indexPage transaction's database.transaction_timeout budget.
-//
-// The transaction is still bounded to prevent a pathological cleanup from
-// remaining open indefinitely and holding an MVCC snapshot.
-//
-// Any error is returned to the caller. The caller must not continue with the
-// replacement WebObject when cleanup fails, otherwise old and new generations
-// could coexist for the same page.
-func deleteWebObjects(
-	parent context.Context,
-	db *cdb.Handler,
-	indexID uint64,
-) (retErr error) {
-	if db == nil || *db == nil {
-		return errors.New("database handler is nil")
-	}
-	if indexID == 0 {
-		return errors.New("index ID is required")
-	}
-	if parent == nil {
-		parent = context.Background()
-	}
-
-	cleanupCtx, cancelCleanup := context.WithTimeout(
-		parent,
-		webObjectCleanupTimeout,
-	)
-	defer cancelCleanup()
-
-	tx, err := (*db).BeginTx(cleanupCtx, nil)
-	if err != nil {
-		return cdb.NormalizeTransactionError(cleanupCtx, err)
-	}
-
-	started := time.Now()
-	committed := false
-
-	defer func() {
-		if !committed {
-			_ = tx.Rollback()
-		}
-
-		retErr = cdb.NormalizeTransactionError(cleanupCtx, retErr)
-		cdb.LogTransactionOutcome(
-			"deleteWebObjects",
-			started,
-			retErr,
-		)
-	}()
-
-	_, err = tx.ExecContext(
-		cleanupCtx,
-		`
-			DELETE FROM WebObjects
-			WHERE object_id IN (
-				SELECT object_id
-				FROM WebObjectsIndex
-				WHERE index_id = $1
-			)
-		`,
-		indexID,
-	)
-	if err != nil {
-		return err
-	}
-
-	if err = tx.Commit(); err != nil {
-		return err
-	}
-
-	committed = true
-	return nil
 }
 
 // insertOrUpdateWebObjects inserts or updates a web object entry in the database.
@@ -2444,6 +2602,16 @@ func insertKeywordsWithTimeSeries(
 	pageInfo *PageInfo,
 	currCfg *cfg.Config,
 ) error {
+	return insertKeywordsWithTimeSeriesWithFence(db, indexID, pageInfo, currCfg, nil)
+}
+
+func insertKeywordsWithTimeSeriesWithFence(
+	db cdb.Handler,
+	indexID uint64,
+	pageInfo *PageInfo,
+	currCfg *cfg.Config,
+	fence func(*sql.Tx) error,
+) error {
 	cmn.DebugMsg(
 		cmn.DbgLvlDebug4,
 		"[DEBUG-Indexing] Inserting keywords for indexID: %d",
@@ -2458,7 +2626,7 @@ func insertKeywordsWithTimeSeries(
 	var persisted []persistedKeyword
 	var err error
 	if db.DBMS() == cdb.DBPostgresStr {
-		persisted, err = upsertPostgresKeywords(db, currCfg, indexID, ordered, occurrences)
+		persisted, err = upsertPostgresKeywords(db, currCfg, indexID, ordered, occurrences, fence)
 	} else {
 		persisted, err = upsertPortableKeywords(db, indexID, ordered, occurrences)
 	}
@@ -2571,7 +2739,7 @@ func upsertPortableKeywords(db cdb.Handler, indexID uint64, ordered []string, oc
 // committed together, so callers never observe a page with only some keyword links.
 const postgresKeywordBatchSize = 500
 
-func upsertPostgresKeywords(db cdb.Handler, currCfg *cfg.Config, indexID uint64, ordered []string, occurrences map[string]int64) (persisted []persistedKeyword, retErr error) {
+func upsertPostgresKeywords(db cdb.Handler, currCfg *cfg.Config, indexID uint64, ordered []string, occurrences map[string]int64, fence func(*sql.Tx) error) (persisted []persistedKeyword, retErr error) {
 	if len(ordered) == 0 {
 		return nil, nil
 	}
@@ -2585,6 +2753,36 @@ func upsertPostgresKeywords(db cdb.Handler, currCfg *cfg.Config, indexID uint64,
 		_ = tx.Rollback()
 		retErr = cdb.NormalizeTransactionError(txCtx, retErr)
 	}()
+	if fence != nil {
+		if fenceErr := fence(tx); fenceErr != nil {
+			return nil, fenceErr
+		}
+	}
+
+	result, err := upsertPostgresKeywordRowsTx(tx, indexID, ordered, occurrences)
+	if err != nil {
+		return nil, err
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// upsertPostgresKeywordRowsTx performs the bounded, transactional keyword and
+// KeywordIndex upsert on an already open transaction.
+//
+// It is split out from upsertPostgresKeywords so a test can run the exact
+// production statement against one transaction. The thirty-second suppression
+// window compares `Keywords.last_updated_at` with `CURRENT_TIMESTAMP`, and
+// PostgreSQL evaluates `CURRENT_TIMESTAMP` once per transaction. Running the
+// baseline and the upsert in the same transaction is therefore the only way to
+// probe the window boundary without either waiting thirty real seconds or
+// letting scheduler delay decide which branch executes.
+func upsertPostgresKeywordRowsTx(tx *sql.Tx, indexID uint64, ordered []string, occurrences map[string]int64) ([]persistedKeyword, error) {
+	if tx == nil {
+		return nil, errors.New("postgres keyword upsert requires an active transaction")
+	}
 
 	result := make([]persistedKeyword, 0, len(ordered))
 	for start := 0; start < len(ordered); start += postgresKeywordBatchSize {
@@ -2634,25 +2832,22 @@ func upsertPostgresKeywords(db cdb.Handler, currCfg *cfg.Config, indexID uint64,
 		}
 		for rows.Next() {
 			var stored persistedKeyword
-			if err = rows.Scan(&stored.keyword, &stored.keywordID, &stored.keywordIndexID, &stored.occurrences); err != nil {
+			if scanErr := rows.Scan(&stored.keyword, &stored.keywordID, &stored.keywordIndexID, &stored.occurrences); scanErr != nil {
 				_ = rows.Close()
-				return nil, err
+				return nil, scanErr
 			}
 			result = append(result, stored)
 		}
-		if err = rows.Err(); err != nil {
+		if err := rows.Err(); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
-		if err = rows.Close(); err != nil {
+		if err := rows.Close(); err != nil {
 			return nil, err
 		}
 		if len(result) != end {
 			return nil, fmt.Errorf("PostgreSQL keyword upsert returned %d of %d rows", len(result), end)
 		}
-	}
-	if err = tx.Commit(); err != nil {
-		return nil, err
 	}
 	return result, nil
 }
@@ -3045,6 +3240,13 @@ func worker(processCtx *ProcessContext, id int, jobs chan LinkItem) error {
 			cmn.DebugMsg(cmn.DbgLvlDebug4, "[DEBUG-Worker] %s: Returned to the main worker routine for '%s'\n", wid, url.Link)
 		} else {
 			processCtx.Status.TotalErrors.Add(1)
+			// A fenced crawl must report a page-indexing failure to the
+			// terminal reporter. Legacy crawls keep the historical behaviour of
+			// logging non-critical worker errors and continuing.
+			if fencedIndexingFailure(processCtx.sourceCrawl, err) {
+				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: Returning indexing failure for '%s': %v\n", wid, url.Link, err)
+				return err
+			}
 			if strings.Contains(err.Error(), errCriticalError) {
 				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-Worker] %s: Returned to the main worker routine for '%s' with a critical error: %v\n", wid, url.Link, err)
 				return err

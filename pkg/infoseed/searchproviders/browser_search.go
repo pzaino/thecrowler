@@ -112,18 +112,18 @@ func (p *BrowserSearchProvider) Search(ctx context.Context, query string, option
 }
 
 func (p *BrowserSearchProvider) fetchDocument(ctx context.Context, endpoint string, options Options) (*goquery.Document, error) {
-	if options.Timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, options.Timeout)
-		defer cancel()
-	}
 	client := p.Client
 	if client == nil {
-		client = &http.Client{Timeout: options.Timeout}
+		client = &http.Client{}
 	}
 	limiter := limiterFor(p.Name(), options.RateLimit)
 	if err := limiter.wait(ctx); err != nil {
 		return nil, safeProviderError(p.Name(), err)
+	}
+	if options.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, options.Timeout)
+		defer cancel()
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {

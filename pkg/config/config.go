@@ -17,6 +17,7 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -61,6 +62,15 @@ const (
 	informationSeedMaxCandidatesPerSeed            = 1000
 	informationSeedDefaultRetryInterval            = 60
 	informationSeedMaxRetryInterval                = 86400
+	informationSeedDefaultRetryBackoffMax          = 3600
+	informationSeedMaxRetryBackoffMax              = 86400
+	informationSeedDefaultMaxAttempts              = 5
+	informationSeedMaxAttempts                     = 100
+	informationSeedDefaultHeartbeatInterval        = 20
+	informationSeedMaxHeartbeatInterval            = 300
+	informationSeedDefaultLeaseDuration            = 120
+	informationSeedMinLeaseDuration                = 30
+	informationSeedMaxLeaseDuration                = 3600
 	informationSeedDefaultProcessingTimeout        = "30 minutes"
 	informationSeedDefaultPluginTimeout            = 30
 	informationSeedMaxPluginTimeout                = 300
@@ -172,9 +182,15 @@ func getConfigFile(confName string) (Config, error) {
 	// If the configuration file has been found and is not empty, unmarshal it
 	if (finalData != "") && (finalData != "\n") && (finalData != "\r\n") {
 		err = yaml.Unmarshal([]byte(finalData), &config)
+		if err == nil {
+			err = applyMCPMutationPolicyStrict(&config, []byte(finalData))
+		}
+		if err != nil {
+			return Config{}, err
+		}
 	}
 
-	return config, err
+	return config, nil
 }
 
 // NewConfig returns a new Config struct with default values.
@@ -284,12 +300,24 @@ func NewConfig() *Config {
 			MaxQueriesPerSeed:    informationSeedDefaultMaxQueriesPerSeed,
 			MaxCandidatesPerSeed: informationSeedDefaultMaxCandidatesPerSeed,
 			RetryInterval:        informationSeedDefaultRetryInterval,
+			RetryBackoffMax:      informationSeedDefaultRetryBackoffMax,
+			MaxAttempts:          informationSeedDefaultMaxAttempts,
+			HeartbeatInterval:    informationSeedDefaultHeartbeatInterval,
+			LeaseDuration:        informationSeedDefaultLeaseDuration,
 			ProcessingTimeout:    informationSeedDefaultProcessingTimeout,
 			Providers:            map[string]InformationSeedProviderConfig{},
 			ProviderAllowList:    []string{},
 			PluginLimits: InformationSeedPluginLimitsConfig{
 				Timeout:            informationSeedDefaultPluginTimeout,
 				MaxOutputSizeBytes: informationSeedDefaultPluginOutputSize,
+			},
+			Retention: InformationSeedRetentionConfig{
+				Enabled:       false,
+				CompletedDays: 30,
+				DisabledDays:  30,
+				ExhaustedDays: 90,
+				BatchSize:     100,
+				DryRun:        false,
 			},
 		},
 		TimeSeries: defaultTimeSeriesConfig(),
@@ -600,6 +628,9 @@ func LoadRemoteConfig(cfg Config, fetcher RemoteFetcher) (Config, error) {
 		if err != nil {
 			return config, err
 		}
+		if err := applyMCPMutationPolicyStrict(&config, []byte(interpolatedData)); err != nil {
+			return config, err
+		}
 	}
 
 	// Check if the configuration is correct:
@@ -621,6 +652,9 @@ func ParseConfig(data []byte) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := applyMCPMutationPolicyStrict(&cfg, data); err != nil {
+		return nil, err
+	}
 	err = cfg.Validate()
 	if err != nil {
 		return nil, err
@@ -631,8 +665,17 @@ func ParseConfig(data []byte) (*Config, error) {
 // Validate checks if the configuration file contains valid values.
 // Where possible, if a provided value is wrong, it's replaced with a default value.
 func (c *Config) Validate() error {
+	if err := c.MCP.MutationPolicy.Validate(); err != nil {
+		return fmt.Errorf("mcp.mutation_policy: %w", err)
+	}
+	if err := c.MCP.MutationPolicy.ValidateInventory(c.MCP.Servers); err != nil {
+		return fmt.Errorf("mcp.mutation_policy: %w", err)
+	}
 	// Check if the Crawling configuration file contains valid values
 	c.validateCrawler()
+	if errs := c.AttributesIndexing.Validate(); len(errs) > 0 {
+		return fmt.Errorf("invalid attributes_indexing configuration: %w", errors.Join(errs...))
+	}
 	if err := c.Email.Validate(); err != nil {
 		return err
 	}
@@ -1059,6 +1102,41 @@ func (c *Config) validateInformationSeed() error {
 		c.InformationSeed.RetryInterval = informationSeedMaxRetryInterval
 	}
 
+	if c.InformationSeed.RetryBackoffMax < 1 {
+		c.InformationSeed.RetryBackoffMax = informationSeedDefaultRetryBackoffMax
+	} else if c.InformationSeed.RetryBackoffMax > informationSeedMaxRetryBackoffMax {
+		c.InformationSeed.RetryBackoffMax = informationSeedMaxRetryBackoffMax
+	}
+	if c.InformationSeed.RetryBackoffMax < c.InformationSeed.RetryInterval {
+		c.InformationSeed.RetryBackoffMax = c.InformationSeed.RetryInterval
+	}
+
+	if c.InformationSeed.MaxAttempts < 0 {
+		c.InformationSeed.MaxAttempts = informationSeedDefaultMaxAttempts
+	} else if c.InformationSeed.MaxAttempts > informationSeedMaxAttempts {
+		c.InformationSeed.MaxAttempts = informationSeedMaxAttempts
+	}
+	if c.InformationSeed.MaxAttempts == 0 {
+		c.InformationSeed.MaxAttempts = informationSeedDefaultMaxAttempts
+	}
+
+	if c.InformationSeed.HeartbeatInterval < 1 {
+		c.InformationSeed.HeartbeatInterval = informationSeedDefaultHeartbeatInterval
+	} else if c.InformationSeed.HeartbeatInterval > informationSeedMaxHeartbeatInterval {
+		c.InformationSeed.HeartbeatInterval = informationSeedMaxHeartbeatInterval
+	}
+	if c.InformationSeed.LeaseDuration < informationSeedMinLeaseDuration {
+		c.InformationSeed.LeaseDuration = informationSeedDefaultLeaseDuration
+	} else if c.InformationSeed.LeaseDuration > informationSeedMaxLeaseDuration {
+		c.InformationSeed.LeaseDuration = informationSeedMaxLeaseDuration
+	}
+	if c.InformationSeed.HeartbeatInterval >= c.InformationSeed.LeaseDuration {
+		c.InformationSeed.HeartbeatInterval = c.InformationSeed.LeaseDuration / 2
+		if c.InformationSeed.HeartbeatInterval < 1 {
+			c.InformationSeed.HeartbeatInterval = 1
+		}
+	}
+
 	if strings.TrimSpace(c.InformationSeed.ProcessingTimeout) == "" {
 		c.InformationSeed.ProcessingTimeout = informationSeedDefaultProcessingTimeout
 	} else {
@@ -1075,6 +1153,20 @@ func (c *Config) validateInformationSeed() error {
 		c.InformationSeed.PluginLimits.MaxOutputSizeBytes = informationSeedDefaultPluginOutputSize
 	} else if c.InformationSeed.PluginLimits.MaxOutputSizeBytes > informationSeedMaxPluginOutputSize {
 		c.InformationSeed.PluginLimits.MaxOutputSizeBytes = informationSeedMaxPluginOutputSize
+	}
+	if c.InformationSeed.Retention.CompletedDays < 1 {
+		c.InformationSeed.Retention.CompletedDays = 30
+	}
+	if c.InformationSeed.Retention.DisabledDays < 1 {
+		c.InformationSeed.Retention.DisabledDays = 30
+	}
+	if c.InformationSeed.Retention.ExhaustedDays < 1 {
+		c.InformationSeed.Retention.ExhaustedDays = 90
+	}
+	if c.InformationSeed.Retention.BatchSize < 1 {
+		c.InformationSeed.Retention.BatchSize = 100
+	} else if c.InformationSeed.Retention.BatchSize > 1000 {
+		c.InformationSeed.Retention.BatchSize = 1000
 	}
 
 	if c.InformationSeed.Providers == nil {
@@ -1960,17 +2052,30 @@ func (c *ServiceScoutConfig) IsEmpty() bool {
 	return true
 }
 
-// IsEmpty checks if the given ExecutionPlanItem is empty.
+// IsEmpty checks if the given Condition is empty.
+func (c Condition) IsEmpty() bool {
+	return len(c.URLPatterns) == 0 && len(c.URLBlockPatterns) == 0
+}
+
+// IsEmpty checks if the given RuleParameters is empty.
+func (r RuleParameters) IsEmpty() bool {
+	return len(r.Action) == 0 && len(r.Scraping) == 0 && len(r.Detection) == 0 && len(r.Crawling) == 0
+}
+
+// IsEmpty checks if the given ExecutionPlanItem is empty. Any populated field
+// makes the item meaningful so SourceConfig.IsEmpty never treats a partially
+// configured execution plan as absent.
 func (ep *ExecutionPlanItem) IsEmpty() bool {
 	if ep == nil {
 		return true
 	}
 
-	if len(ep.Rulesets) == 0 && len(ep.RuleGroups) == 0 && len(ep.Rules) == 0 {
-		return true
-	}
-
-	return false
+	return strings.TrimSpace(ep.Label) == "" &&
+		ep.Conditions.IsEmpty() &&
+		len(ep.Rulesets) == 0 &&
+		len(ep.RuleGroups) == 0 &&
+		len(ep.Rules) == 0 &&
+		len(ep.AdditionalConditions) == 0
 }
 
 // IsEmpty checks if the given SourceConfig is empty.
@@ -2001,11 +2106,13 @@ func (sc *SourceConfig) IsEmpty() bool {
 		return false
 	}
 
-	// ExecutionPlan must be nil or empty
-	if len(sc.ExecutionPlan) != 0 {
-		if len(sc.ExecutionPlan) == 1 && !sc.ExecutionPlan[0].IsEmpty() {
-			return true
+	for index := range sc.ExecutionPlan {
+		if !sc.ExecutionPlan[index].IsEmpty() {
+			return false
 		}
+	}
+
+	if !sc.RuleParameters.IsEmpty() {
 		return false
 	}
 
@@ -2231,6 +2338,8 @@ func CombineConfigs(dstConfig Config, srcConfig SourceConfig) Config {
 		combineCrawlerCfg(&dstConfig.Crawler, srcConfig.Custom["crawler"])
 	}
 
+	applySourceCrawlingOverrides(&dstConfig, srcConfig.CrawlingConfig)
+
 	if srcConfig.Custom["vdi"] != nil {
 		combineVDICfg(&dstConfig.Selenium, srcConfig.Custom["vdi"])
 	}
@@ -2273,6 +2382,58 @@ func CombineConfigs(dstConfig Config, srcConfig SourceConfig) Config {
 	}
 
 	return dstConfig
+}
+
+// applySourceCrawlingOverrides applies the two source-scoped crawling options
+// that live directly under `crawling_config` (rather than under
+// `custom.crawler`), because they describe how this particular source must be
+// fetched.
+//
+// Both options are optional pointers so that an explicit `false` is
+// distinguishable from "not set":
+//
+//   - Incognito: nil preserves the historical browser default (private for
+//     Chrome/Chromium). It is copied by value so concurrent sources never share
+//     a mutable flag.
+//   - FollowRedirects: nil inherits http_headers.follow_redirects. When set it
+//     becomes the effective value for every redirect-aware consumer of this
+//     source's merged configuration (HTTP header collection and browser
+//     navigation policy).
+//
+// dstConfig is the per-source merged copy, never the process-global
+// configuration, so this cannot leak between sources.
+func applySourceCrawlingOverrides(dstConfig *Config, crawling CrawlingConfig) {
+	if dstConfig == nil {
+		return
+	}
+	if crawling.Incognito != nil {
+		value := *crawling.Incognito
+		dstConfig.Crawler.Incognito = &value
+	}
+	if crawling.FollowRedirects != nil {
+		dstConfig.HTTPHeaders.FollowRedirects = *crawling.FollowRedirects
+	}
+}
+
+// EffectiveFollowRedirects reports the redirect policy that applies to this
+// (already merged) configuration. The source-level override is folded into
+// HTTPHeaders.FollowRedirects by applySourceCrawlingOverrides, so a single
+// value governs every consumer.
+func (c Config) EffectiveFollowRedirects() bool {
+	return c.HTTPHeaders.FollowRedirects
+}
+
+// EffectiveIncognito reports whether the browser must be launched with a
+// private profile for this (already merged) configuration. An absent value
+// keeps the historical behaviour: private browsing for Chrome/Chromium.
+func (c Config) EffectiveIncognito() bool {
+	return c.Crawler.EffectiveIncognito()
+}
+
+// EffectiveIncognito reports whether a private browser profile is required.
+// An absent value keeps the historical behaviour: private.
+func (c Crawler) EffectiveIncognito() bool {
+	return c.Incognito == nil || *c.Incognito
 }
 
 func combineCrawlerCfg(dstCfg *Crawler, srcCfgIface interface{}) {

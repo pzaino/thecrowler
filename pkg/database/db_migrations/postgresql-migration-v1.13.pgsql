@@ -1,3 +1,6 @@
+-- CROWler schema migration chain: read docs/database-migrations.md before running.
+-- Target version: 1.13. Apply every earlier migration first; do not run out of order.
+
 ALTER TABLE Sources
 ADD COLUMN IF NOT EXISTS sub_priority INTEGER DEFAULT 0 NOT NULL;
 

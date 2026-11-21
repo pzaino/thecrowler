@@ -19,6 +19,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
+
+	cdb "github.com/pzaino/thecrowler/pkg/database"
 )
 
 const (
@@ -42,6 +45,30 @@ type AuditEvent struct {
 	Reason             string   `json:"reason,omitempty"`
 	DelegationTarget   string   `json:"delegation_target,omitempty"`
 	FailurePolicy      string   `json:"failure_policy,omitempty"`
+	// WP-02 goal correlation fields. Empty for legacy actions.
+	GoalID      string   `json:"goal_id,omitempty"`
+	CriterionID string   `json:"criterion_id,omitempty"`
+	ReasonCode  string   `json:"reason_code,omitempty"`
+	EvidenceIDs []string `json:"evidence_ids,omitempty"`
+	// WP-03B1 scheduling correlation fields. Empty for non-scheduling actions.
+	PrincipalUserID         uint64 `json:"principal_user_id,omitempty"`
+	SourceID                uint64 `json:"source_id,omitempty"`
+	RequestID               string `json:"request_id,omitempty"`
+	OperationType           string `json:"operation_type,omitempty"`
+	IdempotencyKey          string `json:"idempotency_key,omitempty"`
+	AuthorizationOutcome    string `json:"authorization_outcome,omitempty"`
+	AuthorizationReasonCode string `json:"authorization_reason_code,omitempty"`
+	AuthorizationStage      string `json:"authorization_stage,omitempty"`
+	ApprovalOutcome         string `json:"approval_outcome,omitempty"`
+	SourceOwnershipOutcome  string `json:"source_ownership_outcome,omitempty"`
+	SchedulingState         string `json:"scheduling_state,omitempty"`
+	// WP-04A MCP provenance. Empty for non-MCP actions.
+	MCPServerID       string     `json:"mcp_server_id,omitempty"`
+	MCPToolName       string     `json:"mcp_tool_name,omitempty"`
+	MCPProposalID     string     `json:"mcp_proposal_id,omitempty"`
+	MCPProposalSHA256 string     `json:"mcp_proposal_sha256,omitempty"`
+	MCPPolicyID       string     `json:"mcp_policy_id,omitempty"`
+	Timestamp         *time.Time `json:"timestamp,omitempty"`
 }
 
 func (je *JobEngine) startGovernanceRun() {
@@ -66,6 +93,78 @@ func (je *JobEngine) appendAudit(event AuditEvent) {
 	je.auditEvents = append(je.auditEvents, event)
 	trace := fmt.Sprintf("%04d|outcome=%s|agent=%s|action=%s|reason=%s|target=%s|policy=%s", event.Sequence, event.Outcome, event.AgentID, event.Action, event.Reason, event.DelegationTarget, event.FailurePolicy)
 	je.traceLogs = append(je.traceLogs, trace)
+}
+
+// AuditCrawlSchedulingDecision records one crawl proposal/scheduling decision
+// through the existing governance audit. Reason values are stable codes; model
+// text and database details are never copied into the audit.
+func (je *JobEngine) AuditCrawlSchedulingDecision(identity AgentIdentity, proposal CrawlRequestProposal, decision CrawlRequestDecision, result *cdb.CrawlScheduleResult, runID, traceID string) {
+	outcome := auditOutcomeDenied
+	reason := decision.ReasonCode()
+	operationType := proposal.OperationType
+	requestID := proposal.RequestID
+	sourceID := proposal.SourceID
+	operationID := ""
+	if decision.Allowed() {
+		outcome = auditOutcomeAllowed
+	}
+	if result != nil {
+		reason = result.ReasonCode
+		operationType = result.OperationType
+		requestID = result.RequestID
+		sourceID = result.SourceID
+		operationID = result.OperationID
+		switch result.State {
+		case cdb.CrawlOperationAccepted, cdb.CrawlOperationAlreadyPending, cdb.CrawlOperationProcessing, cdb.CrawlOperationCompleted:
+			outcome = auditOutcomeAllowed
+		case cdb.CrawlOperationFailed, cdb.CrawlOperationCancelled, cdb.CrawlOperationUnsupported:
+			outcome = auditOutcomeError
+		default:
+			outcome = auditOutcomeDenied
+		}
+	}
+	capabilities := []string(nil)
+	authorizationOutcome := auditOutcomeDenied
+	if decision.Allowed() {
+		capabilities = decision.RequiredCapabilities()
+		authorizationOutcome = auditOutcomeAllowed
+	}
+	authorizationReason := decision.ReasonCode()
+	authorizationStage := decision.Stage()
+	schedulingState := ""
+	if result != nil {
+		schedulingState = string(result.State)
+		switch {
+		case result.Reused && (result.State == cdb.CrawlOperationAccepted ||
+			result.State == cdb.CrawlOperationAlreadyPending):
+			authorizationStage = CrawlStageReused
+		case result.State == cdb.CrawlOperationAccepted ||
+			result.State == cdb.CrawlOperationAlreadyPending ||
+			result.State == cdb.CrawlOperationProcessing ||
+			result.State == cdb.CrawlOperationCompleted:
+			authorizationStage = CrawlStageSubmitted
+		case result.State == cdb.CrawlOperationFailed ||
+			result.State == cdb.CrawlOperationCancelled ||
+			result.State == cdb.CrawlOperationUnsupported:
+			authorizationStage = CrawlStageSubmissionFailed
+		default:
+			authorizationStage = CrawlStageSubmissionDenied
+		}
+	}
+	timestamp := time.Now().UTC()
+	je.appendAudit(AuditEvent{
+		RunID: runID, TraceID: traceID,
+		AgentID: identity.AgentID, AgentName: identity.Name, Owner: identity.Owner,
+		Action: "CrawlRequest", RequiredCapability: "tool_execution+db_write",
+		CapabilitiesUsed: capabilities, Outcome: outcome, Reason: reason,
+		ReasonCode: reason, PrincipalUserID: decision.PrincipalUserID(),
+		SourceID: sourceID, RequestID: requestID,
+		OperationType: operationType, IdempotencyKey: operationID,
+		AuthorizationOutcome: authorizationOutcome, AuthorizationReasonCode: authorizationReason,
+		AuthorizationStage: authorizationStage, ApprovalOutcome: decision.ApprovalOutcome(),
+		SourceOwnershipOutcome: decision.SourceOwnershipOutcome(),
+		SchedulingState:        schedulingState, Timestamp: &timestamp,
+	})
 }
 
 func (je *JobEngine) AuditEvents() []AuditEvent {

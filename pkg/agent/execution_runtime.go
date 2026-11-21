@@ -35,12 +35,16 @@ const (
 
 // AgentExecutionContext captures per-run identity metadata and correlation fields.
 type AgentExecutionContext struct {
-	RunID            string        `json:"run_id"`
-	TraceID          string        `json:"trace_id"`
-	Source           string        `json:"source,omitempty"`
-	Owner            string        `json:"owner,omitempty"`
-	IdentitySnapshot AgentIdentity `json:"identity_snapshot"`
-	StartedAt        time.Time     `json:"started_at"`
+	RunID                string               `json:"run_id"`
+	TraceID              string               `json:"trace_id"`
+	Source               string               `json:"source,omitempty"`
+	Owner                string               `json:"owner,omitempty"`
+	IdentitySnapshot     AgentIdentity        `json:"identity_snapshot"`
+	MCPMutationPrincipal MCPMutationPrincipal `json:"-"`
+	StartedAt            time.Time            `json:"started_at"`
+	// Context is the trusted caller context for this execution. It is never
+	// serialized into params or derived from model/event data.
+	Context context.Context `json:"-"`
 }
 
 // constraintBudgetManager owns one job group's step counter, elapsed-time
@@ -62,9 +66,16 @@ type constraintBudgetManager struct {
 }
 
 func newConstraintBudgetManager(identity AgentIdentity) (*constraintBudgetManager, error) {
+	return newConstraintBudgetManagerWithContext(context.Background(), identity)
+}
+
+func newConstraintBudgetManagerWithContext(parent context.Context, identity AgentIdentity) (*constraintBudgetManager, error) {
+	if parent == nil {
+		parent = context.Background()
+	}
 	bm := &constraintBudgetManager{startedAt: time.Now().UTC()}
 	if identity.Constraints == nil {
-		bm.ctx, bm.cancel = context.WithCancel(context.Background())
+		bm.ctx, bm.cancel = context.WithCancel(parent)
 		return bm, nil
 	}
 
@@ -79,9 +90,9 @@ func newConstraintBudgetManager(identity AgentIdentity) (*constraintBudgetManage
 		bm.hasTimeBudget = true
 	}
 	if bm.hasTimeBudget {
-		bm.ctx, bm.cancel = context.WithDeadline(context.Background(), bm.startedAt.Add(bm.timeBudget))
+		bm.ctx, bm.cancel = context.WithDeadline(parent, bm.startedAt.Add(bm.timeBudget))
 	} else {
-		bm.ctx, bm.cancel = context.WithCancel(context.Background())
+		bm.ctx, bm.cancel = context.WithCancel(parent)
 	}
 	return bm, nil
 }
@@ -286,6 +297,7 @@ var actionCapability = map[string]string{
 	"CreateEvent":     "emit_event",
 	"APIRequest":      "api_request",
 	"AgentToolLoop":   "tool_execution",
+	"AgentGoalRun":    "goal_execution",
 }
 
 // delegationCapabilityName is the schema capability needed to delegate.
@@ -490,7 +502,7 @@ func trustLevelRank(level string) int {
 
 func minTrustRankForAction(actionName string) int {
 	switch strings.TrimSpace(actionName) {
-	case "RunCommand", "DBQuery", "PluginExecution", "AgentToolLoop":
+	case "RunCommand", "DBQuery", "PluginExecution", "AgentToolLoop", "AgentGoalRun":
 		return 2
 	default:
 		return 1
@@ -538,5 +550,11 @@ func applyExecutionContext(params map[string]interface{}, ctx AgentExecutionCont
 	runtimeMap["source"] = ctx.Source
 	runtimeMap["owner"] = ctx.Owner
 	runtimeMap["identity_snapshot"] = ctx.IdentitySnapshot
+	// The principal is a typed trusted value. Delete any caller/manifest value
+	// first so a forged map or string can never be mistaken for authority.
+	delete(runtimeMap, cfgKeyMCPMutationPrincipal)
+	if ctx.MCPMutationPrincipal.Validate() == nil {
+		runtimeMap[cfgKeyMCPMutationPrincipal] = ctx.MCPMutationPrincipal
+	}
 	configMap[cfgKeyAgentRuntime] = runtimeMap
 }

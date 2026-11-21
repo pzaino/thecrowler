@@ -1,3 +1,6 @@
+-- CROWler schema migration chain: read docs/database-migrations.md before running.
+-- Target version: 1.08. Apply every earlier migration first; do not run out of order.
+
 -- PostgreSQL upgrade migration for Information Seed schema v1.8.
 -- Safe to run on existing databases; all DDL is guarded or idempotent.
 

@@ -25,6 +25,13 @@ type SourceCrawlingConfig struct {
 	UnwantedURLs      []string              `json:"unwanted_urls,omitempty"`
 	SourceType        SourceConfigType      `json:"source_type,omitempty"`
 	LoadValidation    *SourceLoadValidation `json:"load_validation,omitempty"`
+	// Incognito overrides private browsing for this source only. nil keeps the
+	// historical default. It is a strict boolean: any other JSON type fails
+	// decoding instead of silently disabling private browsing.
+	Incognito *bool `json:"incognito,omitempty"`
+	// FollowRedirects overrides http_headers.follow_redirects for this source
+	// only. nil inherits the global value.
+	FollowRedirects *bool `json:"follow_redirects,omitempty"`
 }
 
 // SourceConfigType defines the type of the source, which can influence crawling and processing behavior.

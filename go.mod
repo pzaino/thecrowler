@@ -145,6 +145,7 @@ require (
 	github.com/jhillyerd/enmime/v2 v2.4.1
 	github.com/joho/godotenv v1.5.1
 	github.com/mattn/go-sqlite3 v1.14.52
+	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/neo4j/neo4j-go-driver/v5 v5.28.5
 	github.com/prometheus/client_golang v1.24.1
 	github.com/snowflakedb/gosnowflake/v2 v2.3.0
@@ -154,6 +155,13 @@ require (
 	golang.org/x/time v0.16.0
 	google.golang.org/api v0.300.0
 	gopkg.in/yaml.v3 v3.0.1
+)
+
+require (
+	github.com/google/jsonschema-go v0.4.3 // indirect
+	github.com/segmentio/asm v1.2.1 // indirect
+	github.com/segmentio/encoding v0.5.4 // indirect
+	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 )
 
 require (

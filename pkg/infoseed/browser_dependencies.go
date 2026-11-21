@@ -31,7 +31,8 @@ type BrowserDependencies struct {
 
 // RunnerOptions contains explicitly injected optional runner dependencies.
 type RunnerOptions struct {
-	Browser BrowserDependencies
+	Browser       BrowserDependencies
+	TrustedOwners bool
 }
 
 // NewBrowserDependencies adapts the application-owned VDI pool, validated

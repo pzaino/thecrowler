@@ -3,6 +3,7 @@
     {
       "url": "HTTPS://Accepted.Example.test:443/Path/?utm_source=fake-search&keep=1#fragment",
       "title": "Accepted Candidate",
+      "snippet": "Feed provided snippet for the accepted candidate.",
       "score": 0.55,
       "metadata": {"fixture_case": "accepted"}
     },
