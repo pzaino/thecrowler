@@ -1,14 +1,16 @@
 # Database migrations
 
 This is the operator guide for upgrading a CROWler database to the schema used by
-release **2.3.0**, or for checking that an existing database matches it.
+release **2.3.0** or **2.3.1**, or for checking that an existing database
+matches it. Release 2.3.1 keeps the same schema and writer generation; it adds
+opt-in time-series retention and does not require a migration.
 
 - **Schema version:** `1.17`
 - **Writer generation:** `verified-ownership-v1.17`
 - **Primary engine:** PostgreSQL 17 (PostgreSQL 15.10 is also used by the
   default Compose generator)
 - **Other engines:** SQLite is supported. MySQL/MariaDB SQL is shipped but the
-  runtime backend is **disabled** in 2.3.0 (see §5).
+  runtime backend is **disabled** in 2.3.x (see §5).
 
 The migration files themselves carry a short header with their engine-specific
 warnings. This guide is the complete procedure.
@@ -19,7 +21,7 @@ warnings. This guide is the complete procedure.
 
 A CROWler database has two version markers:
 
-| Marker | Table | 2.3.0 value |
+| Marker | Table | 2.3.x value |
 | --- | --- | --- |
 | Schema version | `DBSchemaVersion.version` where `is_current` | `1.17` |
 | Writer generation | `DatabaseWriterCompatibility.writer_generation` | `verified-ownership-v1.17` |

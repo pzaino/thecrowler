@@ -36,3 +36,4 @@ deployed in a containerized environment.
 
 * [Information Seed discovery](information-seed/information_seed.md) — configure providers, submit seeds, filter candidates, create or link Sources, and inspect diagnostics.
 * [Time-series observations and aggregates](time_series/timeseries.md) — metric definitions, emitters, scope/dedupe/change behavior, aggregation, API queries, retention, privacy, portability, and runnable examples.
+* [Time-series retention hardening (2.3.1)](time_series/timeseries-retention-hardening.md) — scheduled retention contract, calendar windows, cardinality recovery, and aggregate-integrity guardrails.

@@ -508,13 +508,20 @@ timeseries:
     dedupe_scope: none           # none|source|object|global
     failure_policy: log_skip     # log_skip|log|skip|retry|fail_indexing
   retention:
-    raw: 30d
-    aggregated: 365d
+    enabled: false              # opt-in scheduled deletion
+    schedule: 1h
+    batch_size: 1000
+    max_batches: 10
+    max_duration: 1m
+    dry_run: false
+    raw: 30d                    # 0 keeps raw forever; mo/y are calendar units
+    aggregated: 365d            # 0 keeps aggregates forever
   aggregation:
     enabled: false
     schedule: 5m
     batch_size: 1000
     max_batches: 10
+    max_duration: 1m
     overlap: 15m
   storage:
     backend: postgres
@@ -555,9 +562,33 @@ must provide `timestamp_selector`. Numeric aggregates (`sum`, `average`, `min`,
 Boolean and JSON values support counting/distinct counting only; strings also
 support first/last. Metric keys must be non-empty and unique.
 
-Privacy and cardinality can be overridden per metric. `hash_only: true` cannot
-be combined with `store_value_text: true`; regular expressions are compiled at
+Privacy and cardinality can be overridden per metric. Retention can also be
+overridden per metric with `retention.raw` and/or `retention.aggregated`; an
+omitted or empty value inherits the global window, while `"0"` keeps that family
+forever. Retention windows accept `ns`, `us`, `µs`, `ms`, `s`, `m`, `h`, `d`,
+`w`, `mo`, and `y`. Fixed windows preserve the Go duration grammar, including
+composites (`1h30m`) and fractions (`1.5h`), extended with `d` and `w`. Calendar
+windows are integer `y`/`mo` compositions (`1y6mo`) and cannot be mixed with
+fixed units; they are capped at 100 years (1200 months). `mo` and `y` use UTC
+calendar arithmetic with end-of-month clamping (31 March minus one month is
+28 February, or 29 February in a leap year). `hash_only: true` cannot be
+combined with `store_value_text: true`; regular expressions are compiled at
 configuration validation time. Limits are bounded to prevent unbounded series,
 dimension, or value growth.
 
-The aggregation `overlap` duration controls how far an incremental run rewinds its durable checkpoint to include late observations. The events scheduler runs only when both top-level time-series and aggregation switches are enabled. Configuration metrics are declarative runtime input; registration uses `database.UpsertTimeSeriesMetric`, and the crawler startup/reload path calls `database.SyncConfiguredTimeSeriesMetrics` to synchronize YAML metrics into `TimeSeriesMetrics`. See [Time-series observations and aggregates](timeseries.md) for the complete delivered workflow and schema-valid examples.
+Automatic retention is disabled by default. When enabled, the Events master
+runs a bounded pass on `retention.schedule`. The scheduler captures its
+configuration at process startup; change retention settings and restart the
+Events service to apply them. Raw deletion participates in the same
+transactional cardinality accounting as observation insertion, so expired
+observations release series and dimension-value capacity. With aggregation
+enabled, raw pruning never advances past the durable aggregation checkpoint
+minus `aggregation.overlap`; without an aggregation checkpoint the raw pass is
+skipped. Aggregate pruning is independent and never removes unexpired buckets.
+A metric that has lost raw history to retention is omitted from an explicit
+aggregate rebuild that starts before its retention watermark, preventing
+aggregates from being recomputed from incomplete data. The default
+`max_dimensions: 0` is treated as "inherit the built-in default (10)" for
+configured metrics, not as unlimited.
+
+The aggregation `overlap` duration controls how far an incremental run rewinds its durable checkpoint to include late observations. The events scheduler runs only when both top-level time-series and aggregation switches are enabled. Configuration metrics are declarative runtime input; registration uses `database.UpsertTimeSeriesMetric`, and the crawler startup/reload path calls `database.SyncConfiguredTimeSeriesMetrics` to synchronize YAML metrics into `TimeSeriesMetrics`, including the effective retention and cardinality policy. See [Time-series observations and aggregates](timeseries.md) for the complete delivered workflow and schema-valid examples.

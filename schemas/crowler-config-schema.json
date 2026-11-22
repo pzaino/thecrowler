@@ -3543,15 +3543,64 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "raw": {
+            "enabled": {
+              "type": "boolean",
+              "default": false,
+              "description": "Opt-in scheduled retention. Disabled by default so upgrades never delete history automatically."
+            },
+            "schedule": {
               "type": "string",
               "pattern": "^[1-9][0-9]*(ns|us|\u00b5s|ms|s|m|h|d|w)$",
-              "default": "30d"
+              "default": "1h"
+            },
+            "batch_size": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100000,
+              "default": 1000
+            },
+            "max_batches": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000,
+              "default": 10
+            },
+            "max_duration": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*(ns|us|\u00b5s|ms|s|m|h|d|w)$",
+              "default": "1m"
+            },
+            "dry_run": {
+              "type": "boolean",
+              "default": false
+            },
+            "raw": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^0$|^(?:[0-9]+(?:\\.[0-9]+)?(?:ns|us|\u00b5s|ms|s|m|h|d|w))+$|^(?:[0-9]+(?:y|mo))+$"
+                },
+                {
+                  "type": "integer",
+                  "const": 0
+                }
+              ],
+              "default": "30d",
+              "description": "Raw observation retention. 0 keeps raw observations forever; fixed windows keep Go duration syntax plus d/w, mo/y use UTC calendar arithmetic with end-of-month clamping, and calendar horizons are capped at 100 years."
             },
             "aggregated": {
-              "type": "string",
-              "pattern": "^[1-9][0-9]*(ns|us|\u00b5s|ms|s|m|h|d|w)$",
-              "default": "365d"
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^0$|^(?:[0-9]+(?:\\.[0-9]+)?(?:ns|us|\u00b5s|ms|s|m|h|d|w))+$|^(?:[0-9]+(?:y|mo))+$"
+                },
+                {
+                  "type": "integer",
+                  "const": 0
+                }
+              ],
+              "default": "365d",
+              "description": "Aggregate retention. 0 keeps aggregates forever; fixed windows keep Go duration syntax plus d/w, mo/y use UTC calendar arithmetic with end-of-month clamping, and calendar horizons are capped at 100 years."
             }
           }
         },
@@ -3797,6 +3846,38 @@
       "minProperties": 1,
       "additionalProperties": true
     },
+    "timeSeriesRetentionOverride": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "raw": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^0$|^(?:[0-9]+(?:\\.[0-9]+)?(?:ns|us|\u00b5s|ms|s|m|h|d|w))+$|^(?:[0-9]+(?:y|mo))+$"
+            },
+            {
+              "type": "integer",
+              "const": 0
+            }
+          ],
+          "description": "Per-metric raw retention override. Omit or leave empty to inherit the global value; 0 keeps raw observations forever; calendar horizons are capped at 100 years."
+        },
+        "aggregated": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^0$|^(?:[0-9]+(?:\\.[0-9]+)?(?:ns|us|\u00b5s|ms|s|m|h|d|w))+$|^(?:[0-9]+(?:y|mo))+$"
+            },
+            {
+              "type": "integer",
+              "const": 0
+            }
+          ],
+          "description": "Per-metric aggregate retention override. Omit or leave empty to inherit the global value; 0 keeps aggregates forever; calendar horizons are capped at 100 years."
+        }
+      }
+    },
     "timeSeriesCardinality": {
       "type": "object",
       "additionalProperties": false,
@@ -3811,7 +3892,8 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 64,
-          "default": 10
+          "default": 10,
+          "description": "Maximum configured dimensions per metric. For synchronized metrics 0 means inherit the built-in default (10), not unlimited."
         },
         "max_values_per_dimension": {
           "type": "integer",
@@ -3977,6 +4059,9 @@
           "items": {
             "$ref": "#/definitions/timeSeriesDimension"
           }
+        },
+        "retention": {
+          "$ref": "#/definitions/timeSeriesRetentionOverride"
         },
         "cardinality": {
           "$ref": "#/definitions/timeSeriesCardinality"

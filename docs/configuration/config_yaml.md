@@ -497,6 +497,14 @@ configuration does not seed domain-specific production metrics. If a metric
 does not specify `failure_policy`, it inherits `log_skip`. `fail_indexing` propagates an emitter error through the indexing transaction; `log`,
 `skip`, and the default `log_skip` keep indexing non-fatal.
 
+Scheduled retention is separately opt-in through `timeseries.retention.enabled`
+and defaults to `false`, so upgrading does not delete history. Global raw and
+aggregate windows default to `30d` and `365d`; a metric can override either with
+`retention.raw` and `retention.aggregated`. `0` keeps a family forever, and
+`mo`/`y` use UTC calendar arithmetic. See the
+[retention hardening note](../time-series/timeseries-retention-hardening.md) for
+the checkpoint, watermark, and aggregate-integrity rules.
+
 For a complete workflow, safe examples, emitter timing, registration boundary, aggregation, reaggregation, retention, and API queries, see [Time-series observations and aggregates](timeseries.md). All files under [`examples/timeseries/`](../examples/timeseries/) are examples rather than built-in behavior.
 
 ## API authentication and authorization

@@ -21,10 +21,14 @@ func SyncConfiguredTimeSeriesMetrics(db *Handler, ts cfg.TimeSeriesConfig) error
 	if !ts.Enabled || len(ts.Metrics) == 0 {
 		return nil
 	}
-	for i := range ts.Metrics {
-		metric, err := configuredTimeSeriesMetric(ts, ts.Metrics[i])
+	normalized := cfg.NormalizeTimeSeriesConfig(ts)
+	if err := normalized.Validate(); err != nil {
+		return fmt.Errorf("validate time-series configuration before synchronization: %w", err)
+	}
+	for i := range normalized.Metrics {
+		metric, err := configuredTimeSeriesMetric(normalized, normalized.Metrics[i])
 		if err != nil {
-			return fmt.Errorf("configure time-series metric %q: %w", ts.Metrics[i].Key, err)
+			return fmt.Errorf("configure time-series metric %q: %w", normalized.Metrics[i].Key, err)
 		}
 		if _, err = UpsertTimeSeriesMetric(db, metric); err != nil {
 			return err
@@ -34,6 +38,7 @@ func SyncConfiguredTimeSeriesMetrics(db *Handler, ts cfg.TimeSeriesConfig) error
 }
 
 func configuredTimeSeriesMetric(ts cfg.TimeSeriesConfig, configured cfg.TimeSeriesMetricConfig) (*TimeSeriesMetric, error) {
+	ts = cfg.NormalizeTimeSeriesConfig(ts)
 	selector, err := marshalTimeSeriesConfigJSON(configured.Selector)
 	if err != nil {
 		return nil, fmt.Errorf("selector: %w", err)
@@ -42,9 +47,38 @@ func configuredTimeSeriesMetric(ts cfg.TimeSeriesConfig, configured cfg.TimeSeri
 	if err != nil {
 		return nil, fmt.Errorf("dimensions: %w", err)
 	}
-	cardinality, err := marshalTimeSeriesConfigJSON(configured.Cardinality)
+	// Persist the effective policy rather than NULL. Emitters and retention do
+	// not have access to the process configuration, and an explicit object keeps
+	// inheritance decisions reviewable in the database. A NULL policy remains
+	// supported for metrics created before 2.3.1 or registered directly through
+	// UpsertTimeSeriesMetric.
+	cardinalityPolicy := ts.Cardinality
+	if configured.Cardinality != nil {
+		cardinalityPolicy = *configured.Cardinality
+	}
+	if cardinalityPolicy.MaxDimensions == 0 {
+		// For configured metrics 0 means "inherit the built-in default", never
+		// "unlimited". Runtime emitters still treat a legacy NULL/zero policy as
+		// no dimension cap, but synchronization always writes a concrete value.
+		cardinalityPolicy.MaxDimensions = ts.Cardinality.MaxDimensions
+	}
+	cardinality, err := marshalTimeSeriesConfigJSON(cardinalityPolicy)
 	if err != nil {
 		return nil, fmt.Errorf("cardinality: %w", err)
+	}
+	rawRetention := strings.TrimSpace(ts.Retention.Raw)
+	aggregateRetention := strings.TrimSpace(ts.Retention.Aggregated)
+	if configured.Retention != nil {
+		if value := strings.TrimSpace(configured.Retention.Raw); value != "" {
+			rawRetention = value
+		}
+		if value := strings.TrimSpace(configured.Retention.Aggregated); value != "" {
+			aggregateRetention = value
+		}
+	}
+	retention, err := marshalTimeSeriesConfigJSON(timeSeriesStoredRetentionPolicy{Raw: rawRetention, Aggregated: aggregateRetention})
+	if err != nil {
+		return nil, fmt.Errorf("retention: %w", err)
 	}
 	privacy := ts.Privacy
 	if configured.Privacy != nil {
@@ -92,6 +126,7 @@ func configuredTimeSeriesMetric(ts cfg.TimeSeriesConfig, configured cfg.TimeSeri
 		FailurePolicy:     failurePolicy,
 		Selector:          selector,
 		Dimensions:        dimensions,
+		RetentionPolicy:   retention,
 		CardinalityPolicy: cardinality,
 		Unit:              configured.Unit,
 		Enabled:           configured.Enabled,

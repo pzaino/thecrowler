@@ -1,0 +1,37 @@
+# Example deployment-only time-series retention policy.
+# The feature is opt-in: `enabled: false` keeps the 2.3.0 upgrade behaviour.
+# It does not define built-in metrics; selectors must match facts your
+# deployment actually persists.
+timeseries:
+  enabled: true
+  retention:
+    enabled: true
+    schedule: 1h
+    batch_size: 500
+    max_batches: 5
+    max_duration: 2m
+    dry_run: false
+    raw: 30d
+    aggregated: 1y
+  aggregation:
+    enabled: true
+    schedule: 5m
+    batch_size: 1000
+    max_batches: 10
+    max_duration: 1m
+    overlap: 15m
+  metrics:
+    - key: example.product.price
+      enabled: true
+      description: Example price history from a persisted web-object attribute.
+      source_kind: object_attribute
+      object_type: webobject
+      selector:
+        attribute_key: price
+        from: normalized
+      value_type: decimal
+      aggregates: [average, min, max, first, last]
+      bucket_interval: 1d
+      retention:
+        raw: 0
+        aggregated: 5y
