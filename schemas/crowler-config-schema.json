@@ -1894,6 +1894,55 @@
               "http://proxy:port"
             ]
           },
+          "sticky_session": {
+            "title": "CROWler VDI Sticky Session Configuration",
+            "description": "Trusted, globally configured microproxy sticky-session data plane for this VDI. It is used only by sources whose crawling_config.sticky_session is true. Source documents cannot override, redirect or extend this profile. The browser connects to proxy_url; the engine calls api_url exactly once per opted-in source crawl, with the bearer token read from the engine environment variable named by token_env. All four fields are required together. An absent profile is valid and makes sticky sources fail closed on this VDI.",
+            "type": "object",
+            "properties": {
+              "proxy_url": {
+                "title": "Sticky Downstream Listener",
+                "description": "Absolute http or https URL of the microproxy sticky downstream proxy listener used by the browser, including host and explicit port. It must not contain credentials, a path, a query or a fragment. This is not the rotation API URL.",
+                "type": "string",
+                "format": "uri",
+                "examples": [
+                  "http://microproxy-vdi1:8081"
+                ]
+              },
+              "api_url": {
+                "title": "Sticky Data-Plane API Origin",
+                "description": "Absolute http or https origin of the microproxy data-plane session API used by the engine, including host and explicit port. It must not contain credentials, a path, a query or a fragment. It must identify the same microproxy process that serves proxy_url; the engine never derives it from a source-specified proxy.",
+                "type": "string",
+                "format": "uri",
+                "examples": [
+                  "http://microproxy-vdi1:8094"
+                ]
+              },
+              "token_env": {
+                "title": "Bearer Token Environment Variable",
+                "description": "Name of the engine environment variable that contains the microproxy data-plane bearer token. This field is a variable name, never the token value; source documents cannot provide either.",
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                "examples": [
+                  "MICROPROXY_VDI1_SESSION_API_KEY"
+                ]
+              },
+              "provider": {
+                "title": "Expected Sticky Provider",
+                "description": "Exact microproxy sticky provider name that the rotation API must report. A successful HTTP 200 response for a different provider is rejected before browser startup. The microproxy listener-to-provider binding must be configured consistently; the session API alone cannot prove that binding.",
+                "type": "string",
+                "examples": [
+                  "residential-sticky"
+                ]
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "proxy_url",
+              "api_url",
+              "token_env",
+              "provider"
+            ]
+          },
           "sys_manager": {
             "title": "CROWler VDI System Manager",
             "description": "This configures the VDI System Manager API. It is the API that the CROWler will use to manage the VDI. This is used to configure system-wide proxy settings, manage the VDI's resources, and perform other system-level tasks.",

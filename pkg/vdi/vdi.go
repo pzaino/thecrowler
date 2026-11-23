@@ -2,6 +2,7 @@
 package vdi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -542,6 +543,15 @@ type ProcessContextInterface interface {
 	GetVDIAbortError() error
 }
 
+// EffectiveProxyProvider is an optional narrow interface implemented by the
+// crawler's per-source ProcessContext. When the source-start hook has already
+// resolved and validated a proxy, ConnectVDI must use that exact value rather
+// than resolving a second time.
+type EffectiveProxyProvider interface {
+	GetEffectiveProxy() (string, bool)
+	GetEffectiveProxySource() string
+}
+
 // WebDriverToSeleniumWebDriver converts a VDI WebDriver to a Selenium WebDriver
 func WebDriverToSeleniumWebDriver(wd WebDriver) selenium.WebDriver {
 	return wd
@@ -904,21 +914,28 @@ func customSeleniumProxyURL(processCfg cfg.Config, vdiName string) string {
 	return ""
 }
 
-// effectiveSessionProxy composes the three proxy layers without changing
-// their individual semantics: the top-level source proxy_url
-// wins when present (value or no_proxy sentinel); otherwise the merged
-// custom.vdi override applies; otherwise the VDI default. An
-// unparseable source document behaves like an absent top-level key.
+// effectiveSessionProxy composes the three legacy proxy layers without
+// changing their individual semantics: the top-level source proxy_url wins
+// when present (value or no_proxy sentinel); otherwise the merged custom.vdi
+// override applies; otherwise the VDI default. An unparseable source document
+// behaves like an absent top-level key.
+//
+// It is a compatibility wrapper around the single shared resolver in
+// pkg/config; the source-start sticky hook and ConnectVDI use the same
+// precedence code.
 func effectiveSessionProxy(sourceProxy string, sourceOK bool, customProxy, vdiProxy string) string {
-	base := vdiProxy
-	if customProxy = strings.TrimSpace(customProxy); customProxy != "" {
-		if customProxy == "no_proxy" {
-			base = ""
-		} else {
-			base = customProxy
-		}
+	customProxy = strings.TrimSpace(customProxy)
+	resolution, err := cfg.ResolveEffectiveProxy(cfg.EffectiveProxyInput{
+		LegacyProxy:        sourceProxy,
+		LegacyProxyPresent: sourceOK,
+		CustomProxy:        customProxy,
+		CustomProxyPresent: customProxy != "",
+		VDIProxy:           vdiProxy,
+	})
+	if err != nil {
+		return ""
 	}
-	return resolveEffectiveProxyURL(sourceProxy, sourceOK, base)
+	return resolution.URL
 }
 
 // redactProxyURL removes authentication secrets from a proxy URL for
@@ -1156,6 +1173,81 @@ func webdriverBrowserName(browser string) string {
 	return browser
 }
 
+// resolveSessionProxy returns the one effective browser proxy for this
+// source/VDI session and its diagnostic provenance. A decision stored by the
+// source-start hook is authoritative; other callers keep the historical
+// fallback resolution. The helper performs no network I/O and does not rotate
+// anything, so ResetVDI and reconnect paths reuse the pinned proxy.
+func resolveSessionProxy(ctx ProcessContextInterface, pConfig *cfg.Config, sel SeleniumInstance) (string, string, error) {
+	if ctx == nil {
+		return "", "", fmt.Errorf("resolving browser proxy: process context is nil")
+	}
+	if pConfig == nil {
+		return "", "", fmt.Errorf("resolving browser proxy: process configuration is nil")
+	}
+	var sourceProxy string
+	var sourceProxyOK bool
+	if rawSource := ctx.GetSource(); rawSource != nil && rawSource.Config != nil && len(bytes.TrimSpace(*rawSource.Config)) != 0 {
+		var sourceConfig map[string]interface{}
+		if err := json.Unmarshal(*rawSource.Config, &sourceConfig); err == nil {
+			if val, ok := sourceConfig["proxy_url"].(string); ok {
+				sourceProxy, sourceProxyOK = val, true
+			}
+		}
+	}
+	effectiveProxy := ""
+	proxyProvenance := ""
+	if provider, ok := ctx.(EffectiveProxyProvider); ok {
+		if resolved, set := provider.GetEffectiveProxy(); set {
+			effectiveProxy, proxyProvenance = resolved, provider.GetEffectiveProxySource()
+		}
+	}
+	if proxyProvenance == "" {
+		canonicalProxy := ""
+		customProxy := ""
+		customProxyPresent := false
+		// Defense in depth: a sticky source must not reach browser creation
+		// through a caller that skipped the source-start rotation boundary.
+		if rawSource := ctx.GetSource(); rawSource != nil && rawSource.Config != nil && len(bytes.TrimSpace(*rawSource.Config)) != 0 {
+			sessionCfg, sessionErr := cfg.DecodeSourceSessionConfig(*rawSource.Config)
+			if sessionErr != nil {
+				return "", "", fmt.Errorf("decoding source configuration before browser launch: %w", sessionErr)
+			}
+			if sessionCfg.CrawlingConfig.StickySession != nil && *sessionCfg.CrawlingConfig.StickySession {
+				return "", "", fmt.Errorf("sticky_session source requires the source-start rotation boundary")
+			}
+			canonicalProxy = sessionCfg.CrawlingConfig.Proxy
+			if sourceCustom, ok := cfg.SourceCustomVDIProxy(cfg.SourceConfig{
+				CrawlingConfig: sessionCfg.CrawlingConfig,
+				Custom:         sessionCfg.Custom,
+			}, pConfig.Selenium, sel.Config.Name); ok {
+				customProxy = sourceCustom
+				customProxyPresent = true
+			}
+		}
+		// Fallback for callers that do not run the source-start hook (for
+		// example the application-owned browser session helper). The shared
+		// resolver preserves the legacy precedence and sentinels.
+		resolution, resolveErr := cfg.ResolveEffectiveProxy(cfg.EffectiveProxyInput{
+			SourceProxy:        canonicalProxy,
+			LegacyProxy:        sourceProxy,
+			LegacyProxyPresent: sourceProxyOK,
+			CustomProxy:        customProxy,
+			CustomProxyPresent: customProxyPresent,
+			VDIProxy:           sel.Config.ProxyURL,
+		})
+		if resolveErr != nil {
+			return "", "", fmt.Errorf("resolving browser proxy: %w", resolveErr)
+		}
+		effectiveProxy = resolution.URL
+		proxyProvenance = string(resolution.Source)
+	}
+	if err := cfg.ValidateBrowserProxyCompatibility(sel.Config.Type, effectiveProxy); err != nil {
+		return "", "", err
+	}
+	return effectiveProxy, proxyProvenance, nil
+}
+
 // ConnectVDI is responsible for connecting to the Selenium server instance
 func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType int) (WebDriver, error) {
 	if ctx == nil {
@@ -1225,24 +1317,15 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	brands := ClientHintBrandsFor(selection.Product, chromeMajor, productMajor)
 	details := NewClientHintsDetails(userAgent, selection.Product, ident)
 
-	// Resolve the effective proxy preserving the existing source-vs-VDI
-	// precedence (absent/empty inherits the VDI default; "no_proxy" forces a
-	// direct connection; otherwise the trimmed source value wins).
-	var sourceProxy string
-	var sourceProxyOK bool
-	if rawSource := ctx.GetSource(); rawSource != nil && rawSource.Config != nil {
-		var sourceConfig map[string]interface{}
-		if err := json.Unmarshal(*rawSource.Config, &sourceConfig); err == nil {
-			if val, ok := sourceConfig["proxy_url"].(string); ok {
-				sourceProxy, sourceProxyOK = val, true
-			}
-		}
+	// The source-start hook resolves the effective proxy once, before any
+	// browser session exists. Reuse that exact decision so the engine and the
+	// browser can never disagree about which listener was validated and
+	// rotated. Contexts without the optional provider keep the historical
+	// resolution path unchanged.
+	effectiveProxy, proxyProvenance, err := resolveSessionProxy(ctx, pConfig, sel)
+	if err != nil {
+		return nil, err
 	}
-	// Middle layer: the merged custom.vdi override for this
-	// VDI, if any. The top-level source key keeps precedence via
-	// effectiveSessionProxy; each layer retains its existing meaning.
-	customProxy := customSeleniumProxyURL(*pConfig, sel.Config.Name)
-	effectiveProxy := effectiveSessionProxy(sourceProxy, sourceProxyOK, customProxy, sel.Config.ProxyURL)
 
 	// Assemble the browser launch arguments with the shared builder so
 	// multi-value switches stay coherent (single --disable-features and
@@ -1269,9 +1352,9 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 		// Get local network:
 		localNet, err := cmn.DetectLocalNetwork()
 		if err == nil {
-			cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ConnectVDI] Proxy settings: URL '%s', Exclusions: '%s' for '%s'", redactProxyURL(effectiveProxy), "localhost,"+localNet, sel.Config.Name)
+			cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ConnectVDI] Proxy settings: URL '%s' (source '%s'), Exclusions: '%s' for '%s'", redactProxyURL(effectiveProxy), proxyProvenance, "localhost,"+localNet, sel.Config.Name)
 		} else {
-			cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ConnectVDI] Proxy settings: URL '%s', Exclusions: '%s' for '%s'", redactProxyURL(effectiveProxy), "localhost", sel.Config.Name)
+			cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-ConnectVDI] Proxy settings: URL '%s' (source '%s'), Exclusions: '%s' for '%s'", redactProxyURL(effectiveProxy), proxyProvenance, "localhost", sel.Config.Name)
 		}
 
 		/*
@@ -1573,8 +1656,8 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	// threading them in adds no observation or call.
 	emitVDIPresentationReport(
 		pConfig, sel.Config, selection, userAgent, ident, brands, details,
-		cdpActive, effectiveProxy, result, err2 == nil,
-		args, sourceProxy, sourceProxyOK, customProxy, pConfig.Crawler.ChangeUserAgent)
+		cdpActive, effectiveProxy, proxyProvenance, result, err2 == nil,
+		args, pConfig.Crawler.ChangeUserAgent)
 
 	err2 = addLoadListener(wd)
 	if err2 != nil {
@@ -1743,9 +1826,9 @@ var unavailableDiagnosticNotes = []string{
 // reuses the single getBrowserConfiguration observation (passed in) and issues
 // no additional browser or CDP call.
 //
-// The additive PR7 inputs (launchArgs, the proxy-provenance layers, and the
-// User-Agent rotation policy) are likewise pure, in-scope, in-scope values the
-// session already computed; surfacing them adds no observation and no call.
+// The additive PR7 inputs (launchArgs, the resolved proxy provenance, and the
+// User-Agent rotation policy) are likewise pure, in-scope values the session
+// already computed; surfacing them adds no observation and no call.
 func emitVDIPresentationReport(
 	pConfig *cfg.Config,
 	vd cfg.Selenium,
@@ -1756,12 +1839,10 @@ func emitVDIPresentationReport(
 	details ClientHintsDetails,
 	cdpActive bool,
 	effectiveProxy string,
+	proxyProvenance string,
 	observation map[string]interface{},
 	observedOK bool,
 	launchArgs []string,
-	sourceProxy string,
-	sourceProxyOK bool,
-	customProxy string,
 	uaChangePolicy string,
 ) {
 	if cmn.GetDebugLevel() < cmn.DbgLvlDebug5 {
@@ -1787,10 +1868,8 @@ func emitVDIPresentationReport(
 		identityScriptScope = "new_document_session"
 	}
 
-	// Proxy provenance is the one effective-setting-ownership fact derivable at
-	// the emit: it attributes the effective proxy to the configuration layer that
-	// supplied it, mirroring effectiveSessionProxy's precedence.
-	proxyProvenance := proxyProvenanceLayer(sourceProxy, sourceProxyOK, customProxy, effectiveProxy)
+	// Proxy provenance comes from the single resolver, so canonical,
+	// custom.vdi, legacy, VDI and sticky listeners are attributed accurately.
 
 	obsStatus := StatusNotObserved
 	if observedOK {
@@ -1969,29 +2048,47 @@ func QuitSelenium(ctx ProcessContextInterface) {
 	}
 	cmn.DebugMsg(cmn.DbgLvlDebug, "Checking WebDriver session before quitting...")
 
-	// Ensure we aren't quitting an already-closed session
-	_, err := (*wd).CurrentURL()
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug1, "WebDriver session already invalid: %v", err)
-		return
-	}
+	// A failed CurrentURL probe does not prove the browser process is gone.
+	// Always attempt Close and Quit so a surviving browser cannot keep a
+	// microproxy tunnel or profile alive after the VDI slot is released.
+	quitWebDriverSession(*wd, time.Sleep)
 
-	// Force quit session before returning instance
-	cmn.DebugMsg(cmn.DbgLvlDebug, "Quitting WebDriver session now...")
-	err = (*wd).Close()
-	if err != nil {
-		cmn.DebugMsg(cmn.DbgLvlError, "failed to close WebDriver: %v", err)
-	} else {
-		cmn.DebugMsg(cmn.DbgLvlInfo, "WebDriver closed successfully.")
-		time.Sleep(1 * time.Second)
-		err = (*wd).Quit()
-		if err != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "Failed to quit WebDriver: %v", err)
-		} else {
-			cmn.DebugMsg(cmn.DbgLvlInfo, "WebDriver quitted successfully.")
-		}
-	}
 	// Drop the tracked identity-script registration for the ended session.
 	// Best-effort bookkeeping; it changes nothing about the quit path.
 	forgetIdentityScript((*wd).SessionID())
+}
+
+// webDriverQuitter is the narrow subset used by the shutdown path so cleanup
+// can be tested without a live Selenium server.
+type webDriverQuitter interface {
+	CurrentURL() (string, error)
+	Close() error
+	Quit() error
+}
+
+// quitWebDriverSession closes and quits a browser session. Both operations are
+// attempted even when an earlier probe or Close reports an error: a browser
+// that survives VDI release can otherwise keep using the prior proxy session.
+func quitWebDriverSession(wd webDriverQuitter, settle func(time.Duration)) {
+	if wd == nil {
+		return
+	}
+	if _, err := wd.CurrentURL(); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug1, "WebDriver session already invalid: %v", err)
+	}
+
+	cmn.DebugMsg(cmn.DbgLvlDebug, "Quitting WebDriver session now...")
+	if err := wd.Close(); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "failed to close WebDriver: %v", err)
+	} else {
+		cmn.DebugMsg(cmn.DbgLvlInfo, "WebDriver closed successfully.")
+		if settle != nil {
+			settle(1 * time.Second)
+		}
+	}
+	if err := wd.Quit(); err != nil {
+		cmn.DebugMsg(cmn.DbgLvlError, "Failed to quit WebDriver: %v", err)
+	} else {
+		cmn.DebugMsg(cmn.DbgLvlInfo, "WebDriver quitted successfully.")
+	}
 }

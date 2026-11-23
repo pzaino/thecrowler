@@ -501,6 +501,34 @@ type Selenium struct {
 	DownloadDir string       `yaml:"download_dir"` // Download directory for Selenium
 	Language    string       `yaml:"language"`     // Language for Selenium
 	SysMng      SysMngConfig `yaml:"sys_manager"`  // System management configuration
+
+	// StickySession is trusted operator configuration for this VDI's
+	// microproxy data plane. It is global-only: source documents cannot
+	// override, redirect or extend it. An absent profile is valid and leaves
+	// sticky sources unsupported on this VDI (they fail closed).
+	StickySession StickySessionConfig `json:"sticky_session,omitempty" yaml:"sticky_session,omitempty"`
+}
+
+// StickySessionConfig describes one VDI's trusted microproxy sticky-session
+// data plane. The browser connects to ProxyURL (the sticky downstream
+// listener); the engine calls the data-plane API at APIURL to rotate the
+// session. TokenEnv names an engine environment variable; it is never the
+// token value and never a source-provided field.
+type StickySessionConfig struct {
+	ProxyURL string `json:"proxy_url,omitempty" yaml:"proxy_url,omitempty"`
+	APIURL   string `json:"api_url,omitempty" yaml:"api_url,omitempty"`
+	TokenEnv string `json:"token_env,omitempty" yaml:"token_env,omitempty"`
+	Provider string `json:"provider,omitempty" yaml:"provider,omitempty"`
+}
+
+// IsEmpty reports whether no sticky-session profile is configured.
+func (s StickySessionConfig) IsEmpty() bool {
+	return s.ProxyURL == "" && s.APIURL == "" && s.TokenEnv == "" && s.Provider == ""
+}
+
+// Configured reports whether the profile has the complete four-field contract.
+func (s StickySessionConfig) Configured() bool {
+	return s.ProxyURL != "" && s.APIURL != "" && s.TokenEnv != "" && s.Provider != ""
 }
 
 /////////////////////////////////////////////////
@@ -1056,25 +1084,37 @@ type CrawlingConfig struct {
 	// only. nil inherits the global value. A JSON null is rejected: only an
 	// omitted key means "inherit".
 	FollowRedirects *bool `json:"follow_redirects,omitempty" yaml:"follow_redirects,omitempty"`
+	// Proxy selects the downstream browser proxy for this source. Non-empty
+	// values are validated before browser launch and must be an absolute
+	// http, https or socks5 listener URL with a host and port and no
+	// credentials. A blank value inherits the next layer.
+	Proxy string `json:"proxy,omitempty" yaml:"proxy,omitempty"`
+	// StickySession requests one microproxy data-plane session rotation at
+	// the start of each browser-backed crawl of this source. It is only
+	// meaningful for website/API/file/db sources that use the browser; the
+	// crawl is rejected for email and network-only sources. nil/false leave
+	// the feature disabled. A JSON null is rejected.
+	StickySession *bool `json:"sticky_session,omitempty" yaml:"sticky_session,omitempty"`
 }
 
 // UnmarshalJSON decodes a crawling configuration and enforces the documented
-// contract for the two optional source-scoped booleans.
+// contract for the optional source-scoped booleans.
 //
-// The authoritative schema declares both as `type: boolean` with
+// The authoritative schema declares all three as `type: boolean` with
 // `additionalProperties: false`. `encoding/json` would happily decode an
 // explicit `null` into a nil pointer, silently turning "null" into "inherit".
 // The release contract is stricter and identical on every path (API request,
 // stored document reload, tests): the key may be omitted, or it may be `true` or
 // `false`. An explicit `null`, a string, a number, an array or an object is a
 // malformed document and is rejected, so a bad value can never silently change
-// the browser mode or the redirect policy.
+// the browser mode, the redirect policy or the sticky-session opt-in.
 func (c *CrawlingConfig) UnmarshalJSON(data []byte) error {
 	type plain CrawlingConfig
 	aux := struct {
 		*plain
 		Incognito       json.RawMessage `json:"incognito"`
 		FollowRedirects json.RawMessage `json:"follow_redirects"`
+		StickySession   json.RawMessage `json:"sticky_session"`
 	}{plain: (*plain)(c)}
 
 	if err := json.Unmarshal(data, &aux); err != nil {
@@ -1089,11 +1129,16 @@ func (c *CrawlingConfig) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	// The embedded alias never receives these two keys: the outer fields have
-	// the same JSON names at a shallower depth and therefore win the decoder's
+	stickySession, err := parseOptionalStrictBool(aux.StickySession, "crawling_config.sticky_session")
+	if err != nil {
+		return err
+	}
+	// The embedded alias never receives these keys: the outer fields have the
+	// same JSON names at a shallower depth and therefore win the decoder's
 	// conflict resolution.
 	c.Incognito = incognito
 	c.FollowRedirects = followRedirects
+	c.StickySession = stickySession
 	return nil
 }
 
@@ -1121,7 +1166,9 @@ func parseOptionalStrictBool(raw json.RawMessage, field string) (*bool, error) {
 
 // IsEmpty returns true if the CrawlingConfig is empty
 func (c CrawlingConfig) IsEmpty() bool {
-	return c.Site == "" && c.URLReferrer == "" && len(c.AlternativeLinks) == 0 && c.RetriesOnRedirect == 0 && len(c.UnwantedURLs) == 0 && c.SourceType == ""
+	return c.Site == "" && c.URLReferrer == "" && len(c.AlternativeLinks) == 0 &&
+		c.RetriesOnRedirect == 0 && len(c.UnwantedURLs) == 0 && c.SourceType == "" &&
+		c.Proxy == "" && c.StickySession == nil
 }
 
 // RuleParameters contains Source-scoped parameters available to CROWler rules.
@@ -1170,5 +1217,5 @@ func (s *SysMngConfig) IsEmpty() bool {
 
 // IsEmpty returns true is the Selenium configuration is empty
 func (s *Selenium) IsEmpty() bool {
-	return s.Name == "" && s.Location == "" && s.Path == "" && s.DriverPath == "" && s.Type == "" && s.ServiceType == "" && s.Port == 0 && s.Host == "" && !s.Headless && !s.UseService && s.SSLMode == "" && s.ProxyURL == "" && s.DownloadDir == "" && s.Language == "" && s.SysMng.IsEmpty()
+	return s.Name == "" && s.Location == "" && s.Path == "" && s.DriverPath == "" && s.Type == "" && s.ServiceType == "" && s.Port == 0 && s.Host == "" && !s.Headless && !s.UseService && s.SSLMode == "" && s.ProxyURL == "" && s.DownloadDir == "" && s.Language == "" && s.SysMng.IsEmpty() && s.StickySession.IsEmpty()
 }

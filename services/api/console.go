@@ -964,6 +964,9 @@ func validateAndReformatConfig(config *cfg.SourceConfig) error {
 	if err := config.ValidateEmailSource(); err != nil {
 		return fmt.Errorf("%w: %v", errInvalidSourceConfig, err)
 	}
+	if err := cfg.ValidateSourceProtocolOptions(*config); err != nil {
+		return fmt.Errorf("%w: %v", errInvalidSourceConfig, err)
+	}
 
 	return nil
 }

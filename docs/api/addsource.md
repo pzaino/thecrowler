@@ -47,6 +47,17 @@ The POST request should be in the following format:
 }
 ```
 
+## Per-source browser proxy and sticky sessions
+
+`crawling_config.proxy` selects an optional per-source downstream browser proxy
+listener. It is resolved once at the source-crawl boundary and the same value is
+used by Chromium or Firefox. `crawling_config.sticky_session` is a strict
+boolean; when true, the engine rotates the leased VDI's trusted microproxy
+data-plane session exactly once before creating the browser session. Both fields
+are rejected when malformed, and sticky sessions are rejected for email and
+network-only sources. See [Sources](../sources.md) and
+[Sticky sessions and per-source proxies](../sticky-sessions.md).
+
 ## Ownership and authentication
 
 When `api.auth.enabled` is true, source mutations require a valid bearer token

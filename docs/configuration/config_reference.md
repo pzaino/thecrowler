@@ -383,8 +383,8 @@
   - **`rate_limit`** *(string)*: This is the rate limit for the API. It is the maximum number of requests that the CROWler will accept per second. You can use the ExprTerpreter language to set the rate limit.
   - **`enable_console`** *(boolean)*: This is a flag that tells the CROWler to enable the admin console via the API. In other words, you'll get more endpoints to manage the CROWler via the Search API instead of local commands.
   - **`return_404`** *(boolean)*: This is a flag that tells the CROWler to return 404 status code if a query has no results.
-- **`selenium`** *(array)*
-  - **Items** *(object)*: This is the configuration for the selenium driver. It is the configuration for the selenium driver that the CROWler will use to crawl websites. To scale the CROWler web crawling capabilities, you can add multiple selenium drivers in the array. Cannot contain additional properties.
+- **`vdi`** *(array)*: This is the VDI configuration (the former `selenium` key is no longer supported).
+  - **Items** *(object)*: This is the configuration for the VDI browser/driver. It is the configuration that the CROWler will use to crawl websites. To scale the CROWler web crawling capabilities, you can add multiple VDI entries in the array. Cannot contain additional properties.
     - **`name`** *(string)*: This is the name of the VDI image.
     - **`location`** *(string)*: This is the location of the VDI image.
     - **`path`** *(string)*: This is the path to the selenium driver (IF LOCAL). It is the path to the selenium driver that the CROWler will use to crawl websites.
@@ -395,6 +395,12 @@
     - **`headless`** *(boolean)*: This is a flag that tells the selenium driver to run in headless mode. This is useful for running the selenium driver in a headless environment. It's generally NOT recommended to enable headless mode for the selenium driver.
     - **`use_service`** *(boolean)*: This is a flag that tells the CROWler to access Selenium as service.
     - **`sslmode`** *(string)*: This is the sslmode that the selenium driver will use to connect to the CROWler. It is the sslmode that the selenium driver will use to connect to the CROWler.
+    - **`proxy_url`** *(string)*: Global downstream browser proxy for this VDI. Normal sources inherit it unless they supply a canonical `crawling_config.proxy`, a legacy top-level source `proxy_url`, or an explicit `custom.vdi[].proxy_url`. Sticky sources use `sticky_session.proxy_url` instead when they do not supply an explicit matching override.
+    - **`sticky_session`** *(object)*: Trusted microproxy sticky-session data plane for this VDI, used only by sources with `crawling_config.sticky_session: true`. The profile is global-only and cannot be overridden, redirected or extended by a source document. All four fields are required together when the object is present; an absent profile makes sticky sources on this VDI fail closed.
+      - **`proxy_url`** *(string)*: Absolute `http` or `https` URL of the microproxy sticky downstream listener used by the browser, including host and explicit port. It must not contain credentials, a path, a query or a fragment. Firefox supports HTTP but not HTTPS downstream listeners; an HTTPS listener on a Firefox VDI is rejected before rotation.
+      - **`api_url`** *(string)*: Absolute `http` or `https` origin of the same microproxy process's data-plane session API, including host and explicit port. It must not contain credentials, a path, a query or a fragment. It is never derived from a source-specified proxy URL.
+      - **`token_env`** *(string)*: Name of the engine environment variable containing the data-plane bearer token. The field is a variable name, never the token value. Write the literal name; do not use `${...}` interpolation here. Change or remove a sticky profile with a service restart.
+      - **`provider`** *(string)*: Exact sticky provider name that a successful rotate response must report. A 200 response for a different provider is rejected before browser startup.
     - **`download_path`** *(string)*: This is the download path for the selenium driver. It is the path where the selenium driver will download files. This is useful for downloading files from websites. The CROWler will use this path to store the downloaded files.
 - **`image_storage`** *(object)*: This is the configuration for the image storage. It is the configuration for the storage that the CROWler will use to store images.
   - **`host`** *(string)*

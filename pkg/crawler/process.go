@@ -83,6 +83,20 @@ type ProcessContext struct {
 	ruleCallState        *ruleCallRuntimeState     // Runtime guardrails for plugin/agent rule calls
 	crowlerMeta          CrowlerMeta               // Shared metadata document for the current source/link
 	performanceLogs      performanceLogStore       // Temporary Perf Log storage per page
+
+	// Effective downstream proxy resolved once at the source boundary. The
+	// resolver stores the exact value that the browser launcher must use so a
+	// validated sticky listener cannot drift from the actual launch proxy.
+	effectiveProxy       string
+	effectiveProxySet    bool
+	effectiveProxySource string
+
+	// Deterministic test seams for the sticky-session boundary. Production
+	// values are nil and fall back to the real rotator, os.Getenv and
+	// crypto/rand.
+	stickyRotator     stickySessionRotator
+	stickyGetenv      func(string) string
+	stickyKeyGenerate func() (string, error)
 }
 
 type performanceLogStore struct {

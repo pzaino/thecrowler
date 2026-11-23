@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
 
 // addSourceRequestEnvelope mirrors the JSON body accepted by POST /v1/source/add.
@@ -56,6 +58,49 @@ func TestAddSourceRequestRejectsNullSourceCrawlingBooleans(t *testing.T) {
 // decoder used by the add-source handler no longer logs and ignores a malformed
 // document. Before RC4F the error was only logged, so the handler created a
 // source with an empty configuration and answered 201.
+func TestValidateAndReformatConfigChecksProtocolProxyAndStickyOptions(t *testing.T) {
+	base := func() cfg.SourceConfig {
+		return cfg.SourceConfig{
+			Version:       "1.0",
+			FormatVersion: "1.0.0",
+			SourceName:    "options",
+			CrawlingConfig: cfg.CrawlingConfig{
+				Site:       "https://example.test/",
+				SourceType: "website",
+			},
+		}
+	}
+
+	valid := base()
+	valid.CrawlingConfig.Proxy = "http://microproxy-vdi1:8081"
+	sticky := true
+	valid.CrawlingConfig.StickySession = &sticky
+	if err := validateAndReformatConfig(&valid); err != nil {
+		t.Fatalf("valid protocol options rejected: %v", err)
+	}
+
+	badProxy := base()
+	badProxy.CrawlingConfig.Proxy = "http://bad host:1"
+	if err := validateAndReformatConfig(&badProxy); err == nil {
+		t.Fatal("malformed proxy accepted by update/add validation")
+	}
+
+	emailSticky := base()
+	emailSticky.CrawlingConfig.SourceType = "email"
+	emailSticky.CrawlingConfig.Site = "imaps://mail.example.test:993"
+	emailSticky.CrawlingConfig.StickySession = &sticky
+	if err := validateAndReformatConfig(&emailSticky); err == nil {
+		t.Fatal("email sticky source accepted by update/add validation")
+	}
+
+	networkSticky := base()
+	networkSticky.CrawlingConfig.Site = "null://example.test"
+	networkSticky.CrawlingConfig.StickySession = &sticky
+	if err := validateAndReformatConfig(&networkSticky); err == nil {
+		t.Fatal("network-only sticky source accepted by update/add validation")
+	}
+}
+
 func TestExtractAddSourceParamsPropagatesDecodeErrors(t *testing.T) {
 	valid := `{"url":"https://example.test/","restricted":0,"config":{"version":"1.0","format_version":"1.0.0","source_name":"ok","crawling_config":{"site":"https://example.test/","incognito":false}}}`
 	var params addSourceRequest

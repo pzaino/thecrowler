@@ -690,7 +690,9 @@ func (c *Config) Validate() error {
 		return err
 	}
 	c.validateEvents()
-	c.validateVDI()
+	if err := c.validateVDI(); err != nil {
+		return err
+	}
 	c.validatePrometheus()
 	c.validateImageStorageAPI()
 	c.validateFileStorageAPI()
@@ -1526,7 +1528,7 @@ func (c *Config) validateEvents() {
 	}
 }
 
-func (c *Config) validateVDI() {
+func (c *Config) validateVDI() error {
 	// Check VDIConfig
 	for i := range c.Selenium {
 		c.validateVDIName(&c.Selenium[i], i)
@@ -1537,6 +1539,9 @@ func (c *Config) validateVDI() {
 		c.validateVDIHost(&c.Selenium[i])
 		c.validateVDIPort(&c.Selenium[i])
 		c.validateVDIProxyURL(&c.Selenium[i])
+		if err := c.validateVDIStickySession(&c.Selenium[i]); err != nil {
+			return fmt.Errorf("vdi[%d] %q: %w", i, c.Selenium[i].Name, err)
+		}
 	}
 	// Check if this engine has aVDI filter
 	if len(c.Crawler.Engine) > 0 {
@@ -1557,6 +1562,7 @@ func (c *Config) validateVDI() {
 			}
 		}
 	}
+	return nil
 }
 
 func (c *Config) validateVDIName(selenium *Selenium, index int) {
@@ -1619,6 +1625,48 @@ func (c *Config) validateVDIProxyURL(selenium *Selenium) {
 	} else {
 		selenium.ProxyURL = strings.TrimSpace(selenium.ProxyURL)
 	}
+}
+
+// validateVDIStickySession enforces the trusted per-VDI sticky-session
+// profile contract. An absent profile is valid; a present profile must be
+// complete and unambiguous. All fields are operator configuration and can
+// never be supplied by a source document.
+func (c *Config) validateVDIStickySession(selenium *Selenium) error {
+	profile := &selenium.StickySession
+	profile.ProxyURL = strings.TrimSpace(profile.ProxyURL)
+	profile.APIURL = strings.TrimSpace(profile.APIURL)
+	profile.TokenEnv = strings.TrimSpace(profile.TokenEnv)
+	profile.Provider = strings.TrimSpace(profile.Provider)
+
+	if profile.IsEmpty() {
+		return nil
+	}
+	if !profile.Configured() {
+		return fmt.Errorf("sticky_session requires proxy_url, api_url, token_env and provider together")
+	}
+	proxyURL, err := NormalizeStickySessionURL(profile.ProxyURL)
+	if err != nil {
+		return fmt.Errorf("sticky_session.proxy_url: %w", err)
+	}
+	apiURL, err := NormalizeStickyAPIURL(profile.APIURL)
+	if err != nil {
+		return fmt.Errorf("sticky_session.api_url: %w", err)
+	}
+	if !validEnvironmentVariableName(profile.TokenEnv) {
+		return fmt.Errorf("sticky_session.token_env must be a valid environment variable name")
+	}
+	if strings.ContainsAny(profile.Provider, " \t\r\n") {
+		return fmt.Errorf("sticky_session.provider must not contain whitespace")
+	}
+	profile.ProxyURL = proxyURL
+	profile.APIURL = apiURL
+	return nil
+}
+
+var environmentVariableNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+func validEnvironmentVariableName(name string) bool {
+	return environmentVariableNamePattern.MatchString(name)
 }
 
 func (c *Config) validatePrometheus() {
@@ -2341,6 +2389,11 @@ func CombineConfigs(dstConfig Config, srcConfig SourceConfig) Config {
 	applySourceCrawlingOverrides(&dstConfig, srcConfig.CrawlingConfig)
 
 	if srcConfig.Custom["vdi"] != nil {
+		// The merge is per-source. Copy the slice header's backing array first:
+		// Config is passed by value, but its Selenium slice would otherwise be
+		// shared with the caller and a source override could rewrite another
+		// source's (or the process's) VDI defaults.
+		dstConfig.Selenium = append([]Selenium(nil), dstConfig.Selenium...)
 		combineVDICfg(&dstConfig.Selenium, srcConfig.Custom["vdi"])
 	}
 

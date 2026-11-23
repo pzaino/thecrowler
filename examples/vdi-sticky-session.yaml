@@ -1,0 +1,22 @@
+# Example global VDI fragment for microproxy sticky sessions.
+#
+# Merge this list under the top-level `vdi:` key of config.yaml. It is not a
+# complete config.yaml on its own.
+#
+# The browser uses sticky_session.proxy_url (the sticky listener). The engine
+# uses sticky_session.api_url (the data-plane API on the same microproxy
+# process). The bearer token is read from the ENGINE environment variable named
+# by token_env; it is never stored here.
+vdi:
+  - name: vdi-1
+    type: chrome
+    host: selenium-vdi1
+    port: 4444
+    headless: false
+    # Normal, non-sticky sources inherit this rotating listener.
+    proxy_url: "http://microproxy-vdi1:8080"
+    sticky_session:
+      proxy_url: "http://microproxy-vdi1:8081"
+      api_url: "http://microproxy-vdi1:8094"
+      token_env: "MICROPROXY_VDI1_SESSION_API_KEY"
+      provider: "residential-sticky"

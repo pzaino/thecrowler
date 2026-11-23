@@ -34,6 +34,60 @@ func TestCombineVDICfgMergesProxyPerIndex(t *testing.T) {
 	}
 }
 
+func TestCombineVDICfgDoesNotMutateSharedBaseSlice(t *testing.T) {
+	base := mergeTestBase()
+	base.Selenium[0].ProxyURL = "http://global-vdi:8080"
+	source := SourceConfig{Custom: map[string]interface{}{
+		"vdi": []interface{}{map[string]interface{}{"proxy_url": "http://source:3128"}},
+	}}
+	first := CombineConfigs(base, source)
+	second := CombineConfigs(base, SourceConfig{Custom: map[string]interface{}{
+		"vdi": []interface{}{map[string]interface{}{"proxy_url": "http://other:3129"}},
+	}})
+	if base.Selenium[0].ProxyURL != "http://global-vdi:8080" {
+		t.Fatalf("base VDI proxy mutated to %q", base.Selenium[0].ProxyURL)
+	}
+	if first.Selenium[0].ProxyURL != "http://source:3128" {
+		t.Fatalf("first merged proxy = %q", first.Selenium[0].ProxyURL)
+	}
+	if second.Selenium[0].ProxyURL != "http://other:3129" {
+		t.Fatalf("second merged proxy = %q", second.Selenium[0].ProxyURL)
+	}
+	if first.Selenium[0].ProxyURL == second.Selenium[0].ProxyURL {
+		t.Fatal("merged source configs share VDI proxy state")
+	}
+}
+
+func TestCombineVDICfgCannotMergeTrustedStickyProfile(t *testing.T) {
+	dst := mergeTestBase()
+	dst.Selenium[0].StickySession = StickySessionConfig{
+		ProxyURL: "http://trusted:8081",
+		APIURL:   "http://trusted:8094",
+		TokenEnv: "TRUSTED_TOKEN",
+		Provider: "trusted-provider",
+	}
+	src := SourceConfig{Custom: map[string]interface{}{
+		"vdi": []interface{}{
+			map[string]interface{}{
+				"proxy_url": "http://untrusted:8080",
+				"sticky_session": map[string]interface{}{
+					"proxy_url": "http://untrusted:8081",
+					"api_url":   "http://untrusted:8094",
+					"token_env": "UNTRUSTED_TOKEN",
+					"provider":  "untrusted-provider",
+				},
+			},
+		},
+	}}
+	got := CombineConfigs(dst, src)
+	if got.Selenium[0].StickySession != dst.Selenium[0].StickySession {
+		t.Fatalf("source merged trusted sticky profile: %+v", got.Selenium[0].StickySession)
+	}
+	if got.Selenium[0].ProxyURL != "http://untrusted:8080" {
+		t.Fatalf("source custom proxy = %q", got.Selenium[0].ProxyURL)
+	}
+}
+
 func TestCombineVDICfgIgnoresExcessEntries(t *testing.T) {
 	dst := mergeTestBase()
 	src := SourceConfig{Custom: map[string]interface{}{

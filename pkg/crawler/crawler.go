@@ -165,16 +165,68 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		}
 	}
 
-	// Combine default configuration with the source configuration
-	if processCtx.source.Config != nil {
-		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-CrawlWebsite] Custom Source configuration found, proceeding to combine it with the default one for this source...")
-		combined, cfgErr := cfg.CombineConfig(processCtx.config, *processCtx.source.Config)
-		if cfgErr != nil {
-			cmn.DebugMsg(cmn.DbgLvlError, "combining source configuration: %v", cfgErr)
-		} else {
-			processCtx.config = combined
-			cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-CrawlWebsite] Source configuration combined successfully.")
+	// Combine default configuration with the source configuration. The
+	// browser-session boundary is decoded strictly before any protocol work:
+	// the sticky-session opt-in must never be silently lost because the stored
+	// JSON is malformed. The decoded subtree is also the provenance source for
+	// the canonical and custom.vdi proxy layers.
+	var sourceCfg cfg.SourceConfig
+	var sourceRaw json.RawMessage
+	var sourceCfgErr error
+	sourceMergeOK := true
+	protocol := classifySourceProtocol(args.Src.URL)
+	if processCtx.source != nil && processCtx.source.Config != nil {
+		sourceRaw = *processCtx.source.Config
+		if len(bytes.TrimSpace(sourceRaw)) == 0 {
+			// An empty stored value is equivalent to no configuration; keep the
+			// historical log-and-continue behavior for it.
+			sourceRaw = nil
 		}
+	}
+	if sourceRaw != nil {
+		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-CrawlWebsite] Custom Source configuration found, decoding and combining it for this source...")
+		// The session-boundary subtree is decoded strictly and independently:
+		// a malformed crawling_config may hide the sticky opt-in, so it must
+		// fail closed. Unrelated malformed document fields keep the historical
+		// log-and-continue behavior for non-sticky sources.
+		sessionCfg, sessionErr := cfg.DecodeSourceSessionConfig(sourceRaw)
+		if sessionErr != nil {
+			if protocol == SourceProtocolWeb {
+				sourceCfgErr = fmt.Errorf("decoding source configuration: %w", sessionErr)
+				cmn.DebugMsg(cmn.DbgLvlError, "%v", sourceCfgErr)
+			} else {
+				// Non-browser sources cannot opt into sticky sessions. Keep the
+				// historical log-and-continue behavior for dirty legacy rows.
+				cmn.DebugMsg(cmn.DbgLvlError,
+					"decoding non-browser source session configuration: %v", sessionErr)
+			}
+		} else {
+			sourceCfg.CrawlingConfig = sessionCfg.CrawlingConfig
+			sourceCfg.Custom = sessionCfg.Custom
+		}
+		if sourceCfgErr == nil {
+			combined, cfgErr := cfg.CombineConfig(processCtx.config, sourceRaw)
+			if cfgErr != nil {
+				if sourceCfg.CrawlingConfig.StickySession != nil && *sourceCfg.CrawlingConfig.StickySession {
+					sourceCfgErr = fmt.Errorf("decoding sticky_session source configuration: %w", cfgErr)
+					cmn.DebugMsg(cmn.DbgLvlError, "%v", sourceCfgErr)
+				} else {
+					// Preserve the historical per-source merge result when an
+					// unrelated field is malformed: the old path left the merged
+					// VDI list untouched, so custom.vdi proxy overrides were not
+					// applied. The canonical crawling_config.proxy is new and can
+					// still be resolved safely from the strict session subtree.
+					sourceMergeOK = false
+					cmn.DebugMsg(cmn.DbgLvlError, "combining source configuration: %v", cfgErr)
+				}
+			} else {
+				processCtx.config = combined
+				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-CrawlWebsite] Source configuration combined successfully.")
+			}
+		}
+	}
+	if !sourceMergeOK {
+		sourceCfg.Custom = nil
 	}
 
 	// Log the crawling process
@@ -207,7 +259,23 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		processCtx.Status.LastError = err.Error()
 		return err
 	}
-	switch classifySourceProtocol(args.Src.URL) {
+	if sourceCfgErr != nil {
+		processCtx.Status.PipelineRunning.Store(3)
+		processCtx.Status.TotalErrors.Add(1)
+		processCtx.Status.LastError = sourceCfgErr.Error()
+		err = sourceCfgErr
+		return err
+	}
+
+	stickySource := sourceCfg.CrawlingConfig.StickySession != nil && *sourceCfg.CrawlingConfig.StickySession
+	if stickyErr := validateStickySourceBoundary(stickySource, protocol, sourceCfg.CrawlingConfig); stickyErr != nil {
+		processCtx.Status.PipelineRunning.Store(3)
+		processCtx.Status.TotalErrors.Add(1)
+		processCtx.Status.LastError = stickyErr.Error()
+		err = stickyErr
+		return err
+	}
+	switch protocol {
 	case SourceProtocolEmail:
 		emailArgs := *args
 		var webQueue *bufferedWebCrawlQueue
@@ -286,14 +354,20 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		// Continue with the existing browser-backed crawl path.
 	}
 
-	// Initialize the Selenium instance
-	if err = processCtx.ConnectToVDI(sel); err != nil {
+	// Source-start browser boundary: resolve one proxy decision, perform at
+	// most one sticky-session rotation for an opted-in source, and only then
+	// create the WebDriver session. Page workers and refreshes never re-enter
+	// this path.
+	err = processCtx.startBrowserCrawl(sel, sourceCfg, sourceRaw, func() error {
+		return processCtx.ConnectToVDI(sel)
+	})
+	if err != nil {
 		UpdateSourceStateForCrawl(processCtx, args, err)
 		processCtx.Status.EndTime = time.Now()
 		processCtx.Status.PipelineRunning.Store(3)
 		processCtx.Status.TotalErrors.Add(1)
 		processCtx.Status.LastError = err.Error()
-		cmn.DebugMsg(cmn.DbgLvlError, vdi.VDIConnError, err)
+		cmn.DebugMsg(cmn.DbgLvlError, "starting browser-backed crawl: %v", err)
 		return err
 	}
 	processCtx.Status.CrawlingRunning.Store(1)
@@ -308,7 +382,9 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		}
 		processCtx.srcCfg = sourceConfig
 		_ = processCtx.loadRuleParameters()
-		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-CrawlWebsite] Source configuration extracted: %v", processCtx.srcCfg)
+		// Log only the document shape: source documents can carry extension
+		// values that must not be copied into logs.
+		cmn.DebugMsg(cmn.DbgLvlDebug2, "[DEBUG-CrawlWebsite] Source configuration extracted (%d top-level keys)", len(processCtx.srcCfg))
 		crawlingConfig := make(map[string]any)
 		crawlingConfig, _ = processCtx.srcCfg["crawling_config"].(map[string]interface{})
 		// Check if we have UnwantedURLs in the source configuration (and if so compile the patterns)

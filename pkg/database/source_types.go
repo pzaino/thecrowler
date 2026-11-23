@@ -1,5 +1,11 @@
 package database
 
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+)
+
 // SourceConfig represents crowler-source-config-schema.json.
 type SourceConfig struct {
 	Version        string                `json:"version,omitempty"`
@@ -32,6 +38,38 @@ type SourceCrawlingConfig struct {
 	// FollowRedirects overrides http_headers.follow_redirects for this source
 	// only. nil inherits the global value.
 	FollowRedirects *bool `json:"follow_redirects,omitempty"`
+	// StickySession requests one microproxy session rotation at the start of
+	// each browser-backed crawl. It is a strict boolean; null and non-boolean
+	// JSON values are rejected.
+	StickySession *bool `json:"sticky_session,omitempty"`
+}
+
+// UnmarshalJSON keeps the database-facing source document decoder aligned
+// with pkg/config: an omitted sticky_session means disabled, while an explicit
+// null or any non-boolean value is a malformed document.
+func (c *SourceCrawlingConfig) UnmarshalJSON(data []byte) error {
+	type plain SourceCrawlingConfig
+	aux := struct {
+		*plain
+		StickySession json.RawMessage `json:"sticky_session"`
+	}{plain: (*plain)(c)}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	raw := strings.TrimSpace(string(aux.StickySession))
+	switch raw {
+	case "":
+		c.StickySession = nil
+	case "true":
+		value := true
+		c.StickySession = &value
+	case "false":
+		value := false
+		c.StickySession = &value
+	default:
+		return fmt.Errorf("crawling_config.sticky_session must be a JSON boolean, got %.64s", raw)
+	}
+	return nil
 }
 
 // SourceConfigType defines the type of the source, which can influence crawling and processing behavior.

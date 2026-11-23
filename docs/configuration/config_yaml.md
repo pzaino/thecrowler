@@ -138,7 +138,7 @@ api:                         # This is the API configuration (this is the Genera
   key_file: ""               # Optional, this is the SSL key for the API
   enable_console: true       # Optional, this (if set to true) will enable the extra end points for adding and removing sources etc.
 
-selenium:                    # This is the Selenium container configuration (please note that this tag will soon be replaced by "vdi" and that is because a VDI image is not just selenium but also other tools which will soon need to be configured)
+vdi:                         # This is the VDI configuration (Selenium/browser container(s) and optional sticky-session data plane)
   - name: thecrowler_vdi_1   # Optional, This field allow you to specify a name for the VDI container
     location: AWS_EU_WEST_1  # Optional, This field allow you to specify the location of the VDI container
     type: chrome             # Required, this is the type of the Selenium container
@@ -251,7 +251,7 @@ The sections are:
 * The image_storage_api section configures the image storage API
 * The file_storage_api section configures the file storage API (downloaded files and/or web objects)
 * The API section configures the API
-* The selenium section configures the VDI container (please note the selenium tag will soon be replaced by the VDI tag)
+* The `vdi` section configures the VDI container(s), including the optional trusted microproxy sticky-session profile
 * The network_info section configures the network information gathering
 * The rulesets section configures the rulesets that will be loaded on the specific CROWler engine
 * The debug_level section configures the debug level
@@ -372,6 +372,64 @@ can reload the configuration by sending a `SIGHUP` signal to the CROWler.
 When a `SIGHUP` signal is received, the CROWler will reload the configuration AFTER
 the current crawling operations are completed.
 
+## Per-VDI microproxy sticky sessions
+
+A source opts into sticky sessions with `crawling_config.sticky_session: true`
+(see [Sources](../sources.md)). The trusted connection for the microproxy data
+plane is global operator configuration on the VDI it belongs to:
+
+```yaml
+vdi:
+  - name: vdi-1
+    type: chrome
+    host: selenium-vdi1
+    port: 4444
+    # Normal sources use the rotating listener by default.
+    proxy_url: "http://microproxy-vdi1:8080"
+    sticky_session:
+      # Sticky downstream listener used by the browser.
+      proxy_url: "http://microproxy-vdi1:8081"
+      # Data-plane API origin used by the CROWler engine.
+      api_url: "http://microproxy-vdi1:8094"
+      # Name of the ENGINE environment variable holding the bearer token.
+      token_env: "MICROPROXY_VDI1_SESSION_API_KEY"
+      # Exact provider the rotate response must report.
+      provider: "residential-sticky"
+```
+
+All four `sticky_session` fields are required together. An absent profile (or an
+empty `sticky_session: {}` object, which the runtime treats as absent) is valid,
+but a source that requests sticky sessions on that VDI fails closed.
+`proxy_url` and `api_url` must be absolute `http` or `https` origins with a host
+and explicit port, without credentials, a path, a query or a fragment. Firefox
+VDIs support HTTP sticky listeners but not HTTPS; a Firefox/HTTPS combination is
+rejected before rotation.
+`token_env` must be a valid environment-variable name; it is not the token
+value. Write the literal variable name. Do **not** use `${...}` interpolation
+for `token_env`: configuration interpolation would replace it with the secret
+itself. The token belongs in the engine's environment (or deployment secret
+mechanism), and microproxy has its own independent
+`MICROPROXY_SESSION_API_KEY` setting.
+
+Change or remove a `sticky_session` profile with a service restart. The
+configuration reload path can retain existing VDI pool slots, so a reload is not
+a reliable way to retire an old trusted profile.
+
+The browser must be able to reach the sticky listener. The engine must be able
+to reach the data-plane API. Publish the API only on a private network and use a
+distinct token per VDI. Source documents cannot set or override `api_url`,
+`token_env`, `provider` or the trusted profile through `custom.vdi`.
+
+The supported deployment topology is one microproxy data-plane process per VDI.
+Because a VDI lease is exclusive, only one source crawl at a time can rotate and
+use that process. Aliasing several VDIs to one microproxy process is not
+supported in 2.3.1 because those VDIs would share and rotate one sticky
+identity.
+
+Rotation changes the upstream sticky-session identifier. It does not guarantee a
+different public IP. See [Sticky sessions and per-source proxies](../sticky-sessions.md)
+for the complete operational contract, troubleshooting and limitations.
+
 ## Adding configuration validation in VSCode
 
 To add the CROWler configuration validation in VSCode, you can use the
@@ -429,7 +487,7 @@ api:
   enable_console: true
   return_404: false
 
-selenium:
+vdi:
   - type: chrome
     path: ""
     port: 4444
@@ -437,6 +495,12 @@ selenium:
     host: ${SELENIUM_HOST}
     sslmode: disable
     use_service: false
+    # Optional trusted microproxy sticky-session profile (see the section above).
+    # sticky_session:
+    #   proxy_url: "http://microproxy-vdi1:8081"
+    #   api_url: "http://microproxy-vdi1:8094"
+    #   token_env: "MICROPROXY_VDI1_SESSION_API_KEY"
+    #   provider: "residential-sticky"
 
 network_info:
   dns:

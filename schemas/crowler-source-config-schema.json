@@ -48,7 +48,7 @@
         "proxy": {
           "type": "string",
           "format": "uri",
-          "description": "This is the proxy that the CROWler will use to crawl the source. It's an alternative proxy that might be required for this specific source. It should be in the format 'http://proxyserver:port', no authentication is supported for this specific one."
+          "description": "Canonical per-source downstream browser proxy listener. It must be an absolute http, https or socks5 URL with a host and explicit port, and must not contain credentials, a path, a query or a fragment. A blank value inherits the next layer. Precedence for non-sticky sources is crawling_config.proxy, the historical top-level source proxy_url, custom.vdi[].proxy_url for the leased VDI, then vdi[].proxy_url. The exact lowercase sentinel no_proxy is honored only by the legacy and custom.vdi layers; it is not a valid value for this canonical field. For sticky sources this value, when supplied, must equal the selected VDI's vdi[].sticky_session.proxy_url listener."
         },
         "site": {
           "type": "string",
@@ -98,6 +98,10 @@
         "follow_redirects": {
           "type": "boolean",
           "description": "Redirect policy override for this source only. When omitted, http_headers.follow_redirects applies. When set, it becomes the effective policy for this source: HTTP metadata collection uses it directly, and browser navigation refuses to accept a page that landed on a different resource, retrying up to retries_on_redirect times before failing. An explicit null, string, number, array or object is rejected; omit the key to inherit. Only standards-equivalent spellings are treated as the same resource (scheme/host case, default port, origin-root path); /hotel and /hotel/, repeated slashes, escaped separators, path case and any query difference count as redirects. The browser itself always performs the HTTP redirect; this option controls acceptance, not interception. Source restrictions, unwanted_urls and ownership checks still apply to the final URL."
+        },
+        "sticky_session": {
+          "type": "boolean",
+          "description": "Request one microproxy data-plane sticky-session rotation at the start of each new browser-backed crawl of this source. Omitted or false disables the feature and performs no rotation API call. true requires the leased VDI to carry a complete trusted vdi[].sticky_session profile; the browser then uses that profile's sticky downstream listener and the engine calls its data-plane API exactly once before creating the WebDriver session. Only website/API/file/db sources that use the browser are supported; email and network-only sources are rejected. An explicit null, string, number, array or object is rejected. This value never contains tokens, rotation URLs or session identifiers."
         },
         "load_validation": {
           "title": "Page Load Validation",
