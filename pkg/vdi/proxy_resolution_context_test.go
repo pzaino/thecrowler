@@ -126,3 +126,24 @@ func TestResolveSessionProxyStickyGuardAndBrowserCompatibility(t *testing.T) {
 		}
 	})
 }
+
+func TestResolveSessionProxyRejectsSourceVDIIdentityOverride(t *testing.T) {
+	leased := SeleniumInstance{Config: cfg.Selenium{
+		Name: "vdi-1", Type: "chrome", Host: "selenium-vdi-1", Port: 4444,
+		ProxyURL: "http://vdi:8080",
+	}}
+	merged := leased.Config
+	merged.Host = "source-controlled-selenium"
+	merged.Port = 5555
+	source := `{"crawling_config":{"site":"https://example.test/"}}`
+	ctx := newFakeProxyContext(source, leased)
+	ctx.config.Selenium = []cfg.Selenium{merged}
+
+	_, _, err := resolveSessionProxy(ctx, ctx.config, leased)
+	if err == nil {
+		t.Fatal("reconnect/fallback accepted a source-controlled Selenium endpoint")
+	}
+	if !strings.Contains(err.Error(), "host") {
+		t.Fatalf("error = %v, want the conflicting identity field", err)
+	}
+}

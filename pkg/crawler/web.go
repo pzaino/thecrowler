@@ -85,6 +85,14 @@ func (ctx *ProcessContext) RefreshVDIConnection(sel vdi.SeleniumInstance) error 
 	if err := ctx.checkCrawlFence(); err != nil {
 		return err
 	}
+	// A refresh must reconnect to the VDI selected and validated at source
+	// start. Reject a caller-provided instance that would retarget the
+	// Selenium endpoint or browser family, then use the pinned effective
+	// instance so proxy/session settings cannot drift.
+	if err := cfg.ValidateLeasedVDIIdentity(ctx.SelInstance.Config, sel.Config); err != nil {
+		return fmt.Errorf("refresh VDI does not match the pinned source session: %w", err)
+	}
+	sel = ctx.SelInstance
 	if (ctx.Status.DetectedState.Load() & 0x01) != 0 {
 		// Stale-Processing detected, we need to abort the process
 		err := errors.New("stale-processing detected")

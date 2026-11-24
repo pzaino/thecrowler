@@ -125,6 +125,47 @@ API validates a submitted source against its configuration snapshot, while the
 engine revalidates the stored document against its own snapshot immediately
 before the crawl; a mismatch fails closed.
 
+### Leased VDI identity
+
+The pool slot and the `vdi.SeleniumInstance` returned by acquisition are
+authoritative. A source may override its **downstream proxy** and select an
+approved sticky profile, but it cannot redirect the pipeline to another
+Selenium VDI. The effective browser and the temporary CDP management browser
+use the same leased Selenium host, port, endpoint scheme and browser type.
+
+The runtime compares the source-merged candidate with the lease before profile
+selection, sticky rotation or WebDriver creation. A difference in `name`,
+`host`, `port`, `sslmode` (effective `http`/`https` scheme) or browser `type`
+fails closed and identifies the conflicting field. An equivalent spelling such
+as surrounding whitespace or hostname case is accepted for the crawl and
+replaced by the leased value in the effective session; the stored source
+document is not rewritten. No DNS alias resolution is attempted for
+source-supplied hosts, and a different port is never treated as equivalent.
+The `sslmode` decision mirrors the launcher: the exact-case value `enable` means
+HTTPS and every other value means HTTP. A spelling that would change that
+decision is rejected; an equivalent value is replaced by the leased spelling in
+the effective session.
+
+The legacy `service_type`, `path` and `driver_path` fields still merge for
+compatibility (`use_service` is not merged), but none of them is consulted by
+the pooled remote WebDriver launch; they cannot redirect the acquired VDI. A
+source override for one VDI position cannot affect the lease or effective
+configuration of another VDI.
+
+Stored sources that were created with a differing `custom.vdi[].host`, `port`,
+`sslmode` or `type` now fail closed instead of silently overriding the acquired
+VDI. Correct or remove those identity fields before scheduling the source; a
+proxy or approved sticky-profile override does not need to change.
+
+The API console compares the override with its own VDI snapshot and returns a
+client error when it can prove a conflict. The engine always revalidates the
+stored source against its own snapshot, so an API/engine configuration
+divergence still fails closed at crawl time. The `addSource` CLI checks its
+loaded configuration, while Sources created by Information Seed discovery are
+stored and validated by the engine at crawl time. Identity fields are checked
+for every source document, including network-only sources; a network-only crawl
+does not create a browser and ignores such fields if they are already stored.
+
 ## Source configuration
 
 An explicit source opt-in can use the inherited profile:
@@ -381,10 +422,12 @@ the VDI can reach it through its own network namespace.
   Microproxy idempotency is process-local; two different processes can each
   accept the same key.
 
-The disposable browser:
+The real source browser is created with the same leased host, port, endpoint
+scheme and browser type; a source-level `custom.vdi[].host`, `port`, `sslmode`
+or `type` is rejected before rotation. The disposable management browser:
 
-- is created on the **already leased VDI** using that VDI's host, port and
-  browser type, so a source-level `custom.vdi[].host`, `port` or `type` cannot
+- is created on the **already leased VDI** using that VDI's host, port,
+  endpoint scheme and browser type, so a source-level identity override cannot
   retarget the privileged management browser;
 - uses a fresh Selenium session and temporary browser profile;
 - does not inherit the source's rotating/sticky proxy listener: it starts with
@@ -526,6 +569,7 @@ client keeps its bounded retries. The microproxy response body is capped at
 | `stale_key (HTTP 409, code stale_idempotency_key)` | Another rotation superseded this attempt's key. | Treat as a failed source attempt. Do not reuse the key; the next new source crawl mints a fresh one. |
 | `unavailable (HTTP 503)` | Microproxy could not generate a new identity; previous state was preserved. | Check microproxy/provider health and retry the source later. |
 | `invalid_response` / `provider_mismatch` | The API returned malformed data or a different provider than configured. | Verify the listener-to-provider binding and the `provider` field; do not start the browser manually as a workaround. |
+| `leased VDI identity mismatch` / `cannot change the leased` | A source `custom.vdi` entry changed the Selenium host, port, scheme or browser type after the pipeline acquired its VDI. | Remove the identity override; only proxy and approved sticky-profile overrides are valid. The pipeline will not fall back to another VDI or silently repair the value. |
 | `custom.vdi[...].sticky_session is not approved by the operator` | The source supplied a profile that is neither the VDI default nor an `approved_sticky_profiles` entry. | Add the exact complete profile to the VDI allowlist (operator action) or change the source to an approved profile. The runtime checks stored sources too. |
 | `sticky_session:false would browse the configured sticky listener` | The source disabled rotation but its effective proxy is still a known sticky listener. | Select a conventional/direct proxy for that source or remove the false override. |
 | Ordinary source rotates unexpectedly | The VDI ordinary `proxy_url` equals a configured sticky listener, or the source selected one. | Use a different ordinary listener for a standby profile, or set `crawling_config.sticky_session:false` with a safe conventional proxy. Do not infer mode from the port number. |

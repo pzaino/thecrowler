@@ -240,3 +240,32 @@ func TestCombineVDICfgLegacySeleniumKeyIgnored(t *testing.T) {
 		t.Errorf("[0].ProxyURL = %q, want the canonical custom.vdi value", got.Selenium[0].ProxyURL)
 	}
 }
+
+func TestCombineVDICfgMergesLegacyIdentityFieldsForRuntimeValidation(t *testing.T) {
+	base := mergeTestBase()
+	leased := base.Selenium[0]
+	src := SourceConfig{Custom: map[string]interface{}{
+		"vdi": []interface{}{map[string]interface{}{
+			"host":    "attacker-selenium",
+			"port":    float64(5555),
+			"type":    "firefox",
+			"sslmode": "enable",
+		}},
+	}}
+	merged := CombineConfigs(base, src)
+	if merged.Selenium[0].Host != "attacker-selenium" ||
+		merged.Selenium[0].Port != 5555 ||
+		merged.Selenium[0].Type != "firefox" ||
+		merged.Selenium[0].SSLMode != "enable" {
+		t.Fatalf("legacy identity fields were not merged for validation: %+v", merged.Selenium[0])
+	}
+	if base.Selenium[0].Host != leased.Host || base.Selenium[0].Port != leased.Port ||
+		base.Selenium[0].Type != leased.Type || base.Selenium[0].SSLMode != leased.SSLMode {
+		t.Fatalf("source merge mutated the caller's VDI configuration: %+v", base.Selenium[0])
+	}
+	if _, err := ResolveEffectiveVDI(EffectiveVDIInput{
+		Leased: leased, LeasedIndex: 0, Merged: merged.Selenium, Source: SourceConfig{},
+	}); err == nil {
+		t.Fatal("runtime accepted a merged source-controlled VDI identity")
+	}
+}

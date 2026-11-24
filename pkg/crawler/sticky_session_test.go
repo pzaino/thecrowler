@@ -263,32 +263,262 @@ func TestStartBrowserCrawlExplicitFalseWithStickyDefaultFails(t *testing.T) {
 	}
 }
 
-func TestStartBrowserCrawlUsesEffectiveSourceVDIForLaunch(t *testing.T) {
+func TestRefreshVDIConnectionRejectsRetargetedSession(t *testing.T) {
 	ctx, sel := stickyTestContext(t)
-	profile := sel.Config.StickySession
-	profile.ProxyURL = "http://microproxy-vdi1:8091"
-	profile.APIURL = "http://microproxy-vdi1:8095"
-	profile.Provider = "custom-provider"
-	sel.Config.ProxyURL = "http://microproxy-vdi1:8080"
-	sel.Config.ApprovedStickyProfiles = []cfg.StickySessionConfig{profile}
-	merged := sel.Config
-	merged.Host = "source-selected-selenium"
-	merged.Port = 5555
-	merged.Type = "chrome"
-	ctx.config.Selenium[0] = merged
-	ctx.stickyRotator = &recordingRotator{
-		response: proxycontrol.RotateResponse{Status: "rotated", Provider: "custom-provider", Generation: 1},
+	ctx.SelInstance = sel
+	tampered := sel
+	tampered.Config.Host = "attacker-selenium"
+	err := ctx.RefreshVDIConnection(tampered)
+	if !errors.Is(err, cfg.ErrVDIIdentityMismatch) {
+		t.Fatalf("refresh error = %v, want ErrVDIIdentityMismatch", err)
 	}
+}
+
+func TestNonWebSourceSessionIdentityBoundary(t *testing.T) {
+	t.Run("network-only ignores an irrelevant identity override", func(t *testing.T) {
+		ctx, sel := stickyTestContext(t)
+		merged := sel.Config
+		merged.Host = "attacker-selenium"
+		ctx.config.Selenium[0] = merged
+		if err := ctx.resolveNonWebSourceSession(SourceProtocolNetwork, sel, cfg.SourceConfig{}, nil); err != nil {
+			t.Fatalf("network-only source failed on an unused browser identity: %v", err)
+		}
+		if _, set := ctx.GetEffectiveProxy(); set {
+			t.Fatal("network-only source unexpectedly stored a browser proxy decision")
+		}
+	})
+	t.Run("email rejects an identity override", func(t *testing.T) {
+		ctx, sel := stickyTestContext(t)
+		merged := sel.Config
+		merged.Port = 5555
+		ctx.config.Selenium[0] = merged
+		err := ctx.resolveNonWebSourceSession(SourceProtocolEmail, sel, cfg.SourceConfig{}, nil)
+		if !errors.Is(err, cfg.ErrVDIIdentityMismatch) {
+			t.Fatalf("email identity mismatch error = %v, want ErrVDIIdentityMismatch", err)
+		}
+		if _, set := ctx.GetEffectiveProxy(); set {
+			t.Fatal("rejected email source stored a browser proxy decision")
+		}
+	})
+	t.Run("email keeps the ordinary proxy override", func(t *testing.T) {
+		ctx, sel := stickyTestContext(t)
+		source := cfg.SourceConfig{CrawlingConfig: cfg.CrawlingConfig{Proxy: "http://source-proxy:3128"}}
+		if err := ctx.resolveNonWebSourceSession(SourceProtocolEmail, sel, source, nil); err != nil {
+			t.Fatal(err)
+		}
+		proxy, set := ctx.GetEffectiveProxy()
+		if !set || proxy != "http://source-proxy:3128" {
+			t.Fatalf("effective proxy = %q (set=%t)", proxy, set)
+		}
+	})
+}
+
+func TestBrowserSessionPinsEffectiveVDIForRefreshAndReconnect(t *testing.T) {
+	ctx, sel := stickyTestContext(t)
+	sel.Config.ProxyURL = sel.Config.StickySession.ProxyURL
+	ctx.config.Selenium[0] = sel.Config
+	rotator := &recordingRotator{
+		response: proxycontrol.RotateResponse{Status: "rotated", Provider: "residential-sticky", Generation: 1},
+	}
+	ctx.stickyRotator = rotator
 	ctx.stickyGetenv = func(string) string { return "token" }
 	ctx.stickyKeyGenerate = func() (string, error) { return "key", nil }
 
+	connect := func() error {
+		if ctx.SelInstance.Config.Host != sel.Config.Host ||
+			ctx.SelInstance.Config.Port != sel.Config.Port ||
+			ctx.SelInstance.Config.Type != sel.Config.Type ||
+			ctx.SelInstance.Config.Name != sel.Config.Name {
+			t.Fatalf("source browser used %+v, want leased identity %+v",
+				ctx.SelInstance.Config, sel.Config)
+		}
+		if ctx.SelInstance.Config.ProxyURL != sel.Config.StickySession.ProxyURL {
+			t.Fatalf("source browser proxy = %q, want pinned sticky listener %q",
+				ctx.SelInstance.Config.ProxyURL, sel.Config.StickySession.ProxyURL)
+		}
+		return nil
+	}
+
+	if err := ctx.startBrowserCrawl(sel, cfg.SourceConfig{}, nil, connect); err != nil {
+		t.Fatalf("startBrowserCrawl: %v", err)
+	}
+	// RefreshVDIConnection and ResetVDI consume ctx.SelInstance/
+	// GetVDIInstance. This asserts the pinned instance those paths reconnect
+	// with; the real WebDriver reconnect I/O is covered only by the opt-in
+	// integration suite. Reusing the session must not rotate again.
+	if ctx.GetVDIInstance() != &ctx.SelInstance {
+		t.Fatal("GetVDIInstance does not return the pinned effective instance")
+	}
+	if err := connect(); err != nil {
+		t.Fatal(err)
+	}
+	if rotator.count() != 1 {
+		t.Fatalf("rotation count = %d, want exactly one source-start rotation", rotator.count())
+	}
+}
+
+func TestStartBrowserCrawlRejectsMismatchedEffectiveVDI(t *testing.T) {
+	t.Run("index", func(t *testing.T) {
+		ctx, sel := stickyTestContext(t)
+		ctx.effectiveVDI = &cfg.EffectiveVDISelection{LeasedIndex: 1, Management: sel.Config}
+		connected := false
+		err := ctx.startBrowserCrawl(sel, cfg.SourceConfig{}, nil, func() error {
+			connected = true
+			return nil
+		})
+		if err == nil {
+			t.Fatal("effective VDI resolved for another pool index was accepted")
+		}
+		if connected {
+			t.Fatal("index mismatch reached the browser connection")
+		}
+	})
+	t.Run("management identity", func(t *testing.T) {
+		ctx, sel := stickyTestContext(t)
+		tampered := sel.Config
+		tampered.Host = "attacker-selenium"
+		ctx.effectiveVDI = &cfg.EffectiveVDISelection{LeasedIndex: 0, Management: tampered}
+		connected := false
+		err := ctx.startBrowserCrawl(sel, cfg.SourceConfig{}, nil, func() error {
+			connected = true
+			return nil
+		})
+		if err == nil || !errors.Is(err, cfg.ErrVDIIdentityMismatch) {
+			t.Fatalf("tampered effective VDI error = %v, want ErrVDIIdentityMismatch", err)
+		}
+		if connected {
+			t.Fatal("management identity mismatch reached the browser connection")
+		}
+	})
+	t.Run("browser identity", func(t *testing.T) {
+		ctx, sel := stickyTestContext(t)
+		browser := sel.Config
+		browser.Port = 5555
+		ctx.effectiveVDI = &cfg.EffectiveVDISelection{
+			LeasedIndex: 0, Management: sel.Config, Browser: browser,
+		}
+		connected := false
+		err := ctx.startBrowserCrawl(sel, cfg.SourceConfig{}, nil, func() error {
+			connected = true
+			return nil
+		})
+		if err == nil || !errors.Is(err, cfg.ErrVDIIdentityMismatch) {
+			t.Fatalf("tampered browser VDI error = %v, want ErrVDIIdentityMismatch", err)
+		}
+		if connected {
+			t.Fatal("browser identity mismatch reached the browser connection")
+		}
+	})
+}
+
+func TestStartBrowserCrawlRejectsSourceVDIIdentityOverride(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(*cfg.Selenium)
+		field  string
+	}{
+		{"host", func(s *cfg.Selenium) { s.Host = "source-selected-selenium" }, "host"},
+		{"port", func(s *cfg.Selenium) { s.Port = 5555 }, "port"},
+		{"type", func(s *cfg.Selenium) { s.Type = "firefox" }, "type"},
+		{"sslmode", func(s *cfg.Selenium) { s.SSLMode = "enable" }, "sslmode"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, sel := stickyTestContext(t)
+			profile := sel.Config.StickySession
+			profile.Provider = "custom-provider"
+			profile.ProxyURL = "http://microproxy-vdi1:8091"
+			profile.APIURL = "http://microproxy-vdi1:8095"
+			sel.Config.ProxyURL = "http://microproxy-vdi1:8080"
+			sel.Config.ApprovedStickyProfiles = []cfg.StickySessionConfig{profile}
+			merged := sel.Config
+			tc.change(&merged)
+			ctx.config.Selenium[0] = merged
+			direct := &recordingRotator{
+				response: proxycontrol.RotateResponse{Status: "rotated", Provider: "custom-provider", Generation: 1},
+			}
+			cdp := &recordingCDPRotator{
+				response: proxycontrol.RotateResponse{Status: "rotated", Provider: "custom-provider", Generation: 1},
+			}
+			ctx.stickyRotator = direct
+			ctx.stickyCDPRotator = cdp
+			ctx.stickyGetenv = func(string) string { return "token" }
+			ctx.stickyKeyGenerate = func() (string, error) { return "key", nil }
+
+			connected := false
+			err := ctx.startBrowserCrawl(sel, stickySourceWithProfile(profile, ""), nil, func() error {
+				connected = true
+				return nil
+			})
+			if err == nil {
+				t.Fatalf("source-controlled %s was accepted", tc.field)
+			}
+			if !strings.Contains(err.Error(), tc.field) {
+				t.Fatalf("error = %v, want field %q", err, tc.field)
+			}
+			if !errors.Is(err, cfg.ErrVDIIdentityMismatch) {
+				t.Fatalf("error = %v, want ErrVDIIdentityMismatch", err)
+			}
+			if connected || direct.count() != 0 || cdp.count() != 0 {
+				t.Fatalf("identity mismatch reached I/O: connected=%t direct=%d cdp=%d",
+					connected, direct.count(), cdp.count())
+			}
+		})
+	}
+}
+
+func TestStartBrowserCrawlNonStickyRejectsSourceVDIIdentityOverride(t *testing.T) {
+	ctx, sel := stickyTestContext(t)
+	merged := sel.Config
+	merged.Host = "source-selected-selenium"
+	ctx.config.Selenium[0] = merged
+	connected := false
+	if err := ctx.startBrowserCrawl(sel, cfg.SourceConfig{}, nil, func() error {
+		connected = true
+		return nil
+	}); err == nil {
+		t.Fatal("non-sticky source-controlled Selenium host was accepted")
+	}
+	if connected {
+		t.Fatal("non-sticky identity mismatch reached the browser connection")
+	}
+}
+
+func TestStartBrowserCrawlAcceptsSameIdentityAndProxyOverride(t *testing.T) {
+	ctx, sel := stickyTestContext(t)
+	profile := sel.Config.StickySession
+	profile.Provider = "custom-provider"
+	profile.ProxyURL = "http://microproxy-vdi1:8091"
+	profile.APIURL = "http://microproxy-vdi1:8095"
+	sel.Config.ProxyURL = "http://microproxy-vdi1:8080"
+	sel.Config.ApprovedStickyProfiles = []cfg.StickySessionConfig{profile}
+	merged := sel.Config
+	merged.Name = " VDI-1 "
+	merged.Host = " SELENIUM-VDI1 "
+	merged.Type = "CHROME"
+	ctx.config.Selenium[0] = merged
+	rotator := &recordingRotator{
+		response: proxycontrol.RotateResponse{Status: "rotated", Provider: "custom-provider", Generation: 1},
+	}
+	ctx.stickyRotator = rotator
+	ctx.stickyGetenv = func(string) string { return "token" }
+	ctx.stickyKeyGenerate = func() (string, error) { return "key", nil }
+
+	connected := false
 	if err := ctx.startBrowserCrawl(sel, stickySourceWithProfile(profile, ""), nil, func() error {
-		if ctx.SelInstance.Config.Host != "source-selected-selenium" || ctx.SelInstance.Config.Port != 5555 {
-			t.Fatalf("source browser used %s:%d", ctx.SelInstance.Config.Host, ctx.SelInstance.Config.Port)
+		connected = true
+		if ctx.SelInstance.Config.Host != sel.Config.Host ||
+			ctx.SelInstance.Config.Port != sel.Config.Port ||
+			ctx.SelInstance.Config.Type != sel.Config.Type {
+			t.Fatalf("source browser used %s:%d/%s, want leased %s:%d/%s",
+				ctx.SelInstance.Config.Host, ctx.SelInstance.Config.Port, ctx.SelInstance.Config.Type,
+				sel.Config.Host, sel.Config.Port, sel.Config.Type)
 		}
 		return nil
 	}); err != nil {
 		t.Fatalf("startBrowserCrawl: %v", err)
+	}
+	if !connected || rotator.count() != 1 {
+		t.Fatalf("connected=%t rotations=%d", connected, rotator.count())
 	}
 	if ctx.SelInstance.Config.ProxyURL != profile.ProxyURL {
 		t.Fatalf("effective proxy = %q", ctx.SelInstance.Config.ProxyURL)
@@ -1168,6 +1398,7 @@ func TestStickyRotationUsesPerVDIProfile(t *testing.T) {
 		leases = append(leases, lease)
 		instances = append(instances, instance)
 		ctx, _ := stickyTestContext(t)
+		ctx.SelID = i
 		ctx.config.Selenium = profiles
 		ctx.stickyRotator = rotators[i]
 		token := profiles[i].StickySession.TokenEnv

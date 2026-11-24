@@ -970,6 +970,9 @@ func validateAndReformatConfig(sourceConfig *cfg.SourceConfig) error {
 	if err := config.ValidateSourceStickyAuthorization(*sourceConfig); err != nil {
 		return fmt.Errorf("%w: %v", errInvalidSourceConfig, err)
 	}
+	if err := config.ValidateSourceVDIIdentityOverrides(*sourceConfig); err != nil {
+		return fmt.Errorf("%w: %v", errInvalidSourceConfig, err)
+	}
 
 	return nil
 }

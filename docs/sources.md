@@ -218,6 +218,21 @@ or browser creation. The allowlist is operator-only and is never copied from a
 source document. A source cannot introduce a new `token_env` or management
 origin.
 
+A source can select the downstream proxy (conventional, rotating or the sticky
+listener as documented above) but cannot redirect the pipeline to another
+Selenium VDI. The acquired VDI's `name`, `host`, `port`, effective `sslmode`
+scheme and browser `type` are authoritative; a differing `custom.vdi[]` value
+fails closed before rotation or WebDriver creation. Host comparison is
+case-insensitive after trimming, but no DNS alias resolution is performed.
+The `sslmode` decision mirrors the launcher: exact-case `enable` means HTTPS
+and every other value means HTTP. An accepted equivalent value is replaced by
+the leased value in the effective session; the stored source document is not
+rewritten.
+
+The legacy `service_type`, `path` and `driver_path` fields still merge for
+compatibility (`use_service` is not merged), but none of them is consulted by
+the pooled remote WebDriver launch and cannot redirect the acquired VDI.
+
 The trusted microproxy connection is configured per VDI with
 `vdi[].sticky_session.{proxy_url,api_url,vdi_api_url,token_env,provider}` and
 the optional `vdi[].approved_sticky_profiles` allowlist (see

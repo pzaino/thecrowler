@@ -487,6 +487,20 @@ A source may also replace a sticky default with a conventional or direct proxy
 for its own crawl. That source does not rotate. The process-wide configuration
 and other sources are never mutated.
 
+Proxy and approved sticky-profile overrides do not change the physical VDI
+assignment. The pool-leased VDI's `name`, `host`, `port`, effective `sslmode`
+scheme and browser `type` remain authoritative; a source-level
+`custom.vdi[].host`, `port`, `sslmode` or `type` that differs is rejected before
+rotation or WebDriver creation. An equivalent hostname case/whitespace is
+accepted for the crawl and replaced by the leased value in the effective
+session; the stored source document is not rewritten. The `sslmode` decision
+mirrors the launcher: exact-case `enable` means HTTPS and every other value
+means HTTP.
+
+The legacy `service_type`, `path` and `driver_path` fields still merge for
+compatibility (`use_service` is not merged), but none of them is used by the
+pooled remote WebDriver launch and cannot redirect it.
+
 `127.0.0.1` in `vdi_api_url` means the Chrome/VDI network namespace, not the
 engine or necessarily the Docker host. When Selenium and microproxy are in
 isolated containers, use a private hostname or network mapping reachable from

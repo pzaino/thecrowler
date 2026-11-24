@@ -370,10 +370,7 @@ func seleniumBaseURL(sel SeleniumInstance) (string, error) {
 	if host == "" || sel.Config.Port < 1 || sel.Config.Port > 65535 {
 		return "", fmt.Errorf("invalid VDI Selenium endpoint")
 	}
-	scheme := cmn.HTTPStr
-	if strings.EqualFold(strings.TrimSpace(sel.Config.SSLMode), cmn.EnableStr) {
-		scheme = cmn.HTTPSStr
-	}
+	scheme := cfg.SeleniumEndpointScheme(sel.Config.SSLMode)
 	return fmt.Sprintf("%s://%s/wd/hub", scheme, net.JoinHostPort(host, strconv.Itoa(sel.Config.Port))), nil
 }
 

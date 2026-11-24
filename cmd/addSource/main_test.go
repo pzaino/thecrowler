@@ -123,6 +123,24 @@ func TestGetSourceConfig(t *testing.T) {
 			t.Fatal("getSourceConfig() error = nil, want JSON error")
 		}
 	})
+
+	t.Run("rejects a source-selected Selenium identity", func(t *testing.T) {
+		oldConfig := config
+		defer func() { config = oldConfig }()
+		config = cfg.Config{Selenium: []cfg.Selenium{{
+			Name: "vdi-1", Host: "selenium-vdi1", Port: 4444, Type: "chrome",
+		}}}
+		path := filepath.Join(t.TempDir(), "source.json")
+		content := []byte(`{"custom":{"vdi":[{"host":"attacker-selenium"}]}}`)
+		if err := os.WriteFile(path, content, 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err := getSourceConfig(path)
+		if err == nil {
+			t.Fatal("getSourceConfig() accepted a source-selected Selenium identity")
+		}
+	})
 }
 
 func TestInsertWebsite(t *testing.T) {

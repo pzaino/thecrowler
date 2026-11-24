@@ -63,6 +63,17 @@ The source profile must exactly match `vdi[].sticky_session` or an entry in
 `vdi[].approved_sticky_profiles`; the runtime rechecks this for stored sources,
 so a source cannot introduce a new management origin or `token_env`.
 
+The source may change its downstream proxy and approved sticky profile, but it
+cannot redirect the pipeline to another Selenium VDI. The leased VDI's `name`,
+`host`, `port`, effective `sslmode` scheme and browser `type` are authoritative;
+a conflicting `custom.vdi[]` value is rejected before rotation or browser
+creation. Equivalent hostname case/whitespace is accepted for the crawl and
+replaced by the leased value in the effective session; the stored source
+document is not rewritten. Source add and update compare the override with the
+API service's VDI snapshot and return HTTP `400` when they can prove a conflict.
+The engine always revalidates the stored source against its own snapshot, so an
+API/engine configuration divergence still fails closed at crawl time.
+
 For Chrome/Chromium the rotation is attempted first through a disposable
 VDI-local management browser; eligible CDP failures fall back to the engine-direct
 client with the same key. Firefox uses the engine-direct client. Both source

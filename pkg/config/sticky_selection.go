@@ -23,9 +23,17 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
+
+	cmn "github.com/pzaino/thecrowler/pkg/common"
 )
+
+// ErrVDIIdentityMismatch marks a source-merged VDI entry that would redirect
+// the active pipeline away from its leased Selenium VDI. It is fatal even on
+// non-web protocols; callers must not silently fall back to another proxy/VDI.
+var ErrVDIIdentityMismatch = errors.New("leased VDI identity mismatch")
 
 // StickySelectionOrigin identifies why the effective selection is sticky.
 // It is diagnostic only and never grants authority.
@@ -50,9 +58,10 @@ const (
 
 // EffectiveVDISelection is the immutable per-crawl VDI decision.
 type EffectiveVDISelection struct {
-	// Browser is the effective configuration for the real source browser. It
-	// may include source-level type/host/port/ordinary-proxy overrides and the
-	// selected sticky profile.
+	// Browser is the effective configuration for the real source browser. Its
+	// VDI identity fields (name, host, port, sslmode and browser type) are the
+	// leased values; source overrides are limited to proxy and approved sticky
+	// profile settings.
 	Browser Selenium
 	// Management is the leased VDI identity used for the disposable CDP
 	// management browser. It deliberately preserves the leased host/port/name
@@ -69,6 +78,10 @@ type EffectiveVDISelection struct {
 	StickyProfile StickySessionConfig
 	// StickyOrigin explains the decision for diagnostics.
 	StickyOrigin StickySelectionOrigin
+	// LeasedIndex is the authoritative pool/configuration index used for this
+	// selection. A caller that already holds a pool slot must verify it matches
+	// its own index before launching a browser.
+	LeasedIndex int
 }
 
 // EffectiveVDIInput is the complete, provenance-aware selection input set.
@@ -76,7 +89,11 @@ type EffectiveVDIInput struct {
 	// Leased is the original pool entry. It supplies the stable VDI identity,
 	// the global proxy/sticky defaults and the operator-approved profile list.
 	Leased Selenium
-	// LeasedIndex is the pool slot/configuration index when known.
+	// LeasedIndex is the authoritative pool slot/configuration index. A value
+	// >= 0 must identify the leased VDI at exactly that position; no name-based
+	// fallback is allowed. -1 is reserved for callers that genuinely have no
+	// pool index and requires a unique name match. Other negative values are
+	// rejected.
 	LeasedIndex int
 	// Merged is the per-source merged VDI list (already isolated from the
 	// process-global configuration).
@@ -369,6 +386,50 @@ func (c Config) ValidateSourceStickyAuthorization(source SourceConfig) error {
 	return nil
 }
 
+// ValidateSourceVDIIdentityOverrides rejects positional source VDI entries
+// that would change a configured VDI's Selenium endpoint or browser family.
+// The runtime resolver repeats this check against the engine's own snapshot;
+// this early check improves API feedback but is never the security boundary.
+func (c Config) ValidateSourceVDIIdentityOverrides(source SourceConfig) error {
+	if err := ValidateSourceCustomVDI(source.Custom); err != nil {
+		return err
+	}
+	rawEntries, ok := source.Custom["vdi"]
+	if !ok || rawEntries == nil {
+		return nil
+	}
+	entries, ok := rawEntries.([]interface{})
+	if !ok {
+		return fmt.Errorf("custom.vdi must be a list")
+	}
+	for i, rawEntry := range entries {
+		entry, ok := rawEntry.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if i >= len(c.Selenium) {
+			continue
+		}
+		candidate := c.Selenium[i]
+		if value, ok := entry["host"].(string); ok {
+			candidate.Host = value
+		}
+		if value, ok := entry["port"].(float64); ok {
+			candidate.Port = int(value)
+		}
+		if value, ok := entry["type"].(string); ok {
+			candidate.Type = value
+		}
+		if value, ok := entry["sslmode"].(string); ok {
+			candidate.SSLMode = value
+		}
+		if err := ValidateLeasedVDIIdentity(c.Selenium[i], candidate); err != nil {
+			return fmt.Errorf("custom.vdi[%d] for leased VDI %q: %w", i, c.Selenium[i].Name, err)
+		}
+	}
+	return nil
+}
+
 // ResolveSourceProxy resolves the ordinary (non-sticky) proxy for one source
 // and VDI. It is used by non-web protocols, which do not enter the sticky
 // source-start boundary but may still use a browser for optional email-link
@@ -383,6 +444,85 @@ func ResolveSourceProxy(in EffectiveVDIInput) (ProxyResolution, error) {
 		return ProxyResolution{}, err
 	}
 	return resolveNonStickyForSelection(in, custom)
+}
+
+// ValidateLeasedVDIIdentity rejects a source-merged candidate that would
+// redirect the active crawl to another physical/logical Selenium VDI or change
+// its browser family. Only fields actually used by ConnectVDI to build the
+// WebDriver endpoint/capabilities are identity-bearing:
+//
+//   - name: stable pool/VDI identity;
+//   - host and port: the Selenium remote endpoint;
+//   - sslmode: the effective launcher scheme (exact-case "enable" => https,
+//     otherwise http);
+//   - type: the browser family used for capabilities and CDP selection.
+//
+// service_type, path and driver_path still merge for legacy compatibility and
+// use_service is not merged at all; none of them is consulted by the pooled
+// remote WebDriver launch, so they cannot redirect the acquired VDI. proxy_url
+// and sticky_session are deliberately excluded: they are the supported
+// per-crawl overrides.
+func ValidateLeasedVDIIdentity(leased, candidate Selenium) error {
+	if !strings.EqualFold(strings.TrimSpace(candidate.Name), strings.TrimSpace(leased.Name)) {
+		return fmt.Errorf(
+			"field name cannot change the leased VDI identity (leased %q, source %q): %w",
+			leased.Name, candidate.Name, ErrVDIIdentityMismatch)
+	}
+	if !strings.EqualFold(strings.TrimSpace(candidate.Host), strings.TrimSpace(leased.Host)) {
+		return fmt.Errorf(
+			"field host cannot redirect the leased Selenium endpoint (leased %q, source %q): %w",
+			leased.Host, candidate.Host, ErrVDIIdentityMismatch)
+	}
+	if candidate.Port != leased.Port {
+		return fmt.Errorf(
+			"field port cannot redirect the leased Selenium endpoint (leased %d, source %d): %w",
+			leased.Port, candidate.Port, ErrVDIIdentityMismatch)
+	}
+	if SeleniumEndpointScheme(candidate.SSLMode) != SeleniumEndpointScheme(leased.SSLMode) {
+		return fmt.Errorf(
+			"field sslmode cannot change the leased Selenium endpoint scheme (leased %q, source %q): %w",
+			leased.SSLMode, candidate.SSLMode, ErrVDIIdentityMismatch)
+	}
+	if vdiBrowserType(candidate) != vdiBrowserType(leased) {
+		return fmt.Errorf(
+			"field type cannot change the leased browser family (leased %q, source %q): %w",
+			vdiBrowserType(leased), vdiBrowserType(candidate), ErrVDIIdentityMismatch)
+	}
+	return nil
+}
+
+// SeleniumEndpointScheme mirrors the exact SSLMode comparison used by the
+// pooled remote launcher. "enable" (exact case, no trimming) selects HTTPS;
+// every other value selects HTTP. Configuration validation and every Selenium
+// URL builder must share this definition so the source browser, pool service
+// and disposable CDP management browser cannot disagree about the scheme.
+func SeleniumEndpointScheme(sslMode string) string {
+	if sslMode == cmn.EnableStr {
+		return cmn.HTTPSStr
+	}
+	return cmn.HTTPStr
+}
+
+func vdiBrowserType(sel Selenium) string {
+	browser := strings.ToLower(strings.TrimSpace(sel.Type))
+	if browser == "" {
+		return "chrome"
+	}
+	return browser
+}
+
+// applyLeasedVDIIdentity replaces the validated no-op identity spellings with
+// the authoritative leased values, so the browser launcher cannot observe a
+// whitespace/case variant and a future transport change cannot reinterpret it.
+func applyLeasedVDIIdentity(candidate *Selenium, leased Selenium) {
+	if candidate == nil {
+		return
+	}
+	candidate.Name = leased.Name
+	candidate.Host = leased.Host
+	candidate.Port = leased.Port
+	candidate.SSLMode = leased.SSLMode
+	candidate.Type = leased.Type
 }
 
 // ResolveEffectiveVDI applies the documented per-crawl selection order.
@@ -400,8 +540,9 @@ func ResolveEffectiveVDI(in EffectiveVDIInput) (EffectiveVDISelection, error) {
 		return EffectiveVDISelection{}, err
 	}
 
-	selection := EffectiveVDISelection{StickyOrigin: StickySelectionNone}
+	selection := EffectiveVDISelection{StickyOrigin: StickySelectionNone, LeasedIndex: index}
 	selection.Browser = in.Merged[index]
+	applyLeasedVDIIdentity(&selection.Browser, in.Leased)
 	selection.Management = in.Leased
 
 	explicit := in.Source.CrawlingConfig.StickySession
@@ -504,23 +645,42 @@ func effectiveVDIIndex(leased Selenium, merged []Selenium, leasedIndex int) (int
 	if len(merged) == 0 {
 		return 0, fmt.Errorf("effective VDI selection requires at least one configured VDI")
 	}
-	if leasedIndex >= 0 && leasedIndex < len(merged) &&
-		strings.EqualFold(strings.TrimSpace(leased.Name), strings.TrimSpace(merged[leasedIndex].Name)) {
+	if leasedIndex >= 0 {
+		if leasedIndex >= len(merged) {
+			return 0, fmt.Errorf(
+				"leased VDI index %d is outside the effective VDI list (%d entries)",
+				leasedIndex, len(merged))
+		}
+		if err := ValidateLeasedVDIIdentity(leased, merged[leasedIndex]); err != nil {
+			return 0, fmt.Errorf(
+				"leased VDI %q: custom.vdi[%d] cannot change the leased identity: %w",
+				leased.Name, leasedIndex, err)
+		}
 		return leasedIndex, nil
 	}
+	if leasedIndex < -1 {
+		return 0, fmt.Errorf("invalid negative leased VDI index %d", leasedIndex)
+	}
+
 	matches := make([]int, 0, 1)
 	for i := range merged {
 		if strings.EqualFold(strings.TrimSpace(merged[i].Name), strings.TrimSpace(leased.Name)) {
 			matches = append(matches, i)
 		}
 	}
-	if len(matches) == 1 {
+	switch len(matches) {
+	case 1:
+		if err := ValidateLeasedVDIIdentity(leased, merged[matches[0]]); err != nil {
+			return 0, fmt.Errorf(
+				"leased VDI %q: custom.vdi[%d] cannot change the leased identity: %w",
+				leased.Name, matches[0], err)
+		}
 		return matches[0], nil
-	}
-	if len(matches) == 0 {
+	case 0:
 		return 0, fmt.Errorf("leased VDI %q is not present in the effective configuration", leased.Name)
+	default:
+		return 0, fmt.Errorf("leased VDI %q is ambiguous in the effective configuration", leased.Name)
 	}
-	return 0, fmt.Errorf("leased VDI %q is ambiguous in the effective configuration", leased.Name)
 }
 
 func resolveNonStickyForSelection(in EffectiveVDIInput, custom SourceCustomVDIEntry) (ProxyResolution, error) {

@@ -333,6 +333,9 @@ func getSourceConfig(configFile string) (*json.RawMessage, error) {
 		if err := json.Unmarshal(configFile, &sourceConfig); err != nil {
 			return &sourceConfigRaw, err
 		}
+		if err := config.ValidateSourceVDIIdentityOverrides(sourceConfig); err != nil {
+			return &sourceConfigRaw, fmt.Errorf("validating source VDI identity: %w", err)
+		}
 
 		// Cast the config to a JSON.RawMessage
 		sourceConfigRaw = json.RawMessage(configFile)

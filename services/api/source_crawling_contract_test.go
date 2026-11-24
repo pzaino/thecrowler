@@ -174,6 +174,40 @@ func TestValidateAndReformatConfigChecksSourceStickyAuthorization(t *testing.T) 
 	if err := validateAndReformatConfig(&emailCustom); err == nil {
 		t.Fatal("email source with custom sticky profile accepted")
 	}
+
+	for _, tc := range []struct {
+		name  string
+		key   string
+		value interface{}
+	}{
+		{"host", "host", "attacker-selenium"},
+		{"port", "port", float64(5555)},
+		{"type", "type", "firefox"},
+		{"sslmode", "sslmode", "enable"},
+	} {
+		identityChange := base()
+		identityChange.Custom["vdi"].([]interface{})[0].(map[string]interface{})[tc.key] = tc.value
+		if err := validateAndReformatConfig(&identityChange); err == nil {
+			t.Fatalf("source-controlled Selenium %s accepted by add/update validation", tc.name)
+		}
+	}
+
+	sameIdentity := base()
+	sameIdentity.Custom["vdi"].([]interface{})[0].(map[string]interface{})["host"] = " SELENIUM-VDI1 "
+	if err := validateAndReformatConfig(&sameIdentity); err != nil {
+		t.Fatalf("equivalent leased VDI host rejected: %v", err)
+	}
+	if stored := sameIdentity.Custom["vdi"].([]interface{})[0].(map[string]interface{})["host"]; stored != " SELENIUM-VDI1 " {
+		t.Fatalf("validation rewrote the stored source identity value: %v", stored)
+	}
+
+	proxyOnly := base()
+	proxyEntry := proxyOnly.Custom["vdi"].([]interface{})[0].(map[string]interface{})
+	proxyEntry["proxy_url"] = "http://source-proxy:3128"
+	delete(proxyEntry, "sticky_session")
+	if err := validateAndReformatConfig(&proxyOnly); err != nil {
+		t.Fatalf("proxy-only source VDI override rejected: %v", err)
+	}
 }
 
 func TestExtractAddSourceParamsPropagatesDecodeErrors(t *testing.T) {

@@ -464,12 +464,30 @@
       "properties": {
         "vdi": {
           "title": "Per-Source VDI Overrides",
-          "description": "Positional per-VDI overrides for this source. Unrelated extension keys remain allowed. A proxy_url changes the downstream listener for this source only. A sticky_session object replaces the effective sticky profile for this source and must match the operator's vdi[].sticky_session default or an entry in vdi[].approved_sticky_profiles for the same VDI index.",
+          "description": "Positional per-VDI overrides for this source. Unrelated extension keys remain allowed. A proxy_url changes the downstream listener for this source only. A sticky_session object replaces the effective sticky profile for this source and must match the operator's vdi[].sticky_session default or an entry in vdi[].approved_sticky_profiles for the same VDI index. The runtime binds the crawl to the leased VDI: source host, port, sslmode and browser type must match the leased VDI without changing the launcher decision (host comparison trims and ignores case; sslmode mirrors the launcher; browser type matches after trimming and case-folding) and cannot redirect the Selenium session to another VDI.",
           "type": "array",
           "items": {
             "type": "object",
             "additionalProperties": true,
             "properties": {
+              "host": {
+                "type": "string",
+                "description": "Legacy per-source Selenium host override. It must match the leased VDI host after trimming surrounding whitespace and comparing case-insensitively; no DNS alias resolution is performed and a different host is rejected before rotation or browser creation."
+              },
+              "port": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535,
+                "description": "Legacy per-source Selenium port override. It must equal the leased VDI port; a different port is rejected before rotation or browser creation."
+              },
+              "sslmode": {
+                "type": "string",
+                "description": "Legacy per-source Selenium endpoint scheme override. The effective launcher scheme must match the leased VDI: exact-case `enable` means HTTPS and every other value means HTTP. A spelling that would change that decision is rejected; an equivalent spelling is replaced by the leased value in the effective session."
+              },
+              "type": {
+                "type": "string",
+                "description": "Legacy per-source browser family override. It must match the leased VDI browser type; a different type is rejected before CDP selection or browser creation."
+              },
               "proxy_url": {
                 "type": "string",
                 "description": "Optional downstream browser proxy listener (for ex. microproxy) for this source and VDI position. It must be an absolute http, https or socks5 URL with a host and explicit port, without credentials, a path, a query or a fragment. When a sticky profile is selected, an explicit value must equal that profile's proxy_url; the legacy no_proxy sentinel is not allowed for sticky sessions."

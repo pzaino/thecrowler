@@ -303,27 +303,15 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 			err = stickyErr
 			return err
 		}
-		// Non-web protocols do not enter the sticky source boundary. Preserve
-		// the ordinary source/VDI proxy decision for optional email-link
-		// browsing; no rotation is performed for these source families.
-		nonWebSelection := cfg.EffectiveVDIInput{
-			Leased:      sel.Config,
-			LeasedIndex: args.SelIdx,
-			Merged:      processCtx.config.Selenium,
-			Source:      sourceCfg,
-			Raw:         sourceRaw,
-		}
-		if resolution, resolveErr := cfg.ResolveSourceProxy(nonWebSelection); resolveErr == nil {
-			processCtx.SetEffectiveProxy(resolution.URL, string(resolution.Source))
-		} else {
-			cmn.DebugMsg(cmn.DbgLvlWarn,
-				"resolving non-sticky source proxy for non-web source: %v", resolveErr)
-			nonWebProxy := strings.TrimSpace(sel.Config.ProxyURL)
-			nonWebSource := cfg.ProxySourceVDI
-			if nonWebProxy == "" {
-				nonWebSource = cfg.ProxySourceDirect
-			}
-			processCtx.SetEffectiveProxy(nonWebProxy, string(nonWebSource))
+		// Non-web protocols do not enter the sticky source boundary. Email
+		// sources may create a browser for approved web links; network-only
+		// sources never launch one. No rotation is performed for either.
+		if sessionErr := processCtx.resolveNonWebSourceSession(protocol, sel, sourceCfg, sourceRaw); sessionErr != nil {
+			processCtx.Status.PipelineRunning.Store(3)
+			processCtx.Status.TotalErrors.Add(1)
+			processCtx.Status.LastError = sessionErr.Error()
+			err = sessionErr
+			return err
 		}
 	} else {
 		selection, selectionErr := cfg.ResolveEffectiveVDI(cfg.EffectiveVDIInput{

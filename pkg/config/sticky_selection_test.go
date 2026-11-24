@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -289,26 +290,21 @@ func TestEffectiveVDISelectionTable(t *testing.T) {
 			t.Fatalf("first VDI unexpectedly rotated: %+v", firstSelection)
 		}
 	})
-	t.Run("Q management keeps the leased Selenium identity", func(t *testing.T) {
+	t.Run("Q source cannot retarget the leased Selenium identity", func(t *testing.T) {
 		leased := testVDI("vdi-1", "http://127.0.0.1:8080", StickySessionConfig{}, replacement)
 		merged := leased
 		merged.Host = "source-controlled-selenium"
 		merged.Port = 5555
 		merged.Type = "firefox"
 		source := testSourceWithProfile(replacement)
-		selection, err := ResolveEffectiveVDI(EffectiveVDIInput{
+		_, err := ResolveEffectiveVDI(EffectiveVDIInput{
 			Leased: leased, LeasedIndex: 0, Merged: []Selenium{merged}, Source: source,
 		})
-		if err != nil {
-			t.Fatal(err)
+		if err == nil {
+			t.Fatal("source-controlled Selenium host/port/type was accepted")
 		}
-		if selection.Browser.Host != "source-controlled-selenium" ||
-			selection.Browser.Port != 5555 || selection.Browser.Type != "firefox" {
-			t.Fatalf("effective browser did not honor source VDI overrides: %+v", selection.Browser)
-		}
-		if selection.Management.Host != leased.Host || selection.Management.Port != leased.Port ||
-			selection.Management.Type != leased.Type {
-			t.Fatalf("management browser was retargeted: %+v", selection.Management)
+		if !strings.Contains(err.Error(), "host") {
+			t.Fatalf("error does not identify the conflicting identity field: %v", err)
 		}
 	})
 	t.Run("R same-VDI configurations stay isolated", func(t *testing.T) {
@@ -440,5 +436,288 @@ func TestStickyProfileNormalization(t *testing.T) {
 	}
 	if !normalized.Equal(testStickyProfile("Provider")) && !strings.Contains(normalized.ProxyURL, "microproxy") {
 		t.Fatalf("unexpected normalization: %+v", normalized)
+	}
+}
+
+func TestEffectiveVDIIdentityAndIndexBinding(t *testing.T) {
+	leased := testVDI("vdi-1", "http://127.0.0.1:8080", StickySessionConfig{})
+	source := SourceConfig{}
+
+	assertConflict := func(t *testing.T, merged Selenium, wantField string) {
+		t.Helper()
+		_, err := ResolveEffectiveVDI(EffectiveVDIInput{
+			Leased: leased, LeasedIndex: 0, Merged: []Selenium{merged}, Source: source,
+		})
+		if err == nil {
+			t.Fatalf("identity mismatch in %s was accepted", wantField)
+		}
+		if !strings.Contains(err.Error(), wantField) {
+			t.Fatalf("error %v does not identify field %q", err, wantField)
+		}
+		if !errors.Is(err, ErrVDIIdentityMismatch) {
+			t.Fatalf("error %v does not classify as an identity mismatch", err)
+		}
+	}
+
+	t.Run("A1 no override", func(t *testing.T) {
+		selection, err := resolveTestSelection(t, leased, []Selenium{leased}, source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if selection.Browser.Host != leased.Host || selection.Browser.Port != leased.Port ||
+			selection.Browser.Type != leased.Type || selection.Browser.Name != leased.Name {
+			t.Fatalf("effective browser changed identity: %+v", selection.Browser)
+		}
+	})
+	t.Run("A2 proxy-only override", func(t *testing.T) {
+		merged := leased
+		merged.ProxyURL = "http://source-proxy:3128"
+		sourceWithProxy := SourceConfig{CrawlingConfig: CrawlingConfig{Proxy: "http://source-proxy:3128"}}
+		selection, err := resolveTestSelection(t, leased, []Selenium{merged}, sourceWithProxy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if selection.Proxy.URL != merged.ProxyURL || selection.Browser.Host != leased.Host ||
+			selection.Browser.Port != leased.Port || selection.Browser.Type != leased.Type {
+			t.Fatalf("selection = %+v", selection)
+		}
+	})
+	t.Run("A3 approved sticky profile", func(t *testing.T) {
+		profile := testStickyProfile("approved")
+		leasedWithProfile := leased
+		leasedWithProfile.ApprovedStickyProfiles = []StickySessionConfig{profile}
+		merged := leasedWithProfile
+		merged.StickySession = profile
+		selection, err := ResolveEffectiveVDI(EffectiveVDIInput{
+			Leased: leasedWithProfile, LeasedIndex: 0,
+			Merged: []Selenium{merged}, Source: testSourceWithProfile(profile),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !selection.Sticky || selection.Browser.Host != leased.Host ||
+			selection.Browser.Port != leased.Port || selection.Browser.Type != leased.Type {
+			t.Fatalf("selection = %+v", selection)
+		}
+	})
+	t.Run("A4 host change", func(t *testing.T) {
+		merged := leased
+		merged.Host = "attacker-selenium"
+		assertConflict(t, merged, "host")
+	})
+	t.Run("A5 port change", func(t *testing.T) {
+		merged := leased
+		merged.Port = 5555
+		assertConflict(t, merged, "port")
+	})
+	t.Run("A6 host and port change", func(t *testing.T) {
+		merged := leased
+		merged.Host = "attacker-selenium"
+		merged.Port = 5555
+		assertConflict(t, merged, "host")
+	})
+	t.Run("A7 scheme/sslmode change", func(t *testing.T) {
+		merged := leased
+		merged.SSLMode = "enable"
+		assertConflict(t, merged, "sslmode")
+	})
+	t.Run("A7b sslmode case change is a launcher-scheme change", func(t *testing.T) {
+		upper := leased
+		upper.SSLMode = "ENABLE"
+		lower := leased
+		lower.SSLMode = "enable"
+		_, err := ResolveEffectiveVDI(EffectiveVDIInput{
+			Leased: upper, LeasedIndex: 0, Merged: []Selenium{lower}, Source: source,
+		})
+		if err == nil || !errors.Is(err, ErrVDIIdentityMismatch) {
+			t.Fatalf("case-variant sslmode error = %v, want ErrVDIIdentityMismatch", err)
+		}
+	})
+	t.Run("A7c equivalent launcher scheme is accepted", func(t *testing.T) {
+		merged := leased
+		merged.SSLMode = "disable"
+		selection, err := resolveTestSelection(t, leased, []Selenium{merged}, source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if selection.Browser.SSLMode != leased.SSLMode {
+			t.Fatalf("effective sslmode = %q, want lease %q", selection.Browser.SSLMode, leased.SSLMode)
+		}
+	})
+	t.Run("A8 browser type change", func(t *testing.T) {
+		merged := leased
+		merged.Type = "firefox"
+		assertConflict(t, merged, "type")
+	})
+	t.Run("A9 equivalent identity spellings", func(t *testing.T) {
+		merged := leased
+		merged.Name = " VDI-1 "
+		merged.Host = " SELENIUM-VDI-1 "
+		merged.Type = "CHROME"
+		merged.SSLMode = "disable"
+		selection, err := resolveTestSelection(t, leased, []Selenium{merged}, source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if selection.Browser.Name != leased.Name || selection.Browser.Host != leased.Host ||
+			selection.Browser.Port != leased.Port || selection.Browser.Type != leased.Type ||
+			selection.Browser.SSLMode != leased.SSLMode {
+			t.Fatalf("effective browser was not canonicalized to the lease: %+v", selection.Browser)
+		}
+	})
+	t.Run("A10 correct positional binding", func(t *testing.T) {
+		other := testVDI("vdi-2", "http://127.0.0.1:8082", StickySessionConfig{})
+		selection, err := ResolveEffectiveVDI(EffectiveVDIInput{
+			Leased: leased, LeasedIndex: 0, Merged: []Selenium{leased, other}, Source: source,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if selection.Browser.Name != leased.Name {
+			t.Fatalf("selection used %q", selection.Browser.Name)
+		}
+		if selection.LeasedIndex != 0 {
+			t.Fatalf("selection index = %d, want 0", selection.LeasedIndex)
+		}
+	})
+	t.Run("A11 wrong authoritative index does not fall back by name", func(t *testing.T) {
+		other := testVDI("vdi-2", "http://127.0.0.1:8082", StickySessionConfig{})
+		_, err := ResolveEffectiveVDI(EffectiveVDIInput{
+			Leased: leased, LeasedIndex: 0, Merged: []Selenium{other, leased}, Source: source,
+		})
+		if err == nil {
+			t.Fatal("wrong pool index was silently remapped to another VDI entry")
+		}
+		if !strings.Contains(err.Error(), "name") {
+			t.Fatalf("error = %v, want identity/name conflict", err)
+		}
+	})
+	t.Run("A12 out-of-range index", func(t *testing.T) {
+		_, err := ResolveEffectiveVDI(EffectiveVDIInput{
+			Leased: leased, LeasedIndex: 2, Merged: []Selenium{leased}, Source: source,
+		})
+		if err == nil {
+			t.Fatal("out-of-range index was accepted")
+		}
+	})
+	t.Run("A12b other negative index", func(t *testing.T) {
+		_, err := ResolveEffectiveVDI(EffectiveVDIInput{
+			Leased: leased, LeasedIndex: -2, Merged: []Selenium{leased}, Source: source,
+		})
+		if err == nil {
+			t.Fatal("leased index -2 was accepted")
+		}
+		if errors.Is(err, ErrVDIIdentityMismatch) {
+			t.Fatalf("index validation error was misclassified as an identity mismatch: %v", err)
+		}
+	})
+	t.Run("A13 unique name fallback without an index", func(t *testing.T) {
+		selection, err := ResolveEffectiveVDI(EffectiveVDIInput{
+			Leased: leased, LeasedIndex: -1, Merged: []Selenium{leased}, Source: source,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if selection.Browser.Name != leased.Name {
+			t.Fatalf("selection used %q", selection.Browser.Name)
+		}
+	})
+	t.Run("A13b unique-name fallback still validates identity", func(t *testing.T) {
+		merged := leased
+		merged.Host = "attacker-selenium"
+		_, err := ResolveEffectiveVDI(EffectiveVDIInput{
+			Leased: leased, LeasedIndex: -1, Merged: []Selenium{merged}, Source: source,
+		})
+		if err == nil || !errors.Is(err, ErrVDIIdentityMismatch) {
+			t.Fatalf("fallback identity mismatch error = %v, want ErrVDIIdentityMismatch", err)
+		}
+		if !strings.Contains(err.Error(), "custom.vdi[0]") {
+			t.Fatalf("error %v does not identify the resolved source index", err)
+		}
+	})
+	t.Run("A14 missing or duplicate name without an index", func(t *testing.T) {
+		other := testVDI("vdi-2", "http://127.0.0.1:8082", StickySessionConfig{})
+		if _, err := ResolveEffectiveVDI(EffectiveVDIInput{
+			Leased: leased, LeasedIndex: -1, Merged: []Selenium{other}, Source: source,
+		}); err == nil {
+			t.Fatal("missing VDI name was accepted")
+		}
+		duplicate := leased
+		if _, err := ResolveEffectiveVDI(EffectiveVDIInput{
+			Leased: leased, LeasedIndex: -1, Merged: []Selenium{leased, duplicate}, Source: source,
+		}); err == nil {
+			t.Fatal("duplicate VDI name was accepted as a unique fallback")
+		}
+	})
+	t.Run("A14b legacy non-identity fields stay mergeable", func(t *testing.T) {
+		merged := leased
+		merged.ServiceType = "hub"
+		merged.Path = "/legacy/driver"
+		merged.DriverPath = "/legacy/driver/bin"
+		merged.UseService = true
+		selection, err := resolveTestSelection(t, leased, []Selenium{merged}, source)
+		if err != nil {
+			t.Fatalf("legacy non-identity overrides rejected: %v", err)
+		}
+		if selection.Browser.Host != leased.Host || selection.Browser.Port != leased.Port ||
+			selection.Browser.Type != leased.Type || selection.Browser.Name != leased.Name {
+			t.Fatalf("legacy fields altered identity: %+v", selection.Browser)
+		}
+	})
+	t.Run("A15 VDI B override does not affect leased VDI A", func(t *testing.T) {
+		first := testVDI("vdi-1", "http://127.0.0.1:8080", StickySessionConfig{})
+		second := testVDI("vdi-2", "http://127.0.0.1:8082", StickySessionConfig{})
+		mergedSecond := second
+		mergedSecond.Host = "other-selenium"
+		selection, err := ResolveEffectiveVDI(EffectiveVDIInput{
+			Leased: first, LeasedIndex: 0,
+			Merged: []Selenium{first, mergedSecond},
+			Source: SourceConfig{Custom: map[string]interface{}{
+				"vdi": []interface{}{map[string]interface{}{}, map[string]interface{}{"host": "other-selenium"}},
+			}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if selection.Browser.Name != first.Name || selection.Browser.Host != first.Host {
+			t.Fatalf("VDI A was affected by VDI B override: %+v", selection.Browser)
+		}
+	})
+}
+
+func TestValidateSourceVDIIdentityOverrides(t *testing.T) {
+	first := testVDI("vdi-1", "http://127.0.0.1:8080", StickySessionConfig{})
+	second := testVDI("vdi-2", "http://127.0.0.1:8082", StickySessionConfig{})
+	conf := Config{Selenium: []Selenium{first, second}}
+
+	entry := func(values map[string]interface{}) SourceConfig {
+		return SourceConfig{Custom: map[string]interface{}{
+			"vdi": []interface{}{map[string]interface{}{}, values},
+		}}
+	}
+
+	if err := conf.ValidateSourceVDIIdentityOverrides(entry(map[string]interface{}{
+		"host": " SELENIUM-VDI-2 ", "port": float64(4444), "type": "CHROME",
+	})); err != nil {
+		t.Fatalf("equivalent second-position identity rejected: %v", err)
+	}
+	for _, tc := range []struct {
+		name  string
+		value map[string]interface{}
+	}{
+		{"host", map[string]interface{}{"host": "attacker-selenium"}},
+		{"port", map[string]interface{}{"port": float64(5555)}},
+		{"type", map[string]interface{}{"type": "firefox"}},
+		{"sslmode", map[string]interface{}{"sslmode": "enable"}},
+	} {
+		if err := conf.ValidateSourceVDIIdentityOverrides(entry(tc.value)); err == nil {
+			t.Fatalf("second-position %s mismatch was accepted", tc.name)
+		}
+	}
+	outOfRange := SourceConfig{Custom: map[string]interface{}{
+		"vdi": []interface{}{map[string]interface{}{}, map[string]interface{}{}, map[string]interface{}{"host": "ignored"}},
+	}}
+	if err := conf.ValidateSourceVDIIdentityOverrides(outOfRange); err != nil {
+		t.Fatalf("entry beyond the configured VDI list should be ignored: %v", err)
 	}
 }

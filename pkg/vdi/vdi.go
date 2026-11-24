@@ -585,12 +585,7 @@ func NewVDIService(c cfg.Selenium) (*Service, error) {
 		c.Host = "selenium"
 	}
 
-	var protocol string
-	if c.SSLMode == cmn.EnableStr {
-		protocol = cmn.HTTPSStr
-	} else {
-		protocol = cmn.HTTPStr
-	}
+	protocol := cfg.SeleniumEndpointScheme(c.SSLMode)
 
 	var err error
 	var retries int
@@ -1520,12 +1515,7 @@ func ConnectVDI(ctx ProcessContextInterface, sel SeleniumInstance, browseType in
 	logSel["browser"] = all
 	caps.AddLogging(logSel)
 
-	var protocol string
-	if sel.Config.SSLMode == cmn.EnableStr {
-		protocol = cmn.HTTPSStr
-	} else {
-		protocol = cmn.HTTPStr
-	}
+	protocol := cfg.SeleniumEndpointScheme(sel.Config.SSLMode)
 
 	if strings.TrimSpace(sel.Config.Host) == "" {
 		sel.Config.Host = "crowler-vdi-1"

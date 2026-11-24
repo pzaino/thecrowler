@@ -540,3 +540,38 @@ func TestCDPRotatorDebug5DoesNotLogSecrets(t *testing.T) {
 		t.Fatalf("Debug5 log leaked credentials: %s", buf.String())
 	}
 }
+
+func TestSeleniumEndpointSchemeMatchesLauncherForCDPBaseURL(t *testing.T) {
+	// The real browser and the disposable CDP management browser must make the
+	// same HTTP/HTTPS decision for the leased endpoint. The launcher uses an
+	// exact, untrimmed comparison, so these cases pin that behavior.
+	cases := []struct {
+		sslMode string
+		want    string
+	}{
+		{"", cmn.HTTPStr},
+		{"disable", cmn.HTTPStr},
+		{"DISABLE", cmn.HTTPStr},
+		{"ENABLE", cmn.HTTPStr},
+		{" enable ", cmn.HTTPStr},
+		{"enable", cmn.HTTPSStr},
+	}
+	for _, tc := range cases {
+		t.Run(tc.sslMode, func(t *testing.T) {
+			if got := cfg.SeleniumEndpointScheme(tc.sslMode); got != tc.want {
+				t.Fatalf("SeleniumEndpointScheme(%q) = %q, want %q", tc.sslMode, got, tc.want)
+			}
+			sel := SeleniumInstance{Config: cfg.Selenium{
+				Name: "vdi-1", Type: "chrome", Host: "selenium-vdi1", Port: 4444, SSLMode: tc.sslMode,
+			}}
+			baseURL, err := seleniumBaseURL(sel)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantURL := tc.want + "://selenium-vdi1:4444/wd/hub"
+			if baseURL != wantURL {
+				t.Fatalf("seleniumBaseURL(%q) = %q, want %q", tc.sslMode, baseURL, wantURL)
+			}
+		})
+	}
+}

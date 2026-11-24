@@ -102,6 +102,47 @@ func validateStickySourceBoundary(sticky bool, protocol SourceProtocol, crawling
 	return nil
 }
 
+// resolveNonWebSourceSession applies the ordinary proxy decision for a
+// non-web source that can create a browser for follow-on work (email web
+// links). Network-only sources never launch a browser, so their historical
+// path is unchanged and source VDI proxy/identity fields cannot affect network
+// collection. Only an identity mismatch is fatal; other proxy-resolution
+// failures keep the historical VDI-default fallback.
+func (ctx *ProcessContext) resolveNonWebSourceSession(
+	protocol SourceProtocol,
+	sel vdi.SeleniumInstance,
+	sourceCfg cfg.SourceConfig,
+	raw json.RawMessage,
+) error {
+	if protocol != SourceProtocolEmail {
+		return nil
+	}
+	selection := cfg.EffectiveVDIInput{
+		Leased:      sel.Config,
+		LeasedIndex: ctx.SelID,
+		Merged:      ctx.config.Selenium,
+		Source:      sourceCfg,
+		Raw:         raw,
+	}
+	resolution, err := cfg.ResolveSourceProxy(selection)
+	if err == nil {
+		ctx.SetEffectiveProxy(resolution.URL, string(resolution.Source))
+		return nil
+	}
+	if errors.Is(err, cfg.ErrVDIIdentityMismatch) {
+		return err
+	}
+	cmn.DebugMsg(cmn.DbgLvlWarn,
+		"resolving non-sticky source proxy for non-web source: %v", err)
+	nonWebProxy := strings.TrimSpace(sel.Config.ProxyURL)
+	nonWebSource := cfg.ProxySourceVDI
+	if nonWebProxy == "" {
+		nonWebSource = cfg.ProxySourceDirect
+	}
+	ctx.SetEffectiveProxy(nonWebProxy, string(nonWebSource))
+	return nil
+}
+
 // startBrowserCrawl is the single source-start boundary. It resolves one
 // effective VDI/profile/proxy decision, performs at most one sticky-session
 // rotation, and only then invokes connect (the WebDriver session creation).
@@ -130,6 +171,19 @@ func (ctx *ProcessContext) startBrowserCrawl(
 		}
 		selection = &resolved
 		ctx.effectiveVDI = selection
+	}
+	if selection.LeasedIndex != ctx.SelID {
+		return fmt.Errorf(
+			"effective VDI index %d does not match the acquired VDI index %d (leased VDI %q)",
+			selection.LeasedIndex, ctx.SelID, sel.Config.Name)
+	}
+	if err := cfg.ValidateLeasedVDIIdentity(sel.Config, selection.Management); err != nil {
+		return fmt.Errorf("effective VDI %d (%q) does not match the acquired VDI instance: %w",
+			ctx.SelID, sel.Config.Name, err)
+	}
+	if err := cfg.ValidateLeasedVDIIdentity(selection.Management, selection.Browser); err != nil {
+		return fmt.Errorf("effective browser VDI %d (%q) does not match its management identity: %w",
+			ctx.SelID, sel.Config.Name, err)
 	}
 	effective := vdi.SeleniumInstance{Service: sel.Service, Config: selection.Browser}
 	management := vdi.SeleniumInstance{Service: sel.Service, Config: selection.Management}

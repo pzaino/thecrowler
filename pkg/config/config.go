@@ -2648,6 +2648,9 @@ func combineCrawlerCollectSettings(dstCfg *Crawler, srcCfg map[string]interface{
 // of panicking: source-supplied data must never crash the engine.
 // Valid entries merge exactly as before.
 func combineVDICfg(dstCfg *[]Selenium, srcCfgIface interface{}) {
+	// Legacy source VDI fields are merged so the runtime can validate them
+	// against the authoritative leased identity. Mergeability is not authority
+	// to redirect an acquired Selenium endpoint.
 	if dstCfg == nil {
 		return
 	}
@@ -2665,6 +2668,8 @@ func combineVDICfg(dstCfg *[]Selenium, srcCfgIface interface{}) {
 		}
 		if srcCfg["type"] != nil {
 			if val, ok := srcCfg["type"].(string); ok {
+				// Legacy merge: the runtime identity validator rejects a
+				// source value that changes the leased browser family.
 				(*dstCfg)[i].Type = val
 			}
 		}
@@ -2691,6 +2696,11 @@ func combineVDICfg(dstCfg *[]Selenium, srcCfgIface interface{}) {
 		if srcCfg["port"] != nil {
 			if val, ok := srcCfg["port"].(float64); ok { // Handle float64 to int conversion
 				(*dstCfg)[i].Port = int(val)
+			}
+		}
+		if srcCfg["sslmode"] != nil {
+			if val, ok := srcCfg["sslmode"].(string); ok {
+				(*dstCfg)[i].SSLMode = val
 			}
 		}
 		if srcCfg["proxy_url"] != nil {
