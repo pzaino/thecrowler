@@ -1,0 +1,33 @@
+{
+  "version": "1.0.0",
+  "format_version": "1.0.0",
+  "author": "TheCROWler",
+  "description": "Example source that selects a complete operator-approved sticky profile through custom.vdi. The VDI may have no global sticky default; the exact profile must be present in vdi[].approved_sticky_profiles. Source documents never contain token values.",
+  "source_name": "Example source-specific sticky profile",
+  "crawling_config": {
+    "site": "https://example.org/",
+    "source_type": "website"
+  },
+  "custom": {
+    "created_by": "operator-example",
+    "vdi": [
+      {
+        "proxy_url": "http://microproxy-vdi1:8091",
+        "sticky_session": {
+          "proxy_url": "http://microproxy-vdi1:8091",
+          "api_url": "http://microproxy-vdi1:8095",
+          "vdi_api_url": "http://127.0.0.1:8095",
+          "token_env": "MICROPROXY_VDI1_ALT_SESSION_API_KEY",
+          "provider": "residential-sticky-alt"
+        }
+      }
+    ]
+  },
+  "rule_parameters": {
+    "crawling": {
+      "browsing_mode": "recursive",
+      "max_depth": 1,
+      "max_links": 10
+    }
+  }
+}

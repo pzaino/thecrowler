@@ -1629,46 +1629,27 @@ func (c *Config) validateVDIProxyURL(selenium *Selenium) {
 
 // validateVDIStickySession enforces the trusted per-VDI sticky-session
 // profile contract. An absent profile is valid; a present profile must be
-// complete and unambiguous. All fields are operator configuration and can
-// never be supplied by a source document.
+// complete and unambiguous. The default profile and every approved profile
+// are operator configuration. A source may reference an approved profile but
+// can never extend or redirect the trusted control parameters.
 func (c *Config) validateVDIStickySession(selenium *Selenium) error {
-	profile := &selenium.StickySession
-	profile.ProxyURL = strings.TrimSpace(profile.ProxyURL)
-	profile.APIURL = strings.TrimSpace(profile.APIURL)
-	profile.VDIAPIURL = strings.TrimSpace(profile.VDIAPIURL)
-	profile.TokenEnv = strings.TrimSpace(profile.TokenEnv)
-	profile.Provider = strings.TrimSpace(profile.Provider)
-
-	if profile.IsEmpty() {
-		return nil
-	}
-	if !profile.Configured() {
-		return fmt.Errorf("sticky_session requires proxy_url, api_url, token_env and provider together")
-	}
-	proxyURL, err := NormalizeStickySessionURL(profile.ProxyURL)
+	profile, err := NormalizeStickySessionProfile(selenium.StickySession, true)
 	if err != nil {
-		return fmt.Errorf("sticky_session.proxy_url: %w", err)
+		return err
 	}
-	apiURL, err := NormalizeStickyAPIURL(profile.APIURL)
-	if err != nil {
-		return fmt.Errorf("sticky_session.api_url: %w", err)
-	}
-	vdiAPIURL := ""
-	if profile.VDIAPIURL != "" {
-		vdiAPIURL, err = NormalizeStickyAPIURL(profile.VDIAPIURL)
+	selenium.StickySession = profile
+	additional := make([]StickySessionConfig, 0, len(selenium.ApprovedStickyProfiles))
+	for i, raw := range selenium.ApprovedStickyProfiles {
+		approved, err := NormalizeStickySessionProfile(raw, false)
 		if err != nil {
-			return fmt.Errorf("sticky_session.vdi_api_url: %w", err)
+			return fmt.Errorf("approved_sticky_profiles[%d]: %w", i, err)
 		}
+		additional = append(additional, approved)
 	}
-	if !validEnvironmentVariableName(profile.TokenEnv) {
-		return fmt.Errorf("sticky_session.token_env must be a valid environment variable name")
+	selenium.ApprovedStickyProfiles = additional
+	if _, err := ApprovedStickyProfiles(*selenium); err != nil {
+		return err
 	}
-	if strings.ContainsAny(profile.Provider, " \t\r\n") {
-		return fmt.Errorf("sticky_session.provider must not contain whitespace")
-	}
-	profile.ProxyURL = proxyURL
-	profile.APIURL = apiURL
-	profile.VDIAPIURL = vdiAPIURL
 	return nil
 }
 
@@ -2367,6 +2348,13 @@ func (hc *HTTPConfig) IsEmpty() bool {
 
 // CombineConfig combine the given config with a custom one provided as raw JSON message.
 func CombineConfig(dstConfig Config, srcConfig json.RawMessage) (Config, error) {
+	// Validate the session-boundary subtree before the general merge. This
+	// makes a malformed custom.vdi[].sticky_session fail closed instead of
+	// being hidden by the legacy log-and-continue merge path.
+	if _, err := DecodeSourceSessionConfig(srcConfig); err != nil {
+		return dstConfig, err
+	}
+
 	// Parse the provided JSON message
 	var srcCfg SourceConfig
 	err := json.Unmarshal(srcConfig, &srcCfg)
@@ -2403,6 +2391,10 @@ func CombineConfigs(dstConfig Config, srcConfig SourceConfig) Config {
 		// shared with the caller and a source override could rewrite another
 		// source's (or the process's) VDI defaults.
 		dstConfig.Selenium = append([]Selenium(nil), dstConfig.Selenium...)
+		for i := range dstConfig.Selenium {
+			dstConfig.Selenium[i].ApprovedStickyProfiles = append(
+				[]StickySessionConfig(nil), dstConfig.Selenium[i].ApprovedStickyProfiles...)
+		}
 		combineVDICfg(&dstConfig.Selenium, srcConfig.Custom["vdi"])
 	}
 
@@ -2704,6 +2696,13 @@ func combineVDICfg(dstCfg *[]Selenium, srcCfgIface interface{}) {
 		if srcCfg["proxy_url"] != nil {
 			if val, ok := srcCfg["proxy_url"].(string); ok {
 				(*dstCfg)[i].ProxyURL = val
+			}
+		}
+		// A present source profile replaces the effective profile for this
+		// source. It never modifies the operator allowlist or any other VDI.
+		if rawSticky, present := srcCfg["sticky_session"]; present {
+			if profile, err := decodeStickySessionObject(rawSticky); err == nil {
+				(*dstCfg)[i].StickySession = profile
 			}
 		}
 	}
@@ -3088,6 +3087,10 @@ func DeepCopyConfig(src *Config) *Config {
 	// Deep copy the Selenium slice
 	copyConfig.Selenium = make([]Selenium, len(src.Selenium))
 	copy(copyConfig.Selenium, src.Selenium)
+	for i := range copyConfig.Selenium {
+		copyConfig.Selenium[i].ApprovedStickyProfiles = append(
+			[]StickySessionConfig(nil), src.Selenium[i].ApprovedStickyProfiles...)
+	}
 
 	// Deep copy ImageStorageAPI (struct can be copied directly)
 	copyConfig.ImageStorageAPI = src.ImageStorageAPI

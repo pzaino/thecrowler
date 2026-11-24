@@ -941,8 +941,8 @@ func getDefaultConfig() cfg.SourceConfig {
 }
 */
 
-func validateAndReformatConfig(config *cfg.SourceConfig) error {
-	configJSON, err := json.Marshal(config)
+func validateAndReformatConfig(sourceConfig *cfg.SourceConfig) error {
+	configJSON, err := json.Marshal(sourceConfig)
 	if err != nil {
 		return fmt.Errorf("%w: failed to marshal config to JSON: %v", errInvalidSourceConfig, err)
 	}
@@ -957,14 +957,17 @@ func validateAndReformatConfig(config *cfg.SourceConfig) error {
 		return fmt.Errorf("%w: failed to marshal Config field: %v", errInvalidSourceConfig, err)
 	}
 
-	if err := json.Unmarshal(configJSONChecked, config); err != nil {
+	if err := json.Unmarshal(configJSONChecked, sourceConfig); err != nil {
 		return fmt.Errorf("%w: failed to unmarshal validated JSON back to Config struct: %v", errInvalidSourceConfig, err)
 	}
 
-	if err := config.ValidateEmailSource(); err != nil {
+	if err := sourceConfig.ValidateEmailSource(); err != nil {
 		return fmt.Errorf("%w: %v", errInvalidSourceConfig, err)
 	}
-	if err := cfg.ValidateSourceProtocolOptions(*config); err != nil {
+	if err := cfg.ValidateSourceProtocolOptions(*sourceConfig); err != nil {
+		return fmt.Errorf("%w: %v", errInvalidSourceConfig, err)
+	}
+	if err := config.ValidateSourceStickyAuthorization(*sourceConfig); err != nil {
 		return fmt.Errorf("%w: %v", errInvalidSourceConfig, err)
 	}
 

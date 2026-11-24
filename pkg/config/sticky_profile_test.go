@@ -141,6 +141,112 @@ vdi:
 	}
 }
 
+func TestStickySessionApprovedProfiles(t *testing.T) {
+	cfg, err := ParseConfig([]byte(`
+vdi:
+  - name: vdi-1
+    type: chrome
+    host: selenium-vdi1
+    port: 4444
+    proxy_url: "http://127.0.0.1:8080"
+    approved_sticky_profiles:
+      - proxy_url: "http://127.0.0.1:8081"
+        api_url: "http://microproxy-vdi1:8094"
+        vdi_api_url: "http://127.0.0.1:8094"
+        token_env: MICROPROXY_A_TOKEN
+        provider: provider-a
+      - proxy_url: "http://127.0.0.1:8082"
+        api_url: "http://microproxy-vdi1:8095"
+        token_env: MICROPROXY_B_TOKEN
+        provider: provider-b
+`))
+	if err != nil {
+		t.Fatalf("approved profiles rejected: %v", err)
+	}
+	if len(cfg.Selenium[0].ApprovedStickyProfiles) != 2 {
+		t.Fatalf("approved profiles = %+v", cfg.Selenium[0].ApprovedStickyProfiles)
+	}
+	if cfg.Selenium[0].ApprovedStickyProfiles[0].TokenEnv != "MICROPROXY_A_TOKEN" {
+		t.Fatalf("profile order/normalization changed: %+v", cfg.Selenium[0].ApprovedStickyProfiles)
+	}
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"incomplete", `
+vdi:
+  - name: vdi-1
+    type: chrome
+    host: selenium-vdi1
+    port: 4444
+    approved_sticky_profiles:
+      - proxy_url: "http://127.0.0.1:8081"
+        api_url: "http://microproxy-vdi1:8094"
+        token_env: KEY
+`},
+		{"duplicate listener", `
+vdi:
+  - name: vdi-1
+    type: chrome
+    host: selenium-vdi1
+    port: 4444
+    sticky_session:
+      proxy_url: "http://127.0.0.1:8081"
+      api_url: "http://microproxy-vdi1:8094"
+      token_env: KEY
+      provider: p
+    approved_sticky_profiles:
+      - proxy_url: "http://127.0.0.1:8081"
+        api_url: "http://microproxy-vdi1:8095"
+        token_env: OTHER_KEY
+        provider: q
+`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := ParseConfig([]byte(tc.body)); err == nil {
+				t.Fatal("invalid approved profile was accepted")
+			}
+		})
+	}
+}
+
+func TestStickySessionDefaultAndApprovedProfilesRemainDistinct(t *testing.T) {
+	cfg, err := ParseConfig([]byte(`
+vdi:
+  - name: vdi-1
+    type: chrome
+    host: selenium-vdi1
+    port: 4444
+    proxy_url: "http://127.0.0.1:8081"
+    sticky_session:
+      proxy_url: "http://127.0.0.1:8081"
+      api_url: "http://microproxy-vdi1:8094"
+      token_env: MICROPROXY_DEFAULT_TOKEN
+      provider: default-provider
+    approved_sticky_profiles:
+      - proxy_url: "http://127.0.0.1:8091"
+        api_url: "http://microproxy-vdi1:8095"
+        token_env: MICROPROXY_ALT_TOKEN
+        provider: alt-provider
+`))
+	if err != nil {
+		t.Fatalf("default plus approved profiles rejected: %v", err)
+	}
+	if len(cfg.Selenium[0].ApprovedStickyProfiles) != 1 {
+		t.Fatalf("approved allowlist absorbed the default: %+v", cfg.Selenium[0].ApprovedStickyProfiles)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("second validation rejected the config: %v", err)
+	}
+	profiles, err := ApprovedStickyProfiles(cfg.Selenium[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(profiles) != 2 {
+		t.Fatalf("effective profiles = %+v", profiles)
+	}
+}
+
 func TestStickySessionSchemaContract(t *testing.T) {
 	schemaData, err := os.ReadFile("../../schemas/crowler-config-schema.json")
 	if err != nil {
@@ -198,5 +304,40 @@ func TestStickySessionSchemaContract(t *testing.T) {
 				t.Fatal("invalid profile passed schema validation")
 			}
 		})
+	}
+}
+
+func TestApprovedStickyProfilesSchemaContract(t *testing.T) {
+	schemaData, err := os.ReadFile("../../schemas/crowler-config-schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document struct {
+		Properties map[string]struct {
+			Items struct {
+				Properties map[string]json.RawMessage `json:"properties"`
+			} `json:"items"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(schemaData, &document); err != nil {
+		t.Fatal(err)
+	}
+	raw := document.Properties["vdi"].Items.Properties["approved_sticky_profiles"]
+	if len(raw) == 0 {
+		t.Fatal("vdi[].approved_sticky_profiles schema missing")
+	}
+	schema := &jsonschema.Schema{}
+	if err := schema.UnmarshalJSON(raw); err != nil {
+		t.Fatal(err)
+	}
+	valid := `[{"proxy_url":"http://127.0.0.1:8091","api_url":"http://microproxy-vdi1:8095","vdi_api_url":"http://127.0.0.1:8095","token_env":"MICROPROXY_ALT_KEY","provider":"alt"}]`
+	if issues, err := schema.ValidateBytes(context.Background(), []byte(valid)); err != nil || len(issues) != 0 {
+		t.Fatalf("valid approved profile rejected: %v %v", issues, err)
+	}
+	invalid := `[{"proxy_url":"http://127.0.0.1:8091","api_url":"http://microproxy-vdi1:8095","token_env":"MICROPROXY_ALT_KEY","provider":"alt","token":"secret"}]`
+	if issues, err := schema.ValidateBytes(context.Background(), []byte(invalid)); err != nil {
+		t.Fatalf("schema validation error: %v", err)
+	} else if len(issues) == 0 {
+		t.Fatal("approved profile with token value passed schema validation")
 	}
 }

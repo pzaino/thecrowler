@@ -53,7 +53,7 @@ func TestCrawlingConfigStickySessionStrictBoolean(t *testing.T) {
 
 func TestDecodeSourceConfigStoredDocumentRoundTrip(t *testing.T) {
 	raw := json.RawMessage(`{
-		"version":"1.0",
+		"version":"1.0.0",
 		"format_version":"1.0.0",
 		"source_name":"sticky",
 		"crawling_config":{
@@ -95,7 +95,7 @@ func TestDecodeSourceConfigStoredDocumentRoundTrip(t *testing.T) {
 
 func TestDecodeSourceSessionConfigIsIndependentOfUnrelatedFields(t *testing.T) {
 	raw := json.RawMessage(`{
-		"version":"1.0",
+		"version":"1.0.0",
 		"format_version":"1.0.0",
 		"source_name":"sticky",
 		"created_at":"not-a-timestamp",
@@ -199,5 +199,56 @@ func TestSourceSchemaSupportsStickySessionAndProxy(t *testing.T) {
 	}
 	if issues, err := proxySchema.ValidateBytes(context.Background(), []byte(fmt.Sprintf("%q", "http://microproxy-vdi1:8081"))); err != nil || len(issues) != 0 {
 		t.Fatalf("valid proxy rejected: err=%v issues=%v", err, issues)
+	}
+}
+
+func TestSourceSchemaValidatesCustomVDIStickyProfile(t *testing.T) {
+	schemaData, err := os.ReadFile("../../schemas/crowler-source-config-schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := &jsonschema.Schema{}
+	if err := schema.UnmarshalJSON(schemaData); err != nil {
+		t.Fatal(err)
+	}
+	valid := `{
+		"version":"1.0.0",
+		"format_version":"1.0.0",
+		"source_name":"custom-sticky",
+		"crawling_config":{"site":"https://example.test/","source_type":"website"},
+		"custom":{"vdi":[{"proxy_url":"http://microproxy-vdi1:8091","sticky_session":{
+			"proxy_url":"http://microproxy-vdi1:8091",
+			"api_url":"http://microproxy-vdi1:8095",
+			"vdi_api_url":"http://127.0.0.1:8095",
+			"token_env":"MICROPROXY_VDI1_ALT_SESSION_API_KEY",
+			"provider":"residential-sticky-alt"
+		}}]}
+	}`
+	issues, err := schema.ValidateBytes(context.Background(), []byte(valid))
+	if err != nil {
+		t.Fatalf("schema validation error: %v", err)
+	}
+	if len(issues) != 0 {
+		t.Fatalf("valid custom sticky source rejected: %v", issues)
+	}
+	invalid := `{
+		"version":"1.0.0",
+		"format_version":"1.0.0",
+		"source_name":"custom-sticky",
+		"crawling_config":{"site":"https://example.test/","source_type":"website"},
+		"custom":{"vdi":[{"sticky_session":{
+			"proxy_url":"http://microproxy-vdi1:8091",
+			"api_url":"http://microproxy-vdi1:8095",
+			"token_env":"MICROPROXY_VDI1_ALT_SESSION_API_KEY",
+			"provider":"p",
+			"token":"secret"
+		}}]}
+	}`
+	issues, err = schema.ValidateBytes(context.Background(), []byte(invalid))
+	if err != nil {
+		t.Fatalf("schema validation error: %v", err)
+	}
+	if len(issues) == 0 {
+		t.Fatal("custom sticky profile with token value passed schema validation")
 	}
 }

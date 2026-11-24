@@ -1185,16 +1185,6 @@ func resolveSessionProxy(ctx ProcessContextInterface, pConfig *cfg.Config, sel S
 	if pConfig == nil {
 		return "", "", fmt.Errorf("resolving browser proxy: process configuration is nil")
 	}
-	var sourceProxy string
-	var sourceProxyOK bool
-	if rawSource := ctx.GetSource(); rawSource != nil && rawSource.Config != nil && len(bytes.TrimSpace(*rawSource.Config)) != 0 {
-		var sourceConfig map[string]interface{}
-		if err := json.Unmarshal(*rawSource.Config, &sourceConfig); err == nil {
-			if val, ok := sourceConfig["proxy_url"].(string); ok {
-				sourceProxy, sourceProxyOK = val, true
-			}
-		}
-	}
 	effectiveProxy := ""
 	proxyProvenance := ""
 	if provider, ok := ctx.(EffectiveProxyProvider); ok {
@@ -1203,44 +1193,51 @@ func resolveSessionProxy(ctx ProcessContextInterface, pConfig *cfg.Config, sel S
 		}
 	}
 	if proxyProvenance == "" {
-		canonicalProxy := ""
-		customProxy := ""
-		customProxyPresent := false
-		// Defense in depth: a sticky source must not reach browser creation
-		// through a caller that skipped the source-start rotation boundary.
-		if rawSource := ctx.GetSource(); rawSource != nil && rawSource.Config != nil && len(bytes.TrimSpace(*rawSource.Config)) != 0 {
-			sessionCfg, sessionErr := cfg.DecodeSourceSessionConfig(*rawSource.Config)
-			if sessionErr != nil {
-				return "", "", fmt.Errorf("decoding source configuration before browser launch: %w", sessionErr)
+		if ctx.GetSource() == nil {
+			// Application-owned browser sessions (for example Information Seed
+			// browser providers) are not Source crawls and have no source-start
+			// rotation boundary. Preserve their historical VDI-default proxy
+			// behavior.
+			effectiveProxy = sel.Config.ProxyURL
+			if effectiveProxy == "" {
+				proxyProvenance = string(cfg.ProxySourceDirect)
+			} else {
+				proxyProvenance = string(cfg.ProxySourceVDI)
 			}
-			if sessionCfg.CrawlingConfig.StickySession != nil && *sessionCfg.CrawlingConfig.StickySession {
+		} else {
+			var sourceCfg cfg.SourceConfig
+			var rawSourceDoc json.RawMessage
+			if rawSource := ctx.GetSource(); rawSource.Config != nil && len(bytes.TrimSpace(*rawSource.Config)) != 0 {
+				rawSourceDoc = *rawSource.Config
+				sessionCfg, sessionErr := cfg.DecodeSourceSessionConfig(rawSourceDoc)
+				if sessionErr != nil {
+					return "", "", fmt.Errorf("decoding source configuration before browser launch: %w", sessionErr)
+				}
+				sourceCfg.CrawlingConfig = sessionCfg.CrawlingConfig
+				sourceCfg.Custom = sessionCfg.Custom
+			}
+			// Defense in depth: a sticky selection must not reach browser
+			// creation through a caller that skipped the source-start rotation
+			// boundary. This resolves the same effective VDI/profile/proxy
+			// decision, so a global sticky default, a standby opt-in or an
+			// approved custom profile cannot be silently browsed without
+			// rotation.
+			selection, selectionErr := cfg.ResolveEffectiveVDI(cfg.EffectiveVDIInput{
+				Leased:      sel.Config,
+				LeasedIndex: -1,
+				Merged:      pConfig.Selenium,
+				Source:      sourceCfg,
+				Raw:         rawSourceDoc,
+			})
+			if selectionErr != nil {
+				return "", "", fmt.Errorf("resolving effective VDI before browser launch: %w", selectionErr)
+			}
+			if selection.Sticky {
 				return "", "", fmt.Errorf("sticky_session source requires the source-start rotation boundary")
 			}
-			canonicalProxy = sessionCfg.CrawlingConfig.Proxy
-			if sourceCustom, ok := cfg.SourceCustomVDIProxy(cfg.SourceConfig{
-				CrawlingConfig: sessionCfg.CrawlingConfig,
-				Custom:         sessionCfg.Custom,
-			}, pConfig.Selenium, sel.Config.Name); ok {
-				customProxy = sourceCustom
-				customProxyPresent = true
-			}
+			effectiveProxy = selection.Proxy.URL
+			proxyProvenance = string(selection.Proxy.Source)
 		}
-		// Fallback for callers that do not run the source-start hook (for
-		// example the application-owned browser session helper). The shared
-		// resolver preserves the legacy precedence and sentinels.
-		resolution, resolveErr := cfg.ResolveEffectiveProxy(cfg.EffectiveProxyInput{
-			SourceProxy:        canonicalProxy,
-			LegacyProxy:        sourceProxy,
-			LegacyProxyPresent: sourceProxyOK,
-			CustomProxy:        customProxy,
-			CustomProxyPresent: customProxyPresent,
-			VDIProxy:           sel.Config.ProxyURL,
-		})
-		if resolveErr != nil {
-			return "", "", fmt.Errorf("resolving browser proxy: %w", resolveErr)
-		}
-		effectiveProxy = resolution.URL
-		proxyProvenance = string(resolution.Source)
 	}
 	if err := cfg.ValidateBrowserProxyCompatibility(sel.Config.Type, effectiveProxy); err != nil {
 		return "", "", err

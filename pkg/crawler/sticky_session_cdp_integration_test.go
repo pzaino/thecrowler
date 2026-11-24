@@ -9,6 +9,7 @@ package crawler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -64,7 +65,7 @@ func integrationRotationContext(sel vdi.SeleniumInstance, apiURL, vdiAPIURL stri
 		crawlCtx:          crawlCtx,
 		crawlCancel:       crawlCancel,
 		stickyRotator:     proxycontrol.NewRotator(),
-		stickyCDPRotator:  vdi.NewCDPStickyRotator(sel),
+		stickyCDPRotator:  &recordingRealCDPRotator{inner: vdi.NewCDPStickyRotator(sel)},
 		stickyGetenv:      func(string) string { return "e2e-token" },
 		stickyKeyGenerate: func() (string, error) { return "e2e-fallback-key", nil },
 	}, sel
@@ -141,5 +142,99 @@ func TestStickyCDPBothTransportsInaccessibleIntegration(t *testing.T) {
 	}
 	if elapsed := time.Since(started); elapsed > 2*time.Minute {
 		t.Fatalf("both-transports failure exceeded the rotation budget: %v", elapsed)
+	}
+}
+
+type recordingRealCDPRotator struct {
+	inner    *vdi.CDPStickyRotator
+	response proxycontrol.RotateResponse
+}
+
+func (r *recordingRealCDPRotator) Rotate(ctx context.Context, apiURL string, request proxycontrol.RotateRequest) (proxycontrol.RotateResponse, error) {
+	response, err := r.inner.Rotate(ctx, apiURL, request)
+	r.response = response
+	return response, err
+}
+
+func TestStickyCDPGlobalDefaultAndNonStickyIntegration(t *testing.T) {
+	if os.Getenv("THECROWLER_E2E_WEBDRIVER") != "1" {
+		t.Skip("set THECROWLER_E2E_WEBDRIVER=1 to run the global sticky default test")
+	}
+	apiURL := strings.TrimSpace(os.Getenv("THECROWLER_E2E_CDP_API_URL"))
+	if apiURL == "" {
+		t.Skip("set THECROWLER_E2E_CDP_API_URL to a fixture inside the VDI namespace")
+	}
+	expectedGeneration := int64(1)
+	if raw := strings.TrimSpace(os.Getenv("THECROWLER_E2E_CDP_EXPECTED_GENERATION")); raw != "" {
+		value, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || value < 1 {
+			t.Fatalf("THECROWLER_E2E_CDP_EXPECTED_GENERATION must be a positive integer")
+		}
+		expectedGeneration = value
+	}
+
+	sel := integrationSeleniumInstance(t)
+	profile := cfg.StickySessionConfig{
+		ProxyURL:  "http://127.0.0.1:8081",
+		APIURL:    apiURL,
+		VDIAPIURL: apiURL,
+		TokenEnv:  "CROWLER_E2E_STICKY_TOKEN",
+		Provider:  "e2e-provider",
+	}
+	sel.Config.StickySession = profile
+	sel.Config.ProxyURL = profile.ProxyURL
+
+	crawlCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx := &ProcessContext{
+		source:            &cdb.Source{ID: 1, URL: "https://example.test/"},
+		config:            cfg.Config{Selenium: []cfg.Selenium{sel.Config}},
+		crawlCtx:          crawlCtx,
+		crawlCancel:       cancel,
+		stickyRotator:     &recordingRotator{err: errors.New("engine-direct fallback must not run")},
+		stickyCDPRotator:  &recordingRealCDPRotator{inner: vdi.NewCDPStickyRotator(sel)},
+		stickyGetenv:      func(string) string { return "e2e-token" },
+		stickyKeyGenerate: func() (string, error) { return "e2e-idempotency-key", nil },
+	}
+	connected := false
+	if err := ctx.startBrowserCrawl(sel, cfg.SourceConfig{}, nil, func() error {
+		connected = true
+		return nil
+	}); err != nil {
+		t.Fatalf("global sticky default source: %v", err)
+	}
+	if !connected {
+		t.Fatal("global sticky default did not connect the source browser")
+	}
+	if ctx.SelInstance.Config.StickySession.Provider != "e2e-provider" {
+		t.Fatalf("effective profile = %+v", ctx.SelInstance.Config.StickySession)
+	}
+	if cdp, ok := ctx.stickyCDPRotator.(*recordingRealCDPRotator); !ok || cdp.response.Generation != expectedGeneration {
+		t.Fatalf("CDP response = %+v, want generation %d", cdp, expectedGeneration)
+	}
+
+	// A second source on the same VDI config selects a conventional proxy. It
+	// must not inherit the first source's sticky profile or rotate.
+	secondCtx := &ProcessContext{
+		source:      &cdb.Source{ID: 2, URL: "https://example.test/other"},
+		config:      cfg.Config{Selenium: []cfg.Selenium{sel.Config}},
+		crawlCtx:    crawlCtx,
+		crawlCancel: cancel,
+		stickyRotator: &recordingRotator{
+			err: errors.New("non-sticky source must not rotate"),
+		},
+		stickyCDPRotator: vdi.NewCDPStickyRotator(sel),
+	}
+	source := cfg.SourceConfig{CrawlingConfig: cfg.CrawlingConfig{Proxy: "http://conventional-proxy:3128"}}
+	if err := secondCtx.startBrowserCrawl(sel, source, nil, func() error {
+		return nil
+	}); err != nil {
+		t.Fatalf("non-sticky source after sticky: %v", err)
+	}
+	if secondCtx.SelInstance.Config.StickySession != (cfg.StickySessionConfig{}) {
+		t.Fatalf("non-sticky source inherited profile: %+v", secondCtx.SelInstance.Config.StickySession)
+	}
+	if got, ok := secondCtx.GetEffectiveProxy(); !ok || got != "http://conventional-proxy:3128" {
+		t.Fatalf("non-sticky effective proxy = (%q,%t)", got, ok)
 	}
 }

@@ -167,13 +167,12 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 
 	// Combine default configuration with the source configuration. The
 	// browser-session boundary is decoded strictly before any protocol work:
-	// the sticky-session opt-in must never be silently lost because the stored
-	// JSON is malformed. The decoded subtree is also the provenance source for
-	// the canonical and custom.vdi proxy layers.
+	// the sticky decision must never be silently lost because the stored JSON
+	// is malformed. The decoded subtree is also the provenance source for the
+	// canonical and custom.vdi proxy layers.
 	var sourceCfg cfg.SourceConfig
 	var sourceRaw json.RawMessage
 	var sourceCfgErr error
-	sourceMergeOK := true
 	protocol := classifySourceProtocol(args.Src.URL)
 	if processCtx.source != nil && processCtx.source.Config != nil {
 		sourceRaw = *processCtx.source.Config
@@ -186,9 +185,8 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 	if sourceRaw != nil {
 		cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-CrawlWebsite] Custom Source configuration found, decoding and combining it for this source...")
 		// The session-boundary subtree is decoded strictly and independently:
-		// a malformed crawling_config may hide the sticky opt-in, so it must
-		// fail closed. Unrelated malformed document fields keep the historical
-		// log-and-continue behavior for non-sticky sources.
+		// a malformed crawling_config or custom.vdi sticky profile may hide the
+		// sticky decision, so it must fail closed.
 		sessionCfg, sessionErr := cfg.DecodeSourceSessionConfig(sourceRaw)
 		if sessionErr != nil {
 			if protocol == SourceProtocolWeb {
@@ -204,19 +202,28 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 			sourceCfg.CrawlingConfig = sessionCfg.CrawlingConfig
 			sourceCfg.Custom = sessionCfg.Custom
 		}
+
+		customSticky, customStickyErr := cfg.SourceCustomVDIHasSticky(sourceCfg.Custom)
+		if customStickyErr != nil && sourceCfgErr == nil {
+			sourceCfgErr = fmt.Errorf("decoding custom.vdi sticky configuration: %w", customStickyErr)
+			cmn.DebugMsg(cmn.DbgLvlError, "%v", sourceCfgErr)
+		}
+		explicitSticky := sourceCfg.CrawlingConfig.StickySession != nil && *sourceCfg.CrawlingConfig.StickySession
+		_, hasVDIOverride := sourceCfg.Custom["vdi"]
+
 		if sourceCfgErr == nil {
 			combined, cfgErr := cfg.CombineConfig(processCtx.config, sourceRaw)
 			if cfgErr != nil {
-				if sourceCfg.CrawlingConfig.StickySession != nil && *sourceCfg.CrawlingConfig.StickySession {
+				if explicitSticky || customSticky || hasVDIOverride {
+					// A sticky request or VDI override is privileged. An
+					// unrelated malformed field must not silently drop the
+					// selected profile/proxy or change the effective VDI.
 					sourceCfgErr = fmt.Errorf("decoding sticky_session source configuration: %w", cfgErr)
 					cmn.DebugMsg(cmn.DbgLvlError, "%v", sourceCfgErr)
 				} else {
 					// Preserve the historical per-source merge result when an
-					// unrelated field is malformed: the old path left the merged
-					// VDI list untouched, so custom.vdi proxy overrides were not
-					// applied. The canonical crawling_config.proxy is new and can
-					// still be resolved safely from the strict session subtree.
-					sourceMergeOK = false
+					// unrelated field is malformed and the source has no VDI
+					// override to lose.
 					cmn.DebugMsg(cmn.DbgLvlError, "combining source configuration: %v", cfgErr)
 				}
 			} else {
@@ -224,9 +231,20 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 				cmn.DebugMsg(cmn.DbgLvlDebug, "[DEBUG-CrawlWebsite] Source configuration combined successfully.")
 			}
 		}
-	}
-	if !sourceMergeOK {
-		sourceCfg.Custom = nil
+
+		if sourceCfgErr == nil && hasVDIOverride {
+			// Apply only the session-boundary VDI overrides to a fresh copy.
+			// This is idempotent after a successful full merge, but it keeps
+			// the effective VDI isolated from the process-global slice.
+			sessionSource := cfg.SourceConfig{}
+			if sourceCfg.Custom != nil {
+				if rawVDI, ok := sourceCfg.Custom["vdi"]; ok {
+					sessionSource.Custom = map[string]interface{}{"vdi": rawVDI}
+				}
+			}
+			sessionMerged := cfg.CombineConfigs(processCtx.config, sessionSource)
+			processCtx.config.Selenium = sessionMerged.Selenium
+		}
 	}
 
 	// Log the crawling process
@@ -267,13 +285,69 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		return err
 	}
 
-	stickySource := sourceCfg.CrawlingConfig.StickySession != nil && *sourceCfg.CrawlingConfig.StickySession
-	if stickyErr := validateStickySourceBoundary(stickySource, protocol, sourceCfg.CrawlingConfig); stickyErr != nil {
+	explicitSticky := sourceCfg.CrawlingConfig.StickySession != nil && *sourceCfg.CrawlingConfig.StickySession
+	customSticky, customStickyErr := cfg.SourceCustomVDIHasSticky(sourceCfg.Custom)
+	if customStickyErr != nil {
 		processCtx.Status.PipelineRunning.Store(3)
 		processCtx.Status.TotalErrors.Add(1)
-		processCtx.Status.LastError = stickyErr.Error()
-		err = stickyErr
+		processCtx.Status.LastError = customStickyErr.Error()
+		err = customStickyErr
 		return err
+	}
+	if protocol != SourceProtocolWeb {
+		if explicitSticky || customSticky {
+			stickyErr := fmt.Errorf("sticky_session is only supported for browser-backed web sources")
+			processCtx.Status.PipelineRunning.Store(3)
+			processCtx.Status.TotalErrors.Add(1)
+			processCtx.Status.LastError = stickyErr.Error()
+			err = stickyErr
+			return err
+		}
+		// Non-web protocols do not enter the sticky source boundary. Preserve
+		// the ordinary source/VDI proxy decision for optional email-link
+		// browsing; no rotation is performed for these source families.
+		nonWebSelection := cfg.EffectiveVDIInput{
+			Leased:      sel.Config,
+			LeasedIndex: args.SelIdx,
+			Merged:      processCtx.config.Selenium,
+			Source:      sourceCfg,
+			Raw:         sourceRaw,
+		}
+		if resolution, resolveErr := cfg.ResolveSourceProxy(nonWebSelection); resolveErr == nil {
+			processCtx.SetEffectiveProxy(resolution.URL, string(resolution.Source))
+		} else {
+			cmn.DebugMsg(cmn.DbgLvlWarn,
+				"resolving non-sticky source proxy for non-web source: %v", resolveErr)
+			nonWebProxy := strings.TrimSpace(sel.Config.ProxyURL)
+			nonWebSource := cfg.ProxySourceVDI
+			if nonWebProxy == "" {
+				nonWebSource = cfg.ProxySourceDirect
+			}
+			processCtx.SetEffectiveProxy(nonWebProxy, string(nonWebSource))
+		}
+	} else {
+		selection, selectionErr := cfg.ResolveEffectiveVDI(cfg.EffectiveVDIInput{
+			Leased:      sel.Config,
+			LeasedIndex: args.SelIdx,
+			Merged:      processCtx.config.Selenium,
+			Source:      sourceCfg,
+			Raw:         sourceRaw,
+		})
+		if selectionErr != nil {
+			processCtx.Status.PipelineRunning.Store(3)
+			processCtx.Status.TotalErrors.Add(1)
+			processCtx.Status.LastError = selectionErr.Error()
+			err = selectionErr
+			return err
+		}
+		processCtx.effectiveVDI = &selection
+		if stickyErr := validateStickySourceBoundary(selection.Sticky, protocol, sourceCfg.CrawlingConfig, args.Src.URL); stickyErr != nil {
+			processCtx.Status.PipelineRunning.Store(3)
+			processCtx.Status.TotalErrors.Add(1)
+			processCtx.Status.LastError = stickyErr.Error()
+			err = stickyErr
+			return err
+		}
 	}
 	switch protocol {
 	case SourceProtocolEmail:
@@ -359,7 +433,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 	// create the WebDriver session. Page workers and refreshes never re-enter
 	// this path.
 	err = processCtx.startBrowserCrawl(sel, sourceCfg, sourceRaw, func() error {
-		return processCtx.ConnectToVDI(sel)
+		return processCtx.ConnectToVDI(processCtx.SelInstance)
 	})
 	if err != nil {
 		UpdateSourceStateForCrawl(processCtx, args, err)
@@ -460,7 +534,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 			htmlContent  string
 			initialLinks []LinkItem
 		)
-		pageSource, htmlContent, initialLinks, tErr := processCtx.CrawlInitialURL(sel)
+		pageSource, htmlContent, initialLinks, tErr := processCtx.CrawlInitialURL(processCtx.SelInstance)
 		if tErr != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "crawling initial URL: %v", tErr)
 			processCtx.Status.EndTime = time.Now()
@@ -526,7 +600,7 @@ func CrawlWebsite(args *Pars, sel vdi.SeleniumInstance, releaseVDI chan<- vdi.Se
 		_ = vdi.Refresh(processCtx) // Refresh the WebDriver session
 
 		// Refresh the page
-		tErr = processCtx.RefreshVDIConnection(sel)
+		tErr = processCtx.RefreshVDIConnection(processCtx.SelInstance)
 		if tErr != nil {
 			cmn.DebugMsg(cmn.DbgLvlError, "refreshing VDI connection: %v", tErr)
 			if processCtx != nil {
@@ -1108,7 +1182,7 @@ func (ctx *ProcessContext) GetHTTPInfo(url string, htmlContent string) {
 	ctx.Status.HTTPInfoRunning.Store(1)
 	// Create a new HTTPDetails instance
 	ctx.hi = &httpi.HTTPDetails{}
-	browser := ctx.config.Selenium[ctx.SelID].Type
+	browser := ctx.effectiveBrowserType()
 	var err error
 	c := httpi.Config{
 		URL:             url,

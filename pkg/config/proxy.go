@@ -208,18 +208,28 @@ func ValidateSourceProtocolOptions(source SourceConfig) error {
 			return fmt.Errorf("invalid crawling_config.proxy: %w", err)
 		}
 	}
+	hasCustomSticky, err := SourceCustomVDIHasSticky(source.Custom)
+	if err != nil {
+		return err
+	}
 	sticky := source.CrawlingConfig.StickySession
-	if sticky == nil || !*sticky {
+	if sticky != nil && !*sticky && hasCustomSticky {
+		return fmt.Errorf("crawling_config.sticky_session:false conflicts with a custom.vdi[].sticky_session profile")
+	}
+	stickyRequested := hasCustomSticky || (sticky != nil && *sticky)
+	if !stickyRequested {
 		return nil
 	}
 	if source.Email != nil {
-		return fmt.Errorf("crawling_config.sticky_session is only supported for browser-backed sources")
+		return fmt.Errorf("sticky_session is only supported for browser-backed sources")
 	}
 	if strings.EqualFold(strings.TrimSpace(source.CrawlingConfig.SourceType), SourceTypeEmail) {
-		return fmt.Errorf("crawling_config.sticky_session is not supported for email sources")
+		return fmt.Errorf("sticky_session is not supported for email sources")
 	}
-	if err := ValidateStickySessionSite(source.CrawlingConfig.Site); err != nil {
-		return fmt.Errorf("crawling_config.sticky_session: %w", err)
+	if strings.TrimSpace(source.CrawlingConfig.Site) != "" {
+		if err := ValidateStickySessionSite(source.CrawlingConfig.Site); err != nil {
+			return fmt.Errorf("sticky_session: %w", err)
+		}
 	}
 	return nil
 }
@@ -425,8 +435,10 @@ type SourceSessionConfig struct {
 
 // DecodeSourceSessionConfig strictly decodes the crawling_config and custom
 // subtrees used by proxy and sticky-session resolution. A malformed
-// crawling_config is always an error because it may contain the opt-in.
-// A malformed custom subtree yields no overrides, matching combineVDICfg.
+// crawling_config is always an error because it may contain the opt-in. A
+// malformed custom subtree or custom.vdi sticky profile is also an error: it
+// could otherwise silently drop a source-selected profile or inherit an
+// unrelated global one.
 func DecodeSourceSessionConfig(raw json.RawMessage) (SourceSessionConfig, error) {
 	var envelope struct {
 		CrawlingConfig json.RawMessage `json:"crawling_config"`
@@ -442,7 +454,15 @@ func DecodeSourceSessionConfig(raw json.RawMessage) (SourceSessionConfig, error)
 		}
 	}
 	if len(envelope.Custom) != 0 && strings.TrimSpace(string(envelope.Custom)) != "null" {
-		_ = json.Unmarshal(envelope.Custom, &result.Custom)
+		if err := json.Unmarshal(envelope.Custom, &result.Custom); err != nil {
+			return SourceSessionConfig{}, fmt.Errorf("custom: %w", err)
+		}
+		if result.Custom == nil {
+			return SourceSessionConfig{}, fmt.Errorf("custom must be an object")
+		}
+		if err := ValidateSourceCustomVDI(result.Custom); err != nil {
+			return SourceSessionConfig{}, err
+		}
 	}
 	return result, nil
 }

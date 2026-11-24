@@ -2,54 +2,132 @@
 
 > **2.3.1 release note:** browser-backed Sources can now opt into one
 > microproxy data-plane session rotation at the start of each new crawl, and
-> `crawling_config.proxy` now actually configures the browser. Chrome/Chromium
-> rotate through a disposable VDI-local management browser first, so the path
-> works when only the browser can reach microproxy's management API; eligible
-> CDP failures fall back to the engine-direct client with the same key. Both
-> features are opt-in, add no database schema change, and leave ordinary sources
-> on the existing proxy path. Sticky support requires one microproxy process per
-> VDI and a trusted global `vdi[].sticky_session` profile.
+> `crawling_config.proxy` now actually configures the browser. A VDI may make
+> its sticky profile the default by selecting its listener as the ordinary
+> `proxy_url`, keep it as an opt-in standby, or let a source select a complete
+> operator-approved profile. Chrome/Chromium rotate through a disposable
+> VDI-local management browser first, so the path works when only the browser
+> can reach microproxy's management API; eligible CDP failures fall back to the
+> engine-direct client with the same key. These features add no database schema
+> change. Sticky support requires one microproxy process per VDI.
 
-This page is the operator guide for the 2.3.1 per-source sticky-session boundary
-and the completed `crawling_config.proxy` override.
+This page is the operator guide for the sticky-session boundary, the effective
+per-crawl VDI selection, and the completed `crawling_config.proxy` override.
 
 ## What 2.3.1 does
 
-For a **new browser-backed source crawl** whose source document contains
-`crawling_config.sticky_session: true`, the engine:
+For a **new browser-backed source crawl**, the engine resolves one effective
+VDI decision before creating any source browser:
 
 1. acquires the VDI it will actually use and validates that the fenced crawl
    attempt is still authorized;
-2. resolves the leased VDI by name against the trusted global
-   `vdi[].sticky_session` profile;
-3. resolves and validates one effective downstream browser proxy;
-4. for Chrome/Chromium, creates a **disposable management browser on that VDI**
+2. starts from that VDI's global defaults and applies the source's positional
+   `custom.vdi` overrides to an isolated per-crawl copy;
+3. determines the effective browser proxy and whether sticky rotation is
+   selected. The decision is explicit configuration, never inferred from a port
+   number;
+4. selects a complete sticky profile. It may be the VDI default, the source's
+   approved custom profile, or an approved profile selected by an explicit
+   matching proxy listener;
+5. validates the profile, downstream listener, browser compatibility and the
+   operator's approval allowlist before any network I/O;
+6. for Chrome/Chromium, creates a **disposable management browser on that VDI**
    and sends one logical authenticated `POST /api/v1/sessions/rotate` from a
    same-origin page under the browser-visible microproxy API origin, using the
    VDI-local `vdi_api_url` when configured (otherwise `api_url`). If that CDP
    route is unavailable or its network outcome is uncertain, the engine retries
    the **same key** through the existing engine-direct `api_url` client. Firefox
    skips CDP and uses the engine-direct client only;
-5. requires HTTP 200 with `status: rotated`, the configured provider and a
+7. requires HTTP 200 with `status: rotated`, the configured provider and a
    positive generation;
-6. rechecks cancellation and the fenced claim;
-7. only after the temporary management browser is fully closed, and only then,
-   creates the real source WebDriver session configured to use the sticky
-   listener and starts the source crawl.
+8. rechecks cancellation and the fenced claim;
+9. only after the temporary management browser is fully closed, creates the
+   real source WebDriver session using the same effective VDI/proxy and starts
+   the crawl.
 
 The whole source crawl then uses that pinned microproxy session. Pages, Selenium
 refreshes, retries and reconnects inside the same source crawl do not rotate it
 again.
 
-Ordinary sources perform no rotation API call. A source with
-`sticky_session: false` performs no rotation even when its VDI has a sticky
-profile. Email and network-only sources reject the opt-in.
+A conventional or direct source performs no rotation API call, even when its
+VDI has a standby sticky profile. Email and network-only sources reject an
+explicit sticky request and do not perform a browser rotation.
 
 The engine never rotates on a per-page, HTTP 403/429, failed-navigation or
 redirect trigger, and CROWler 2.3.1 has no microproxy-control integration, IP
 verification, provider failover or IP-history feature.
 
+## Effective sticky selection
+
+The source can influence the decision in three ways:
+
+- `crawling_config.sticky_session: true` explicitly requires rotation using the
+  effective profile.
+- `crawling_config.sticky_session: false` explicitly disables inherited sticky
+  mode. If the effective proxy is still a known sticky listener, validation
+  fails; choose a conventional or direct proxy instead.
+- Omitting the field inherits the effective VDI decision.
+
+The VDI default participates as follows:
+
+- If the VDI's ordinary `proxy_url` selects the same listener as
+  `vdi[].sticky_session`, ordinary browser-backed sources inherit sticky mode.
+- If `proxy_url` is a different listener, the profile is a standby. It is used
+  only by an explicit source request or a source proxy that selects the known
+  sticky listener. A conventional source keeps using the ordinary listener.
+- A source selecting a configured sticky listener through
+  `crawling_config.proxy`, the legacy top-level `proxy_url`, or
+  `custom.vdi[].proxy_url` rotates instead of browsing that listener unrotated.
+- A VDI with neither an ordinary proxy nor a sticky profile is direct; it never
+  rotates and never performs a management request.
+
+A Source may select a **complete** custom profile even when the global VDI has
+no sticky default. A proxy URL that does not match a configured sticky profile
+listener is treated as a conventional proxy: CROWler cannot infer stickiness
+from an arbitrary URL, and a port number alone never identifies a rotating or
+sticky listener.
+
+```json
+{
+  "crawling_config": {
+    "site": "https://example.org/",
+    "source_type": "website"
+  },
+  "custom": {
+    "vdi": [
+      {
+        "proxy_url": "http://microproxy-vdi1:8091",
+        "sticky_session": {
+          "proxy_url": "http://microproxy-vdi1:8091",
+          "api_url": "http://microproxy-vdi1:8095",
+          "vdi_api_url": "http://127.0.0.1:8095",
+          "token_env": "MICROPROXY_VDI1_ALT_SESSION_API_KEY",
+          "provider": "residential-sticky-alt"
+        }
+      }
+    ]
+  }
+}
+```
+
+`custom.vdi` is matched positionally against the configured VDI list. The
+nested profile is a full replacement, not a field-level merge. It must exactly
+match the VDI's `sticky_session` default or one entry in
+`approved_sticky_profiles`; otherwise the crawl fails before any rotation or
+browser startup. The allowlist is operator-only and is never copied from a
+source document. This prevents a source author from naming an arbitrary engine
+environment variable or sending a bearer token to an attacker-controlled
+management origin. A complete source document example is available at
+[`examples/source-sticky-profile.json`](../examples/source-sticky-profile.json).
+
+API and engine instances should share the same VDI default and allowlist. The
+API validates a submitted source against its configuration snapshot, while the
+engine revalidates the stored document against its own snapshot immediately
+before the crawl; a mismatch fails closed.
+
 ## Source configuration
+
+An explicit source opt-in can use the inherited profile:
 
 ```json
 {
@@ -66,17 +144,18 @@ verification, provider failover or IP-history feature.
 ```
 
 `proxy` may be omitted. When supplied for a sticky source, it must equal the
-selected VDI's trusted `sticky_session.proxy_url` listener after conservative
+selected effective profile's `proxy_url` listener after conservative
 normalization (scheme and host case, effective port, no credentials/path/query/
 fragment). It is not the rotation API URL.
 
-A malformed `crawling_config` on a browser-backed source fails the crawl closed
-because it may hide the sticky opt-in. Email and network-only sources keep the
-historical log-and-continue behavior for an unrelated malformed
-`crawling_config`; sticky mode itself remains unsupported for those source
-families.
+A malformed `crawling_config`, `custom.vdi` entry, or nested `sticky_session`
+object on a browser-backed source fails the crawl closed because it may hide or
+redirect the sticky decision. Email and network-only sources keep the historical
+log-and-continue behavior for unrelated malformed session fields; explicit
+sticky mode remains unsupported for those source families.
 
-A non-sticky source may use an independent listener:
+A non-sticky source may use an independent listener and replace a sticky global
+default for its own crawl:
 
 ```json
 {
@@ -107,12 +186,13 @@ top-level and `custom.vdi` layers. It is not valid for
 `crawling_config.proxy`; omit the canonical field to inherit. A malformed
 non-empty canonical proxy fails the crawl.
 
-For **sticky** sources, no explicit source override selects the VDI's
-`sticky_session.proxy_url` even if `vdi[].proxy_url` is a different rotating
-listener. Any non-empty canonical, legacy or explicit `custom.vdi` override must
-match that sticky listener. `no_proxy`, a rotating listener, an unrelated proxy
-or a malformed URL is a configuration error before any rotation request or
-browser startup.
+For **sticky** sources, the selected profile's `proxy_url` is authoritative. An
+explicit `crawling_config.proxy`, legacy top-level `proxy_url`, or
+`custom.vdi[].proxy_url` must match it after normalization. `no_proxy`, the
+ordinary rotating listener, an unrelated proxy or a malformed URL is a
+configuration error before any rotation request or browser startup. The global
+ordinary `vdi[].proxy_url` being different does not conflict when the source
+explicitly selected sticky mode.
 
 ## Global VDI configuration
 
@@ -122,6 +202,8 @@ vdi:
     type: chrome
     host: selenium-vdi1
     port: 4444
+    # Leave this as the rotating listener for a standby profile, or set it to
+    # the sticky listener to make sticky the default for ordinary sources.
     proxy_url: "http://microproxy-vdi1:8080"
     sticky_session:
       proxy_url: "http://microproxy-vdi1:8081"
@@ -131,7 +213,20 @@ vdi:
       vdi_api_url: "http://127.0.0.1:8094"
       token_env: "MICROPROXY_VDI1_SESSION_API_KEY"
       provider: "residential-sticky"
+    # Optional operator allowlist for source-selected complete profiles.
+    approved_sticky_profiles:
+      - proxy_url: "http://microproxy-vdi1:8091"
+        api_url: "http://microproxy-vdi1:8095"
+        vdi_api_url: "http://127.0.0.1:8095"
+        token_env: "MICROPROXY_VDI1_ALT_SESSION_API_KEY"
+        provider: "residential-sticky-alt"
 ```
+
+The four original `sticky_session` fields are required together when a profile
+is present. An absent profile is valid. `vdi_api_url` is optional. Each approved
+profile must be complete and use a distinct sticky listener. Configurations
+with duplicate profiles or duplicate sticky listeners are rejected because
+selection would be ambiguous.
 
 ### Deployment example A: browser-only local API
 
@@ -175,17 +270,90 @@ vdi:
       provider: "residential-sticky"
 ```
 
-The engine reads the bearer token from the environment variable named by
-`token_env`. Write the literal variable name; do **not** use `${...}`
-interpolation for `token_env`, because configuration interpolation would replace
-the name with the secret itself. The token is never read from the source
-document and never written to logs, API errors or metrics. Microproxy receives
-its own token through its own independent `MICROPROXY_SESSION_API_KEY`; the
-engine and microproxy containers do not need to share an environment.
+### Deployment example C: direct VDI default, source-specific sticky profile
 
-Change or remove a sticky profile with a service restart. The reload path can
-retain existing VDI pool slots, so SIGHUP is not a reliable way to retire an old
-trusted profile.
+Use this when a VDI has no global sticky default but the operator has approved an
+additional profile for selected sources. The source references the complete
+profile positionally.
+
+```yaml
+vdi:
+  - name: vdi-1
+    type: chrome
+    host: selenium-vdi1
+    port: 4444
+    proxy_url: ""
+    approved_sticky_profiles:
+      - proxy_url: "http://microproxy-vdi1:8091"
+        api_url: "http://microproxy-vdi1:8095"
+        vdi_api_url: "http://127.0.0.1:8095"
+        token_env: "MICROPROXY_VDI1_ALT_SESSION_API_KEY"
+        provider: "residential-sticky-alt"
+```
+
+```json
+{
+  "crawling_config": {
+    "site": "https://example.org/",
+    "source_type": "website"
+  },
+  "custom": {
+    "vdi": [
+      {
+        "proxy_url": "http://microproxy-vdi1:8091",
+        "sticky_session": {
+          "proxy_url": "http://microproxy-vdi1:8091",
+          "api_url": "http://microproxy-vdi1:8095",
+          "vdi_api_url": "http://127.0.0.1:8095",
+          "token_env": "MICROPROXY_VDI1_ALT_SESSION_API_KEY",
+          "provider": "residential-sticky-alt"
+        }
+      }
+    ]
+  }
+}
+```
+
+The source rotates before its browser starts; other sources on the same VDI
+remain direct.
+
+### Deployment example D: globally sticky VDI
+
+Use this when every ordinary browser-backed source on the VDI should rotate
+through the same profile. The ordinary listener must equal the sticky listener;
+otherwise the profile is treated as an opt-in standby.
+
+```yaml
+vdi:
+  - name: vdi-1
+    type: chrome
+    host: selenium-vdi1
+    port: 4444
+    proxy_url: "http://microproxy-vdi1:8081"
+    sticky_session:
+      proxy_url: "http://microproxy-vdi1:8081"
+      api_url: "http://microproxy-vdi1:8094"
+      vdi_api_url: "http://127.0.0.1:8094"
+      token_env: "MICROPROXY_VDI1_SESSION_API_KEY"
+      provider: "residential-sticky"
+```
+
+A source can still override this with a conventional proxy for its own crawl;
+that source does not rotate.
+
+The engine reads the bearer token from the environment variable named by the
+selected profile's `token_env`. Write the literal variable name; do **not** use
+`${...}` interpolation for `token_env`, because configuration interpolation
+would replace the name with the secret itself. A source can select only an
+operator-approved profile, so it cannot name an arbitrary environment variable.
+The token is never read from the source document and never written to logs, API
+errors or metrics. Microproxy receives its own token through its own independent
+`MICROPROXY_SESSION_API_KEY`; the engine and microproxy containers do not need
+to share an environment.
+
+Change or remove a sticky profile or an approved profile with a service restart.
+The reload path can retain existing VDI pool slots, so SIGHUP is not a reliable
+way to retire an old trusted profile.
 
 The rotation API origin is always operator configuration. It is never derived
 by rewriting a source-specified proxy URL, because the engine and Selenium may
@@ -215,8 +383,10 @@ the VDI can reach it through its own network namespace.
 
 The disposable browser:
 
-- is created on the **already leased VDI** and uses a fresh Selenium session and
-  temporary browser profile;
+- is created on the **already leased VDI** using that VDI's host, port and
+  browser type, so a source-level `custom.vdi[].host`, `port` or `type` cannot
+  retarget the privileged management browser;
+- uses a fresh Selenium session and temporary browser profile;
 - does not inherit the source's rotating/sticky proxy listener: it starts with
   `--no-proxy-server`;
 - never opens the source website, source URL or arbitrary target path;
@@ -321,14 +491,14 @@ client keeps its bounded retries. The microproxy response body is capped at
   If both fail, it logs the failure but cannot prove the browser process is
   gone; treat that VDI and its microproxy process as suspect and restart them
   before relying on the next rotation.
-- The **browser** must reach `sticky_session.proxy_url`. For Chrome/Chromium
-  CDP rotation it must also reach `sticky_session.vdi_api_url` when configured,
-  or the browser-visible interpretation of `sticky_session.api_url` when it is
-  omitted.
-- The **engine** must reach `sticky_session.api_url` only when CDP fails and the
-  engine-direct fallback is needed. A deployment where only the VDI namespace
-  can reach the management API is valid while CDP succeeds; the fallback will
-  fail closed if it cannot connect.
+- The **browser** must reach the selected profile's `proxy_url`. For
+  Chrome/Chromium CDP rotation it must also reach that profile's `vdi_api_url`
+  when configured, or the browser-visible interpretation of `api_url` when it
+  is omitted.
+- The **engine** must reach the selected profile's `api_url` only when CDP
+  fails and the engine-direct fallback is needed. A deployment where only the
+  VDI namespace can reach the management API is valid while CDP succeeds; the
+  fallback will fail closed if it cannot connect.
 - Firefox supports HTTP and SOCKS5 downstream listeners but not HTTPS. A
   Firefox sticky source with an HTTPS sticky listener is rejected before the
   rotation request, so it cannot consume a new upstream identity that the
@@ -340,9 +510,12 @@ client keeps its bounded retries. The microproxy response body is capped at
 - Keep the microproxy listener bound to the expected provider. The listener
   binding, not the rotation API alone, is what makes the browser's egress path
   match the provider that was rotated.
-- Do not put tokens, session identifiers or rotation URLs in source JSON.
-  `custom.vdi` cannot change `vdi_api_url`, `api_url`, `token_env`, `provider`
-  or the trusted profile.
+- Do not put tokens, session identifiers or rotation URLs in source JSON. A
+  source may select an operator-approved complete profile, but it cannot add,
+  extend or redirect the trusted profile. The privileged management browser is
+  created on the leased Selenium identity, so a source-level
+  `custom.vdi[].host`, `port` or `type` override cannot retarget the temporary
+  browser that receives the token.
 
 ## Troubleshooting
 
@@ -353,6 +526,10 @@ client keeps its bounded retries. The microproxy response body is capped at
 | `stale_key (HTTP 409, code stale_idempotency_key)` | Another rotation superseded this attempt's key. | Treat as a failed source attempt. Do not reuse the key; the next new source crawl mints a fresh one. |
 | `unavailable (HTTP 503)` | Microproxy could not generate a new identity; previous state was preserved. | Check microproxy/provider health and retry the source later. |
 | `invalid_response` / `provider_mismatch` | The API returned malformed data or a different provider than configured. | Verify the listener-to-provider binding and the `provider` field; do not start the browser manually as a workaround. |
+| `custom.vdi[...].sticky_session is not approved by the operator` | The source supplied a profile that is neither the VDI default nor an `approved_sticky_profiles` entry. | Add the exact complete profile to the VDI allowlist (operator action) or change the source to an approved profile. The runtime checks stored sources too. |
+| `sticky_session:false would browse the configured sticky listener` | The source disabled rotation but its effective proxy is still a known sticky listener. | Select a conventional/direct proxy for that source or remove the false override. |
+| Ordinary source rotates unexpectedly | The VDI ordinary `proxy_url` equals a configured sticky listener, or the source selected one. | Use a different ordinary listener for a standby profile, or set `crawling_config.sticky_session:false` with a safe conventional proxy. Do not infer mode from the port number. |
+| Global sticky profile is not used | `vdi[].proxy_url` points at a different ordinary listener (standby) and the source did not opt in. | Set `vdi[].proxy_url` to the sticky listener for a global default, or set `crawling_config.sticky_session:true` on the source. |
 | `CDP sticky rotation unavailable ... bootstrap` | Chrome could not create a usable same-origin document, or the bootstrap redirected/left the trusted origin. | Verify `vdi_api_url` is reachable **from inside the VDI browser**, returns a normal document on the fixed bootstrap path, and does not redirect. The engine then tries the direct `api_url` fallback. |
 | `CDP temporary browser cleanup failed` | The disposable browser could not be proven closed. | The VDI is quarantined and not released. Restart the VDI/Selenium container and its microproxy before retrying; do not reuse the slot manually. |
 | CDP succeeds but direct fallback also runs | Should not happen for a validated 200. | Treat as a defect: capture sanitized logs and inspect the CDP result classification. Direct fallback is only for unavailable/uncertain CDP outcomes, never for a valid rotation. |
@@ -388,6 +565,14 @@ reassign an IP.
   failover or rotation via Action Rules.
 - No new database table, migration, distributed session registry or long-lived
   session persistence.
-- No source-supplied rotation endpoint or bearer secret.
+- A source can select only the VDI default or an operator-approved profile. It
+  cannot supply a bearer token value, an unapproved `token_env`, or an arbitrary
+  management origin.
+- Sticky mode is never inferred from a port number. A global profile is a
+  default only when the ordinary `proxy_url` selects its listener; otherwise it
+  is a standby opt-in.
+- Email and network-only sources are outside the sticky source boundary. An
+  explicit sticky request is rejected. Optional email web-link crawling uses the
+  VDI's ordinary proxy and does not perform a source-start rotation.
 - A deployment that aliases multiple VDIs to one microproxy process is
   unsupported because those VDIs would rotate and share one identity.

@@ -73,18 +73,20 @@ func (ctx *ProcessContext) GetEffectiveProxySource() string {
 	return ctx.effectiveProxySource
 }
 
-// validateStickySourceProtocol keeps the 2.3.1 boundary explicit: only the
-// browser-backed web path may use sticky sessions.
+// validateStickySourceProtocol keeps the browser-session boundary explicit:
+// only the browser-backed web path may use sticky sessions.
 func validateStickySourceProtocol(sticky bool, protocol SourceProtocol) error {
 	if sticky && protocol != SourceProtocolWeb {
-		return fmt.Errorf("crawling_config.sticky_session is only supported for browser-backed web sources")
+		return fmt.Errorf("sticky_session is only supported for browser-backed web sources")
 	}
 	return nil
 }
 
-// validateStickySourceBoundary rechecks the protocol and the stored source
-// site, so a legacy document cannot opt into sticky mode on a non-browser site.
-func validateStickySourceBoundary(sticky bool, protocol SourceProtocol, crawling cfg.CrawlingConfig) error {
+// validateStickySourceBoundary rechecks the protocol and the effective
+// retrieval URL, so a legacy or minimal source document cannot select sticky
+// mode for a non-browser path. An absent crawling_config.site falls back to
+// the actual Source URL.
+func validateStickySourceBoundary(sticky bool, protocol SourceProtocol, crawling cfg.CrawlingConfig, sourceURL string) error {
 	if err := validateStickySourceProtocol(sticky, protocol); err != nil {
 		return err
 	}
@@ -92,83 +94,19 @@ func validateStickySourceBoundary(sticky bool, protocol SourceProtocol, crawling
 		return nil
 	}
 	if strings.EqualFold(strings.TrimSpace(crawling.SourceType), cfg.SourceTypeEmail) {
-		return fmt.Errorf("crawling_config.sticky_session is not supported for email sources")
+		return fmt.Errorf("sticky_session is not supported for email sources")
 	}
-	if err := cfg.ValidateStickySessionSite(crawling.Site); err != nil {
-		return fmt.Errorf("crawling_config.sticky_session: %w", err)
+	if err := cfg.ValidateStickySelectionSite(crawling, sourceURL); err != nil {
+		return fmt.Errorf("sticky_session: %w", err)
 	}
 	return nil
 }
 
-// resolveBrowserProxy computes and stores the effective proxy for the leased
-// VDI. The raw source document is required only for the legacy top-level
-// proxy_url layer; canonical and custom values come from the decoded document.
-func (ctx *ProcessContext) resolveBrowserProxy(sel vdi.SeleniumInstance, sourceCfg cfg.SourceConfig, raw json.RawMessage) (cfg.ProxyResolution, error) {
-	if ctx == nil {
-		return cfg.ProxyResolution{}, fmt.Errorf("resolving browser proxy: process context is nil")
-	}
-	sticky := sourceCfg.CrawlingConfig.StickySession != nil && *sourceCfg.CrawlingConfig.StickySession
-
-	var legacyProxy string
-	var legacyPresent bool
-	var customProxy string
-	var customPresent bool
-	profile := sel.Config.StickySession
-
-	if sticky {
-		var strictErr error
-		if _, apiErr := cfg.NormalizeStickyAPIURL(profile.APIURL); apiErr != nil {
-			return cfg.ProxyResolution{}, fmt.Errorf("vdi.sticky_session.api_url: %w", apiErr)
-		}
-		if strings.TrimSpace(profile.VDIAPIURL) != "" {
-			if _, vdiAPIErr := cfg.NormalizeStickyAPIURL(profile.VDIAPIURL); vdiAPIErr != nil {
-				return cfg.ProxyResolution{}, fmt.Errorf("vdi.sticky_session.vdi_api_url: %w", vdiAPIErr)
-			}
-		}
-		if strings.ContainsAny(profile.Provider, " \t\r\n") {
-			return cfg.ProxyResolution{}, fmt.Errorf("vdi.sticky_session.provider must not contain whitespace")
-		}
-		legacyProxy, legacyPresent, strictErr = cfg.LegacyTopLevelProxyStrict(raw)
-		if strictErr != nil {
-			return cfg.ProxyResolution{}, fmt.Errorf("sticky_session: %w", strictErr)
-		}
-		customProxy, customPresent, strictErr = cfg.SourceCustomVDIProxyStrict(sourceCfg, ctx.config.Selenium, sel.Config.Name)
-		if strictErr != nil {
-			return cfg.ProxyResolution{}, fmt.Errorf("sticky_session: %w", strictErr)
-		}
-		if !cfg.VDIByNameUnique(ctx.config.Selenium, sel.Config.Name) {
-			return cfg.ProxyResolution{}, fmt.Errorf(
-				"sticky_session requires a unique VDI association for %q", sel.Config.Name)
-		}
-	} else {
-		legacyProxy, legacyPresent = cfg.LegacyTopLevelProxy(raw)
-		customProxy, customPresent = cfg.SourceCustomVDIProxy(sourceCfg, ctx.config.Selenium, sel.Config.Name)
-	}
-	resolution, err := cfg.ResolveEffectiveProxy(cfg.EffectiveProxyInput{
-		SourceProxy:             sourceCfg.CrawlingConfig.Proxy,
-		LegacyProxy:             legacyProxy,
-		LegacyProxyPresent:      legacyPresent,
-		CustomProxy:             customProxy,
-		CustomProxyPresent:      customPresent,
-		VDIProxy:                sel.Config.ProxyURL,
-		Sticky:                  sticky,
-		StickyProxy:             profile.ProxyURL,
-		StickyProfileConfigured: profile.Configured(),
-	})
-	if err != nil {
-		return cfg.ProxyResolution{}, err
-	}
-	if err := cfg.ValidateBrowserProxyCompatibility(sel.Config.Type, resolution.URL); err != nil {
-		return cfg.ProxyResolution{}, err
-	}
-	ctx.SetEffectiveProxy(resolution.URL, string(resolution.Source))
-	return resolution, nil
-}
-
-// startBrowserCrawl is the single source-start boundary. It resolves the
-// proxy, performs at most one sticky-session rotation, and only then invokes
-// connect (the WebDriver session creation). A failed proxy decision or failed
-// rotation returns before connect is called.
+// startBrowserCrawl is the single source-start boundary. It resolves one
+// effective VDI/profile/proxy decision, performs at most one sticky-session
+// rotation, and only then invokes connect (the WebDriver session creation).
+// The same effective VDI is stored in SelInstance so refresh and reconnect
+// paths use exactly the settings that were validated here.
 func (ctx *ProcessContext) startBrowserCrawl(
 	sel vdi.SeleniumInstance,
 	sourceCfg cfg.SourceConfig,
@@ -178,12 +116,27 @@ func (ctx *ProcessContext) startBrowserCrawl(
 	if err := ctx.checkCrawlFence(); err != nil {
 		return err
 	}
-	sticky := sourceCfg.CrawlingConfig.StickySession != nil && *sourceCfg.CrawlingConfig.StickySession
-
-	if _, err := ctx.resolveBrowserProxy(sel, sourceCfg, raw); err != nil {
-		return err
+	selection := ctx.effectiveVDI
+	if selection == nil {
+		resolved, err := cfg.ResolveEffectiveVDI(cfg.EffectiveVDIInput{
+			Leased:      sel.Config,
+			LeasedIndex: ctx.SelID,
+			Merged:      ctx.config.Selenium,
+			Source:      sourceCfg,
+			Raw:         raw,
+		})
+		if err != nil {
+			return err
+		}
+		selection = &resolved
+		ctx.effectiveVDI = selection
 	}
-	if !sticky {
+	effective := vdi.SeleniumInstance{Service: sel.Service, Config: selection.Browser}
+	management := vdi.SeleniumInstance{Service: sel.Service, Config: selection.Management}
+	ctx.SelInstance = effective
+	ctx.SetEffectiveProxy(selection.Proxy.URL, string(selection.Proxy.Source))
+
+	if !selection.Sticky {
 		if connect == nil {
 			return fmt.Errorf("browser connection callback is nil")
 		}
@@ -200,7 +153,7 @@ func (ctx *ProcessContext) startBrowserCrawl(
 		return err
 	}
 
-	profile := sel.Config.StickySession
+	profile := selection.StickyProfile
 	getenv := ctx.stickyGetenv
 	if getenv == nil {
 		getenv = os.Getenv
@@ -223,7 +176,7 @@ func (ctx *ProcessContext) startBrowserCrawl(
 	rotationCtx, cancel := context.WithTimeout(ctx.crawlContext(), stickySessionRotationBudget)
 	defer cancel()
 
-	response, transport, err := ctx.rotateStickySession(rotationCtx, sel, profile, token, idempotencyKey)
+	response, transport, err := ctx.rotateStickySession(rotationCtx, management, profile, token, idempotencyKey)
 	if err != nil {
 		sourceID := uint64(0)
 		if ctx.source != nil {
@@ -231,13 +184,13 @@ func (ctx *ProcessContext) startBrowserCrawl(
 		}
 		cmn.DebugMsg(cmn.DbgLvlError,
 			"sticky session rotation failed for VDI '%s' (source %d): %v",
-			sel.Config.Name, sourceID, err)
-		return fmt.Errorf("sticky session rotation for VDI %q: %w", sel.Config.Name, err)
+			management.Config.Name, sourceID, err)
+		return fmt.Errorf("sticky session rotation for VDI %q: %w", management.Config.Name, err)
 	}
 
 	cmn.DebugMsg(cmn.DbgLvlInfo,
-		"sticky session rotated for VDI '%s' via %s (provider '%s', generation %d, replayed=%t)",
-		sel.Config.Name, transport, response.Provider, response.Generation, response.Replayed)
+		"sticky session rotated for VDI '%s' via %s (provider '%s', generation %d, replayed=%t, origin=%s)",
+		management.Config.Name, transport, response.Provider, response.Generation, response.Replayed, selection.StickyOrigin)
 
 	// The attempt may have been cancelled or superseded while the API call
 	// was in flight. Never start a browser after losing the fence.

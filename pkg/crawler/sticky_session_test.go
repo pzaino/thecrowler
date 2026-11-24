@@ -113,6 +113,251 @@ func stickySourceConfig() cfg.SourceConfig {
 	return cfg.SourceConfig{CrawlingConfig: cfg.CrawlingConfig{StickySession: &enabled}}
 }
 
+func stickySourceWithProfile(profile cfg.StickySessionConfig, proxy string) cfg.SourceConfig {
+	entry := map[string]interface{}{
+		"sticky_session": map[string]interface{}{
+			"proxy_url":   profile.ProxyURL,
+			"api_url":     profile.APIURL,
+			"vdi_api_url": profile.VDIAPIURL,
+			"token_env":   profile.TokenEnv,
+			"provider":    profile.Provider,
+		},
+	}
+	if proxy != "" {
+		entry["proxy_url"] = proxy
+	}
+	return cfg.SourceConfig{Custom: map[string]interface{}{
+		"vdi": []interface{}{entry},
+	}}
+}
+
+func TestStartBrowserCrawlGlobalStickyDefaultWithoutSourceOptIn(t *testing.T) {
+	ctx, sel := stickyTestContext(t)
+	sel.Config.ProxyURL = sel.Config.StickySession.ProxyURL
+	ctx.config.Selenium[0] = sel.Config
+	rotator := &recordingRotator{
+		response: proxycontrol.RotateResponse{Status: "rotated", Provider: "residential-sticky", Generation: 1},
+	}
+	ctx.stickyRotator = rotator
+	ctx.stickyGetenv = func(string) string { return "token" }
+	ctx.stickyKeyGenerate = func() (string, error) { return "key", nil }
+
+	connected := false
+	if err := ctx.startBrowserCrawl(sel, cfg.SourceConfig{}, nil, func() error {
+		connected = true
+		if ctx.SelInstance.Config.ProxyURL != sel.Config.StickySession.ProxyURL {
+			t.Fatalf("effective proxy = %q", ctx.SelInstance.Config.ProxyURL)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("startBrowserCrawl: %v", err)
+	}
+	if !connected || rotator.count() != 1 {
+		t.Fatalf("connected=%t rotations=%d", connected, rotator.count())
+	}
+	if got, ok := ctx.GetEffectiveProxy(); !ok || got != sel.Config.StickySession.ProxyURL {
+		t.Fatalf("effective proxy = (%q,%t)", got, ok)
+	}
+}
+
+func TestStartBrowserCrawlSourceCustomProfileAuthorized(t *testing.T) {
+	ctx, sel := stickyTestContext(t)
+	profile := sel.Config.StickySession
+	profile.Provider = "custom-provider"
+	profile.ProxyURL = "http://microproxy-vdi1:8091"
+	profile.APIURL = "http://microproxy-vdi1:8095"
+	sel.Config.ProxyURL = "http://microproxy-vdi1:8080"
+	sel.Config.ApprovedStickyProfiles = []cfg.StickySessionConfig{profile}
+	ctx.config.Selenium[0] = sel.Config
+
+	rotator := &recordingRotator{
+		response: proxycontrol.RotateResponse{Status: "rotated", Provider: "custom-provider", Generation: 1},
+	}
+	ctx.stickyRotator = rotator
+	ctx.stickyGetenv = func(name string) string {
+		if name != profile.TokenEnv {
+			t.Fatalf("token env = %q", name)
+		}
+		return "token"
+	}
+	ctx.stickyKeyGenerate = func() (string, error) { return "key", nil }
+
+	source := stickySourceWithProfile(profile, "")
+	if err := ctx.startBrowserCrawl(sel, source, nil, func() error { return nil }); err != nil {
+		t.Fatalf("startBrowserCrawl: %v", err)
+	}
+	if rotator.count() != 1 || rotator.requests[0].Provider != "custom-provider" {
+		t.Fatalf("rotator = %+v", rotator.requests)
+	}
+	if ctx.SelInstance.Config.StickySession.Provider != "custom-provider" {
+		t.Fatalf("effective profile = %+v", ctx.SelInstance.Config.StickySession)
+	}
+}
+
+func TestStartBrowserCrawlSourceCustomProfileRejectedWhenUnapproved(t *testing.T) {
+	ctx, sel := stickyTestContext(t)
+	profile := sel.Config.StickySession
+	profile.Provider = "unapproved-provider"
+	sel.Config.ProxyURL = "http://microproxy-vdi1:8080"
+	ctx.config.Selenium[0] = sel.Config
+	rotator := &recordingRotator{}
+	cdp := &recordingCDPRotator{}
+	ctx.stickyRotator = rotator
+	ctx.stickyCDPRotator = cdp
+	ctx.stickyGetenv = func(string) string { return "token" }
+
+	connected := false
+	err := ctx.startBrowserCrawl(sel, stickySourceWithProfile(profile, ""), nil, func() error {
+		connected = true
+		return nil
+	})
+	if err == nil {
+		t.Fatal("unapproved profile was accepted")
+	}
+	if connected || rotator.count() != 0 || cdp.count() != 0 {
+		t.Fatalf("unapproved profile performed I/O: connected=%t direct=%d cdp=%d",
+			connected, rotator.count(), cdp.count())
+	}
+}
+
+func TestStartBrowserCrawlSourceConventionalProxyReplacesStickyDefault(t *testing.T) {
+	ctx, sel := stickyTestContext(t)
+	sel.Config.ProxyURL = sel.Config.StickySession.ProxyURL
+	ctx.config.Selenium[0] = sel.Config
+	rotator := &recordingRotator{}
+	ctx.stickyRotator = rotator
+
+	source := cfg.SourceConfig{CrawlingConfig: cfg.CrawlingConfig{Proxy: "http://other-proxy:3128"}}
+	connected := false
+	if err := ctx.startBrowserCrawl(sel, source, nil, func() error {
+		connected = true
+		return nil
+	}); err != nil {
+		t.Fatalf("startBrowserCrawl: %v", err)
+	}
+	if !connected || rotator.count() != 0 {
+		t.Fatalf("connected=%t rotations=%d", connected, rotator.count())
+	}
+	if got, ok := ctx.GetEffectiveProxy(); !ok || got != "http://other-proxy:3128" {
+		t.Fatalf("effective proxy = (%q,%t)", got, ok)
+	}
+}
+
+func TestStartBrowserCrawlExplicitFalseWithStickyDefaultFails(t *testing.T) {
+	ctx, sel := stickyTestContext(t)
+	sel.Config.ProxyURL = sel.Config.StickySession.ProxyURL
+	ctx.config.Selenium[0] = sel.Config
+	rotator := &recordingRotator{}
+	ctx.stickyRotator = rotator
+	disabled := false
+	source := cfg.SourceConfig{CrawlingConfig: cfg.CrawlingConfig{StickySession: &disabled}}
+	connected := false
+	if err := ctx.startBrowserCrawl(sel, source, nil, func() error {
+		connected = true
+		return nil
+	}); err == nil {
+		t.Fatal("explicit false accepted the sticky default")
+	}
+	if connected || rotator.count() != 0 {
+		t.Fatalf("connected=%t rotations=%d", connected, rotator.count())
+	}
+}
+
+func TestStartBrowserCrawlUsesEffectiveSourceVDIForLaunch(t *testing.T) {
+	ctx, sel := stickyTestContext(t)
+	profile := sel.Config.StickySession
+	profile.ProxyURL = "http://microproxy-vdi1:8091"
+	profile.APIURL = "http://microproxy-vdi1:8095"
+	profile.Provider = "custom-provider"
+	sel.Config.ProxyURL = "http://microproxy-vdi1:8080"
+	sel.Config.ApprovedStickyProfiles = []cfg.StickySessionConfig{profile}
+	merged := sel.Config
+	merged.Host = "source-selected-selenium"
+	merged.Port = 5555
+	merged.Type = "chrome"
+	ctx.config.Selenium[0] = merged
+	ctx.stickyRotator = &recordingRotator{
+		response: proxycontrol.RotateResponse{Status: "rotated", Provider: "custom-provider", Generation: 1},
+	}
+	ctx.stickyGetenv = func(string) string { return "token" }
+	ctx.stickyKeyGenerate = func() (string, error) { return "key", nil }
+
+	if err := ctx.startBrowserCrawl(sel, stickySourceWithProfile(profile, ""), nil, func() error {
+		if ctx.SelInstance.Config.Host != "source-selected-selenium" || ctx.SelInstance.Config.Port != 5555 {
+			t.Fatalf("source browser used %s:%d", ctx.SelInstance.Config.Host, ctx.SelInstance.Config.Port)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("startBrowserCrawl: %v", err)
+	}
+	if ctx.SelInstance.Config.ProxyURL != profile.ProxyURL {
+		t.Fatalf("effective proxy = %q", ctx.SelInstance.Config.ProxyURL)
+	}
+}
+
+func TestStartBrowserCrawlNonStickyAfterStickyOnSameVDI(t *testing.T) {
+	ctx, sel := stickyTestContext(t)
+	sel.Config.ProxyURL = sel.Config.StickySession.ProxyURL
+	ctx.config.Selenium[0] = sel.Config
+	rotator := &recordingRotator{
+		response: proxycontrol.RotateResponse{Status: "rotated", Provider: "residential-sticky", Generation: 1},
+	}
+	ctx.stickyRotator = rotator
+	ctx.stickyGetenv = func(string) string { return "token" }
+	ctx.stickyKeyGenerate = func() (string, error) { return "key", nil }
+	if err := ctx.startBrowserCrawl(sel, cfg.SourceConfig{}, nil, func() error { return nil }); err != nil {
+		t.Fatalf("sticky source: %v", err)
+	}
+
+	// A second source on the same VDI chooses a conventional proxy. It must
+	// not inherit the first source's profile or rotate again.
+	secondCtx, secondSel := stickyTestContext(t)
+	secondSel.Config = sel.Config
+	secondCtx.config.Selenium[0] = secondSel.Config
+	secondRotator := &recordingRotator{}
+	secondCtx.stickyRotator = secondRotator
+	source := cfg.SourceConfig{CrawlingConfig: cfg.CrawlingConfig{Proxy: "http://other-proxy:3128"}}
+	connected := false
+	if err := secondCtx.startBrowserCrawl(secondSel, source, nil, func() error {
+		connected = true
+		return nil
+	}); err != nil {
+		t.Fatalf("non-sticky source: %v", err)
+	}
+	if !connected || secondRotator.count() != 0 {
+		t.Fatalf("non-sticky source connected=%t rotations=%d", connected, secondRotator.count())
+	}
+	if secondCtx.SelInstance.Config.StickySession != (cfg.StickySessionConfig{}) {
+		t.Fatalf("non-sticky source inherited profile: %+v", secondCtx.SelInstance.Config.StickySession)
+	}
+	if got, ok := secondCtx.GetEffectiveProxy(); !ok || got != "http://other-proxy:3128" {
+		t.Fatalf("non-sticky effective proxy = (%q,%t)", got, ok)
+	}
+}
+
+func TestStartBrowserCrawlExplicitFalseWithConventionalOverride(t *testing.T) {
+	ctx, sel := stickyTestContext(t)
+	sel.Config.ProxyURL = sel.Config.StickySession.ProxyURL
+	ctx.config.Selenium[0] = sel.Config
+	rotator := &recordingRotator{}
+	ctx.stickyRotator = rotator
+	disabled := false
+	source := cfg.SourceConfig{CrawlingConfig: cfg.CrawlingConfig{
+		StickySession: &disabled,
+		Proxy:         "http://other-proxy:3128",
+	}}
+	connected := false
+	if err := ctx.startBrowserCrawl(sel, source, nil, func() error {
+		connected = true
+		return nil
+	}); err != nil {
+		t.Fatalf("startBrowserCrawl: %v", err)
+	}
+	if !connected || rotator.count() != 0 {
+		t.Fatalf("connected=%t rotations=%d", connected, rotator.count())
+	}
+}
+
 func TestStartBrowserCrawlNonStickySkipsRotation(t *testing.T) {
 	ctx, sel := stickyTestContext(t)
 	rotator := &recordingRotator{}
@@ -955,29 +1200,36 @@ func TestStickyRotationUsesPerVDIProfile(t *testing.T) {
 
 func TestStickySourceBoundaryRejectsNonBrowserSite(t *testing.T) {
 	web := cfg.CrawlingConfig{Site: "https://example.test/", SourceType: "website"}
-	if err := validateStickySourceBoundary(true, SourceProtocolWeb, web); err != nil {
+	if err := validateStickySourceBoundary(true, SourceProtocolWeb, web, "https://example.test/"); err != nil {
 		t.Fatalf("browser-backed sticky source rejected: %v", err)
 	}
 	for _, site := range []string{
 		"imaps://mail.example.test:993",
 		"maildir:///var/mail/archive",
 		"null://example.test",
-		"",
 	} {
 		crawling := web
 		crawling.Site = site
-		if err := validateStickySourceBoundary(true, SourceProtocolWeb, crawling); err == nil {
+		if err := validateStickySourceBoundary(true, SourceProtocolWeb, crawling, site); err == nil {
 			t.Errorf("site %q accepted for sticky_session", site)
 		}
 	}
+	// A minimal or absent source document may omit crawling_config.site; the
+	// actual Source URL is the retrieval URL in that case.
+	if err := validateStickySourceBoundary(true, SourceProtocolWeb, cfg.CrawlingConfig{}, "https://example.test/"); err != nil {
+		t.Fatalf("empty source site with a web Source URL was rejected: %v", err)
+	}
+	if err := validateStickySourceBoundary(true, SourceProtocolWeb, cfg.CrawlingConfig{}, "imaps://mail.example.test:993"); err == nil {
+		t.Fatal("empty source site with an email Source URL was accepted")
+	}
 	emailType := web
 	emailType.SourceType = "email"
-	if err := validateStickySourceBoundary(true, SourceProtocolWeb, emailType); err == nil {
+	if err := validateStickySourceBoundary(true, SourceProtocolWeb, emailType, "https://example.test/"); err == nil {
 		t.Fatal("email source_type accepted for sticky_session")
 	}
 	if err := validateStickySourceBoundary(false, SourceProtocolWeb, cfg.CrawlingConfig{
 		Site: "imaps://mail.example.test:993", SourceType: "email",
-	}); err != nil {
+	}, "imaps://mail.example.test:993"); err != nil {
 		t.Fatalf("non-sticky source site was rejected: %v", err)
 	}
 }

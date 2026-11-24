@@ -2,7 +2,7 @@
   "version": "1.0.0",
   "format_version": "1.0.0",
   "author": "TheCROWler",
-  "description": "Example browser-backed source that requests one microproxy sticky-session rotation at the start of each new crawl. The proxy value is optional and, when present, must match the leased VDI's configured sticky listener.",
+  "description": "Example browser-backed source that explicitly requires one microproxy sticky-session rotation at the start of each new crawl. Omitting the boolean instead inherits the effective VDI decision, including a global sticky default or a custom.vdi profile. The proxy value is optional and, when present, must match the selected profile listener.",
   "source_name": "Example sticky source",
   "crawling_config": {
     "site": "https://example.org/",

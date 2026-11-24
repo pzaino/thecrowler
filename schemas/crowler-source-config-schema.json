@@ -48,7 +48,7 @@
         "proxy": {
           "type": "string",
           "format": "uri",
-          "description": "Canonical per-source downstream browser proxy listener. It must be an absolute http, https or socks5 URL with a host and explicit port, and must not contain credentials, a path, a query or a fragment. A blank value inherits the next layer. Precedence for non-sticky sources is crawling_config.proxy, the historical top-level source proxy_url, custom.vdi[].proxy_url for the leased VDI, then vdi[].proxy_url. The exact lowercase sentinel no_proxy is honored only by the legacy and custom.vdi layers; it is not a valid value for this canonical field. For sticky sources this value, when supplied, must equal the selected VDI's vdi[].sticky_session.proxy_url listener."
+          "description": "Canonical per-source downstream browser proxy listener. It must be an absolute http, https or socks5 URL with a host and explicit port, and must not contain credentials, a path, a query or a fragment. A blank value inherits the next layer. Precedence for non-sticky sources is crawling_config.proxy, the historical top-level source proxy_url, custom.vdi[].proxy_url for the leased VDI, then vdi[].proxy_url. The exact lowercase sentinel no_proxy is honored only by the legacy and custom.vdi layers; it is not a valid value for this canonical field. For sticky sources this value, when supplied, must equal the selected effective sticky profile's proxy_url listener (the VDI default or an operator-approved custom profile)."
         },
         "site": {
           "type": "string",
@@ -101,7 +101,7 @@
         },
         "sticky_session": {
           "type": "boolean",
-          "description": "Request one microproxy data-plane sticky-session rotation at the start of each new browser-backed crawl of this source. Omitted or false disables the feature and performs no rotation API call. true requires the leased VDI to carry a complete trusted vdi[].sticky_session profile; the browser then uses that profile's sticky downstream listener and the engine calls its data-plane API exactly once before creating the WebDriver session. Only website/API/file/db sources that use the browser are supported; email and network-only sources are rejected. An explicit null, string, number, array or object is rejected. This value never contains tokens, rotation URLs or session identifiers."
+          "description": "Explicit sticky-session override for this source. Omitted inherits the effective VDI selection: a global sticky default is used when vdi[].proxy_url selects its sticky listener, a selected custom.vdi[].sticky_session profile is used when present, and a configured sticky listener selected by an ordinary proxy override triggers rotation rather than unrotated browsing. true requires a complete effective profile and fails closed if it is missing or an explicit source proxy contradicts it. false disables inherited sticky mode and fails closed if the effective proxy still selects a known sticky listener. custom.vdi[].sticky_session can name a complete profile even when the global VDI has no sticky default, but only when the operator approved the exact profile for that VDI. Only browser-backed sources are supported; email and network-only sources are rejected when sticky is explicitly requested. An explicit null, string, number, array or object is rejected. This value never contains tokens, rotation URLs or session identifiers."
         },
         "load_validation": {
           "title": "Page Load Validation",
@@ -458,9 +458,64 @@
     },
     "custom": {
       "title": "CROWler Source Custom Configuration",
-      "description": "This is the custom configuration for the source. You can use this to add custom configurations for the source.",
+      "description": "This is the custom configuration for the source. You can use this to add custom configurations for the source. The custom.vdi array is matched positionally to the configured VDI list; a sticky_session profile in it is privileged and must exactly match an operator-approved profile for that VDI.",
       "type": "object",
       "additionalProperties": true,
+      "properties": {
+        "vdi": {
+          "title": "Per-Source VDI Overrides",
+          "description": "Positional per-VDI overrides for this source. Unrelated extension keys remain allowed. A proxy_url changes the downstream listener for this source only. A sticky_session object replaces the effective sticky profile for this source and must match the operator's vdi[].sticky_session default or an entry in vdi[].approved_sticky_profiles for the same VDI index.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "proxy_url": {
+                "type": "string",
+                "description": "Optional downstream browser proxy listener (for ex. microproxy) for this source and VDI position. It must be an absolute http, https or socks5 URL with a host and explicit port, without credentials, a path, a query or a fragment. When a sticky profile is selected, an explicit value must equal that profile's proxy_url; the legacy no_proxy sentinel is not allowed for sticky sessions."
+              },
+              "sticky_session": {
+                "title": "Source-Selected Sticky Session Profile",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "proxy_url": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "Absolute http or https sticky downstream listener (for ex. microproxy instance), including host and explicit port, without credentials, a path, a query or a fragment."
+                  },
+                  "api_url": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "Absolute http or https microproxy data-plane API origin reachable by the engine, including host and explicit port."
+                  },
+                  "vdi_api_url": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "Optional absolute http or https microproxy data-plane API origin as seen from Chrome/Chromium inside the VDI."
+                  },
+                  "token_env": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                    "description": "Name of an engine environment variable approved by the operator for this profile. It is never a token value."
+                  },
+                  "provider": {
+                    "type": "string",
+                    "description": "Exact provider name the rotation response must report."
+                  }
+                },
+                "required": [
+                  "proxy_url",
+                  "api_url",
+                  "token_env",
+                  "provider"
+                ],
+                "description": "Complete source-selected sticky profile. This is a full replacement, not a partial merge. It must exactly match the VDI's sticky_session default or an approved_sticky_profiles entry, including proxy_url, api_url, optional vdi_api_url, token_env and provider. A source can never supply a token value. crawling_config.sticky_session:false conflicts with this object."
+              }
+            }
+          }
+        }
+      },
       "examples": [
         {
           "custom": {

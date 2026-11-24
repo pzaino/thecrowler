@@ -502,18 +502,29 @@ type Selenium struct {
 	Language    string       `yaml:"language"`     // Language for Selenium
 	SysMng      SysMngConfig `yaml:"sys_manager"`  // System management configuration
 
-	// StickySession is trusted operator configuration for this VDI's
-	// microproxy data plane. It is global-only: source documents cannot
-	// override, redirect or extend it. An absent profile is valid and leaves
-	// sticky sources unsupported on this VDI (they fail closed).
+	// StickySession is this VDI's operator-configured microproxy sticky
+	// profile. When the VDI's ordinary proxy_url selects ProxyURL, ordinary
+	// browser-backed sources inherit sticky mode automatically. A different
+	// ordinary listener makes this a standby profile that sources can select
+	// with crawling_config.sticky_session or an approved custom profile.
+	// Source documents may replace it only with a complete profile approved by
+	// the operator for this VDI.
 	StickySession StickySessionConfig `json:"sticky_session,omitempty" yaml:"sticky_session,omitempty"`
+
+	// ApprovedStickyProfiles is the operator-only allowlist of additional
+	// complete sticky profiles a source may select for this VDI. A source's
+	// custom.vdi[].sticky_session must match this list or the StickySession
+	// default exactly. It is never copied from a source document. It exists so
+	// a source cannot choose an arbitrary token_env or exfiltrate a bearer
+	// token to an attacker-controlled management origin.
+	ApprovedStickyProfiles []StickySessionConfig `json:"approved_sticky_profiles,omitempty" yaml:"approved_sticky_profiles,omitempty"`
 }
 
-// StickySessionConfig describes one VDI's trusted microproxy sticky-session
-// data plane. The browser connects to ProxyURL (the sticky downstream
-// listener); the engine calls the data-plane API at APIURL to rotate the
-// session. TokenEnv names an engine environment variable; it is never the
-// token value and never a source-provided field.
+// StickySessionConfig describes one trusted microproxy sticky-session data
+// plane. The browser connects to ProxyURL (the sticky downstream listener); the
+// engine calls the data-plane API at APIURL to rotate the session. TokenEnv
+// names an engine environment variable; it is never the token value. A source
+// may reference an operator-approved profile, but never a raw token.
 type StickySessionConfig struct {
 	ProxyURL string `json:"proxy_url,omitempty" yaml:"proxy_url,omitempty"`
 	APIURL   string `json:"api_url,omitempty" yaml:"api_url,omitempty"`
@@ -1093,11 +1104,14 @@ type CrawlingConfig struct {
 	// http, https or socks5 listener URL with a host and port and no
 	// credentials. A blank value inherits the next layer.
 	Proxy string `json:"proxy,omitempty" yaml:"proxy,omitempty"`
-	// StickySession requests one microproxy data-plane session rotation at
-	// the start of each browser-backed crawl of this source. It is only
-	// meaningful for website/API/file/db sources that use the browser; the
-	// crawl is rejected for email and network-only sources. nil/false leave
-	// the feature disabled. A JSON null is rejected.
+	// StickySession is an explicit source override of the effective VDI
+	// decision. true requires sticky rotation using the effective selected
+	// profile and fails closed if the profile is missing/incomplete or an
+	// explicit source proxy contradicts it. false disables inherited sticky
+	// mode; selecting a known sticky listener with false is a configuration
+	// error. nil inherits the effective global or approved custom decision.
+	// It is only meaningful for browser-backed sources; email and network-only
+	// sources are rejected when it is true. A JSON null is rejected.
 	StickySession *bool `json:"sticky_session,omitempty" yaml:"sticky_session,omitempty"`
 }
 
@@ -1221,5 +1235,5 @@ func (s *SysMngConfig) IsEmpty() bool {
 
 // IsEmpty returns true is the Selenium configuration is empty
 func (s *Selenium) IsEmpty() bool {
-	return s.Name == "" && s.Location == "" && s.Path == "" && s.DriverPath == "" && s.Type == "" && s.ServiceType == "" && s.Port == 0 && s.Host == "" && !s.Headless && !s.UseService && s.SSLMode == "" && s.ProxyURL == "" && s.DownloadDir == "" && s.Language == "" && s.SysMng.IsEmpty() && s.StickySession.IsEmpty()
+	return s.Name == "" && s.Location == "" && s.Path == "" && s.DriverPath == "" && s.Type == "" && s.ServiceType == "" && s.Port == 0 && s.Host == "" && !s.Headless && !s.UseService && s.SSLMode == "" && s.ProxyURL == "" && s.DownloadDir == "" && s.Language == "" && s.SysMng.IsEmpty() && s.StickySession.IsEmpty() && len(s.ApprovedStickyProfiles) == 0
 }

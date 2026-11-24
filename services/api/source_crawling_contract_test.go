@@ -101,6 +101,81 @@ func TestValidateAndReformatConfigChecksProtocolProxyAndStickyOptions(t *testing
 	}
 }
 
+func TestValidateAndReformatConfigChecksSourceStickyAuthorization(t *testing.T) {
+	oldConfig := config
+	defer func() { config = oldConfig }()
+
+	profile := cfg.StickySessionConfig{
+		ProxyURL:  "http://127.0.0.1:8081",
+		APIURL:    "http://microproxy-vdi1:8094",
+		VDIAPIURL: "http://127.0.0.1:8094",
+		TokenEnv:  "MICROPROXY_VDI1_SESSION_API_KEY",
+		Provider:  "approved-provider",
+	}
+	config = cfg.Config{Selenium: []cfg.Selenium{{
+		Name:                   "vdi-1",
+		Type:                   "chrome",
+		Host:                   "selenium-vdi1",
+		Port:                   4444,
+		ApprovedStickyProfiles: []cfg.StickySessionConfig{profile},
+	}}}
+
+	base := func() cfg.SourceConfig {
+		return cfg.SourceConfig{
+			Version:       "1.0",
+			FormatVersion: "1.0.0",
+			SourceName:    "custom-sticky",
+			CrawlingConfig: cfg.CrawlingConfig{
+				Site:       "https://example.test/",
+				SourceType: "website",
+			},
+			Custom: map[string]interface{}{
+				"vdi": []interface{}{map[string]interface{}{
+					"proxy_url": profile.ProxyURL,
+					"sticky_session": map[string]interface{}{
+						"proxy_url":   profile.ProxyURL,
+						"api_url":     profile.APIURL,
+						"vdi_api_url": profile.VDIAPIURL,
+						"token_env":   profile.TokenEnv,
+						"provider":    profile.Provider,
+					},
+				}},
+			},
+		}
+	}
+
+	approved := base()
+	if err := validateAndReformatConfig(&approved); err != nil {
+		t.Fatalf("approved custom sticky profile rejected: %v", err)
+	}
+
+	unapproved := base()
+	unapproved.Custom["vdi"].([]interface{})[0].(map[string]interface{})["sticky_session"].(map[string]interface{})["token_env"] = "ATTACKER_TOKEN"
+	if err := validateAndReformatConfig(&unapproved); err == nil {
+		t.Fatal("unapproved token_env accepted by add/update validation")
+	}
+
+	conflicting := base()
+	disabled := false
+	conflicting.CrawlingConfig.StickySession = &disabled
+	if err := validateAndReformatConfig(&conflicting); err == nil {
+		t.Fatal("sticky_session:false plus custom profile accepted")
+	}
+
+	incomplete := base()
+	incomplete.Custom["vdi"].([]interface{})[0].(map[string]interface{})["sticky_session"].(map[string]interface{})["api_url"] = nil
+	if err := validateAndReformatConfig(&incomplete); err == nil {
+		t.Fatal("incomplete custom sticky profile accepted")
+	}
+
+	emailCustom := base()
+	emailCustom.CrawlingConfig.SourceType = "email"
+	emailCustom.CrawlingConfig.Site = "imaps://mail.example.test:993"
+	if err := validateAndReformatConfig(&emailCustom); err == nil {
+		t.Fatal("email source with custom sticky profile accepted")
+	}
+}
+
 func TestExtractAddSourceParamsPropagatesDecodeErrors(t *testing.T) {
 	valid := `{"url":"https://example.test/","restricted":0,"config":{"version":"1.0","format_version":"1.0.0","source_name":"ok","crawling_config":{"site":"https://example.test/","incognito":false}}}`
 	var params addSourceRequest

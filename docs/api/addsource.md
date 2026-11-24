@@ -52,13 +52,22 @@ The POST request should be in the following format:
 `crawling_config.proxy` selects an optional per-source downstream browser proxy
 listener. It is resolved once at the source-crawl boundary and the same value is
 used by Chromium or Firefox. `crawling_config.sticky_session` is a strict
-boolean; when true, the engine rotates the leased VDI's trusted microproxy
-data-plane session exactly once before creating the browser session. For
-Chrome/Chromium the rotation is attempted first through a disposable VDI-local
-management browser; eligible CDP failures fall back to the engine-direct client
-with the same key. Firefox uses the engine-direct client. Both source fields are
-rejected when malformed, and sticky sessions are rejected for email and
-network-only sources. See [Sources](../sources.md) and
+optional boolean. When omitted, the effective decision is inherited: a VDI
+whose ordinary `proxy_url` selects its sticky listener rotates automatically,
+while a standby profile requires an explicit opt-in. `true` requires one
+rotation using the effective profile; `false` disables inherited sticky mode and
+fails if the effective proxy is still a known sticky listener. A source may also
+select a complete operator-approved profile through positional
+`custom.vdi[].sticky_session`, even when the global VDI has no sticky default.
+The source profile must exactly match `vdi[].sticky_session` or an entry in
+`vdi[].approved_sticky_profiles`; the runtime rechecks this for stored sources,
+so a source cannot introduce a new management origin or `token_env`.
+
+For Chrome/Chromium the rotation is attempted first through a disposable
+VDI-local management browser; eligible CDP failures fall back to the engine-direct
+client with the same key. Firefox uses the engine-direct client. Both source
+fields are rejected when malformed, and explicit sticky mode is rejected for
+email and network-only sources. See [Sources](../sources.md) and
 [Sticky sessions and per-source proxies](../sticky-sessions.md).
 
 ## Ownership and authentication

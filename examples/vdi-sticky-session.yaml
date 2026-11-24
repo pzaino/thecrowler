@@ -10,6 +10,15 @@
 # address the same live microproxy data-plane process. The bearer token is read
 # from the ENGINE environment variable named by token_env; it is never stored
 # here.
+#
+# Global behavior:
+# - If proxy_url selects the sticky listener below, ordinary browser-backed
+#   sources rotate automatically.
+# - If proxy_url is a different ordinary listener, this is a standby profile:
+#   sources must opt in with crawling_config.sticky_session:true or select the
+#   listener explicitly.
+# - A source may replace the profile with a complete custom.vdi[].sticky_session
+#   only when it exactly matches sticky_session or approved_sticky_profiles.
 vdi:
   - name: vdi-1
     type: chrome
@@ -25,3 +34,10 @@ vdi:
       vdi_api_url: "http://127.0.0.1:8094"
       token_env: "MICROPROXY_VDI1_SESSION_API_KEY"
       provider: "residential-sticky"
+    # Optional operator-approved profiles for source-specific selection.
+    approved_sticky_profiles:
+      - proxy_url: "http://microproxy-vdi1:8091"
+        api_url: "http://microproxy-vdi1:8095"
+        vdi_api_url: "http://127.0.0.1:8095"
+        token_env: "MICROPROXY_VDI1_ALT_SESSION_API_KEY"
+        provider: "residential-sticky-alt"
