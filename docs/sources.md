@@ -187,11 +187,22 @@ crawling_config:
 
 The trusted microproxy connection is global operator configuration, not source
 data. It is configured per VDI with
-`vdi[].sticky_session.{proxy_url,api_url,token_env,provider}` (see
-[Configuration](configuration/config_yaml.md)). Source `custom.vdi` cannot
-change `api_url`, `token_env`, the provider expectation or the trusted profile.
-The engine bearer token is read from the engine environment variable named by
-`token_env`; it is never stored in the source document or the global YAML.
+`vdi[].sticky_session.{proxy_url,api_url,vdi_api_url,token_env,provider}` (see
+[Configuration](configuration/config_yaml.md)). `vdi_api_url` is the optional
+Chrome/Chromium browser-visible management origin; `api_url` remains the
+engine-direct fallback. They must address the same live microproxy process.
+Source `custom.vdi` cannot change `vdi_api_url`, `api_url`, `token_env`, the
+provider expectation or the trusted profile. The engine bearer token is read
+from the engine environment variable named by `token_env`; it is never stored in
+the source document or the global YAML.
+
+For Chrome and Chromium, rotation is attempted first through a disposable
+management browser on the leased VDI so it works when only the browser can reach
+microproxy's management API. If that route is unavailable or uncertain, the
+engine retries the same key through the engine-direct `api_url`. Firefox uses
+the engine-direct client directly. Definitive API rejections, malformed 200s,
+wrong providers, cancellation and temporary-browser cleanup failures do not
+fall back.
 
 When a sticky source supplies no explicit proxy override, the engine uses the
 leased VDI's sticky listener even when `vdi[].proxy_url` points at a rotating

@@ -1896,7 +1896,7 @@
           },
           "sticky_session": {
             "title": "CROWler VDI Sticky Session Configuration",
-            "description": "Trusted, globally configured microproxy sticky-session data plane for this VDI. It is used only by sources whose crawling_config.sticky_session is true. Source documents cannot override, redirect or extend this profile. The browser connects to proxy_url; the engine calls api_url exactly once per opted-in source crawl, with the bearer token read from the engine environment variable named by token_env. All four fields are required together. An absent profile is valid and makes sticky sources fail closed on this VDI.",
+            "description": "Trusted, globally configured microproxy sticky-session data plane for this VDI. It is used only by sources whose crawling_config.sticky_session is true. Source documents cannot override, redirect or extend this profile. The browser connects to proxy_url. Chrome/Chromium first rotate through a disposable VDI-local browser using vdi_api_url when supplied, otherwise api_url, and fall back to the engine-direct api_url only for eligible CDP failures. Firefox uses api_url directly. The bearer token is read from the engine environment variable named by token_env. The four original fields are required together; vdi_api_url is optional. An absent profile is valid and makes sticky sources fail closed on this VDI.",
             "type": "object",
             "properties": {
               "proxy_url": {
@@ -1910,11 +1910,20 @@
               },
               "api_url": {
                 "title": "Sticky Data-Plane API Origin",
-                "description": "Absolute http or https origin of the microproxy data-plane session API used by the engine, including host and explicit port. It must not contain credentials, a path, a query or a fragment. It must identify the same microproxy process that serves proxy_url; the engine never derives it from a source-specified proxy.",
+                "description": "Absolute http or https origin of the microproxy data-plane session API used by the engine, including host and explicit port. It must not contain credentials, a path, a query or a fragment. It must identify the same microproxy process that serves proxy_url; the engine never derives it from a source-specified proxy. It is always the engine-direct fallback and is the default browser-visible origin when vdi_api_url is omitted.",
                 "type": "string",
                 "format": "uri",
                 "examples": [
                   "http://microproxy-vdi1:8094"
+                ]
+              },
+              "vdi_api_url": {
+                "title": "Sticky Data-Plane API Origin as Seen from the VDI",
+                "description": "Optional absolute http or https origin of the same microproxy data-plane session API as resolved from inside the temporary Chrome/Chromium browser on this VDI, including host and explicit port. It must not contain credentials, a path, a query or a fragment. For localhost deployments this is commonly http://127.0.0.1:8094, but 127.0.0.1 means the browser's network namespace, not the engine or Docker host. It never replaces api_url for the engine-direct fallback.",
+                "type": "string",
+                "format": "uri",
+                "examples": [
+                  "http://127.0.0.1:8094"
                 ]
               },
               "token_env": {

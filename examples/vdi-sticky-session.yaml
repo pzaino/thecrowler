@@ -3,10 +3,13 @@
 # Merge this list under the top-level `vdi:` key of config.yaml. It is not a
 # complete config.yaml on its own.
 #
-# The browser uses sticky_session.proxy_url (the sticky listener). The engine
-# uses sticky_session.api_url (the data-plane API on the same microproxy
-# process). The bearer token is read from the ENGINE environment variable named
-# by token_env; it is never stored here.
+# The browser uses sticky_session.proxy_url (the sticky listener).
+# Chrome/Chromium first rotate through a disposable browser using vdi_api_url
+# (browser network namespace) and fall back to the engine-direct api_url only
+# for eligible CDP failures. Firefox uses api_url directly. Both URLs must
+# address the same live microproxy data-plane process. The bearer token is read
+# from the ENGINE environment variable named by token_env; it is never stored
+# here.
 vdi:
   - name: vdi-1
     type: chrome
@@ -18,5 +21,7 @@ vdi:
     sticky_session:
       proxy_url: "http://microproxy-vdi1:8081"
       api_url: "http://microproxy-vdi1:8094"
+      # Reachable from Chrome inside this VDI, not necessarily from the engine.
+      vdi_api_url: "http://127.0.0.1:8094"
       token_env: "MICROPROXY_VDI1_SESSION_API_KEY"
       provider: "residential-sticky"

@@ -517,13 +517,17 @@ type Selenium struct {
 type StickySessionConfig struct {
 	ProxyURL string `json:"proxy_url,omitempty" yaml:"proxy_url,omitempty"`
 	APIURL   string `json:"api_url,omitempty" yaml:"api_url,omitempty"`
-	TokenEnv string `json:"token_env,omitempty" yaml:"token_env,omitempty"`
-	Provider string `json:"provider,omitempty" yaml:"provider,omitempty"`
+	// VDIAPIURL is the microproxy data-plane API origin as resolved from
+	// inside the temporary Chromium browser on this VDI. It is used first for
+	// CDP rotation; APIURL remains the engine-direct fallback.
+	VDIAPIURL string `json:"vdi_api_url,omitempty" yaml:"vdi_api_url,omitempty"`
+	TokenEnv  string `json:"token_env,omitempty" yaml:"token_env,omitempty"`
+	Provider  string `json:"provider,omitempty" yaml:"provider,omitempty"`
 }
 
 // IsEmpty reports whether no sticky-session profile is configured.
 func (s StickySessionConfig) IsEmpty() bool {
-	return s.ProxyURL == "" && s.APIURL == "" && s.TokenEnv == "" && s.Provider == ""
+	return s.ProxyURL == "" && s.APIURL == "" && s.VDIAPIURL == "" && s.TokenEnv == "" && s.Provider == ""
 }
 
 // Configured reports whether the profile has the complete four-field contract.

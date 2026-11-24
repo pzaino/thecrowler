@@ -96,7 +96,7 @@ Release 2.0 introduced or substantially expanded several major areas:
   - *Benefits*: Helps operators build respectful and predictable collection policies.
 
 - **Per-Source Browser Proxies and Sticky Sessions**: `crawling_config.proxy` selects a source-specific downstream listener, and `crawling_config.sticky_session` can opt a browser-backed source into one trusted microproxy data-plane session rotation at the start of each new crawl. Existing global and `custom.vdi` proxy layers remain available, and ordinary sources perform no rotation.
-  - *Benefits*: Supports independent proxy listeners per source and a pinned sticky upstream identity for the whole source crawl without changing global VDI behavior. See [Sticky sessions and per-source proxies](sticky-sessions.md).
+  - *Benefits*: Supports independent proxy listeners per source and a pinned sticky upstream identity for the whole source crawl without changing global VDI behavior. Chrome/Chromium rotate through a disposable VDI-local browser and fall back to the engine-direct client only for eligible CDP failures; Firefox uses the direct client. See [Sticky sessions and per-source proxies](sticky-sessions.md).
 
 ## (Features Group 3) Information Seed Discovery
 

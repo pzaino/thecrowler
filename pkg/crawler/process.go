@@ -95,6 +95,7 @@ type ProcessContext struct {
 	// values are nil and fall back to the real rotator, os.Getenv and
 	// crypto/rand.
 	stickyRotator     stickySessionRotator
+	stickyCDPRotator  stickyCDPSessionRotator
 	stickyGetenv      func(string) string
 	stickyKeyGenerate func() (string, error)
 }

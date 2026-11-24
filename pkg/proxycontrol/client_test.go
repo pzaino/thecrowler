@@ -1,6 +1,7 @@
 package proxycontrol
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -18,6 +19,55 @@ func successfulResponse() *http.Response {
 		StatusCode: http.StatusOK,
 		Header:     make(http.Header),
 		Body:       io.NopCloser(strings.NewReader(`{"status":"rotated","provider":"residential-sticky","generation":2}`)),
+	}
+}
+
+func TestValidateRotateResponseSharedContract(t *testing.T) {
+	valid := []byte(`{"status":"rotated","provider":"p","generation":2}`)
+	response, err := ValidateRotateResponse(http.StatusOK, valid, "p")
+	if err != nil || response.Generation != 2 {
+		t.Fatalf("valid response = %+v err=%v", response, err)
+	}
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   []byte
+		kind   FailureKind
+	}{
+		{"wrong provider", http.StatusOK, []byte(`{"status":"rotated","provider":"q","generation":1}`), FailureProviderMismatch},
+		{"zero generation", http.StatusOK, []byte(`{"status":"rotated","provider":"p","generation":0}`), FailureInvalidResponse},
+		{"malformed", http.StatusOK, []byte(`{`), FailureInvalidResponse},
+		{"oversized", http.StatusOK, bytes.Repeat([]byte("x"), int(MaxResponseBytes)+1), FailureInvalidResponse},
+		{"unauthorized", http.StatusUnauthorized, nil, FailureAuth},
+		{"stale", http.StatusConflict, []byte(`{"error":{"code":"stale_idempotency_key"}}`), FailureStaleKey},
+		{"unavailable", http.StatusServiceUnavailable, nil, FailureUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ValidateRotateResponse(tc.status, tc.body, "p")
+			if !IsFailureKind(err, tc.kind) {
+				t.Fatalf("error = %v, want kind %q", err, tc.kind)
+			}
+		})
+	}
+}
+
+func TestIsDefinitive(t *testing.T) {
+	for _, kind := range []FailureKind{
+		FailureAuth, FailureInvalidRequest, FailureStaleKey, FailureConflict,
+		FailureUnavailable, FailureInvalidResponse, FailureProviderMismatch,
+		FailureUnexpectedStatus, FailureInvalidInput,
+	} {
+		if !IsDefinitive(&Error{Kind: kind}) {
+			t.Errorf("%q should be definitive", kind)
+		}
+	}
+	for _, kind := range []FailureKind{FailureTransport, FailureTimeout, FailureCancelled} {
+		if IsDefinitive(&Error{Kind: kind}) {
+			t.Errorf("%q should not be definitive", kind)
+		}
+	}
+	if IsDefinitive(errors.New("plain error")) {
+		t.Error("plain error must not be definitive")
 	}
 }
 

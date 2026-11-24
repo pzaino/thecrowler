@@ -389,21 +389,32 @@ vdi:
     sticky_session:
       # Sticky downstream listener used by the browser.
       proxy_url: "http://microproxy-vdi1:8081"
-      # Data-plane API origin used by the CROWler engine.
+      # Data-plane API origin used by the engine-direct fallback.
       api_url: "http://microproxy-vdi1:8094"
+      # Optional data-plane origin as seen from Chrome inside the VDI.
+      vdi_api_url: "http://127.0.0.1:8094"
       # Name of the ENGINE environment variable holding the bearer token.
       token_env: "MICROPROXY_VDI1_SESSION_API_KEY"
       # Exact provider the rotate response must report.
       provider: "residential-sticky"
 ```
 
-All four `sticky_session` fields are required together. An absent profile (or an
-empty `sticky_session: {}` object, which the runtime treats as absent) is valid,
-but a source that requests sticky sessions on that VDI fails closed.
-`proxy_url` and `api_url` must be absolute `http` or `https` origins with a host
-and explicit port, without credentials, a path, a query or a fragment. Firefox
-VDIs support HTTP sticky listeners but not HTTPS; a Firefox/HTTPS combination is
+The four original `sticky_session` fields are required together. An absent
+profile (or an empty `sticky_session: {}` object, which the runtime treats as
+absent) is valid, but a source that requests sticky sessions on that VDI fails
+closed. `vdi_api_url` is optional. Chrome/Chromium first rotate through a
+temporary browser using `vdi_api_url` when set, otherwise `api_url`; Firefox and
+eligible CDP failures use the engine-direct `api_url`. `proxy_url`, `api_url`
+and `vdi_api_url` must be absolute `http` or `https` origins with a host and
+explicit port, without credentials, a path, a query or a fragment. Firefox VDIs
+support HTTP sticky listeners but not HTTPS; a Firefox/HTTPS combination is
 rejected before rotation.
+
+`127.0.0.1` in `vdi_api_url` means the Chrome/VDI network namespace, not the
+engine or necessarily the Docker host. When Selenium and microproxy are in
+isolated containers, use a private hostname or network mapping reachable from
+Chrome. `vdi_api_url` and `api_url` must address the same live microproxy
+process; idempotency is process-local.
 `token_env` must be a valid environment-variable name; it is not the token
 value. Write the literal variable name. Do **not** use `${...}` interpolation
 for `token_env`: configuration interpolation would replace it with the secret
@@ -499,6 +510,7 @@ vdi:
     # sticky_session:
     #   proxy_url: "http://microproxy-vdi1:8081"
     #   api_url: "http://microproxy-vdi1:8094"
+    #   vdi_api_url: "http://127.0.0.1:8094"
     #   token_env: "MICROPROXY_VDI1_SESSION_API_KEY"
     #   provider: "residential-sticky"
 

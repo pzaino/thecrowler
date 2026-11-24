@@ -21,6 +21,7 @@ vdi:
     sticky_session:
       proxy_url: HTTP://MicroProxy-VDI1:8081/
       api_url: http://microproxy-vdi1:8094
+      vdi_api_url: HTTP://127.0.0.1:8094/
       token_env: MICROPROXY_VDI1_SESSION_API_KEY
       provider: residential-sticky
 `))
@@ -36,6 +37,9 @@ vdi:
 	}
 	if profile.APIURL != "http://microproxy-vdi1:8094" {
 		t.Fatalf("api_url = %q", profile.APIURL)
+	}
+	if profile.VDIAPIURL != "http://127.0.0.1:8094" {
+		t.Fatalf("vdi_api_url = %q", profile.VDIAPIURL)
 	}
 }
 
@@ -89,6 +93,38 @@ vdi:
 	}
 }
 
+func TestStickySessionProfileRejectsInvalidVDIAPIURL(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		url  string
+	}{
+		{"path", `"http://127.0.0.1:8094/api"`},
+		{"credentials", `"http://user:pass@127.0.0.1:8094"`},
+		{"no port", `"http://127.0.0.1"`},
+		{"query", `"http://127.0.0.1:8094?x=1"`},
+		{"unsupported scheme", `"ftp://127.0.0.1:21"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := `
+vdi:
+  - name: vdi-1
+    type: chrome
+    host: selenium-vdi1
+    port: 4444
+    sticky_session:
+      proxy_url: "http://microproxy-vdi1:8081"
+      api_url: "http://microproxy-vdi1:8094"
+      vdi_api_url: ` + tc.url + `
+      token_env: MICROPROXY_KEY
+      provider: residential-sticky
+`
+			if _, err := ParseConfig([]byte(raw)); err == nil || !strings.Contains(err.Error(), "vdi_api_url") {
+				t.Fatalf("error = %v, want vdi_api_url rejection", err)
+			}
+		})
+	}
+}
+
 func TestStickySessionProfileAbsentIsValid(t *testing.T) {
 	cfg, err := ParseConfig([]byte(`
 vdi:
@@ -131,6 +167,7 @@ func TestStickySessionSchemaContract(t *testing.T) {
 	valid := `{
 		"proxy_url":"http://microproxy-vdi1:8081",
 		"api_url":"http://microproxy-vdi1:8094",
+		"vdi_api_url":"http://127.0.0.1:8094",
 		"token_env":"MICROPROXY_VDI1_SESSION_API_KEY",
 		"provider":"residential-sticky"
 	}`
@@ -150,6 +187,7 @@ func TestStickySessionSchemaContract(t *testing.T) {
 		{"missing provider", `{"proxy_url":"http://microproxy-vdi1:8081","api_url":"http://microproxy-vdi1:8094","token_env":"KEY"}`},
 		{"unknown field", `{"proxy_url":"http://microproxy-vdi1:8081","api_url":"http://microproxy-vdi1:8094","token_env":"KEY","provider":"p","token":"secret"}`},
 		{"wrong type", `{"proxy_url":8081,"api_url":"http://microproxy-vdi1:8094","token_env":"KEY","provider":"p"}`},
+		{"wrong vdi type", `{"proxy_url":"http://microproxy-vdi1:8081","api_url":"http://microproxy-vdi1:8094","vdi_api_url":8094,"token_env":"KEY","provider":"p"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			issues, err := schema.ValidateBytes(context.Background(), []byte(tc.doc))

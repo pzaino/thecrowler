@@ -39,12 +39,16 @@ const (
 	RotatePath = "/api/v1/sessions/rotate"
 
 	defaultMaxAttempts    = 3
-	defaultResponseLimit  = int64(4 * 1024)
 	defaultDialTimeout    = 5 * time.Second
 	defaultRequestTimeout = 15 * time.Second
 	defaultHeaderTimeout  = 8 * time.Second
 	defaultBackoff        = 200 * time.Millisecond
 )
+
+// MaxResponseBytes is the shared maximum accepted data-plane response size.
+const MaxResponseBytes = int64(4 * 1024)
+
+const defaultResponseLimit = MaxResponseBytes
 
 // RotateRequest is one trusted rotation request. None of these values may be
 // derived from model output or source-provided configuration.
@@ -119,6 +123,22 @@ func (e *Error) Error() string {
 func IsFailureKind(err error, kind FailureKind) bool {
 	var failure *Error
 	return errors.As(err, &failure) && failure.Kind == kind
+}
+
+// IsDefinitive reports whether err is an authoritative API/contract rejection
+// that must not be retried through another transport. Transport, timeout and
+// cancellation outcomes are not definitive.
+func IsDefinitive(err error) bool {
+	var failure *Error
+	if !errors.As(err, &failure) {
+		return false
+	}
+	switch failure.Kind {
+	case FailureTransport, FailureTimeout, FailureCancelled:
+		return false
+	default:
+		return true
+	}
 }
 
 // Rotator sends rotation requests. The zero value is not usable; call
@@ -250,7 +270,7 @@ func (r *Rotator) Rotate(ctx context.Context, request RotateRequest) (RotateResp
 			if readErr != nil {
 				body = nil
 			}
-			return RotateResponse{}, classifyHTTPFailure(resp.StatusCode, body)
+			return RotateResponse{}, ClassifyHTTPFailure(resp.StatusCode, body)
 		}
 		if readErr != nil {
 			if errors.Is(readErr, errResponseTooLarge) {
@@ -270,17 +290,7 @@ func (r *Rotator) Rotate(ctx context.Context, request RotateRequest) (RotateResp
 			return RotateResponse{}, &Error{Kind: FailureInvalidResponse, HTTPStatus: resp.StatusCode}
 		}
 
-		var decoded RotateResponse
-		if err := json.Unmarshal(body, &decoded); err != nil {
-			return RotateResponse{}, &Error{Kind: FailureInvalidResponse, HTTPStatus: resp.StatusCode}
-		}
-		if decoded.Status != "rotated" || decoded.Generation < 1 {
-			return RotateResponse{}, &Error{Kind: FailureInvalidResponse, HTTPStatus: resp.StatusCode}
-		}
-		if decoded.Provider != request.Provider {
-			return RotateResponse{}, &Error{Kind: FailureProviderMismatch, HTTPStatus: resp.StatusCode}
-		}
-		return decoded, nil
+		return ValidateRotateResponse(resp.StatusCode, body, request.Provider)
 	}
 	if isTimeoutError(lastTransport) {
 		return RotateResponse{}, &Error{Kind: FailureTimeout}
@@ -304,7 +314,32 @@ func readBounded(body io.Reader, limit int64) ([]byte, error) {
 	return data, nil
 }
 
-func classifyHTTPFailure(status int, body []byte) error {
+// ValidateRotateResponse applies the shared microproxy contract to a
+// successful HTTP response. It is used by both the direct HTTP client and the
+// CDP transport so the two paths cannot diverge.
+func ValidateRotateResponse(status int, body []byte, expectedProvider string) (RotateResponse, error) {
+	if status != http.StatusOK {
+		return RotateResponse{}, ClassifyHTTPFailure(status, body)
+	}
+	if int64(len(body)) > MaxResponseBytes {
+		return RotateResponse{}, &Error{Kind: FailureInvalidResponse, HTTPStatus: status}
+	}
+	var decoded RotateResponse
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		return RotateResponse{}, &Error{Kind: FailureInvalidResponse, HTTPStatus: status}
+	}
+	if decoded.Status != "rotated" || decoded.Generation < 1 {
+		return RotateResponse{}, &Error{Kind: FailureInvalidResponse, HTTPStatus: status}
+	}
+	if decoded.Provider != expectedProvider {
+		return RotateResponse{}, &Error{Kind: FailureProviderMismatch, HTTPStatus: status}
+	}
+	return decoded, nil
+}
+
+// ClassifyHTTPFailure maps a definitive non-200 response to a sanitized
+// proxycontrol error.
+func ClassifyHTTPFailure(status int, body []byte) error {
 	code := responseErrorCode(body)
 	failure := &Error{Kind: FailureUnexpectedStatus, HTTPStatus: status, Code: code}
 	switch status {

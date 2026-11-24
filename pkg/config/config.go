@@ -1635,6 +1635,7 @@ func (c *Config) validateVDIStickySession(selenium *Selenium) error {
 	profile := &selenium.StickySession
 	profile.ProxyURL = strings.TrimSpace(profile.ProxyURL)
 	profile.APIURL = strings.TrimSpace(profile.APIURL)
+	profile.VDIAPIURL = strings.TrimSpace(profile.VDIAPIURL)
 	profile.TokenEnv = strings.TrimSpace(profile.TokenEnv)
 	profile.Provider = strings.TrimSpace(profile.Provider)
 
@@ -1652,6 +1653,13 @@ func (c *Config) validateVDIStickySession(selenium *Selenium) error {
 	if err != nil {
 		return fmt.Errorf("sticky_session.api_url: %w", err)
 	}
+	vdiAPIURL := ""
+	if profile.VDIAPIURL != "" {
+		vdiAPIURL, err = NormalizeStickyAPIURL(profile.VDIAPIURL)
+		if err != nil {
+			return fmt.Errorf("sticky_session.vdi_api_url: %w", err)
+		}
+	}
 	if !validEnvironmentVariableName(profile.TokenEnv) {
 		return fmt.Errorf("sticky_session.token_env must be a valid environment variable name")
 	}
@@ -1660,6 +1668,7 @@ func (c *Config) validateVDIStickySession(selenium *Selenium) error {
 	}
 	profile.ProxyURL = proxyURL
 	profile.APIURL = apiURL
+	profile.VDIAPIURL = vdiAPIURL
 	return nil
 }
 

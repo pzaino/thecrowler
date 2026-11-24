@@ -444,13 +444,16 @@ vdi:
     proxy_url: ""
     # Optional trusted microproxy sticky-session data plane for this VDI.
     # Used only by sources with crawling_config.sticky_session: true.
-    # All four fields are required together; an absent profile is valid.
+    # The four original fields are required together; vdi_api_url is optional.
+    # Chrome/Chromium try vdi_api_url first, then engine-direct api_url.
+    # An absent profile is valid.
     # token_env names an ENGINE environment variable, never the token itself.
     # Write the literal name; do NOT use ${...} interpolation for token_env.
     # Change/remove this profile with a service restart (reload may retain slots).
     # sticky_session:
     #   proxy_url: "http://microproxy-vdi1:8081"
-    #   api_url: "http://microproxy-vdi1:8094"
+    #   api_url: "http://microproxy-vdi1:8094"       # engine-direct fallback
+    #   vdi_api_url: "http://127.0.0.1:8094"        # browser-namespace CDP origin (optional)
     #   token_env: "MICROPROXY_VDI1_SESSION_API_KEY"
     #   provider: "residential-sticky"
     # Optional sidecar/system manager for the VDI

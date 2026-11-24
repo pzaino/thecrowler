@@ -53,8 +53,11 @@ The POST request should be in the following format:
 listener. It is resolved once at the source-crawl boundary and the same value is
 used by Chromium or Firefox. `crawling_config.sticky_session` is a strict
 boolean; when true, the engine rotates the leased VDI's trusted microproxy
-data-plane session exactly once before creating the browser session. Both fields
-are rejected when malformed, and sticky sessions are rejected for email and
+data-plane session exactly once before creating the browser session. For
+Chrome/Chromium the rotation is attempted first through a disposable VDI-local
+management browser; eligible CDP failures fall back to the engine-direct client
+with the same key. Firefox uses the engine-direct client. Both source fields are
+rejected when malformed, and sticky sessions are rejected for email and
 network-only sources. See [Sources](../sources.md) and
 [Sticky sessions and per-source proxies](../sticky-sessions.md).
 

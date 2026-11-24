@@ -22,6 +22,7 @@ package crawler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -33,11 +34,16 @@ import (
 	"github.com/pzaino/thecrowler/pkg/vdi"
 )
 
-const stickySessionRotationTimeout = 20 * time.Second
+const stickySessionRotationBudget = 120 * time.Second
 
-// stickySessionRotator is the narrow client boundary used by the crawler.
+// stickySessionRotator is the narrow engine-direct client boundary.
 type stickySessionRotator interface {
 	Rotate(context.Context, proxycontrol.RotateRequest) (proxycontrol.RotateResponse, error)
+}
+
+// stickyCDPSessionRotator is the CDP-first transport using the leased VDI.
+type stickyCDPSessionRotator interface {
+	Rotate(context.Context, string, proxycontrol.RotateRequest) (proxycontrol.RotateResponse, error)
 }
 
 // SetEffectiveProxy records the one proxy decision for this source crawl.
@@ -113,6 +119,11 @@ func (ctx *ProcessContext) resolveBrowserProxy(sel vdi.SeleniumInstance, sourceC
 		var strictErr error
 		if _, apiErr := cfg.NormalizeStickyAPIURL(profile.APIURL); apiErr != nil {
 			return cfg.ProxyResolution{}, fmt.Errorf("vdi.sticky_session.api_url: %w", apiErr)
+		}
+		if strings.TrimSpace(profile.VDIAPIURL) != "" {
+			if _, vdiAPIErr := cfg.NormalizeStickyAPIURL(profile.VDIAPIURL); vdiAPIErr != nil {
+				return cfg.ProxyResolution{}, fmt.Errorf("vdi.sticky_session.vdi_api_url: %w", vdiAPIErr)
+			}
 		}
 		if strings.ContainsAny(profile.Provider, " \t\r\n") {
 			return cfg.ProxyResolution{}, fmt.Errorf("vdi.sticky_session.provider must not contain whitespace")
@@ -209,19 +220,10 @@ func (ctx *ProcessContext) startBrowserCrawl(
 		return fmt.Errorf("sticky_session: generating idempotency key: %w", err)
 	}
 
-	rotator := ctx.stickyRotator
-	if rotator == nil {
-		rotator = proxycontrol.NewRotator()
-	}
-	rotationCtx, cancel := context.WithTimeout(ctx.crawlContext(), stickySessionRotationTimeout)
+	rotationCtx, cancel := context.WithTimeout(ctx.crawlContext(), stickySessionRotationBudget)
 	defer cancel()
 
-	response, err := rotator.Rotate(rotationCtx, proxycontrol.RotateRequest{
-		APIURL:         profile.APIURL,
-		Token:          token,
-		IdempotencyKey: idempotencyKey,
-		Provider:       profile.Provider,
-	})
+	response, transport, err := ctx.rotateStickySession(rotationCtx, sel, profile, token, idempotencyKey)
 	if err != nil {
 		sourceID := uint64(0)
 		if ctx.source != nil {
@@ -234,8 +236,8 @@ func (ctx *ProcessContext) startBrowserCrawl(
 	}
 
 	cmn.DebugMsg(cmn.DbgLvlInfo,
-		"sticky session rotated for VDI '%s' (provider '%s', generation %d, replayed=%t)",
-		sel.Config.Name, response.Provider, response.Generation, response.Replayed)
+		"sticky session rotated for VDI '%s' via %s (provider '%s', generation %d, replayed=%t)",
+		sel.Config.Name, transport, response.Provider, response.Generation, response.Replayed)
 
 	// The attempt may have been cancelled or superseded while the API call
 	// was in flight. Never start a browser after losing the fence.
@@ -252,4 +254,89 @@ func (ctx *ProcessContext) startBrowserCrawl(
 		return fmt.Errorf("browser connection callback is nil")
 	}
 	return connect()
+}
+
+// rotateStickySession applies the CDP-first / engine-direct fallback policy.
+// One key and one token are used for every attempt.
+func (ctx *ProcessContext) rotateStickySession(
+	rotationCtx context.Context,
+	sel vdi.SeleniumInstance,
+	profile cfg.StickySessionConfig,
+	token, idempotencyKey string,
+) (proxycontrol.RotateResponse, string, error) {
+	directRequest := proxycontrol.RotateRequest{
+		APIURL:         profile.APIURL,
+		Token:          token,
+		IdempotencyKey: idempotencyKey,
+		Provider:       profile.Provider,
+	}
+
+	direct := ctx.stickyRotator
+	// An explicitly injected engine-direct rotator (tests and embedders) keeps
+	// the historical direct-only behaviour unless a CDP transport is also
+	// supplied. Production leaves both nil and gets CDP-first automatically.
+	useCDP := vdi.SupportsCDPStickyRotation(sel) && (direct == nil || ctx.stickyCDPRotator != nil)
+	var cdpErr error
+	if useCDP {
+		cdp := ctx.stickyCDPRotator
+		if cdp == nil {
+			cdp = vdi.NewCDPStickyRotator(sel)
+		}
+		cdpURL := strings.TrimSpace(profile.VDIAPIURL)
+		if cdpURL == "" {
+			cdpURL = profile.APIURL
+		}
+		cdpRequest := directRequest
+		cdpRequest.APIURL = cdpURL
+		response, err := cdp.Rotate(rotationCtx, cdpURL, cdpRequest)
+		if err == nil {
+			if !validStickyRotationResponse(response, profile.Provider) {
+				return proxycontrol.RotateResponse{}, "cdp",
+					&proxycontrol.Error{Kind: proxycontrol.FailureInvalidResponse}
+			}
+			return response, "cdp", nil
+		}
+		if errors.Is(err, vdi.ErrCDPStickyUnsafeCleanup) {
+			ctx.quarantineSession("sticky rotation temporary browser cleanup failed")
+			return proxycontrol.RotateResponse{}, "cdp", err
+		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+			ctx.crawlAborted() || proxycontrol.IsFailureKind(err, proxycontrol.FailureCancelled) {
+			return proxycontrol.RotateResponse{}, "cdp", err
+		}
+		if proxycontrol.IsDefinitive(err) {
+			return proxycontrol.RotateResponse{}, "cdp", err
+		}
+		if errors.Is(err, vdi.ErrCDPStickyUnavailable) || errors.Is(err, vdi.ErrCDPStickyUncertain) ||
+			proxycontrol.IsFailureKind(err, proxycontrol.FailureTransport) ||
+			proxycontrol.IsFailureKind(err, proxycontrol.FailureTimeout) {
+			cdpErr = err
+			cmn.DebugMsg(cmn.DbgLvlWarn,
+				"CDP sticky rotation unavailable for VDI '%s'; trying engine-direct fallback: %v",
+				sel.Config.Name, err)
+		} else {
+			return proxycontrol.RotateResponse{}, "cdp", err
+		}
+	}
+
+	if direct == nil {
+		direct = proxycontrol.NewRotator()
+	}
+	response, err := direct.Rotate(rotationCtx, directRequest)
+	if err != nil {
+		if cdpErr != nil {
+			return proxycontrol.RotateResponse{}, "direct", fmt.Errorf(
+				"sticky session rotation failed (CDP: %v; engine-direct: %w)", cdpErr, err)
+		}
+		return proxycontrol.RotateResponse{}, "direct", err
+	}
+	if !validStickyRotationResponse(response, profile.Provider) {
+		return proxycontrol.RotateResponse{}, "direct",
+			&proxycontrol.Error{Kind: proxycontrol.FailureInvalidResponse}
+	}
+	return response, "direct", nil
+}
+
+func validStickyRotationResponse(response proxycontrol.RotateResponse, provider string) bool {
+	return response.Status == "rotated" && response.Generation >= 1 && response.Provider == provider
 }

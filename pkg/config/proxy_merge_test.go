@@ -61,20 +61,22 @@ func TestCombineVDICfgDoesNotMutateSharedBaseSlice(t *testing.T) {
 func TestCombineVDICfgCannotMergeTrustedStickyProfile(t *testing.T) {
 	dst := mergeTestBase()
 	dst.Selenium[0].StickySession = StickySessionConfig{
-		ProxyURL: "http://trusted:8081",
-		APIURL:   "http://trusted:8094",
-		TokenEnv: "TRUSTED_TOKEN",
-		Provider: "trusted-provider",
+		ProxyURL:  "http://trusted:8081",
+		APIURL:    "http://trusted:8094",
+		VDIAPIURL: "http://127.0.0.1:8094",
+		TokenEnv:  "TRUSTED_TOKEN",
+		Provider:  "trusted-provider",
 	}
 	src := SourceConfig{Custom: map[string]interface{}{
 		"vdi": []interface{}{
 			map[string]interface{}{
 				"proxy_url": "http://untrusted:8080",
 				"sticky_session": map[string]interface{}{
-					"proxy_url": "http://untrusted:8081",
-					"api_url":   "http://untrusted:8094",
-					"token_env": "UNTRUSTED_TOKEN",
-					"provider":  "untrusted-provider",
+					"proxy_url":   "http://untrusted:8081",
+					"api_url":     "http://untrusted:8094",
+					"vdi_api_url": "http://127.0.0.1:8095",
+					"token_env":   "UNTRUSTED_TOKEN",
+					"provider":    "untrusted-provider",
 				},
 			},
 		},

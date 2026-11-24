@@ -27,6 +27,38 @@ type recordingRotator struct {
 	onRotate func()
 }
 
+type recordingCDPRotator struct {
+	mu       sync.Mutex
+	calls    int
+	apiURLs  []string
+	requests []proxycontrol.RotateRequest
+	response proxycontrol.RotateResponse
+	err      error
+	onRotate func()
+}
+
+func (r *recordingCDPRotator) Rotate(_ context.Context, apiURL string, request proxycontrol.RotateRequest) (proxycontrol.RotateResponse, error) {
+	r.mu.Lock()
+	r.calls++
+	r.apiURLs = append(r.apiURLs, apiURL)
+	r.requests = append(r.requests, request)
+	onRotate := r.onRotate
+	r.mu.Unlock()
+	if onRotate != nil {
+		onRotate()
+	}
+	if r.err != nil {
+		return proxycontrol.RotateResponse{}, r.err
+	}
+	return r.response, nil
+}
+
+func (r *recordingCDPRotator) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.calls
+}
+
 func (r *recordingRotator) Rotate(_ context.Context, request proxycontrol.RotateRequest) (proxycontrol.RotateResponse, error) {
 	r.mu.Lock()
 	r.calls++
@@ -84,7 +116,9 @@ func stickySourceConfig() cfg.SourceConfig {
 func TestStartBrowserCrawlNonStickySkipsRotation(t *testing.T) {
 	ctx, sel := stickyTestContext(t)
 	rotator := &recordingRotator{}
+	cdp := &recordingCDPRotator{}
 	ctx.stickyRotator = rotator
+	ctx.stickyCDPRotator = cdp
 	ctx.stickyGetenv = func(string) string { return "token" }
 
 	connected := false
@@ -95,8 +129,8 @@ func TestStartBrowserCrawlNonStickySkipsRotation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("startBrowserCrawl: %v", err)
 	}
-	if rotator.count() != 0 {
-		t.Fatalf("non-sticky source performed %d rotations", rotator.count())
+	if rotator.count() != 0 || cdp.count() != 0 {
+		t.Fatalf("non-sticky source performed direct=%d cdp=%d rotations", rotator.count(), cdp.count())
 	}
 	if !connected {
 		t.Fatal("browser connect callback was not invoked")
@@ -207,6 +241,261 @@ func TestStartBrowserCrawlWithRealRotatorHTTPClient(t *testing.T) {
 	}
 	if key != "real-client-key" {
 		t.Fatalf("idempotency key = %q", key)
+	}
+}
+
+func TestStartBrowserCrawlCDPSuccessSkipsDirect(t *testing.T) {
+	ctx, sel := stickyTestContext(t)
+	// The engine-direct origin is deliberately unreachable in this test: a
+	// validated CDP success must not need it.
+	sel.Config.StickySession.APIURL = "http://127.0.0.1:1"
+	sel.Config.StickySession.VDIAPIURL = "http://127.0.0.1:8094"
+	ctx.config.Selenium[0] = sel.Config
+	cdp := &recordingCDPRotator{
+		response: proxycontrol.RotateResponse{Status: "rotated", Provider: "residential-sticky", Generation: 5},
+	}
+	direct := &recordingRotator{}
+	ctx.stickyCDPRotator = cdp
+	ctx.stickyRotator = direct
+	ctx.stickyGetenv = func(string) string { return "secret-token" }
+	ctx.stickyKeyGenerate = func() (string, error) { return "cdp-key", nil }
+
+	connected := false
+	err := ctx.startBrowserCrawl(sel, stickySourceConfig(), nil, func() error {
+		connected = true
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("startBrowserCrawl: %v", err)
+	}
+	if !connected {
+		t.Fatal("browser connect callback was not invoked")
+	}
+	if cdp.count() != 1 || direct.count() != 0 {
+		t.Fatalf("cdp=%d direct=%d, want 1/0", cdp.count(), direct.count())
+	}
+	request := cdp.requests[0]
+	if request.APIURL != "http://127.0.0.1:8094" || cdp.apiURLs[0] != "http://127.0.0.1:8094" {
+		t.Fatalf("CDP API URL = %q / %q", request.APIURL, cdp.apiURLs[0])
+	}
+	if request.Token != "secret-token" || request.IdempotencyKey != "cdp-key" || request.Provider != "residential-sticky" {
+		t.Fatalf("CDP request = %+v", request)
+	}
+}
+
+func TestStartBrowserCrawlCDPUnavailableFallsBackToEngineURL(t *testing.T) {
+	ctx, sel := stickyTestContext(t)
+	sel.Config.StickySession.APIURL = "http://microproxy-vdi1:8094"
+	sel.Config.StickySession.VDIAPIURL = "http://127.0.0.1:8094"
+	ctx.config.Selenium[0] = sel.Config
+	cdp := &recordingCDPRotator{err: fmt.Errorf("%w: bootstrap failed", vdi.ErrCDPStickyUnavailable)}
+	direct := &recordingRotator{
+		response: proxycontrol.RotateResponse{Status: "rotated", Provider: "residential-sticky", Generation: 2},
+	}
+	ctx.stickyCDPRotator = cdp
+	ctx.stickyRotator = direct
+	ctx.stickyGetenv = func(string) string { return "secret-token" }
+	ctx.stickyKeyGenerate = func() (string, error) { return "same-key", nil }
+
+	connected := false
+	err := ctx.startBrowserCrawl(sel, stickySourceConfig(), nil, func() error {
+		connected = true
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("startBrowserCrawl: %v", err)
+	}
+	if !connected {
+		t.Fatal("browser connect callback was not invoked")
+	}
+	if cdp.count() != 1 || direct.count() != 1 {
+		t.Fatalf("cdp=%d direct=%d, want 1/1", cdp.count(), direct.count())
+	}
+	if cdp.apiURLs[0] != "http://127.0.0.1:8094" {
+		t.Fatalf("CDP origin = %q, want vdi_api_url", cdp.apiURLs[0])
+	}
+	request := direct.requests[0]
+	if request.APIURL != "http://microproxy-vdi1:8094" {
+		t.Fatalf("direct fallback API URL = %q", request.APIURL)
+	}
+	if request.Token != "secret-token" || request.IdempotencyKey != "same-key" || request.Provider != "residential-sticky" {
+		t.Fatalf("fallback request = %+v", request)
+	}
+}
+
+func TestStartBrowserCrawlCDPUncertainFallbackReusesSameKey(t *testing.T) {
+	ctx, sel := stickyTestContext(t)
+	cdp := &recordingCDPRotator{err: fmt.Errorf("%w: response lost", vdi.ErrCDPStickyUncertain)}
+	direct := &recordingRotator{
+		response: proxycontrol.RotateResponse{
+			Status: "rotated", Provider: "residential-sticky", Generation: 3, Replayed: true,
+		},
+	}
+	ctx.stickyCDPRotator = cdp
+	ctx.stickyRotator = direct
+	ctx.stickyGetenv = func(string) string { return "secret-token" }
+	ctx.stickyKeyGenerate = func() (string, error) { return "replay-key", nil }
+
+	if err := ctx.startBrowserCrawl(sel, stickySourceConfig(), nil, func() error { return nil }); err != nil {
+		t.Fatalf("startBrowserCrawl: %v", err)
+	}
+	if cdp.count() != 1 || direct.count() != 1 {
+		t.Fatalf("cdp=%d direct=%d, want 1/1", cdp.count(), direct.count())
+	}
+	if cdp.requests[0].IdempotencyKey != "replay-key" || direct.requests[0].IdempotencyKey != "replay-key" {
+		t.Fatalf("idempotency key changed: cdp=%q direct=%q",
+			cdp.requests[0].IdempotencyKey, direct.requests[0].IdempotencyKey)
+	}
+	if cdp.apiURLs[0] != "http://microproxy-vdi1:8094" {
+		t.Fatalf("CDP default origin = %q, want api_url", cdp.apiURLs[0])
+	}
+}
+
+func TestStartBrowserCrawlCDPDefinitiveFailureDoesNotFallback(t *testing.T) {
+	ctx, sel := stickyTestContext(t)
+	cdp := &recordingCDPRotator{err: &proxycontrol.Error{Kind: proxycontrol.FailureAuth, HTTPStatus: 401}}
+	direct := &recordingRotator{
+		response: proxycontrol.RotateResponse{Status: "rotated", Provider: "residential-sticky", Generation: 1},
+	}
+	ctx.stickyCDPRotator = cdp
+	ctx.stickyRotator = direct
+	ctx.stickyGetenv = func(string) string { return "token" }
+	ctx.stickyKeyGenerate = func() (string, error) { return "key", nil }
+
+	connected := false
+	err := ctx.startBrowserCrawl(sel, stickySourceConfig(), nil, func() error {
+		connected = true
+		return nil
+	})
+	if err == nil {
+		t.Fatal("expected definitive CDP failure")
+	}
+	if direct.count() != 0 {
+		t.Fatal("definitive API rejection triggered a second transport")
+	}
+	if connected {
+		t.Fatal("browser started after definitive rejection")
+	}
+}
+
+func TestStartBrowserCrawlCDPUnsafeCleanupQuarantinesWithoutFallback(t *testing.T) {
+	ctx, sel := stickyTestContext(t)
+	cdp := &recordingCDPRotator{err: fmt.Errorf("%w: quit failed", vdi.ErrCDPStickyUnsafeCleanup)}
+	direct := &recordingRotator{
+		response: proxycontrol.RotateResponse{Status: "rotated", Provider: "residential-sticky", Generation: 1},
+	}
+	ctx.stickyCDPRotator = cdp
+	ctx.stickyRotator = direct
+	ctx.stickyGetenv = func(string) string { return "token" }
+	ctx.stickyKeyGenerate = func() (string, error) { return "key", nil }
+
+	connected := false
+	err := ctx.startBrowserCrawl(sel, stickySourceConfig(), nil, func() error {
+		connected = true
+		return nil
+	})
+	if err == nil {
+		t.Fatal("expected unsafe cleanup failure")
+	}
+	if direct.count() != 0 || connected {
+		t.Fatal("unsafe cleanup must not fall back or start the source browser")
+	}
+	if !ctx.sessionIsQuarantined() {
+		t.Fatal("VDI session was not quarantined after unsafe cleanup")
+	}
+}
+
+func TestStartBrowserCrawlCDPUnknownFailureDoesNotFallback(t *testing.T) {
+	ctx, sel := stickyTestContext(t)
+	cdp := &recordingCDPRotator{err: errors.New("unexpected CDP failure")}
+	direct := &recordingRotator{}
+	ctx.stickyCDPRotator = cdp
+	ctx.stickyRotator = direct
+	ctx.stickyGetenv = func(string) string { return "token" }
+	ctx.stickyKeyGenerate = func() (string, error) { return "key", nil }
+
+	if err := ctx.startBrowserCrawl(sel, stickySourceConfig(), nil, func() error {
+		t.Fatal("connect must not run")
+		return nil
+	}); err == nil {
+		t.Fatal("expected unknown CDP failure")
+	}
+	if direct.count() != 0 {
+		t.Fatal("unknown CDP failure was silently treated as fallback")
+	}
+}
+
+func TestStartBrowserCrawlCDPCancellationDoesNotFallback(t *testing.T) {
+	ctx, sel := stickyTestContext(t)
+	cdp := &recordingCDPRotator{
+		err:      fmt.Errorf("%w: source cancelled", vdi.ErrCDPStickyUncertain),
+		onRotate: func() { ctx.crawlCancel() },
+	}
+	direct := &recordingRotator{
+		response: proxycontrol.RotateResponse{Status: "rotated", Provider: "residential-sticky", Generation: 1},
+	}
+	ctx.stickyCDPRotator = cdp
+	ctx.stickyRotator = direct
+	ctx.stickyGetenv = func(string) string { return "token" }
+	ctx.stickyKeyGenerate = func() (string, error) { return "key", nil }
+
+	connected := false
+	if err := ctx.startBrowserCrawl(sel, stickySourceConfig(), nil, func() error {
+		connected = true
+		return nil
+	}); err == nil {
+		t.Fatal("expected cancellation/fence failure")
+	}
+	if direct.count() != 0 || connected {
+		t.Fatal("cancelled CDP attempt fell back or started the source browser")
+	}
+}
+
+func TestStartBrowserCrawlCDPSuccessThenCancellationBlocksSourceBrowser(t *testing.T) {
+	ctx, sel := stickyTestContext(t)
+	cdp := &recordingCDPRotator{
+		response: proxycontrol.RotateResponse{Status: "rotated", Provider: "residential-sticky", Generation: 1},
+		onRotate: func() { ctx.crawlCancel() },
+	}
+	direct := &recordingRotator{}
+	ctx.stickyCDPRotator = cdp
+	ctx.stickyRotator = direct
+	ctx.stickyGetenv = func(string) string { return "token" }
+	ctx.stickyKeyGenerate = func() (string, error) { return "key", nil }
+
+	connected := false
+	if err := ctx.startBrowserCrawl(sel, stickySourceConfig(), nil, func() error {
+		connected = true
+		return nil
+	}); !errors.Is(err, errCrawlFenced) {
+		t.Fatalf("error = %v, want errCrawlFenced", err)
+	}
+	if connected {
+		t.Fatal("source browser started after cancellation following a 200 rotation")
+	}
+	if direct.count() != 0 {
+		t.Fatal("successful CDP rotation triggered direct fallback")
+	}
+}
+
+func TestStartBrowserCrawlFirefoxSkipsCDP(t *testing.T) {
+	ctx, sel := stickyTestContext(t)
+	sel.Config.Type = "firefox"
+	ctx.config.Selenium[0] = sel.Config
+	cdp := &recordingCDPRotator{}
+	direct := &recordingRotator{
+		response: proxycontrol.RotateResponse{Status: "rotated", Provider: "residential-sticky", Generation: 1},
+	}
+	ctx.stickyCDPRotator = cdp
+	ctx.stickyRotator = direct
+	ctx.stickyGetenv = func(string) string { return "token" }
+	ctx.stickyKeyGenerate = func() (string, error) { return "key", nil }
+
+	if err := ctx.startBrowserCrawl(sel, stickySourceConfig(), nil, func() error { return nil }); err != nil {
+		t.Fatalf("startBrowserCrawl: %v", err)
+	}
+	if cdp.count() != 0 || direct.count() != 1 {
+		t.Fatalf("cdp=%d direct=%d, want 0/1", cdp.count(), direct.count())
 	}
 }
 
