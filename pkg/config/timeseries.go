@@ -8,6 +8,7 @@ package config
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -149,9 +150,255 @@ type TimeSeriesMetricDefaults struct {
 	FailurePolicy  TimeSeriesFailurePolicy  `json:"failure_policy" yaml:"failure_policy"`
 }
 
+// TimeSeriesRetentionConfig controls the optional scheduled retention pass.
+// Automatic deletion is disabled by default so an upgrade from 2.3.0 never
+// starts deleting history merely because the feature exists.
 type TimeSeriesRetentionConfig struct {
-	Raw        string `json:"raw" yaml:"raw"`
-	Aggregated string `json:"aggregated" yaml:"aggregated"`
+	Enabled     bool   `json:"enabled" yaml:"enabled"`
+	Schedule    string `json:"schedule" yaml:"schedule"`
+	BatchSize   int    `json:"batch_size" yaml:"batch_size"`
+	MaxBatches  int    `json:"max_batches" yaml:"max_batches"`
+	MaxDuration string `json:"max_duration" yaml:"max_duration"`
+	DryRun      bool   `json:"dry_run" yaml:"dry_run"`
+	Raw         string `json:"raw" yaml:"raw"`
+	Aggregated  string `json:"aggregated" yaml:"aggregated"`
+}
+
+// TimeSeriesRetentionOverride is an optional per-metric replacement for the
+// global raw/aggregated retention windows. An omitted or empty field inherits
+// the global value; the literal "0" keeps that family forever.
+type TimeSeriesRetentionOverride struct {
+	Raw        string `json:"raw,omitempty" yaml:"raw,omitempty"`
+	Aggregated string `json:"aggregated,omitempty" yaml:"aggregated,omitempty"`
+}
+
+// TimeSeriesRetentionWindow is a parsed retention horizon. Retention horizons
+// are not all expressible as a time.Duration: calendar months and years change
+// length, so they are evaluated against a UTC instant with end-of-month
+// clamping. Fixed units (ns, us, µs, ms, s, m, h, d, w) remain exact durations.
+type TimeSeriesRetentionWindow struct {
+	Specified bool
+	Forever   bool
+	Months    int
+	Fixed     time.Duration
+}
+
+const timeSeriesRetentionMaxMonths = 1200
+
+var (
+	// Fixed windows keep the historical Go duration grammar (including
+	// composites such as 1h30m and fractions such as 1.5h), extended with d and
+	// w. Calendar windows are integer y/mo compositions and never mix with fixed
+	// units, because a fractional month has no unambiguous calendar meaning.
+	timeSeriesFixedRetentionPattern    = regexp.MustCompile(`^(?:[0-9]+(?:\.[0-9]+)?(?:ns|us|µs|ms|s|m|h|d|w))+$`)
+	timeSeriesCalendarRetentionPattern = regexp.MustCompile(`^(?:[0-9]+(?:y|mo))+$`)
+	timeSeriesFixedRetentionSegment    = regexp.MustCompile(`^([0-9]+(?:\.[0-9]+)?)(ns|us|µs|ms|s|m|h|d|w)`)
+	timeSeriesCalendarRetentionSegment = regexp.MustCompile(`^([0-9]+)(y|mo)`)
+)
+
+// ParseTimeSeriesRetentionWindow parses a retention horizon. The empty string
+// is rejected so callers must decide explicitly whether it means "inherit" or
+// "unset"; "0" (with or without a unit) means keep forever.
+func ParseTimeSeriesRetentionWindow(value string) (TimeSeriesRetentionWindow, error) {
+	window := TimeSeriesRetentionWindow{}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return window, fmt.Errorf("retention window must not be empty")
+	}
+	window.Specified = true
+	if value == "0" {
+		window.Forever = true
+		return window, nil
+	}
+	if timeSeriesCalendarRetentionPattern.MatchString(value) {
+		months, err := parseCalendarRetentionDuration(value)
+		if err != nil {
+			return window, err
+		}
+		if months == 0 {
+			window.Forever = true
+			return window, nil
+		}
+		if months > timeSeriesRetentionMaxMonths {
+			return window, fmt.Errorf("retention window %q exceeds the maximum of %d months", value, timeSeriesRetentionMaxMonths)
+		}
+		window.Months = months
+		return window, nil
+	}
+	if timeSeriesFixedRetentionPattern.MatchString(value) {
+		fixed, err := parseFixedRetentionDuration(value)
+		if err != nil {
+			return window, err
+		}
+		if fixed == 0 {
+			window.Forever = true
+			return window, nil
+		}
+		window.Fixed = fixed
+		return window, nil
+	}
+	return window, fmt.Errorf("invalid retention window %q", value)
+}
+
+func parseCalendarRetentionDuration(value string) (int, error) {
+	remaining := value
+	months := 0
+	for remaining != "" {
+		location := timeSeriesCalendarRetentionSegment.FindStringSubmatchIndex(remaining)
+		if location == nil || location[0] != 0 {
+			return 0, fmt.Errorf("invalid retention window %q", value)
+		}
+		amountText := remaining[location[2]:location[3]]
+		unit := remaining[location[4]:location[5]]
+		amount, err := strconv.Atoi(amountText)
+		if err != nil || amount < 0 {
+			return 0, fmt.Errorf("invalid retention window %q", value)
+		}
+		switch unit {
+		case "y":
+			if amount > timeSeriesRetentionMaxMonths/12 {
+				return 0, fmt.Errorf("retention window %q exceeds the maximum of %d months", value, timeSeriesRetentionMaxMonths)
+			}
+			amount *= 12
+		}
+		if months > timeSeriesRetentionMaxMonths-amount {
+			return 0, fmt.Errorf("retention window %q exceeds the maximum of %d months", value, timeSeriesRetentionMaxMonths)
+		}
+		months += amount
+		remaining = remaining[location[1]:]
+	}
+	return months, nil
+}
+
+func parseFixedRetentionDuration(value string) (time.Duration, error) {
+	const maxDuration = time.Duration(1<<63 - 1)
+	remaining := value
+	var total time.Duration
+	for remaining != "" {
+		location := timeSeriesFixedRetentionSegment.FindStringSubmatchIndex(remaining)
+		if location == nil || location[0] != 0 {
+			return 0, fmt.Errorf("invalid retention window %q", value)
+		}
+		amountText := remaining[location[2]:location[3]]
+		unit := remaining[location[4]:location[5]]
+		var segment time.Duration
+		var err error
+		switch unit {
+		case "d", "w":
+			segment, err = time.ParseDuration(amountText + "h")
+			if err == nil {
+				multiplier := time.Duration(24)
+				if unit == "w" {
+					multiplier = 7 * 24
+				}
+				if segment > maxDuration/multiplier {
+					return 0, fmt.Errorf("retention window %q overflows", value)
+				}
+				segment *= multiplier
+			}
+		default:
+			segment, err = time.ParseDuration(amountText + unit)
+		}
+		if err != nil {
+			return 0, fmt.Errorf("invalid retention window %q", value)
+		}
+		if total > maxDuration-segment {
+			return 0, fmt.Errorf("retention window %q overflows", value)
+		}
+		total += segment
+		remaining = remaining[location[1]:]
+	}
+	return total, nil
+}
+
+// Validate checks a programmatically constructed window. Parsed windows always
+// satisfy these rules; this protects callers that build options directly.
+func (w TimeSeriesRetentionWindow) Validate() error {
+	if !w.Specified {
+		return nil
+	}
+	if w.Forever {
+		if w.Months != 0 || w.Fixed != 0 {
+			return fmt.Errorf("forever retention window must not carry a duration")
+		}
+		return nil
+	}
+	if w.Months < 0 || w.Fixed < 0 {
+		return fmt.Errorf("retention window must not be negative")
+	}
+	if w.Months > 0 && w.Fixed > 0 {
+		return fmt.Errorf("calendar and fixed retention units cannot be mixed")
+	}
+	if w.Months > timeSeriesRetentionMaxMonths {
+		return fmt.Errorf("retention window exceeds the maximum of %d months", timeSeriesRetentionMaxMonths)
+	}
+	if w.Months == 0 && w.Fixed == 0 {
+		return fmt.Errorf("retention window must be positive or forever")
+	}
+	return nil
+}
+
+// Cutoff returns the oldest instant a finite retention window keeps. The
+// second result is false for "keep forever". now is normalized to UTC.
+func (w TimeSeriesRetentionWindow) Cutoff(now time.Time) (time.Time, bool) {
+	if !w.Specified || w.Forever || (w.Months <= 0 && w.Fixed <= 0) {
+		return time.Time{}, false
+	}
+	now = now.UTC()
+	if w.Months > 0 {
+		year, month, day := now.Date()
+		totalMonths := year*12 + int(month) - 1 - w.Months
+		targetYear := totalMonths / 12
+		targetMonth := totalMonths % 12
+		if targetMonth < 0 {
+			targetMonth += 12
+			targetYear--
+		}
+		monthStart := time.Date(targetYear, time.Month(targetMonth+1), 1, now.Hour(), now.Minute(), now.Second(), now.Nanosecond(), time.UTC)
+		lastDay := monthStart.AddDate(0, 1, -1).Day()
+		if day > lastDay {
+			day = lastDay
+		}
+		return time.Date(targetYear, time.Month(targetMonth+1), day, now.Hour(), now.Minute(), now.Second(), now.Nanosecond(), time.UTC).Add(-w.Fixed), true
+	}
+	return now.Add(-w.Fixed), true
+}
+
+// ParseTimeSeriesFixedDuration parses the existing fixed duration grammar plus
+// the day and week suffixes. Calendar units (mo, y) are deliberately rejected
+// because they have no single time.Duration value.
+func ParseTimeSeriesFixedDuration(value string) (time.Duration, error) {
+	return parseTimeSeriesFixedDuration(value)
+}
+
+func parseTimeSeriesFixedDuration(value string) (time.Duration, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, fmt.Errorf("duration must not be empty")
+	}
+	multiplier := time.Duration(1)
+	normalized := value
+	if strings.HasSuffix(value, "d") {
+		multiplier = 24
+		normalized = strings.TrimSuffix(value, "d") + "h"
+	} else if strings.HasSuffix(value, "w") {
+		multiplier = 7 * 24
+		normalized = strings.TrimSuffix(value, "w") + "h"
+	} else if strings.HasSuffix(value, "mo") || strings.HasSuffix(value, "y") {
+		return 0, fmt.Errorf("calendar duration %q is not a fixed duration", value)
+	}
+	duration, err := time.ParseDuration(normalized)
+	if err != nil {
+		return 0, err
+	}
+	if multiplier > 1 {
+		const maxDuration = time.Duration(1<<63 - 1)
+		if duration > maxDuration/multiplier || duration < -maxDuration/multiplier {
+			return 0, fmt.Errorf("duration %q overflows", value)
+		}
+		duration *= multiplier
+	}
+	return duration, nil
 }
 
 type TimeSeriesAggregationConfig struct {
@@ -207,6 +454,7 @@ type TimeSeriesMetricConfig struct {
 	DedupeScope       TimeSeriesDedupeScope        `json:"dedupe_scope,omitempty" yaml:"dedupe_scope,omitempty"`
 	FailurePolicy     TimeSeriesFailurePolicy      `json:"failure_policy,omitempty" yaml:"failure_policy,omitempty"`
 	Dimensions        []TimeSeriesDimensionConfig  `json:"dimensions,omitempty" yaml:"dimensions,omitempty"`
+	Retention         *TimeSeriesRetentionOverride `json:"retention,omitempty" yaml:"retention,omitempty"`
 	Cardinality       *TimeSeriesCardinalityConfig `json:"cardinality,omitempty" yaml:"cardinality,omitempty"`
 	Privacy           *TimeSeriesPrivacyConfig     `json:"privacy,omitempty" yaml:"privacy,omitempty"`
 }
@@ -219,13 +467,47 @@ type TimeSeriesDimensionConfig struct {
 func defaultTimeSeriesConfig() TimeSeriesConfig {
 	return TimeSeriesConfig{
 		Defaults:    TimeSeriesMetricDefaults{ValueType: TimeSeriesValueInteger, Aggregates: []TimeSeriesAggregate{TimeSeriesAggregateCount}, BucketInterval: TimeSeriesBucketOneHour, TimeBasis: TimeSeriesTimeObservedAt, DedupeScope: TimeSeriesDedupeNone, FailurePolicy: TimeSeriesFailureLogSkip},
-		Retention:   TimeSeriesRetentionConfig{Raw: "30d", Aggregated: "365d"},
+		Retention:   TimeSeriesRetentionConfig{Enabled: false, Schedule: "1h", BatchSize: 1000, MaxBatches: 10, MaxDuration: "1m", DryRun: false, Raw: "30d", Aggregated: "365d"},
 		Aggregation: TimeSeriesAggregationConfig{Schedule: "5m", BatchSize: 1000, MaxBatches: 10, MaxDuration: "1m", Overlap: "15m"},
 		Storage:     TimeSeriesStorageConfig{Backend: "postgres", TablePrefix: "timeseries", Partitioning: TimeSeriesPartitioningConfig{Interval: TimeSeriesBucketOneDay, Precreate: 7}},
 		Cardinality: TimeSeriesCardinalityConfig{MaxSeriesPerMetric: 100000, MaxDimensions: 10, MaxValuesPerDimension: 10000, Overflow: TimeSeriesCardinalityDrop},
 		Privacy:     TimeSeriesPrivacyConfig{StoreValueText: false, MaxValueLength: 2048, RedactPatterns: []string{}},
 		Metrics:     []TimeSeriesMetricConfig{},
 	}
+}
+
+// NormalizeTimeSeriesConfig returns a deep copy with documented defaults applied.
+// It is exported so persistence code can resolve inherited per-metric retention
+// and cardinality policy even when it receives a configuration assembled directly
+// rather than through Config.Validate.
+func NormalizeTimeSeriesConfig(ts TimeSeriesConfig) TimeSeriesConfig {
+	clone := ts
+	clone.Metrics = make([]TimeSeriesMetricConfig, len(ts.Metrics))
+	for i := range ts.Metrics {
+		clone.Metrics[i] = cloneTimeSeriesMetricConfig(ts.Metrics[i])
+	}
+	applyTimeSeriesDefaults(&clone, defaultTimeSeriesConfig())
+	return clone
+}
+
+func cloneTimeSeriesMetricConfig(metric TimeSeriesMetricConfig) TimeSeriesMetricConfig {
+	clone := metric
+	clone.Aggregates = append([]TimeSeriesAggregate(nil), metric.Aggregates...)
+	clone.Dimensions = append([]TimeSeriesDimensionConfig(nil), metric.Dimensions...)
+	if metric.Retention != nil {
+		retention := *metric.Retention
+		clone.Retention = &retention
+	}
+	if metric.Cardinality != nil {
+		cardinality := *metric.Cardinality
+		clone.Cardinality = &cardinality
+	}
+	if metric.Privacy != nil {
+		privacy := *metric.Privacy
+		privacy.RedactPatterns = append([]string(nil), metric.Privacy.RedactPatterns...)
+		clone.Privacy = &privacy
+	}
+	return clone
 }
 
 func (c *Config) validateTimeSeries() error {
@@ -258,6 +540,18 @@ func applyTimeSeriesDefaults(c *TimeSeriesConfig, d TimeSeriesConfig) {
 	}
 	if c.Retention.Aggregated == "" {
 		c.Retention.Aggregated = d.Retention.Aggregated
+	}
+	if c.Retention.Schedule == "" {
+		c.Retention.Schedule = d.Retention.Schedule
+	}
+	if c.Retention.BatchSize == 0 {
+		c.Retention.BatchSize = d.Retention.BatchSize
+	}
+	if c.Retention.MaxBatches == 0 {
+		c.Retention.MaxBatches = d.Retention.MaxBatches
+	}
+	if c.Retention.MaxDuration == "" {
+		c.Retention.MaxDuration = d.Retention.MaxDuration
 	}
 	if c.Aggregation.Schedule == "" {
 		c.Aggregation.Schedule = d.Aggregation.Schedule
@@ -324,6 +618,14 @@ func applyTimeSeriesDefaults(c *TimeSeriesConfig, d TimeSeriesConfig) {
 		if m.FailurePolicy == "" {
 			m.FailurePolicy = c.Defaults.FailurePolicy
 		}
+		if m.Retention != nil {
+			if strings.TrimSpace(m.Retention.Raw) == "" {
+				m.Retention.Raw = c.Retention.Raw
+			}
+			if strings.TrimSpace(m.Retention.Aggregated) == "" {
+				m.Retention.Aggregated = c.Retention.Aggregated
+			}
+		}
 		if m.Cardinality != nil {
 			if m.Cardinality.MaxSeriesPerMetric == 0 {
 				m.Cardinality.MaxSeriesPerMetric = c.Cardinality.MaxSeriesPerMetric
@@ -362,11 +664,19 @@ func (c TimeSeriesConfig) Validate() error {
 	validateValue("defaults.time_basis", string(c.Defaults.TimeBasis), timeBases)
 	validateValue("defaults.dedupe_scope", string(c.Defaults.DedupeScope), dedupeScopes)
 	validateFailure("defaults.failure_policy", c.Defaults.FailurePolicy, &errs)
-	validateDuration("retention.raw", c.Retention.Raw, &errs)
-	validateDuration("retention.aggregated", c.Retention.Aggregated, &errs)
-	validateDuration("aggregation.schedule", c.Aggregation.Schedule, &errs)
-	validateDuration("aggregation.max_duration", c.Aggregation.MaxDuration, &errs)
-	validateDuration("aggregation.overlap", c.Aggregation.Overlap, &errs)
+	validateRetentionWindow("retention.raw", c.Retention.Raw, &errs)
+	validateRetentionWindow("retention.aggregated", c.Retention.Aggregated, &errs)
+	validatePositiveDuration("retention.schedule", c.Retention.Schedule, &errs)
+	validatePositiveDuration("aggregation.schedule", c.Aggregation.Schedule, &errs)
+	validatePositiveDuration("aggregation.max_duration", c.Aggregation.MaxDuration, &errs)
+	validatePositiveDuration("aggregation.overlap", c.Aggregation.Overlap, &errs)
+	if c.Retention.BatchSize < 1 || c.Retention.BatchSize > 100000 {
+		errs = append(errs, "timeseries.retention.batch_size: must be between 1 and 100000")
+	}
+	if c.Retention.MaxBatches < 1 || c.Retention.MaxBatches > 1000 {
+		errs = append(errs, "timeseries.retention.max_batches: must be between 1 and 1000")
+	}
+	validatePositiveDuration("retention.max_duration", c.Retention.MaxDuration, &errs)
 	if c.Aggregation.BatchSize < 1 || c.Aggregation.BatchSize > 100000 {
 		errs = append(errs, "timeseries.aggregation.batch_size: must be between 1 and 100000")
 	}
@@ -435,6 +745,14 @@ func (c TimeSeriesConfig) Validate() error {
 		if m.Cardinality != nil {
 			validateCardinality(p+".cardinality", *m.Cardinality, &errs)
 		}
+		if m.Retention != nil {
+			if strings.TrimSpace(m.Retention.Raw) != "" {
+				validateRetentionWindow(p+".retention.raw", m.Retention.Raw, &errs)
+			}
+			if strings.TrimSpace(m.Retention.Aggregated) != "" {
+				validateRetentionWindow(p+".retention.aggregated", m.Retention.Aggregated, &errs)
+			}
+		}
 		if m.Privacy != nil {
 			validatePrivacy(p+".privacy", *m.Privacy, &errs)
 		}
@@ -485,24 +803,16 @@ func selectorString(m map[string]interface{}, key string) string {
 	}
 	return strings.TrimSpace(s)
 }
-func validateDuration(field, value string, errs *[]string) {
-	d, err := parseTimeSeriesDuration(value)
+func validatePositiveDuration(field, value string, errs *[]string) {
+	d, err := parseTimeSeriesFixedDuration(value)
 	if err != nil || d <= 0 {
 		*errs = append(*errs, fmt.Sprintf("timeseries.%s: must be a positive Go duration", field))
 	}
 }
-func parseTimeSeriesDuration(value string) (time.Duration, error) {
-	value = strings.TrimSpace(value)
-	multiplier := time.Duration(1)
-	if strings.HasSuffix(value, "d") {
-		multiplier = 24
-		value = strings.TrimSuffix(value, "d") + "h"
-	} else if strings.HasSuffix(value, "w") {
-		multiplier = 7 * 24
-		value = strings.TrimSuffix(value, "w") + "h"
+func validateRetentionWindow(field, value string, errs *[]string) {
+	if _, err := ParseTimeSeriesRetentionWindow(value); err != nil {
+		*errs = append(*errs, fmt.Sprintf("timeseries.%s: %v", field, err))
 	}
-	d, err := time.ParseDuration(value)
-	return d * multiplier, err
 }
 
 func validateFailure(field string, value TimeSeriesFailurePolicy, errs *[]string) {

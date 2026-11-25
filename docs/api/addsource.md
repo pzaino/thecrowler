@@ -47,6 +47,40 @@ The POST request should be in the following format:
 }
 ```
 
+## Per-source browser proxy and sticky sessions
+
+`crawling_config.proxy` selects an optional per-source downstream browser proxy
+listener. It is resolved once at the source-crawl boundary and the same value is
+used by Chromium or Firefox. `crawling_config.sticky_session` is a strict
+optional boolean. When omitted, the effective decision is inherited: a VDI
+whose ordinary `proxy_url` selects its sticky listener rotates automatically,
+while a standby profile requires an explicit opt-in. `true` requires one
+rotation using the effective profile; `false` disables inherited sticky mode and
+fails if the effective proxy is still a known sticky listener. A source may also
+select a complete operator-approved profile through positional
+`custom.vdi[].sticky_session`, even when the global VDI has no sticky default.
+The source profile must exactly match `vdi[].sticky_session` or an entry in
+`vdi[].approved_sticky_profiles`; the runtime rechecks this for stored sources,
+so a source cannot introduce a new management origin or `token_env`.
+
+The source may change its downstream proxy and approved sticky profile, but it
+cannot redirect the pipeline to another Selenium VDI. The leased VDI's `name`,
+`host`, `port`, effective `sslmode` scheme and browser `type` are authoritative;
+a conflicting `custom.vdi[]` value is rejected before rotation or browser
+creation. Equivalent hostname case/whitespace is accepted for the crawl and
+replaced by the leased value in the effective session; the stored source
+document is not rewritten. Source add and update compare the override with the
+API service's VDI snapshot and return HTTP `400` when they can prove a conflict.
+The engine always revalidates the stored source against its own snapshot, so an
+API/engine configuration divergence still fails closed at crawl time.
+
+For Chrome/Chromium the rotation is attempted first through a disposable
+VDI-local management browser; eligible CDP failures fall back to the engine-direct
+client with the same key. Firefox uses the engine-direct client. Both source
+fields are rejected when malformed, and explicit sticky mode is rejected for
+email and network-only sources. See [Sources](../sources.md) and
+[Sticky sessions and per-source proxies](../sticky-sessions.md).
+
 ## Ownership and authentication
 
 When `api.auth.enabled` is true, source mutations require a valid bearer token

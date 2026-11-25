@@ -847,7 +847,13 @@ func RebuildTimeSeriesCardinality(ctx context.Context, db *Handler) (TimeSeriesC
 }
 
 func deleteTimeSeriesObservationsWithAccounting(ctx context.Context, tx *sql.Tx, dbms, where string, args []interface{}, limit int) (int64, error) {
-	query := `SELECT ` + timeSeriesObservationColumns + ` FROM TimeSeriesObservations WHERE ` + where + ` ORDER BY observation_id`
+	return deleteTimeSeriesObservationsWithAccountingOrder(ctx, tx, dbms, where, "observation_id", args, limit)
+}
+
+// deleteTimeSeriesObservationsWithAccountingOrder is the internal ordered form.
+// orderBy is always a fixed internal column list, never caller input.
+func deleteTimeSeriesObservationsWithAccountingOrder(ctx context.Context, tx *sql.Tx, dbms, where, orderBy string, args []interface{}, limit int) (int64, error) {
+	query := `SELECT ` + timeSeriesObservationColumns + ` FROM TimeSeriesObservations WHERE ` + where + ` ORDER BY ` + orderBy
 	if limit > 0 {
 		query += ` LIMIT ` + fmt.Sprint(limit)
 	}

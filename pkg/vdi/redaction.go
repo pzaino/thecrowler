@@ -42,6 +42,14 @@ var sensitiveCredentialKeys = map[string]bool{
 	"proxy-password":      true,
 	"proxy_user":          true,
 	"proxy_password":      true,
+	// Runtime.callFunctionOn carries the rotate bearer token and idempotency
+	// key as positional arguments. The whole argument array, expression,
+	// function declaration and remote-object handle are treated as secret so
+	// verbose CDP logging can never expose them.
+	"arguments":           true,
+	"expression":          true,
+	"functiondeclaration": true,
+	"objectid":            true,
 }
 
 // redactCDPParams returns a deep, LOG-SAFE copy of a CDP command's parameter

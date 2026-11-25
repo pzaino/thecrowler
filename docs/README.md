@@ -35,4 +35,6 @@ deployed in a containerized environment.
 ## Feature guides
 
 * [Information Seed discovery](information-seed/information_seed.md) — configure providers, submit seeds, filter candidates, create or link Sources, and inspect diagnostics.
+* [Sticky sessions and per-source proxies](sticky-sessions.md) — per-VDI microproxy profiles, `crawling_config.sticky_session`, `crawling_config.proxy` precedence, deployment topology, and 2.3.1 limitations.
 * [Time-series observations and aggregates](time_series/timeseries.md) — metric definitions, emitters, scope/dedupe/change behavior, aggregation, API queries, retention, privacy, portability, and runnable examples.
+* [Time-series retention hardening (2.3.1)](time_series/timeseries-retention-hardening.md) — scheduled retention contract, calendar windows, cardinality recovery, and aggregate-integrity guardrails.

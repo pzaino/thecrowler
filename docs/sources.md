@@ -120,14 +120,169 @@ and ownership checks. Redirect chains in the Go HTTP client are bounded and
 loops produce an error. MCP Streamable HTTP keeps its own stricter rule and
 never follows redirects; this source option does not affect it.
 
+### `proxy`
+
+`crawling_config.proxy` is the canonical per-source downstream browser proxy
+listener. It must be an absolute `http`, `https` or `socks5` URL with a host and
+an explicit port. It must not contain credentials, a path, a query or a
+fragment. Authentication belongs to the proxy itself, not to the browser
+listener URL. Chromium/Chrome accept HTTP, HTTPS and SOCKS5; Firefox accepts
+HTTP and SOCKS5 only, so an HTTPS listener is rejected for a Firefox VDI before
+the browser starts.
+
+```yaml
+crawling_config:
+  site: "https://example.net/"
+  proxy: "http://regular-proxy:3128"
+```
+
+For a source that does not use sticky sessions, the documented precedence is:
+
+1. `crawling_config.proxy`, when non-empty;
+2. the historical top-level source `proxy_url` for already-stored documents;
+3. an explicit `custom.vdi[].proxy_url` for the leased VDI;
+4. the global `vdi[].proxy_url`;
+5. otherwise a direct connection.
+
+The top-level `proxy_url` is **not** a supported schema field. It is read only
+for backward compatibility with documents created before
+`crawling_config.proxy` was completed at runtime. New source documents must use
+`crawling_config.proxy`.
+
+The exact lowercase sentinel `no_proxy` still disables proxying at the legacy
+top-level and `custom.vdi` layers. It is not a valid value for
+`crawling_config.proxy`; omit the canonical field to inherit the next layer.
+A non-empty malformed `crawling_config.proxy` fails the crawl instead of
+silently falling back to direct egress. Blank values inherit.
+
+The value is resolved once at the source-crawl boundary and the same value is
+used to configure Chromium or Firefox. Two sources using different proxies on
+the same VDI pool slot do not share a proxy decision.
+
+### `sticky_session`
+
+`crawling_config.sticky_session` is a strict optional boolean that explicitly
+overrides the effective VDI decision for this source:
+
+- omitted: inherit the effective decision. A VDI whose ordinary `proxy_url`
+  selects its sticky listener rotates automatically; a standby profile requires
+  an explicit opt-in or an approved source profile. A source selecting a known
+  sticky listener through an ordinary proxy override also rotates.
+- `true`: require one rotation using the effective complete profile. A missing
+  profile or a conflicting explicit source proxy fails closed.
+- `false`: disable inherited sticky mode. If the effective proxy is still a
+  known sticky listener, validation fails; choose a conventional or direct
+  proxy for this source.
+- an explicit `null`, string, number, array or object is rejected.
+
+```yaml
+crawling_config:
+  site: "https://example.org/"
+  source_type: website
+  sticky_session: true
+  # Optional. When supplied it must equal the effective profile's proxy_url
+  # listener; it is not the rotation API URL.
+  proxy: "http://microproxy-vdi1:8081"
+```
+
+A source may instead select a complete operator-approved profile through the
+positional `custom.vdi` array, even when the global VDI has no sticky default:
+
+```json
+{
+  "crawling_config": {
+    "site": "https://example.org/",
+    "source_type": "website"
+  },
+  "custom": {
+    "vdi": [
+      {
+        "proxy_url": "http://microproxy-vdi1:8091",
+        "sticky_session": {
+          "proxy_url": "http://microproxy-vdi1:8091",
+          "api_url": "http://microproxy-vdi1:8095",
+          "vdi_api_url": "http://127.0.0.1:8095",
+          "token_env": "MICROPROXY_VDI1_ALT_SESSION_API_KEY",
+          "provider": "residential-sticky-alt"
+        }
+      }
+    ]
+  }
+}
+```
+
+The nested profile is a full replacement, not a partial merge. It must exactly
+match the VDI's `sticky_session` default or an entry in
+`vdi[].approved_sticky_profiles`; otherwise the crawl fails before any rotation
+or browser creation. The allowlist is operator-only and is never copied from a
+source document. A source cannot introduce a new `token_env` or management
+origin.
+
+A source can select the downstream proxy (conventional, rotating or the sticky
+listener as documented above) but cannot redirect the pipeline to another
+Selenium VDI. The acquired VDI's `name`, `host`, `port`, effective `sslmode`
+scheme and browser `type` are authoritative; a differing `custom.vdi[]` value
+fails closed before rotation or WebDriver creation. Host comparison is
+case-insensitive after trimming, but no DNS alias resolution is performed.
+The `sslmode` decision mirrors the launcher: exact-case `enable` means HTTPS
+and every other value means HTTP. An accepted equivalent value is replaced by
+the leased value in the effective session; the stored source document is not
+rewritten.
+
+The legacy `service_type`, `path` and `driver_path` fields still merge for
+compatibility (`use_service` is not merged), but none of them is consulted by
+the pooled remote WebDriver launch and cannot redirect the acquired VDI.
+
+The trusted microproxy connection is configured per VDI with
+`vdi[].sticky_session.{proxy_url,api_url,vdi_api_url,token_env,provider}` and
+the optional `vdi[].approved_sticky_profiles` allowlist (see
+[Configuration](configuration/config_yaml.md)). `vdi_api_url` is the optional
+Chrome/Chromium browser-visible management origin; `api_url` remains the
+engine-direct fallback. They must address the same live microproxy process. The
+engine bearer token is read from the engine environment variable named by the
+selected profile's `token_env`; it is never stored in the source document or the
+global YAML.
+
+For Chrome and Chromium, rotation is attempted first through a disposable
+management browser on the leased VDI so it works when only the browser can reach
+microproxy's management API. If that route is unavailable or uncertain, the
+engine retries the same key through the engine-direct `api_url`. Firefox uses
+the engine-direct client directly. Definitive API rejections, malformed 200s,
+wrong providers, cancellation and temporary-browser cleanup failures do not
+fall back.
+
+When a sticky profile is selected, the engine uses that profile's listener even
+when `vdi[].proxy_url` points at a different ordinary listener. A conflicting
+`crawling_config.proxy`, `custom.vdi[].proxy_url` or legacy top-level override is
+a configuration error, not a silent override. Sticky sources fail closed when
+the effective profile is missing or unapproved, when the VDI name is ambiguous,
+or when the configured token is missing.
+
+Rotation happens **once per new source crawl**, before browser creation. Pages,
+refreshes, retries and Selenium reconnects inside that crawl reuse the same
+pinned session. Explicit sticky mode is rejected for email and network-only
+sources.
+
+This requests a new upstream sticky-session identifier. The upstream provider
+may assign a different egress IP, but microproxy does not guarantee a different
+public IP. CROWler 2.3.1 does not implement periodic or per-page rotation,
+rotation on HTTP 403/429, failed navigation or redirect, per-client identities
+behind one microproxy process, IP verification or retry loops, or
+provider-control-plane integration. See
+[Sticky sessions and per-source proxies](sticky-sessions.md) for the operator
+topology, troubleshooting and limitations.
+
 ### Choosing values
 
-Most deployments leave both options unset. Use `incognito: false` only when a
+Most deployments leave these options unset. Use `incognito: false` only when a
 site behaves differently in a private session and you accept a normal profile;
 the VDI still isolates that session from other sources. Use
 `follow_redirects: true` for a single source that must reach its canonical URL
 when the global policy is conservative, and `follow_redirects: false` for a
-source whose redirects must never be silently accepted.
+source whose redirects must never be silently accepted. Use
+`crawling_config.proxy` only for a source-specific downstream listener, and
+enable `sticky_session` only on a deployment that runs one microproxy data plane
+per VDI and has configured the matching trusted profile.
 
 ## Using addSource and removeSource commands
 

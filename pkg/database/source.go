@@ -454,6 +454,9 @@ func validateSourceConfig(config cfg.SourceConfig) error {
 	if err := validateURL(config.CrawlingConfig.Site); err != nil {
 		return fmt.Errorf("invalid URL in crawling_config: %v", err)
 	}
+	if err := cfg.ValidateSourceProtocolOptions(config); err != nil {
+		return err
+	}
 
 	for _, item := range config.ExecutionPlan {
 		if item.Label == "" || len(item.Conditions.URLPatterns) == 0 {

@@ -23,6 +23,35 @@ var (
 		Name: "crowler_timeseries_aggregation_budget_stops_total",
 		Help: "Time-series aggregation invocations stopped at an atomic window boundary by budget.",
 	}, []string{"reason"})
+	timeSeriesAggregationSkippedMetrics = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "crowler_timeseries_aggregation_skipped_metrics_total",
+		Help: "Explicit aggregate rebuilds that omitted a metric by bounded reason.",
+	}, []string{"reason"})
+	timeSeriesAggregationSkippedWindows = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "crowler_timeseries_aggregation_skipped_windows_total",
+		Help: "Incremental aggregation windows that advanced without replacing any aggregate because raw history was incomplete.",
+	})
+	timeSeriesRetentionRuns = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "crowler_timeseries_retention_runs_total",
+		Help: "Time-series retention invocations by bounded outcome.",
+	}, []string{"outcome"})
+	timeSeriesRetentionRowsDeleted = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "crowler_timeseries_retention_rows_deleted_total",
+		Help: "Rows physically deleted by time-series retention by family.",
+	}, []string{"family"})
+	timeSeriesRetentionSkippedMetrics = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "crowler_timeseries_retention_skipped_metrics_total",
+		Help: "Metric definitions skipped by time-series retention by bounded reason.",
+	}, []string{"reason"})
+	timeSeriesRetentionBudgetStops = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "crowler_timeseries_retention_budget_stops_total",
+		Help: "Time-series retention invocations stopped by a batch or duration budget.",
+	})
+	timeSeriesRetentionRunDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "crowler_timeseries_retention_run_duration_seconds",
+		Help:    "Wall-clock duration of one time-series retention invocation.",
+		Buckets: prometheus.DefBuckets,
+	})
 	timeSeriesCardinalityDecisions = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "crowler_timeseries_cardinality_decisions_total",
 		Help: "Time-series cardinality decisions by bounded resource type and outcome.",
@@ -62,7 +91,8 @@ const (
 )
 
 func init() {
-	prometheus.MustRegister(timeSeriesAggregationRowsScanned, timeSeriesAggregationWindowsCompleted, timeSeriesAggregationRetries, timeSeriesAggregationBudgetStops,
+	prometheus.MustRegister(timeSeriesAggregationRowsScanned, timeSeriesAggregationWindowsCompleted, timeSeriesAggregationRetries, timeSeriesAggregationBudgetStops, timeSeriesAggregationSkippedMetrics, timeSeriesAggregationSkippedWindows,
+		timeSeriesRetentionRuns, timeSeriesRetentionRowsDeleted, timeSeriesRetentionSkippedMetrics, timeSeriesRetentionBudgetStops, timeSeriesRetentionRunDuration,
 		timeSeriesCardinalityDecisions, timeSeriesCardinalityReservationRetries, timeSeriesCardinalityReservationWaits,
 		timeSeriesCardinalityReservationCleanup, timeSeriesCardinalityIntegrityErrors, timeSeriesPostgresPersistenceDuration)
 }

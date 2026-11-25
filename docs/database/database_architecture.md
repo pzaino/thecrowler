@@ -502,6 +502,8 @@ The backfill deliberately does **not** update `TimeSeriesAggregates`. Its result
 
 `TimeSeriesMetrics`, `TimeSeriesObservations`, `TimeSeriesAggregates`, `TimeSeriesAggregationRuns`, and `EntityObservationBackfillCheckpoints` implement the v1 analytical projection for PostgreSQL, MySQL and SQLite schemas (MySQL is reference-only in 2.3.0). Search and discovery tables remain authoritative; aggregate rows can be rebuilt from retained observations, and entity backfill updates raw scope before explicit reaggregation.
 
+Scheduled retention is opt-in in 2.3.1 and remains inside schema 1.17. Raw deletion uses the metric's selected time basis and the same transactional cardinality accounting as insertion. The existing `TimeSeriesAggregationRuns` table also stores per-metric `timeseries-retention:v1:<metric_id>` watermarks after the first physical raw deletion; an explicit aggregate rebuild that starts before a watermark is refused or omitted so aggregates are never replaced from incomplete history.
+
 PostgreSQL cardinality admission does not lock `TimeSeriesMetrics`. Existing
 series use lock-free active-accounting lookups; a potentially new series or
 dimension value takes a transaction-scoped advisory lock derived from a

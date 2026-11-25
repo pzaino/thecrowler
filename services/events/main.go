@@ -175,6 +175,7 @@ func main() {
 				// Handle SIGINT (Ctrl+C)
 				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGINT received, shutting down...")
 				setSysReady(0)
+				stopTimeSeriesMaintenance()
 				updateMetrics()
 				time.Sleep(2 * time.Second) // Give some time for metrics to be pushed before exiting
 				os.Exit(0)
@@ -183,6 +184,7 @@ func main() {
 				// Handle SIGTERM
 				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGTERM received, shutting down...")
 				setSysReady(0)
+				stopTimeSeriesMaintenance()
 				updateMetrics()
 				time.Sleep(2 * time.Second) // Give some time for metrics to be pushed before exiting
 				os.Exit(0)
@@ -191,6 +193,7 @@ func main() {
 				// Handle SIGQUIT
 				cmn.DebugMsg(cmn.DbgLvlInfo, "SIGQUIT received, shutting down...")
 				setSysReady(0)
+				stopTimeSeriesMaintenance()
 				updateMetrics()
 				time.Sleep(2 * time.Second) // Give some time for metrics to be pushed before exiting
 				os.Exit(0)
@@ -319,7 +322,10 @@ func main() {
 
 		// Start events scheduler and isolated time-series maintenance.
 		cdb.StartScheduler(&dbHandler, config)
-		startTimeSeriesAggregationScheduler(&dbHandler, config.TimeSeries)
+		maintenanceCtx, maintenanceCancel := context.WithCancel(context.Background())
+		setTimeSeriesMaintenanceCancel(maintenanceCancel)
+		startTimeSeriesAggregationScheduler(maintenanceCtx, &dbHandler, config.TimeSeries)
+		startTimeSeriesRetentionScheduler(maintenanceCtx, &dbHandler, config.TimeSeries)
 
 		// Start heartbeat loop if enabled
 		if config.Events.HeartbeatEnabled {

@@ -138,7 +138,7 @@ api:                         # This is the API configuration (this is the Genera
   key_file: ""               # Optional, this is the SSL key for the API
   enable_console: true       # Optional, this (if set to true) will enable the extra end points for adding and removing sources etc.
 
-selenium:                    # This is the Selenium container configuration (please note that this tag will soon be replaced by "vdi" and that is because a VDI image is not just selenium but also other tools which will soon need to be configured)
+vdi:                         # This is the VDI configuration (Selenium/browser container(s) and optional sticky-session data plane)
   - name: thecrowler_vdi_1   # Optional, This field allow you to specify a name for the VDI container
     location: AWS_EU_WEST_1  # Optional, This field allow you to specify the location of the VDI container
     type: chrome             # Required, this is the type of the Selenium container
@@ -251,7 +251,7 @@ The sections are:
 * The image_storage_api section configures the image storage API
 * The file_storage_api section configures the file storage API (downloaded files and/or web objects)
 * The API section configures the API
-* The selenium section configures the VDI container (please note the selenium tag will soon be replaced by the VDI tag)
+* The `vdi` section configures the VDI container(s), including the optional trusted microproxy sticky-session profile
 * The network_info section configures the network information gathering
 * The rulesets section configures the rulesets that will be loaded on the specific CROWler engine
 * The debug_level section configures the debug level
@@ -372,6 +372,167 @@ can reload the configuration by sending a `SIGHUP` signal to the CROWler.
 When a `SIGHUP` signal is received, the CROWler will reload the configuration AFTER
 the current crawling operations are completed.
 
+## Per-VDI microproxy sticky sessions
+
+Sticky-session configuration has two layers:
+
+1. **Operator VDI configuration** declares the normal browser listener, an
+   optional default/standby sticky profile, and an optional allowlist of
+   additional complete profiles that a source may select.
+2. **A Source document** may explicitly request sticky rotation, replace the
+   profile with an approved complete profile, or choose a conventional/direct
+   proxy for its own crawl.
+
+The VDI listener is an ordinary proxy unless configuration explicitly matches a
+sticky profile. Do not infer sticky mode from a port number (`8080` is not
+automatically rotating and `8081` is not automatically sticky).
+
+```yaml
+vdi:
+  - name: vdi-1
+    type: chrome
+    host: selenium-vdi1
+    port: 4444
+    # Normal sources use this listener. When it equals the sticky listener
+    # below, ordinary browser-backed sources inherit sticky mode; when it is
+    # different, the sticky profile is a standby opt-in.
+    proxy_url: "http://microproxy-vdi1:8080"
+    sticky_session:
+      # Sticky downstream listener used by the browser.
+      proxy_url: "http://microproxy-vdi1:8081"
+      # Data-plane API origin used by the engine-direct fallback.
+      api_url: "http://microproxy-vdi1:8094"
+      # Optional data-plane origin as seen from Chrome inside the VDI.
+      vdi_api_url: "http://127.0.0.1:8094"
+      # Name of the ENGINE environment variable holding the bearer token.
+      token_env: "MICROPROXY_VDI1_SESSION_API_KEY"
+      # Exact provider the rotate response must report.
+      provider: "residential-sticky"
+    # Optional operator-approved profiles a source may select. Each profile
+    # must be complete and use a distinct sticky listener.
+    approved_sticky_profiles:
+      - proxy_url: "http://microproxy-vdi1:8091"
+        api_url: "http://microproxy-vdi1:8095"
+        vdi_api_url: "http://127.0.0.1:8095"
+        token_env: "MICROPROXY_VDI1_ALT_SESSION_API_KEY"
+        provider: "residential-sticky-alt"
+```
+
+The four original `sticky_session` fields are required together when a profile
+is present. An absent profile (or an empty `sticky_session: {}` object, which
+the runtime treats as absent) is valid. `vdi_api_url` is optional.
+Chrome/Chromium first rotate through a temporary browser using `vdi_api_url`
+when set, otherwise `api_url`; Firefox and eligible CDP failures use the
+engine-direct `api_url`. `proxy_url`, `api_url` and `vdi_api_url` must be
+absolute `http` or `https` origins with a host and explicit port, without
+credentials, a path, a query or a fragment. Firefox VDIs support HTTP sticky
+listeners but not HTTPS; a Firefox/HTTPS combination is rejected before
+rotation.
+
+### Global default, standby and source selection
+
+The effective sticky decision is made once per crawl:
+
+- If `vdi[].proxy_url` selects the same listener as `vdi[].sticky_session`,
+  ordinary browser-backed sources inherit sticky mode and rotate once.
+- If `vdi[].proxy_url` is a different listener, the profile is a standby. It is
+  used only when the source explicitly requests sticky with
+  `crawling_config.sticky_session: true` or selects the known sticky listener
+  with an explicit proxy.
+- `crawling_config.sticky_session: true` requires a complete effective profile
+  and rejects a conflicting explicit source proxy.
+- `crawling_config.sticky_session: false` disables inherited sticky mode. If the
+  effective proxy would still be a known sticky listener, validation fails; use
+  a conventional or direct proxy instead.
+- Omitted inherits the effective global decision. A source that selects a
+  configured sticky listener through an ordinary proxy override rotates rather
+  than browsing that listener unrotated.
+
+A source may select a complete approved profile even when the global VDI has no
+sticky default:
+
+```json
+{
+  "crawling_config": {
+    "site": "https://example.org/",
+    "source_type": "website"
+  },
+  "custom": {
+    "vdi": [
+      {
+        "proxy_url": "http://microproxy-vdi1:8091",
+        "sticky_session": {
+          "proxy_url": "http://microproxy-vdi1:8091",
+          "api_url": "http://microproxy-vdi1:8095",
+          "vdi_api_url": "http://127.0.0.1:8095",
+          "token_env": "MICROPROXY_VDI1_ALT_SESSION_API_KEY",
+          "provider": "residential-sticky-alt"
+        }
+      }
+    ]
+  }
+}
+```
+
+`custom.vdi` is matched positionally against the configured VDI list. A
+`sticky_session` object is a **complete replacement**, not a field-level merge.
+It must exactly match the VDI's `sticky_session` default or one entry in
+`approved_sticky_profiles`; otherwise the source fails before any management
+request or browser creation. The allowlist is operator-only and is never copied
+from a source document. This prevents a source author from selecting an
+arbitrary engine environment variable or sending a bearer token to an
+attacker-controlled management origin.
+
+A source may also replace a sticky default with a conventional or direct proxy
+for its own crawl. That source does not rotate. The process-wide configuration
+and other sources are never mutated.
+
+Proxy and approved sticky-profile overrides do not change the physical VDI
+assignment. The pool-leased VDI's `name`, `host`, `port`, effective `sslmode`
+scheme and browser `type` remain authoritative; a source-level
+`custom.vdi[].host`, `port`, `sslmode` or `type` that differs is rejected before
+rotation or WebDriver creation. An equivalent hostname case/whitespace is
+accepted for the crawl and replaced by the leased value in the effective
+session; the stored source document is not rewritten. The `sslmode` decision
+mirrors the launcher: exact-case `enable` means HTTPS and every other value
+means HTTP.
+
+The legacy `service_type`, `path` and `driver_path` fields still merge for
+compatibility (`use_service` is not merged), but none of them is used by the
+pooled remote WebDriver launch and cannot redirect it.
+
+`127.0.0.1` in `vdi_api_url` means the Chrome/VDI network namespace, not the
+engine or necessarily the Docker host. When Selenium and microproxy are in
+isolated containers, use a private hostname or network mapping reachable from
+Chrome. `vdi_api_url` and `api_url` must address the same live microproxy
+process; idempotency is process-local.
+`token_env` must be a valid environment-variable name; it is not the token
+value. Write the literal variable name. Do **not** use `${...}` interpolation
+for `token_env`: configuration interpolation would replace it with the secret
+itself. The token belongs in the engine's environment (or deployment secret
+mechanism), and microproxy has its own independent
+`MICROPROXY_SESSION_API_KEY` setting.
+
+Change or remove a `sticky_session` profile or approved profile with a service
+restart. The configuration reload path can retain existing VDI pool slots, so a
+reload is not a reliable way to retire an old trusted profile.
+
+The browser must be able to reach the sticky listener. The engine must be able
+to reach the data-plane API. Publish the API only on a private network and use a
+distinct token per VDI. A source cannot add, remove or redirect an operator
+profile, and it cannot introduce a new `token_env`; it can only select an
+already approved profile or the VDI default.
+
+The supported deployment topology is one microproxy data-plane process per VDI.
+Because a VDI lease is exclusive, only one source crawl at a time can rotate and
+use that process. Aliasing several VDIs to one microproxy process is not
+supported in 2.3.1 because those VDIs would share and rotate one sticky
+identity.
+
+Rotation changes the upstream sticky-session identifier. It does not guarantee a
+different public IP. See [Sticky sessions and per-source proxies](../sticky-sessions.md)
+for the complete operational contract, troubleshooting and limitations.
+
 ## Adding configuration validation in VSCode
 
 To add the CROWler configuration validation in VSCode, you can use the
@@ -429,7 +590,7 @@ api:
   enable_console: true
   return_404: false
 
-selenium:
+vdi:
   - type: chrome
     path: ""
     port: 4444
@@ -437,6 +598,18 @@ selenium:
     host: ${SELENIUM_HOST}
     sslmode: disable
     use_service: false
+    # Optional trusted microproxy sticky-session profile (see the section above).
+    # sticky_session:
+    #   proxy_url: "http://microproxy-vdi1:8081"
+    #   api_url: "http://microproxy-vdi1:8094"
+    #   vdi_api_url: "http://127.0.0.1:8094"
+    #   token_env: "MICROPROXY_VDI1_SESSION_API_KEY"
+    #   provider: "residential-sticky"
+    # approved_sticky_profiles:
+    #   - proxy_url: "http://microproxy-vdi1:8091"
+    #     api_url: "http://microproxy-vdi1:8095"
+    #     token_env: "MICROPROXY_VDI1_ALT_SESSION_API_KEY"
+    #     provider: "residential-sticky-alt"
 
 network_info:
   dns:
@@ -496,6 +669,14 @@ The example remains globally disabled and is illustrative only; the default
 configuration does not seed domain-specific production metrics. If a metric
 does not specify `failure_policy`, it inherits `log_skip`. `fail_indexing` propagates an emitter error through the indexing transaction; `log`,
 `skip`, and the default `log_skip` keep indexing non-fatal.
+
+Scheduled retention is separately opt-in through `timeseries.retention.enabled`
+and defaults to `false`, so upgrading does not delete history. Global raw and
+aggregate windows default to `30d` and `365d`; a metric can override either with
+`retention.raw` and `retention.aggregated`. `0` keeps a family forever, and
+`mo`/`y` use UTC calendar arithmetic. See the
+[retention hardening note](../time-series/timeseries-retention-hardening.md) for
+the checkpoint, watermark, and aggregate-integrity rules.
 
 For a complete workflow, safe examples, emitter timing, registration boundary, aggregation, reaggregation, retention, and API queries, see [Time-series observations and aggregates](timeseries.md). All files under [`examples/timeseries/`](../examples/timeseries/) are examples rather than built-in behavior.
 

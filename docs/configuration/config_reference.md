@@ -383,8 +383,8 @@
   - **`rate_limit`** *(string)*: This is the rate limit for the API. It is the maximum number of requests that the CROWler will accept per second. You can use the ExprTerpreter language to set the rate limit.
   - **`enable_console`** *(boolean)*: This is a flag that tells the CROWler to enable the admin console via the API. In other words, you'll get more endpoints to manage the CROWler via the Search API instead of local commands.
   - **`return_404`** *(boolean)*: This is a flag that tells the CROWler to return 404 status code if a query has no results.
-- **`selenium`** *(array)*
-  - **Items** *(object)*: This is the configuration for the selenium driver. It is the configuration for the selenium driver that the CROWler will use to crawl websites. To scale the CROWler web crawling capabilities, you can add multiple selenium drivers in the array. Cannot contain additional properties.
+- **`vdi`** *(array)*: This is the VDI configuration (the former `selenium` key is no longer supported).
+  - **Items** *(object)*: This is the configuration for the VDI browser/driver. It is the configuration that the CROWler will use to crawl websites. To scale the CROWler web crawling capabilities, you can add multiple VDI entries in the array. Cannot contain additional properties.
     - **`name`** *(string)*: This is the name of the VDI image.
     - **`location`** *(string)*: This is the location of the VDI image.
     - **`path`** *(string)*: This is the path to the selenium driver (IF LOCAL). It is the path to the selenium driver that the CROWler will use to crawl websites.
@@ -395,6 +395,15 @@
     - **`headless`** *(boolean)*: This is a flag that tells the selenium driver to run in headless mode. This is useful for running the selenium driver in a headless environment. It's generally NOT recommended to enable headless mode for the selenium driver.
     - **`use_service`** *(boolean)*: This is a flag that tells the CROWler to access Selenium as service.
     - **`sslmode`** *(string)*: This is the sslmode that the selenium driver will use to connect to the CROWler. It is the sslmode that the selenium driver will use to connect to the CROWler.
+    - **`proxy_url`** *(string)*: Global downstream browser proxy for this VDI. Normal sources inherit it unless they supply a canonical `crawling_config.proxy`, a legacy top-level source `proxy_url`, or an explicit `custom.vdi[].proxy_url`. If it equals a configured sticky profile listener, ordinary browser-backed sources inherit sticky mode; otherwise the sticky profile is an opt-in standby. Sticky mode is never inferred from a port number.
+    - **`sticky_session`** *(object)*: Trusted microproxy sticky-session profile for this VDI. It is the VDI default when `proxy_url` selects the same sticky listener; when `proxy_url` is a different listener it is an opt-in standby profile selected by `crawling_config.sticky_session: true` or an explicit matching source proxy. A source may replace it only with a complete profile approved under `approved_sticky_profiles`. The four original fields are required together when the object is present; `vdi_api_url` is optional. An absent profile is valid.
+      - **`proxy_url`** *(string)*: Absolute `http` or `https` URL of the microproxy sticky downstream listener used by the browser, including host and explicit port. It must not contain credentials, a path, a query or a fragment. Firefox supports HTTP but not HTTPS downstream listeners; an HTTPS listener on a Firefox VDI is rejected before rotation.
+      - **`api_url`** *(string)*: Absolute `http` or `https` origin of the same microproxy process's data-plane session API, including host and explicit port. It must not contain credentials, a path, a query or a fragment. It is never derived from a source-specified proxy URL. It is always the engine-direct fallback and is the browser-visible CDP origin when `vdi_api_url` is omitted.
+      - **`vdi_api_url`** *(string, optional)*: Absolute `http` or `https` origin of the same microproxy data-plane API as resolved from inside the temporary Chrome/Chromium browser on this VDI. It must not contain credentials, a path, a query or a fragment. `127.0.0.1` means the browser's network namespace, not the engine or Docker host. Both origins must address the same live microproxy process because idempotency is process-local.
+      - **`token_env`** *(string)*: Name of the engine environment variable containing the data-plane bearer token. The field is a variable name, never the token value. Write the literal name; do not use `${...}` interpolation here. Change or remove a sticky profile with a service restart.
+      - **`provider`** *(string)*: Exact sticky provider name that a successful rotate response must report. A 200 response for a different provider is rejected before browser startup.
+    - **`approved_sticky_profiles`** *(array, optional)*: Operator-only allowlist of additional complete sticky profiles a source may select for this VDI through `custom.vdi[].sticky_session`. A source profile must exactly match one of these entries or the VDI `sticky_session` default, including `proxy_url`, `api_url`, optional `vdi_api_url`, `token_env` and `provider`. Each entry must be complete and use a distinct sticky listener. The allowlist is never populated from a source document and prevents a source from choosing an arbitrary management origin or engine environment variable.
+      - **Items** *(object)*: A complete sticky profile with the same fields and constraints as `sticky_session`. `vdi_api_url` is optional; the other four fields are required.
     - **`download_path`** *(string)*: This is the download path for the selenium driver. It is the path where the selenium driver will download files. This is useful for downloading files from websites. The CROWler will use this path to store the downloaded files.
 - **`image_storage`** *(object)*: This is the configuration for the image storage. It is the configuration for the storage that the CROWler will use to store images.
   - **`host`** *(string)*
@@ -508,13 +517,20 @@ timeseries:
     dedupe_scope: none           # none|source|object|global
     failure_policy: log_skip     # log_skip|log|skip|retry|fail_indexing
   retention:
-    raw: 30d
-    aggregated: 365d
+    enabled: false              # opt-in scheduled deletion
+    schedule: 1h
+    batch_size: 1000
+    max_batches: 10
+    max_duration: 1m
+    dry_run: false
+    raw: 30d                    # 0 keeps raw forever; mo/y are calendar units
+    aggregated: 365d            # 0 keeps aggregates forever
   aggregation:
     enabled: false
     schedule: 5m
     batch_size: 1000
     max_batches: 10
+    max_duration: 1m
     overlap: 15m
   storage:
     backend: postgres
@@ -555,9 +571,33 @@ must provide `timestamp_selector`. Numeric aggregates (`sum`, `average`, `min`,
 Boolean and JSON values support counting/distinct counting only; strings also
 support first/last. Metric keys must be non-empty and unique.
 
-Privacy and cardinality can be overridden per metric. `hash_only: true` cannot
-be combined with `store_value_text: true`; regular expressions are compiled at
+Privacy and cardinality can be overridden per metric. Retention can also be
+overridden per metric with `retention.raw` and/or `retention.aggregated`; an
+omitted or empty value inherits the global window, while `"0"` keeps that family
+forever. Retention windows accept `ns`, `us`, `µs`, `ms`, `s`, `m`, `h`, `d`,
+`w`, `mo`, and `y`. Fixed windows preserve the Go duration grammar, including
+composites (`1h30m`) and fractions (`1.5h`), extended with `d` and `w`. Calendar
+windows are integer `y`/`mo` compositions (`1y6mo`) and cannot be mixed with
+fixed units; they are capped at 100 years (1200 months). `mo` and `y` use UTC
+calendar arithmetic with end-of-month clamping (31 March minus one month is
+28 February, or 29 February in a leap year). `hash_only: true` cannot be
+combined with `store_value_text: true`; regular expressions are compiled at
 configuration validation time. Limits are bounded to prevent unbounded series,
 dimension, or value growth.
 
-The aggregation `overlap` duration controls how far an incremental run rewinds its durable checkpoint to include late observations. The events scheduler runs only when both top-level time-series and aggregation switches are enabled. Configuration metrics are declarative runtime input; registration uses `database.UpsertTimeSeriesMetric`, and the crawler startup/reload path calls `database.SyncConfiguredTimeSeriesMetrics` to synchronize YAML metrics into `TimeSeriesMetrics`. See [Time-series observations and aggregates](timeseries.md) for the complete delivered workflow and schema-valid examples.
+Automatic retention is disabled by default. When enabled, the Events master
+runs a bounded pass on `retention.schedule`. The scheduler captures its
+configuration at process startup; change retention settings and restart the
+Events service to apply them. Raw deletion participates in the same
+transactional cardinality accounting as observation insertion, so expired
+observations release series and dimension-value capacity. With aggregation
+enabled, raw pruning never advances past the durable aggregation checkpoint
+minus `aggregation.overlap`; without an aggregation checkpoint the raw pass is
+skipped. Aggregate pruning is independent and never removes unexpired buckets.
+A metric that has lost raw history to retention is omitted from an explicit
+aggregate rebuild that starts before its retention watermark, preventing
+aggregates from being recomputed from incomplete data. The default
+`max_dimensions: 0` is treated as "inherit the built-in default (10)" for
+configured metrics, not as unlimited.
+
+The aggregation `overlap` duration controls how far an incremental run rewinds its durable checkpoint to include late observations. The events scheduler runs only when both top-level time-series and aggregation switches are enabled. Configuration metrics are declarative runtime input; registration uses `database.UpsertTimeSeriesMetric`, and the crawler startup/reload path calls `database.SyncConfiguredTimeSeriesMetrics` to synchronize YAML metrics into `TimeSeriesMetrics`, including the effective retention and cardinality policy. See [Time-series observations and aggregates](timeseries.md) for the complete delivered workflow and schema-valid examples.

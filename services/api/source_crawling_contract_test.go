@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	cfg "github.com/pzaino/thecrowler/pkg/config"
 )
 
 // addSourceRequestEnvelope mirrors the JSON body accepted by POST /v1/source/add.
@@ -56,6 +58,158 @@ func TestAddSourceRequestRejectsNullSourceCrawlingBooleans(t *testing.T) {
 // decoder used by the add-source handler no longer logs and ignores a malformed
 // document. Before RC4F the error was only logged, so the handler created a
 // source with an empty configuration and answered 201.
+func TestValidateAndReformatConfigChecksProtocolProxyAndStickyOptions(t *testing.T) {
+	base := func() cfg.SourceConfig {
+		return cfg.SourceConfig{
+			Version:       "1.0",
+			FormatVersion: "1.0.0",
+			SourceName:    "options",
+			CrawlingConfig: cfg.CrawlingConfig{
+				Site:       "https://example.test/",
+				SourceType: "website",
+			},
+		}
+	}
+
+	valid := base()
+	valid.CrawlingConfig.Proxy = "http://microproxy-vdi1:8081"
+	sticky := true
+	valid.CrawlingConfig.StickySession = &sticky
+	if err := validateAndReformatConfig(&valid); err != nil {
+		t.Fatalf("valid protocol options rejected: %v", err)
+	}
+
+	badProxy := base()
+	badProxy.CrawlingConfig.Proxy = "http://bad host:1"
+	if err := validateAndReformatConfig(&badProxy); err == nil {
+		t.Fatal("malformed proxy accepted by update/add validation")
+	}
+
+	emailSticky := base()
+	emailSticky.CrawlingConfig.SourceType = "email"
+	emailSticky.CrawlingConfig.Site = "imaps://mail.example.test:993"
+	emailSticky.CrawlingConfig.StickySession = &sticky
+	if err := validateAndReformatConfig(&emailSticky); err == nil {
+		t.Fatal("email sticky source accepted by update/add validation")
+	}
+
+	networkSticky := base()
+	networkSticky.CrawlingConfig.Site = "null://example.test"
+	networkSticky.CrawlingConfig.StickySession = &sticky
+	if err := validateAndReformatConfig(&networkSticky); err == nil {
+		t.Fatal("network-only sticky source accepted by update/add validation")
+	}
+}
+
+func TestValidateAndReformatConfigChecksSourceStickyAuthorization(t *testing.T) {
+	oldConfig := config
+	defer func() { config = oldConfig }()
+
+	profile := cfg.StickySessionConfig{
+		ProxyURL:  "http://127.0.0.1:8081",
+		APIURL:    "http://microproxy-vdi1:8094",
+		VDIAPIURL: "http://127.0.0.1:8094",
+		TokenEnv:  "MICROPROXY_VDI1_SESSION_API_KEY",
+		Provider:  "approved-provider",
+	}
+	config = cfg.Config{Selenium: []cfg.Selenium{{
+		Name:                   "vdi-1",
+		Type:                   "chrome",
+		Host:                   "selenium-vdi1",
+		Port:                   4444,
+		ApprovedStickyProfiles: []cfg.StickySessionConfig{profile},
+	}}}
+
+	base := func() cfg.SourceConfig {
+		return cfg.SourceConfig{
+			Version:       "1.0",
+			FormatVersion: "1.0.0",
+			SourceName:    "custom-sticky",
+			CrawlingConfig: cfg.CrawlingConfig{
+				Site:       "https://example.test/",
+				SourceType: "website",
+			},
+			Custom: map[string]interface{}{
+				"vdi": []interface{}{map[string]interface{}{
+					"proxy_url": profile.ProxyURL,
+					"sticky_session": map[string]interface{}{
+						"proxy_url":   profile.ProxyURL,
+						"api_url":     profile.APIURL,
+						"vdi_api_url": profile.VDIAPIURL,
+						"token_env":   profile.TokenEnv,
+						"provider":    profile.Provider,
+					},
+				}},
+			},
+		}
+	}
+
+	approved := base()
+	if err := validateAndReformatConfig(&approved); err != nil {
+		t.Fatalf("approved custom sticky profile rejected: %v", err)
+	}
+
+	unapproved := base()
+	unapproved.Custom["vdi"].([]interface{})[0].(map[string]interface{})["sticky_session"].(map[string]interface{})["token_env"] = "ATTACKER_TOKEN"
+	if err := validateAndReformatConfig(&unapproved); err == nil {
+		t.Fatal("unapproved token_env accepted by add/update validation")
+	}
+
+	conflicting := base()
+	disabled := false
+	conflicting.CrawlingConfig.StickySession = &disabled
+	if err := validateAndReformatConfig(&conflicting); err == nil {
+		t.Fatal("sticky_session:false plus custom profile accepted")
+	}
+
+	incomplete := base()
+	incomplete.Custom["vdi"].([]interface{})[0].(map[string]interface{})["sticky_session"].(map[string]interface{})["api_url"] = nil
+	if err := validateAndReformatConfig(&incomplete); err == nil {
+		t.Fatal("incomplete custom sticky profile accepted")
+	}
+
+	emailCustom := base()
+	emailCustom.CrawlingConfig.SourceType = "email"
+	emailCustom.CrawlingConfig.Site = "imaps://mail.example.test:993"
+	if err := validateAndReformatConfig(&emailCustom); err == nil {
+		t.Fatal("email source with custom sticky profile accepted")
+	}
+
+	for _, tc := range []struct {
+		name  string
+		key   string
+		value interface{}
+	}{
+		{"host", "host", "attacker-selenium"},
+		{"port", "port", float64(5555)},
+		{"type", "type", "firefox"},
+		{"sslmode", "sslmode", "enable"},
+	} {
+		identityChange := base()
+		identityChange.Custom["vdi"].([]interface{})[0].(map[string]interface{})[tc.key] = tc.value
+		if err := validateAndReformatConfig(&identityChange); err == nil {
+			t.Fatalf("source-controlled Selenium %s accepted by add/update validation", tc.name)
+		}
+	}
+
+	sameIdentity := base()
+	sameIdentity.Custom["vdi"].([]interface{})[0].(map[string]interface{})["host"] = " SELENIUM-VDI1 "
+	if err := validateAndReformatConfig(&sameIdentity); err != nil {
+		t.Fatalf("equivalent leased VDI host rejected: %v", err)
+	}
+	if stored := sameIdentity.Custom["vdi"].([]interface{})[0].(map[string]interface{})["host"]; stored != " SELENIUM-VDI1 " {
+		t.Fatalf("validation rewrote the stored source identity value: %v", stored)
+	}
+
+	proxyOnly := base()
+	proxyEntry := proxyOnly.Custom["vdi"].([]interface{})[0].(map[string]interface{})
+	proxyEntry["proxy_url"] = "http://source-proxy:3128"
+	delete(proxyEntry, "sticky_session")
+	if err := validateAndReformatConfig(&proxyOnly); err != nil {
+		t.Fatalf("proxy-only source VDI override rejected: %v", err)
+	}
+}
+
 func TestExtractAddSourceParamsPropagatesDecodeErrors(t *testing.T) {
 	valid := `{"url":"https://example.test/","restricted":0,"config":{"version":"1.0","format_version":"1.0.0","source_name":"ok","crawling_config":{"site":"https://example.test/","incognito":false}}}`
 	var params addSourceRequest

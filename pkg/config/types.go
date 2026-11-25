@@ -501,6 +501,49 @@ type Selenium struct {
 	DownloadDir string       `yaml:"download_dir"` // Download directory for Selenium
 	Language    string       `yaml:"language"`     // Language for Selenium
 	SysMng      SysMngConfig `yaml:"sys_manager"`  // System management configuration
+
+	// StickySession is this VDI's operator-configured microproxy sticky
+	// profile. When the VDI's ordinary proxy_url selects ProxyURL, ordinary
+	// browser-backed sources inherit sticky mode automatically. A different
+	// ordinary listener makes this a standby profile that sources can select
+	// with crawling_config.sticky_session or an approved custom profile.
+	// Source documents may replace it only with a complete profile approved by
+	// the operator for this VDI.
+	StickySession StickySessionConfig `json:"sticky_session,omitempty" yaml:"sticky_session,omitempty"`
+
+	// ApprovedStickyProfiles is the operator-only allowlist of additional
+	// complete sticky profiles a source may select for this VDI. A source's
+	// custom.vdi[].sticky_session must match this list or the StickySession
+	// default exactly. It is never copied from a source document. It exists so
+	// a source cannot choose an arbitrary token_env or exfiltrate a bearer
+	// token to an attacker-controlled management origin.
+	ApprovedStickyProfiles []StickySessionConfig `json:"approved_sticky_profiles,omitempty" yaml:"approved_sticky_profiles,omitempty"`
+}
+
+// StickySessionConfig describes one trusted microproxy sticky-session data
+// plane. The browser connects to ProxyURL (the sticky downstream listener); the
+// engine calls the data-plane API at APIURL to rotate the session. TokenEnv
+// names an engine environment variable; it is never the token value. A source
+// may reference an operator-approved profile, but never a raw token.
+type StickySessionConfig struct {
+	ProxyURL string `json:"proxy_url,omitempty" yaml:"proxy_url,omitempty"`
+	APIURL   string `json:"api_url,omitempty" yaml:"api_url,omitempty"`
+	// VDIAPIURL is the microproxy data-plane API origin as resolved from
+	// inside the temporary Chromium browser on this VDI. It is used first for
+	// CDP rotation; APIURL remains the engine-direct fallback.
+	VDIAPIURL string `json:"vdi_api_url,omitempty" yaml:"vdi_api_url,omitempty"`
+	TokenEnv  string `json:"token_env,omitempty" yaml:"token_env,omitempty"`
+	Provider  string `json:"provider,omitempty" yaml:"provider,omitempty"`
+}
+
+// IsEmpty reports whether no sticky-session profile is configured.
+func (s StickySessionConfig) IsEmpty() bool {
+	return s.ProxyURL == "" && s.APIURL == "" && s.VDIAPIURL == "" && s.TokenEnv == "" && s.Provider == ""
+}
+
+// Configured reports whether the profile has the complete four-field contract.
+func (s StickySessionConfig) Configured() bool {
+	return s.ProxyURL != "" && s.APIURL != "" && s.TokenEnv != "" && s.Provider != ""
 }
 
 /////////////////////////////////////////////////
@@ -1056,25 +1099,40 @@ type CrawlingConfig struct {
 	// only. nil inherits the global value. A JSON null is rejected: only an
 	// omitted key means "inherit".
 	FollowRedirects *bool `json:"follow_redirects,omitempty" yaml:"follow_redirects,omitempty"`
+	// Proxy selects the downstream browser proxy for this source. Non-empty
+	// values are validated before browser launch and must be an absolute
+	// http, https or socks5 listener URL with a host and port and no
+	// credentials. A blank value inherits the next layer.
+	Proxy string `json:"proxy,omitempty" yaml:"proxy,omitempty"`
+	// StickySession is an explicit source override of the effective VDI
+	// decision. true requires sticky rotation using the effective selected
+	// profile and fails closed if the profile is missing/incomplete or an
+	// explicit source proxy contradicts it. false disables inherited sticky
+	// mode; selecting a known sticky listener with false is a configuration
+	// error. nil inherits the effective global or approved custom decision.
+	// It is only meaningful for browser-backed sources; email and network-only
+	// sources are rejected when it is true. A JSON null is rejected.
+	StickySession *bool `json:"sticky_session,omitempty" yaml:"sticky_session,omitempty"`
 }
 
 // UnmarshalJSON decodes a crawling configuration and enforces the documented
-// contract for the two optional source-scoped booleans.
+// contract for the optional source-scoped booleans.
 //
-// The authoritative schema declares both as `type: boolean` with
+// The authoritative schema declares all three as `type: boolean` with
 // `additionalProperties: false`. `encoding/json` would happily decode an
 // explicit `null` into a nil pointer, silently turning "null" into "inherit".
 // The release contract is stricter and identical on every path (API request,
 // stored document reload, tests): the key may be omitted, or it may be `true` or
 // `false`. An explicit `null`, a string, a number, an array or an object is a
 // malformed document and is rejected, so a bad value can never silently change
-// the browser mode or the redirect policy.
+// the browser mode, the redirect policy or the sticky-session opt-in.
 func (c *CrawlingConfig) UnmarshalJSON(data []byte) error {
 	type plain CrawlingConfig
 	aux := struct {
 		*plain
 		Incognito       json.RawMessage `json:"incognito"`
 		FollowRedirects json.RawMessage `json:"follow_redirects"`
+		StickySession   json.RawMessage `json:"sticky_session"`
 	}{plain: (*plain)(c)}
 
 	if err := json.Unmarshal(data, &aux); err != nil {
@@ -1089,11 +1147,16 @@ func (c *CrawlingConfig) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	// The embedded alias never receives these two keys: the outer fields have
-	// the same JSON names at a shallower depth and therefore win the decoder's
+	stickySession, err := parseOptionalStrictBool(aux.StickySession, "crawling_config.sticky_session")
+	if err != nil {
+		return err
+	}
+	// The embedded alias never receives these keys: the outer fields have the
+	// same JSON names at a shallower depth and therefore win the decoder's
 	// conflict resolution.
 	c.Incognito = incognito
 	c.FollowRedirects = followRedirects
+	c.StickySession = stickySession
 	return nil
 }
 
@@ -1121,7 +1184,9 @@ func parseOptionalStrictBool(raw json.RawMessage, field string) (*bool, error) {
 
 // IsEmpty returns true if the CrawlingConfig is empty
 func (c CrawlingConfig) IsEmpty() bool {
-	return c.Site == "" && c.URLReferrer == "" && len(c.AlternativeLinks) == 0 && c.RetriesOnRedirect == 0 && len(c.UnwantedURLs) == 0 && c.SourceType == ""
+	return c.Site == "" && c.URLReferrer == "" && len(c.AlternativeLinks) == 0 &&
+		c.RetriesOnRedirect == 0 && len(c.UnwantedURLs) == 0 && c.SourceType == "" &&
+		c.Proxy == "" && c.StickySession == nil
 }
 
 // RuleParameters contains Source-scoped parameters available to CROWler rules.
@@ -1170,5 +1235,5 @@ func (s *SysMngConfig) IsEmpty() bool {
 
 // IsEmpty returns true is the Selenium configuration is empty
 func (s *Selenium) IsEmpty() bool {
-	return s.Name == "" && s.Location == "" && s.Path == "" && s.DriverPath == "" && s.Type == "" && s.ServiceType == "" && s.Port == 0 && s.Host == "" && !s.Headless && !s.UseService && s.SSLMode == "" && s.ProxyURL == "" && s.DownloadDir == "" && s.Language == "" && s.SysMng.IsEmpty()
+	return s.Name == "" && s.Location == "" && s.Path == "" && s.DriverPath == "" && s.Type == "" && s.ServiceType == "" && s.Port == 0 && s.Host == "" && !s.Headless && !s.UseService && s.SSLMode == "" && s.ProxyURL == "" && s.DownloadDir == "" && s.Language == "" && s.SysMng.IsEmpty() && s.StickySession.IsEmpty() && len(s.ApprovedStickyProfiles) == 0
 }

@@ -83,6 +83,25 @@ type ProcessContext struct {
 	ruleCallState        *ruleCallRuntimeState     // Runtime guardrails for plugin/agent rule calls
 	crowlerMeta          CrowlerMeta               // Shared metadata document for the current source/link
 	performanceLogs      performanceLogStore       // Temporary Perf Log storage per page
+
+	// Effective downstream proxy resolved once at the source boundary. The
+	// resolver stores the exact value that the browser launcher must use so a
+	// validated sticky listener cannot drift from the actual launch proxy.
+	effectiveProxy       string
+	effectiveProxySet    bool
+	effectiveProxySource string
+
+	// Deterministic test seams for the sticky-session boundary. Production
+	// values are nil and fall back to the real rotator, os.Getenv and
+	// crypto/rand.
+	stickyRotator     stickySessionRotator
+	stickyCDPRotator  stickyCDPSessionRotator
+	stickyGetenv      func(string) string
+	stickyKeyGenerate func() (string, error)
+
+	// effectiveVDI is the single per-crawl VDI/profile/proxy decision. It is
+	// computed once in CrawlWebsite and consumed by the source-start boundary.
+	effectiveVDI *cfg.EffectiveVDISelection
 }
 
 type performanceLogStore struct {
@@ -199,6 +218,22 @@ func (ctx *ProcessContext) GetWebDriver() *vdi.WebDriver {
 // GetConfig returns the Config object from the ProcessContext
 func (ctx *ProcessContext) GetConfig() *cfg.Config {
 	return &ctx.config
+}
+
+// effectiveBrowserType returns the browser type selected for this crawl. It
+// prefers the effective per-crawl VDI copy set by the source-start boundary and
+// falls back to the merged configuration for paths that run before it.
+func (ctx *ProcessContext) effectiveBrowserType() string {
+	if ctx == nil {
+		return ""
+	}
+	if browser := strings.TrimSpace(ctx.SelInstance.Config.Type); browser != "" {
+		return browser
+	}
+	if ctx.SelID >= 0 && ctx.SelID < len(ctx.config.Selenium) {
+		return strings.TrimSpace(ctx.config.Selenium[ctx.SelID].Type)
+	}
+	return ""
 }
 
 // GetSource returns the Source in the format of *cdb.Source from the ProcessContext

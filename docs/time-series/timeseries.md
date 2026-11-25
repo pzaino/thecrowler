@@ -59,6 +59,12 @@ timeseries:
     max_batches: 10
     overlap: 15m
   retention:
+    enabled: false
+    schedule: 1h
+    batch_size: 1000
+    max_batches: 10
+    max_duration: 1m
+    dry_run: false
     raw: 30d
     aggregated: 365d
   cardinality:
@@ -187,11 +193,29 @@ Use a short schedule for dashboards, a larger batch window for backfills, and en
 
 ```yaml
   retention:
+    enabled: false
+    schedule: 1h
+    batch_size: 1000
+    max_batches: 10
+    max_duration: 1m
+    dry_run: false
     raw: 30d
     aggregated: 365d
 ```
 
-Raw observations contain the most detailed lineage and are expensive to keep indefinitely. Aggregates are smaller and are normally kept longer for trend charts. In v1 these values are policy inputs for administrative pruning; they are not automatically scheduled by the time-series config alone. Run `PruneTimeSeriesRetention` from operational code or maintenance jobs when you want retention applied.
+Raw observations contain the most detailed lineage and are expensive to keep indefinitely. Aggregates are smaller and are normally kept longer for trend charts. Automatic retention is **disabled by default**; upgrading deployments never begin deleting history merely because 2.3.1 is installed. When `retention.enabled` is true, the Events master runs a bounded pass every `retention.schedule`.
+
+Retention windows accept `ns`, `us`, `µs`, `ms`, `s`, `m`, `h`, `d`, `w`, `mo`, and `y`. The literal `0` (with or without a unit, for example `0d` or `0mo`) keeps that family forever. Fixed windows preserve the historical Go duration grammar, including composites such as `1h30m` and fractions such as `1.5h`, extended with `d` and `w` (so `1d12h` and `1.5d` are valid). Calendar windows are integer `y`/`mo` compositions such as `1y6mo`; they cannot be mixed with fixed units and are capped at 100 years (1200 months). `mo` and `y` use UTC calendar arithmetic with end-of-month clamping: 31 March minus one month is 28 February, or 29 February in a leap year. `d` and `w` are exact 24-hour and seven-day durations.
+
+A metric may override either window with `retention.raw` and/or `retention.aggregated`. An omitted or empty override inherits the global value; `"0"` keeps that metric's family forever. The crawler persists the effective policy into `TimeSeriesMetrics.retention_policy` during configuration synchronization, so a metric's policy is visible and auditable in the database. Metrics registered directly through `UpsertTimeSeriesMetric` may retain a NULL policy; a NULL policy falls back to the policy passed to the retention call.
+
+Raw deletion uses the metric's `time_basis` column (`observed_at`, `effective_at`, or `source_updated_at`). Rows whose selected timestamp is NULL are not age-pruned. Deletion runs in bounded transactions and participates in the same transactional cardinality accounting as insertion, so physically removing an observation also releases its series and dimension-value capacity.
+
+When aggregation is enabled, automatic raw pruning is additionally capped at the start of the first aggregation bucket that the checkpoint's late-data overlap can recompute, not merely at `checkpoint - overlap`. The overlap is still needed to recompute late-arriving data, so retention never deletes inside it. A caller that requests checkpoint protection without supplying an overlap gets the 15-minute default. If aggregation is enabled but no checkpoint exists yet, the raw pass is skipped and reported in diagnostics rather than deleting observations that have never been aggregated. Aggregate pruning is independent: only buckets whose `bucket_end` is older than the aggregate window are removed, in bounded transactions, and metric definitions are never deleted.
+
+Retention records a per-metric watermark in `TimeSeriesAggregationRuns` under the reserved `timeseries-retention:v1:<metric_id>` run-key family after the first physical raw deletion. An explicit `AggregateTimeSeriesRange` whose bucket-expanded start precedes that watermark is refused for the affected metric, or the metric is omitted when other metrics remain safe. Incremental aggregation applies the same test per window; if a watermark is ahead of the checkpoint (for example because aggregation was disabled while retention ran), that metric is skipped for the window and its aggregate rows are left intact. A bucket that straddles a watermark is never partially rebuilt: its retained suffix observations remain available through raw queries, while aggregation resumes at the next bucket boundary. This prevents a rebuild from replacing materialized aggregates with values computed from incomplete raw history. The watermark is durable state, not a new schema object: it uses the existing run/checkpoint table and does not change schema 1.17.
+
+Use `dry_run: true` to report candidates without deleting. `batch_size`, `max_batches`, and `max_duration` bound one pass; when a budget is reached the result reports `BudgetExhausted` and the next scheduled pass continues from the new time cutoff. `PruneTimeSeriesRetention` remains available for administrative runs. It takes the same cluster-wide session advisory lease as the scheduler on PostgreSQL, so an administrative and a scheduled pass cannot prune concurrently, and it yields while an aggregation run owns the aggregation lease. See [Time-series retention hardening (2.3.1)](timeseries-retention-hardening.md) for the design baseline, schema decision, rollout, and rollback.
 
 ### Cardinality guardrails
 
@@ -438,7 +462,7 @@ Each defaults to bounded dimensions, `drop` overflow, hash-only value storage, n
 
 ## Configuration reference
 
-The top-level `timeseries` object is optional and defaults to disabled. Durations use Go-style units plus `d` for 24-hour days and `w` for seven-day weeks. The schema rejects unknown fields, invalid enum values, empty metric keys, duplicate metric keys, invalid aggregate/value combinations, `event_at` or `source_timestamp` metrics without `timestamp_selector`, too many configured dimensions, duplicate dimension keys, and privacy settings that set both `hash_only: true` and `store_value_text: true`.
+The top-level `timeseries` object is optional and defaults to disabled. Fixed durations use Go-style units plus `d` for 24-hour days and `w` for seven-day weeks. Retention windows additionally accept `mo` and `y`, which are evaluated as UTC calendar arithmetic. The schema rejects unknown fields, invalid enum values, empty metric keys, duplicate metric keys, invalid aggregate/value combinations, `event_at` or `source_timestamp` metrics without `timestamp_selector`, too many configured dimensions, duplicate dimension keys, and privacy settings that set both `hash_only: true` and `store_value_text: true`.
 
 | Field | Purpose | Default |
 | --- | --- | --- |
@@ -449,8 +473,12 @@ The top-level `timeseries` object is optional and defaults to disabled. Duration
 | `defaults.time_basis` | Timestamp basis inherited by metrics. | `observed_at` |
 | `defaults.dedupe_scope` | Duplicate-suppression scope inherited by metrics. | `none` |
 | `defaults.failure_policy` | Error handling inherited by metrics. | `log_skip` |
-| `retention.raw` | Administrative raw-observation retention horizon. Not scheduled automatically in v1. | `30d` |
-| `retention.aggregated` | Administrative aggregate retention horizon. Not scheduled automatically in v1. | `365d` |
+| `retention.enabled` | Opt-in scheduled retention. Leave false for 2.3.0 upgrades. | `false` |
+| `retention.schedule` | Events-service retention interval. | `1h` |
+| `retention.batch_size` / `max_batches` / `max_duration` | Per-pass row batch, total batch budget, and soft wall-clock budget. | `1000` / `10` / `1m` |
+| `retention.dry_run` | Count candidates without deleting. | `false` |
+| `retention.raw` | Raw-observation retention horizon. `0` keeps raw forever; `mo`/`y` are UTC calendar units. | `30d` |
+| `retention.aggregated` | Aggregate retention horizon. `0` keeps aggregates forever. | `365d` |
 | `aggregation.enabled` | Lets the events service run incremental aggregation when the top-level feature is also enabled. | `false` |
 | `aggregation.schedule` | Events-service aggregation interval. | `5m` |
 | `aggregation.batch_size` / `max_batches` | Observation page size and soft page budget, checked between complete windows. | `1000` / `10` |
@@ -500,7 +528,7 @@ An explicit range is UTC and half-open. `AggregateTimeSeriesRange` expands the r
 
 Backend coordination status is explicit: PostgreSQL has the verified cluster-wide session lease described above. SQLite has only the process-local mutex; its no-op backend lease cannot coordinate writers in different processes, so deployments must ensure that only one process aggregates. MySQL time-series schema/repository SQL exists, but the aggregation runner currently rejects MySQL because no cluster-wide aggregation lease is implemented; coordinated MySQL aggregation is therefore **not supported or verified**.
 
-Retention is not scheduled by the v1 events scheduler. Call `PruneTimeSeriesRetention` from administrative code. It applies global raw/aggregate durations, honors per-metric retention JSON when registered, counts candidates in dry-run mode, deletes in bounded batches otherwise, and never deletes metric definitions.
+Automatic retention is scheduled by the Events master only when both `timeseries.enabled` and `timeseries.retention.enabled` are true. The pass applies global windows with per-metric overrides, counts candidates in dry-run mode, deletes in bounded transactions, and never deletes metric definitions. Raw deletion is additionally constrained by the aggregation checkpoint/overlap and by the transactional cardinality accounting. An explicit rebuild that begins before a metric's retention watermark is refused or omitted instead of replacing aggregates from incomplete history.
 
 ### Runnable operational call patterns
 
@@ -659,9 +687,9 @@ hot-path SQL and performs no PostgreSQL query merely to generate a metric.
 
 ## Storage portability and PostgreSQL partitioning
 
-The v1 database schema and metric/observation/aggregate CRUD, query, dedupe, checkpoint persistence, backfill, and retention SQL cover PostgreSQL, MySQL, and SQLite through backend-specific SQL. In 2.3.0 the runtime does not enable MySQL/MariaDB, so the MySQL SQL paths are reference-only until a supported backend exists. JSON is canonicalized so hashing/grouping remains stable across engines. Aggregation execution has a narrower support boundary: PostgreSQL has a verified cluster-wide writer lease, SQLite is safe only within one process, and MySQL is rejected by the runner until a backend lease is implemented. The currently shipped crawler-side scope/cardinality adapter uses PostgreSQL transaction SQL, so automatic index-owned artifact emission is the PostgreSQL-wired end-to-end path; integrations targeting MySQL or SQLite must use the portable database repository interfaces (and backend-aware lifecycle writers) rather than assuming that PostgreSQL adapter is portable.
+The v1 database schema and metric/observation/aggregate CRUD, query, dedupe, checkpoint persistence, backfill, and retention SQL cover PostgreSQL, MySQL, and SQLite through backend-specific SQL. In 2.3.x the runtime does not enable MySQL/MariaDB, so the MySQL SQL paths are reference-only until a supported backend exists. JSON is canonicalized so hashing/grouping remains stable across engines. Aggregation execution has a narrower support boundary: PostgreSQL has a verified cluster-wide writer lease, SQLite is safe only within one process, and MySQL is rejected by the runner until a backend lease is implemented. The currently shipped crawler-side scope/cardinality adapter uses PostgreSQL transaction SQL, so automatic index-owned artifact emission is the PostgreSQL-wired end-to-end path; integrations targeting MySQL or SQLite must use the portable database repository interfaces (and backend-aware lifecycle writers) rather than assuming that PostgreSQL adapter is portable.
 
-The configuration field `timeseries.storage.backend` currently accepts only `postgres`; it describes the optional time-series storage/partitioning policy and does not override the main `database.type`. SQLite uses its normal unpartitioned time-series tables; the MySQL equivalents are reference-only in 2.3.0. `storage.table_prefix` is validated but the shipped table names remain `TimeSeriesMetrics`, `TimeSeriesObservations`, `TimeSeriesAggregates`, and `TimeSeriesAggregationRuns`.
+The configuration field `timeseries.storage.backend` currently accepts only `postgres`; it describes the optional time-series storage/partitioning policy and does not override the main `database.type`. SQLite uses its normal unpartitioned time-series tables; the MySQL equivalents are reference-only in 2.3.x. `storage.table_prefix` is validated but the shipped table names remain `TimeSeriesMetrics`, `TimeSeriesObservations`, `TimeSeriesAggregates`, and `TimeSeriesAggregationRuns`.
 
 `storage.partitioning` is PostgreSQL-only and optional. In v1 it is declarative configuration (`enabled`, interval `1m|5m|15m|1h|1d|1w|1mo`, and `precreate`); the shipped startup path does not automatically rewrite existing tables or create/manage time-series partitions. Keep it disabled unless deployment migrations/DBA automation provide compatible PostgreSQL partitions. This limitation avoids claiming partition automation that is not delivered.
 

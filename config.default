@@ -302,6 +302,15 @@ timeseries:
     # Safe write behavior; fail_indexing is intentionally not supported.
     failure_policy: log_skip
   retention:
+    # Scheduled retention is opt-in. Leave disabled when upgrading so no
+    # history is deleted without an explicit operator decision.
+    enabled: false
+    schedule: 1h
+    batch_size: 1000
+    max_batches: 10
+    max_duration: 1m
+    dry_run: false
+    # 0 keeps the family forever. mo and y use UTC calendar arithmetic.
     raw: 30d
     aggregated: 365d
   aggregation:
@@ -433,6 +442,34 @@ vdi:
     download_path: "./downloads"
     # http(s)://user:pass@host:port – route all traffic via proxy
     proxy_url: ""
+    # Optional trusted microproxy sticky-session data plane for this VDI.
+    # This is the VDI default (when proxy_url selects the sticky listener) or a
+    # standby opt-in profile (when proxy_url is a different ordinary listener).
+    # Ordinary browser-backed sources inherit it when proxy_url selects it.
+    # crawling_config.sticky_session:true selects a standby profile explicitly.
+    # A source may select an operator-approved replacement profile through
+    # custom.vdi[].sticky_session; unapproved source profiles fail closed.
+    # The four original fields are required together; vdi_api_url is optional.
+    # Chrome/Chromium try vdi_api_url first, then engine-direct api_url.
+    # An absent profile is valid.
+    # token_env names an ENGINE environment variable, never the token itself.
+    # Write the literal name; do NOT use ${...} interpolation for token_env.
+    # Change/remove this profile with a service restart (reload may retain slots).
+    # sticky_session:
+    #   proxy_url: "http://microproxy-vdi1:8081"
+    #   api_url: "http://microproxy-vdi1:8094"       # engine-direct fallback
+    #   vdi_api_url: "http://127.0.0.1:8094"        # browser-namespace CDP origin (optional)
+    #   token_env: "MICROPROXY_VDI1_SESSION_API_KEY"
+    #   provider: "residential-sticky"
+    # Optional operator allowlist of additional complete profiles a source may
+    # select for this VDI. A source profile must match one exactly; this list is
+    # never populated from source documents.
+    # approved_sticky_profiles:
+    #   - proxy_url: "http://microproxy-vdi1:8091"
+    #     api_url: "http://microproxy-vdi1:8095"
+    #     vdi_api_url: "http://127.0.0.1:8095"
+    #     token_env: "MICROPROXY_VDI1_ALT_SESSION_API_KEY"
+    #     provider: "residential-sticky-alt"
     # Optional sidecar/system manager for the VDI
     sys_manager:
       # Manager port

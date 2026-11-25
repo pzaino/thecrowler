@@ -47,7 +47,11 @@ func timeSeriesAggregateUpsertBatchSize(dbms string) int {
 var (
 	// ErrTimeSeriesAggregationRunning indicates that another worker owns the aggregation lease.
 	ErrTimeSeriesAggregationRunning = errors.New("time-series aggregation already running")
-	timeSeriesAggregationMutex      sync.Mutex
+	// ErrTimeSeriesAggregationIncompleteHistory refuses an explicit aggregate
+	// rebuild whose range precedes raw history that scheduled retention may have
+	// physically deleted.
+	ErrTimeSeriesAggregationIncompleteHistory = errors.New("time-series aggregation range precedes retained raw history")
+	timeSeriesAggregationMutex                sync.Mutex
 )
 
 // TimeSeriesRange is a half-open UTC interval [Start, End).
@@ -74,18 +78,33 @@ type TimeSeriesAggregationResult struct {
 	AggregatesReplaced    int
 	BatchesProcessed      int
 	WindowsProcessed      int
+	MetricsSkipped        int
 	Checkpoint            time.Time
 	BudgetExhausted       bool
 }
 
 // TimeSeriesRetentionOptions configures bounded raw and aggregate pruning.
+// RawRetention/AggregateRetention are fixed-duration fallbacks used by legacy
+// callers. RawWindow/AggregateWindow take precedence when Specified, allowing
+// calendar months and years as well as explicit "keep forever".
 type TimeSeriesRetentionOptions struct {
 	Now                time.Time
 	RawRetention       time.Duration
 	AggregateRetention time.Duration
+	RawWindow          cfg.TimeSeriesRetentionWindow
+	AggregateWindow    cfg.TimeSeriesRetentionWindow
 	BatchSize          int
 	MaxBatches         int
+	MaxDuration        time.Duration
 	DryRun             bool
+	// RequireAggregationCheckpoint prevents raw deletion before the durable
+	// aggregation checkpoint has advanced past the candidate rows. Scheduled
+	// retention enables this whenever aggregation is enabled.
+	RequireAggregationCheckpoint bool
+	// AggregationOverlap is the late-data window rewound by incremental
+	// aggregation. Retention keeps raw observations at least this far behind the
+	// checkpoint so the overlap can still be recomputed without losing rows.
+	AggregationOverlap time.Duration
 }
 
 // TimeSeriesRetentionResult reports candidate and deleted rows without deleting metric definitions.
@@ -95,6 +114,13 @@ type TimeSeriesRetentionResult struct {
 	RawDeleted          int64
 	AggregatesDeleted   int64
 	BatchesProcessed    int
+	MetricsProcessed    int
+	MetricsSkipped      int
+	WatermarksUpdated   int
+	BudgetExhausted     bool
+	// SkipReasons contains bounded machine-readable reason codes, never
+	// metric content or SQL errors.
+	SkipReasons []string
 }
 
 type timeSeriesAggregateAccumulator struct {
@@ -182,6 +208,7 @@ func queryTimeSeriesAggregationPage(ctx context.Context, db *Handler, dbms strin
 type timeSeriesAggregationLease struct {
 	conn   *sql.Conn
 	key    string
+	keys   []string
 	unlock func(context.Context, string) (bool, error)
 	close  func() error
 }
@@ -245,16 +272,23 @@ func (lease *timeSeriesAggregationLease) release() error {
 	releaseCtx, cancel := context.WithTimeout(context.Background(), timeSeriesAggregationReleaseTimeout)
 	defer cancel()
 
-	var unlocked bool
 	var unlockErr error
-	if lease.unlock != nil {
-		unlocked, unlockErr = lease.unlock(releaseCtx, lease.key)
+	keys := lease.keys
+	if len(keys) == 0 && lease.key != "" {
+		keys = []string{lease.key}
 	}
-	if unlockErr == nil && !unlocked {
-		unlockErr = errors.New("aggregation advisory lock was not owned by the retained connection")
+	for _, key := range keys {
+		unlocked, err := lease.unlock(releaseCtx, key)
+		if err != nil {
+			unlockErr = errors.Join(unlockErr, fmt.Errorf("unlock %q: %w", key, err))
+			continue
+		}
+		if !unlocked {
+			unlockErr = errors.Join(unlockErr, fmt.Errorf("time-series maintenance advisory lock %q was not owned by the retained connection", key))
+		}
 	}
 	if unlockErr != nil {
-		unlockErr = fmt.Errorf("release aggregation lease: %w", unlockErr)
+		unlockErr = fmt.Errorf("release time-series maintenance lease: %w", unlockErr)
 	}
 
 	var closeErr error
@@ -262,7 +296,7 @@ func (lease *timeSeriesAggregationLease) release() error {
 		closeErr = lease.close()
 	}
 	if closeErr != nil {
-		closeErr = fmt.Errorf("close aggregation lease connection: %w", closeErr)
+		closeErr = fmt.Errorf("close time-series maintenance lease connection: %w", closeErr)
 	}
 	return errors.Join(unlockErr, closeErr)
 }
@@ -357,7 +391,21 @@ func RunTimeSeriesAggregation(
 			)
 		}
 
-		result, err = aggregateTimeSeriesWindow(
+		filtered, skipped, eligible, keptEligible, filterErr := filterTimeSeriesMetricsForRetainedHistory(ctx, db, metrics, affected)
+		if filterErr != nil {
+			return result, filterErr
+		}
+		result.MetricsSkipped = skipped
+		if eligible > 0 && keptEligible == 0 {
+			err = fmt.Errorf("%w: every eligible metric range begins before its retention watermark", ErrTimeSeriesAggregationIncompleteHistory)
+			// This is a validation refusal, not an operational failure. Do not
+			// overwrite the caller's durable aggregation checkpoint with a NULL
+			// failed-run row.
+			return result, err
+		}
+		metrics = filtered
+
+		windowResult, windowErr := aggregateTimeSeriesWindow(
 			ctx,
 			db,
 			dbms,
@@ -368,6 +416,9 @@ func RunTimeSeriesAggregation(
 			options.RunKey,
 			affected.End,
 		)
+		windowResult.MetricsSkipped = skipped
+		result = windowResult
+		err = windowErr
 		if err != nil {
 			if stateErr := recordTimeSeriesAggregationFailure(
 				db,
@@ -390,7 +441,7 @@ func RunTimeSeriesAggregation(
 		return result, nil
 	}
 
-	checkpoint, err := timeSeriesAggregationCheckpoint(db, options.RunKey)
+	checkpoint, err := timeSeriesAggregationCheckpointContext(ctx, db, options.RunKey)
 	if err != nil {
 		return result, err
 	}
@@ -460,19 +511,38 @@ func RunTimeSeriesAggregation(
 			End:   windowEnd,
 		}
 
+		// Retention may have advanced a metric's watermark past the incremental
+		// checkpoint (for example while aggregation was disabled). Never replace
+		// a bucket whose raw history is incomplete; skip that metric for this
+		// window and let the next window start at the safe boundary.
+		windowMetrics, skippedMetrics, eligibleMetrics, safeMetrics, filterErr := filterTimeSeriesMetricsForRetainedHistory(ctx, db, metrics, affected)
+		if filterErr != nil {
+			return result, filterErr
+		}
+		if eligibleMetrics > 0 && safeMetrics == 0 {
+			// All aggregate-eligible metrics are blocked. Advancing the checkpoint
+			// without deleting anything keeps existing aggregate rows intact. A
+			// bucket that straddles a watermark is not partially rebuilt; its
+			// retained suffix remains available through raw queries while the next
+			// bucket boundary resumes normal aggregation.
+			timeSeriesAggregationSkippedWindows.Inc()
+		}
+		metricsForWindow := windowMetrics
+
 		// Incremental aggregation deliberately has no observation-count cutoff.
 		// The unit of atomic progress is the complete bucket-safe time window.
 		partial, aggregateErr := aggregateTimeSeriesWindow(
 			ctx,
 			db,
 			dbms,
-			metrics,
+			metricsForWindow,
 			affected,
 			options.BatchSize,
 			0,
 			options.RunKey,
 			windowEnd,
 		)
+		partial.MetricsSkipped += skippedMetrics
 		if aggregateErr != nil {
 			if stateErr := recordTimeSeriesAggregationFailure(
 				db,
@@ -494,6 +564,7 @@ func RunTimeSeriesAggregation(
 		result.ObservationsProcessed += partial.ObservationsProcessed
 		result.AggregatesReplaced += partial.AggregatesReplaced
 		result.BatchesProcessed += partial.BatchesProcessed
+		result.MetricsSkipped += partial.MetricsSkipped
 		result.WindowsProcessed++
 
 		checkpoint = windowEnd
@@ -518,6 +589,58 @@ func RunTimeSeriesAggregation(
 	}
 
 	return result, nil
+}
+
+// filterTimeSeriesMetricsForRetainedHistory omits metrics whose requested
+// explicit range begins before raw observations may have been physically
+// deleted by retention. Replacing those aggregates from partial history would
+// silently corrupt previously materialized buckets, so they are left untouched.
+func filterTimeSeriesMetricsForRetainedHistory(ctx context.Context, db *Handler, metrics []TimeSeriesMetric, affected TimeSeriesRange) ([]TimeSeriesMetric, int, int, int, error) {
+	dbms, err := validateTimeSeriesDB(db)
+	if err != nil {
+		return nil, 0, 0, 0, err
+	}
+	eligible := 0
+	for i := range metrics {
+		if metrics[i].Bucket != cfg.TimeSeriesBucketNone {
+			eligible++
+		}
+	}
+	p := newInformationSeedPlaceholders(dbms)
+	var watermarkProbe int
+	err = (*db).QueryRowContext(ctx, `SELECT 1 FROM TimeSeriesAggregationRuns WHERE run_key LIKE `+p.Next()+` LIMIT 1`, timeSeriesRetentionRunKeyPrefix+"%").Scan(&watermarkProbe)
+	if errors.Is(err, sql.ErrNoRows) {
+		return metrics, 0, eligible, eligible, nil
+	}
+	if err != nil {
+		return nil, 0, eligible, 0, fmt.Errorf("probe time-series retention watermarks: %w", err)
+	}
+	filtered := make([]TimeSeriesMetric, 0, len(metrics))
+	skipped := 0
+	keptEligible := 0
+	for i := range metrics {
+		metric := metrics[i]
+		if metric.Bucket == cfg.TimeSeriesBucketNone {
+			filtered = append(filtered, metric)
+			continue
+		}
+		watermark, watermarkErr := timeSeriesRetentionWatermark(ctx, db, metric.ID)
+		if watermarkErr != nil {
+			return nil, skipped, eligible, keptEligible, watermarkErr
+		}
+		bucketStart, _, boundsErr := TimeSeriesBucketBounds(affected.Start, metric.Bucket)
+		if boundsErr != nil {
+			return nil, skipped, eligible, keptEligible, boundsErr
+		}
+		if !watermark.IsZero() && bucketStart.Before(watermark) {
+			skipped++
+			timeSeriesAggregationSkippedMetrics.WithLabelValues("retention_watermark").Inc()
+			continue
+		}
+		filtered = append(filtered, metric)
+		keptEligible++
+	}
+	return filtered, skipped, eligible, keptEligible, nil
 }
 
 func nextTimeSeriesAggregationWindowEnd(
@@ -1066,12 +1189,16 @@ func recordTimeSeriesAggregationRun(ctx context.Context, tx *sql.Tx, dbms, key s
 }
 
 func timeSeriesAggregationCheckpoint(db *Handler, key string) (time.Time, error) {
+	return timeSeriesAggregationCheckpointContext(context.Background(), db, key)
+}
+
+func timeSeriesAggregationCheckpointContext(ctx context.Context, db *Handler, key string) (time.Time, error) {
 	dbms, err := validateTimeSeriesDB(db)
 	if err != nil {
 		return time.Time{}, err
 	}
 	var checkpoint sql.NullTime
-	err = (*db).QueryRow(`SELECT checkpoint_at FROM TimeSeriesAggregationRuns WHERE run_key = `+informationSeedPlaceholderForDBMS(dbms, 1), key).Scan(&checkpoint)
+	err = (*db).QueryRowContext(ctx, `SELECT checkpoint_at FROM TimeSeriesAggregationRuns WHERE run_key = `+informationSeedPlaceholderForDBMS(dbms, 1), key).Scan(&checkpoint)
 	if err == sql.ErrNoRows {
 		return time.Time{}, nil
 	}
@@ -1172,121 +1299,6 @@ func buildTimeSeriesAggregateBatchUpsert(dbms string, aggregates []TimeSeriesAgg
 	return query, args, nil
 }
 
-// PruneTimeSeriesRetention applies global defaults with optional metric JSON
-// overrides {"raw":"...","aggregated":"..."}. Deletes are bounded and definitions are never touched.
-func PruneTimeSeriesRetention(ctx context.Context, db *Handler, options TimeSeriesRetentionOptions) (TimeSeriesRetentionResult, error) {
-	var result TimeSeriesRetentionResult
-	dbms, err := validateTimeSeriesDB(db)
-	if err != nil {
-		return result, err
-	}
-	if options.Now.IsZero() {
-		options.Now = time.Now().UTC()
-	}
-	if options.BatchSize <= 0 {
-		options.BatchSize = 1000
-	}
-	if options.MaxBatches <= 0 {
-		options.MaxBatches = 10
-	}
-	metrics, err := ListTimeSeriesMetrics(db, TimeSeriesMetricFilter{IncludeDeleted: true, Pagination: TimeSeriesPagination{Limit: 100000}})
-	if err != nil {
-		return result, err
-	}
-	for _, metric := range metrics {
-		raw, agg := options.RawRetention, options.AggregateRetention
-		var policy struct {
-			Raw        string `json:"raw"`
-			Aggregated string `json:"aggregated"`
-		}
-		if len(metric.RetentionPolicy) > 0 && json.Unmarshal(metric.RetentionPolicy, &policy) == nil {
-			if d, e := parseTimeSeriesDuration(policy.Raw); e == nil && policy.Raw != "" {
-				raw = d
-			}
-			if d, e := parseTimeSeriesDuration(policy.Aggregated); e == nil && policy.Aggregated != "" {
-				agg = d
-			}
-		}
-		for kind, duration := range map[string]time.Duration{"raw": raw, "aggregate": agg} {
-			if duration <= 0 {
-				continue
-			}
-			cutoff := options.Now.Add(-duration)
-			table, timeColumn := "TimeSeriesObservations", "observed_at"
-			if kind == "aggregate" {
-				table, timeColumn = "TimeSeriesAggregates", "bucket_end"
-			}
-			p := newInformationSeedPlaceholders(dbms)
-			var count int64
-			if err = (*db).QueryRow(`SELECT COUNT(*) FROM `+table+` WHERE metric_id = `+p.Next()+` AND `+timeColumn+` < `+p.Next(), metric.ID, cutoff).Scan(&count); err != nil {
-				return result, err
-			}
-			if kind == "raw" {
-				result.RawCandidates += count
-			} else {
-				result.AggregateCandidates += count
-			}
-			if options.DryRun {
-				continue
-			}
-			for batch := 0; batch < options.MaxBatches; batch++ {
-				if kind == "raw" {
-					n, pruneErr := pruneRawObservationBatch(ctx, db, dbms, metric.ID, cutoff, options.BatchSize)
-					if pruneErr != nil {
-						return result, pruneErr
-					}
-					result.RawDeleted += n
-					result.BatchesProcessed++
-					if n < int64(options.BatchSize) {
-						break
-					}
-					continue
-				}
-				p = newInformationSeedPlaceholders(dbms)
-				idColumn := "observation_id"
-				if kind == "aggregate" {
-					idColumn = "aggregate_id"
-				}
-				query := `DELETE FROM ` + table + ` WHERE ` + idColumn + ` IN (SELECT ` + idColumn + ` FROM ` + table + ` WHERE metric_id = ` + p.Next() + ` AND ` + timeColumn + ` < ` + p.Next() + ` ORDER BY ` + idColumn + ` LIMIT ` + p.Next() + `)`
-				if dbms == DBMySQLStr {
-					query = `DELETE target FROM ` + table + ` target JOIN (SELECT ` + idColumn + ` FROM ` + table + ` WHERE metric_id = ? AND ` + timeColumn + ` < ? ORDER BY ` + idColumn + ` LIMIT ?) doomed ON target.` + idColumn + ` = doomed.` + idColumn
-				}
-				res, e := (*db).ExecContext(ctx, query, metric.ID, cutoff, options.BatchSize)
-				if e != nil {
-					return result, e
-				}
-				n, _ := res.RowsAffected()
-				if kind == "raw" {
-					result.RawDeleted += n
-				} else {
-					result.AggregatesDeleted += n
-				}
-				result.BatchesProcessed++
-				if n < int64(options.BatchSize) {
-					break
-				}
-			}
-		}
-	}
-	return result, nil
-}
-
-func parseTimeSeriesDuration(value string) (time.Duration, error) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return 0, nil
-	}
-	multiplier := time.Duration(1)
-	if strings.HasSuffix(value, "d") {
-		multiplier = 24
-		value = strings.TrimSuffix(value, "d") + "h"
-	} else if strings.HasSuffix(value, "w") {
-		multiplier = 7 * 24
-		value = strings.TrimSuffix(value, "w") + "h"
-	}
-	duration, err := time.ParseDuration(value)
-	return duration * multiplier, err
-}
 func timeSeriesUint64Pointer(v uint64) *uint64 { return &v }
 func boolPointer(v bool) *bool                 { return &v }
 func floatPointer(v float64) *float64          { return &v }
@@ -1296,31 +1308,4 @@ func dereferenceUint(v *uint64) uint64 {
 		return 0
 	}
 	return *v
-}
-
-// pruneRawObservationBatch deletes one bounded batch of expired raw
-// observations inside its own transaction. The transaction context is derived
-// from TransactionContext so a stalled batch can never hold locks and its
-// MVCC snapshot indefinitely; the deferred rollback covers panics between
-// BEGIN and COMMIT.
-func pruneRawObservationBatch(ctx context.Context, db *Handler, dbms string, metricID uint64, cutoff time.Time, batchSize int) (deleted int64, retErr error) {
-	txCtx, cancelTx := TransactionContextForHandler(ctx, db)
-	defer cancelTx()
-	tx, err := (*db).BeginTx(txCtx, nil)
-	if err != nil {
-		return 0, NormalizeTransactionError(txCtx, err)
-	}
-	defer func() {
-		_ = tx.Rollback()
-		retErr = NormalizeTransactionError(txCtx, retErr)
-	}()
-	p := newInformationSeedPlaceholders(dbms)
-	n, err := deleteTimeSeriesObservationsWithAccounting(txCtx, tx, dbms, `metric_id = `+p.Next()+` AND observed_at < `+p.Next(), []interface{}{metricID, cutoff}, batchSize)
-	if err != nil {
-		return 0, err
-	}
-	if err = tx.Commit(); err != nil {
-		return 0, err
-	}
-	return n, nil
 }

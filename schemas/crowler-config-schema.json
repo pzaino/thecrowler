@@ -1888,11 +1888,132 @@
           },
           "proxy_url": {
             "title": "CROWler VDI Proxy Configuration",
-            "description": "This is the proxy configuration for the VDI. It is the proxy that the VDI will use to connect to the internet. This is useful for bypassing firewalls or accessing websites that are blocked in your country.",
+            "description": "Global downstream browser proxy listener for this VDI. Ordinary sources inherit it unless they provide crawling_config.proxy, a legacy top-level source proxy_url, or a custom.vdi[].proxy_url. If this value equals a configured sticky_session or approved_sticky_profiles proxy_url, ordinary browser-backed sources inherit sticky mode and rotate once; a different listener leaves the sticky profile as an opt-in standby. Sticky mode is determined from explicit configuration, never from a port number.",
             "type": "string",
             "examples": [
               "http://proxy:port"
             ]
+          },
+          "sticky_session": {
+            "title": "CROWler VDI Sticky Session Configuration",
+            "description": "Trusted, operator-configured microproxy sticky-session profile for this VDI. It is the VDI default or standby profile. When the VDI ordinary proxy_url selects the same listener, ordinary browser-backed sources inherit sticky mode automatically; a different ordinary listener makes this an opt-in standby profile. crawling_config.sticky_session:true selects it explicitly, and a source may replace it only with a complete profile approved under approved_sticky_profiles. Source documents cannot extend or redirect the trusted control parameters. The browser connects to proxy_url. Chrome/Chromium first rotate through a disposable VDI-local browser using vdi_api_url when supplied, otherwise api_url, and fall back to the engine-direct api_url only for eligible CDP failures. Firefox uses api_url directly. The bearer token is read from the engine environment variable named by token_env. The four original fields are required together; vdi_api_url is optional. An absent profile is valid.",
+            "type": "object",
+            "properties": {
+              "proxy_url": {
+                "title": "Sticky Downstream Listener",
+                "description": "Absolute http or https URL of the microproxy sticky downstream proxy listener used by the browser, including host and explicit port. It must not contain credentials, a path, a query or a fragment. This is not the rotation API URL.",
+                "type": "string",
+                "format": "uri",
+                "examples": [
+                  "http://microproxy-vdi1:8081"
+                ]
+              },
+              "api_url": {
+                "title": "Sticky Data-Plane API Origin",
+                "description": "Absolute http or https origin of the microproxy data-plane session API used by the engine, including host and explicit port. It must not contain credentials, a path, a query or a fragment. It must identify the same microproxy process that serves proxy_url; the engine never derives it from a source-specified proxy. It is always the engine-direct fallback and is the default browser-visible origin when vdi_api_url is omitted.",
+                "type": "string",
+                "format": "uri",
+                "examples": [
+                  "http://microproxy-vdi1:8094"
+                ]
+              },
+              "vdi_api_url": {
+                "title": "Sticky Data-Plane API Origin as Seen from the VDI",
+                "description": "Optional absolute http or https origin of the same microproxy data-plane session API as resolved from inside the temporary Chrome/Chromium browser on this VDI, including host and explicit port. It must not contain credentials, a path, a query or a fragment. For localhost deployments this is commonly http://127.0.0.1:8094, but 127.0.0.1 means the browser's network namespace, not the engine or Docker host. It never replaces api_url for the engine-direct fallback.",
+                "type": "string",
+                "format": "uri",
+                "examples": [
+                  "http://127.0.0.1:8094"
+                ]
+              },
+              "token_env": {
+                "title": "Bearer Token Environment Variable",
+                "description": "Name of the engine environment variable that contains the microproxy data-plane bearer token. This field is a variable name, never the token value. A source may reference this name only by selecting an operator-approved complete profile; source documents cannot supply a token value or an unapproved variable name.",
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                "examples": [
+                  "MICROPROXY_VDI1_SESSION_API_KEY"
+                ]
+              },
+              "provider": {
+                "title": "Expected Sticky Provider",
+                "description": "Exact microproxy sticky provider name that the rotation API must report. A successful HTTP 200 response for a different provider is rejected before browser startup. The microproxy listener-to-provider binding must be configured consistently; the session API alone cannot prove that binding.",
+                "type": "string",
+                "examples": [
+                  "residential-sticky"
+                ]
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "proxy_url",
+              "api_url",
+              "token_env",
+              "provider"
+            ]
+          },
+          "approved_sticky_profiles": {
+            "title": "Approved Per-Source Sticky Profiles",
+            "description": "Operator-only allowlist of additional complete microproxy sticky-session profiles that a source may select for this VDI through custom.vdi[].sticky_session. A source profile must match one of these profiles or the VDI sticky_session default exactly; it cannot introduce a new management origin or token_env. This field is never merged from a source document. Each profile must use a distinct sticky listener so selection is unambiguous.",
+            "type": "array",
+            "items": {
+              "title": "CROWler VDI Sticky Session Configuration",
+              "description": "Trusted, operator-configured microproxy sticky-session profile for this VDI. It is the VDI default or standby profile. When the VDI ordinary proxy_url selects the same listener, ordinary browser-backed sources inherit sticky mode automatically; a different ordinary listener makes this an opt-in standby profile. crawling_config.sticky_session:true selects it explicitly, and a source may replace it only with a complete profile approved under approved_sticky_profiles. Source documents cannot extend or redirect the trusted control parameters. The browser connects to proxy_url. Chrome/Chromium first rotate through a disposable VDI-local browser using vdi_api_url when supplied, otherwise api_url, and fall back to the engine-direct api_url only for eligible CDP failures. Firefox uses api_url directly. The bearer token is read from the engine environment variable named by token_env. The four original fields are required together; vdi_api_url is optional. An absent profile is valid.",
+              "type": "object",
+              "properties": {
+                "proxy_url": {
+                  "title": "Sticky Downstream Listener",
+                  "description": "Absolute http or https URL of the microproxy sticky downstream proxy listener used by the browser, including host and explicit port. It must not contain credentials, a path, a query or a fragment. This is not the rotation API URL.",
+                  "type": "string",
+                  "format": "uri",
+                  "examples": [
+                    "http://microproxy-vdi1:8081"
+                  ]
+                },
+                "api_url": {
+                  "title": "Sticky Data-Plane API Origin",
+                  "description": "Absolute http or https origin of the microproxy data-plane session API used by the engine, including host and explicit port. It must not contain credentials, a path, a query or a fragment. It must identify the same microproxy process that serves proxy_url; the engine never derives it from a source-specified proxy. It is always the engine-direct fallback and is the default browser-visible origin when vdi_api_url is omitted.",
+                  "type": "string",
+                  "format": "uri",
+                  "examples": [
+                    "http://microproxy-vdi1:8094"
+                  ]
+                },
+                "vdi_api_url": {
+                  "title": "Sticky Data-Plane API Origin as Seen from the VDI",
+                  "description": "Optional absolute http or https origin of the same microproxy data-plane session API as resolved from inside the temporary Chrome/Chromium browser on this VDI, including host and explicit port. It must not contain credentials, a path, a query or a fragment. For localhost deployments this is commonly http://127.0.0.1:8094, but 127.0.0.1 means the browser's network namespace, not the engine or Docker host. It never replaces api_url for the engine-direct fallback.",
+                  "type": "string",
+                  "format": "uri",
+                  "examples": [
+                    "http://127.0.0.1:8094"
+                  ]
+                },
+                "token_env": {
+                  "title": "Bearer Token Environment Variable",
+                  "description": "Name of the engine environment variable that contains the microproxy data-plane bearer token. This field is a variable name, never the token value. A source may reference this name only by selecting an operator-approved complete profile; source documents cannot supply a token value or an unapproved variable name.",
+                  "type": "string",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                  "examples": [
+                    "MICROPROXY_VDI1_SESSION_API_KEY"
+                  ]
+                },
+                "provider": {
+                  "title": "Expected Sticky Provider",
+                  "description": "Exact microproxy sticky provider name that the rotation API must report. A successful HTTP 200 response for a different provider is rejected before browser startup. The microproxy listener-to-provider binding must be configured consistently; the session API alone cannot prove that binding.",
+                  "type": "string",
+                  "examples": [
+                    "residential-sticky"
+                  ]
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "proxy_url",
+                "api_url",
+                "token_env",
+                "provider"
+              ]
+            }
           },
           "sys_manager": {
             "title": "CROWler VDI System Manager",
@@ -3543,15 +3664,64 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "raw": {
+            "enabled": {
+              "type": "boolean",
+              "default": false,
+              "description": "Opt-in scheduled retention. Disabled by default so upgrades never delete history automatically."
+            },
+            "schedule": {
               "type": "string",
               "pattern": "^[1-9][0-9]*(ns|us|\u00b5s|ms|s|m|h|d|w)$",
-              "default": "30d"
+              "default": "1h"
+            },
+            "batch_size": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100000,
+              "default": 1000
+            },
+            "max_batches": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000,
+              "default": 10
+            },
+            "max_duration": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*(ns|us|\u00b5s|ms|s|m|h|d|w)$",
+              "default": "1m"
+            },
+            "dry_run": {
+              "type": "boolean",
+              "default": false
+            },
+            "raw": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^0$|^(?:[0-9]+(?:\\.[0-9]+)?(?:ns|us|\u00b5s|ms|s|m|h|d|w))+$|^(?:[0-9]+(?:y|mo))+$"
+                },
+                {
+                  "type": "integer",
+                  "const": 0
+                }
+              ],
+              "default": "30d",
+              "description": "Raw observation retention. 0 keeps raw observations forever; fixed windows keep Go duration syntax plus d/w, mo/y use UTC calendar arithmetic with end-of-month clamping, and calendar horizons are capped at 100 years."
             },
             "aggregated": {
-              "type": "string",
-              "pattern": "^[1-9][0-9]*(ns|us|\u00b5s|ms|s|m|h|d|w)$",
-              "default": "365d"
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^0$|^(?:[0-9]+(?:\\.[0-9]+)?(?:ns|us|\u00b5s|ms|s|m|h|d|w))+$|^(?:[0-9]+(?:y|mo))+$"
+                },
+                {
+                  "type": "integer",
+                  "const": 0
+                }
+              ],
+              "default": "365d",
+              "description": "Aggregate retention. 0 keeps aggregates forever; fixed windows keep Go duration syntax plus d/w, mo/y use UTC calendar arithmetic with end-of-month clamping, and calendar horizons are capped at 100 years."
             }
           }
         },
@@ -3797,6 +3967,38 @@
       "minProperties": 1,
       "additionalProperties": true
     },
+    "timeSeriesRetentionOverride": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "raw": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^0$|^(?:[0-9]+(?:\\.[0-9]+)?(?:ns|us|\u00b5s|ms|s|m|h|d|w))+$|^(?:[0-9]+(?:y|mo))+$"
+            },
+            {
+              "type": "integer",
+              "const": 0
+            }
+          ],
+          "description": "Per-metric raw retention override. Omit or leave empty to inherit the global value; 0 keeps raw observations forever; calendar horizons are capped at 100 years."
+        },
+        "aggregated": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^0$|^(?:[0-9]+(?:\\.[0-9]+)?(?:ns|us|\u00b5s|ms|s|m|h|d|w))+$|^(?:[0-9]+(?:y|mo))+$"
+            },
+            {
+              "type": "integer",
+              "const": 0
+            }
+          ],
+          "description": "Per-metric aggregate retention override. Omit or leave empty to inherit the global value; 0 keeps aggregates forever; calendar horizons are capped at 100 years."
+        }
+      }
+    },
     "timeSeriesCardinality": {
       "type": "object",
       "additionalProperties": false,
@@ -3811,7 +4013,8 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 64,
-          "default": 10
+          "default": 10,
+          "description": "Maximum configured dimensions per metric. For synchronized metrics 0 means inherit the built-in default (10), not unlimited."
         },
         "max_values_per_dimension": {
           "type": "integer",
@@ -3977,6 +4180,9 @@
           "items": {
             "$ref": "#/definitions/timeSeriesDimension"
           }
+        },
+        "retention": {
+          "$ref": "#/definitions/timeSeriesRetentionOverride"
         },
         "cardinality": {
           "$ref": "#/definitions/timeSeriesCardinality"

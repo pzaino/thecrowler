@@ -85,6 +85,14 @@ func (ctx *ProcessContext) RefreshVDIConnection(sel vdi.SeleniumInstance) error 
 	if err := ctx.checkCrawlFence(); err != nil {
 		return err
 	}
+	// A refresh must reconnect to the VDI selected and validated at source
+	// start. Reject a caller-provided instance that would retarget the
+	// Selenium endpoint or browser family, then use the pinned effective
+	// instance so proxy/session settings cannot drift.
+	if err := cfg.ValidateLeasedVDIIdentity(ctx.SelInstance.Config, sel.Config); err != nil {
+		return fmt.Errorf("refresh VDI does not match the pinned source session: %w", err)
+	}
+	sel = ctx.SelInstance
 	if (ctx.Status.DetectedState.Load() & 0x01) != 0 {
 		// Stale-Processing detected, we need to abort the process
 		err := errors.New("stale-processing detected")
@@ -740,7 +748,7 @@ func changeUserAgent(wd *vdi.WebDriver, ctx *ProcessContext) error {
 	// this runs) is unchanged.
 	selection := cmn.UADB.SelectUserAgent(
 		ctx.config.Crawler.Platform, ctx.config.Crawler.BrowserPlatform,
-		ctx.config.Selenium[ctx.SelID].Type, ctx.config.Crawler.Platform != "desktop", rand.IntN)
+		ctx.effectiveBrowserType(), ctx.config.Crawler.Platform != "desktop", rand.IntN)
 	userAgent := selection.UserAgent
 	if note := cmn.UserAgentCompatibilityNote(selection); note != "" {
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "[CDP] User-Agent note: %s", note)
@@ -751,7 +759,7 @@ func changeUserAgent(wd *vdi.WebDriver, ctx *ProcessContext) error {
 	details := vdi.NewClientHintsDetails(userAgent, selection.Product, ident)
 
 	// Check if the browser is Chrome and CDP is available
-	if ctx.config.Selenium[ctx.SelID].Type == "chrome" || ctx.config.Selenium[ctx.SelID].Type == "chromium" {
+	if ctx.effectiveBrowserType() == "chrome" || ctx.effectiveBrowserType() == "chromium" {
 		// Try with changeUserAgentCDP
 		err := changeUserAgentCDP(ctx, userAgent, ident, brands, details)
 		if err != nil {
@@ -793,7 +801,7 @@ func changeUserAgent(wd *vdi.WebDriver, ctx *ProcessContext) error {
 	// refresh stays best-effort there. Rotation policy and navigation flow
 	// are otherwise unchanged.
 	if rerr := vdi.RefreshIdentityScript(*wd, getCDPDelay(ctx.config), userAgent, ident, brands, details); rerr != nil {
-		if ctx.config.Selenium[ctx.SelID].Type == "chrome" || ctx.config.Selenium[ctx.SelID].Type == "chromium" {
+		if ctx.effectiveBrowserType() == "chrome" || ctx.effectiveBrowserType() == "chromium" {
 			return fmt.Errorf("refreshing identity script: %w", rerr)
 		}
 		cmn.DebugMsg(cmn.DbgLvlDebug2, "[CDP] refreshing identity script (best-effort): %v", rerr)

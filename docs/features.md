@@ -95,6 +95,9 @@ Release 2.0 introduced or substantially expanded several major areas:
 - **Robots and Low-Noise Controls**: Includes robots.txt checks, configurable request pacing, warm-up ramping, intervals, and delays.
   - *Benefits*: Helps operators build respectful and predictable collection policies.
 
+- **Per-Source Browser Proxies and Sticky Sessions**: `crawling_config.proxy` selects a source-specific downstream listener, and an effective VDI sticky decision can rotate a browser-backed source once at the start of each new crawl. A VDI may make its sticky profile the default by selecting its listener as the ordinary `proxy_url`, keep it as an opt-in standby, or let a source select a complete operator-approved profile through `custom.vdi`. A source may also replace a sticky default with a conventional or direct proxy for its own crawl. Modes are never inferred from port numbers, and ordinary sources perform no rotation unless their effective configuration selects sticky mode.
+  - *Benefits*: Supports independent proxy listeners per source and a pinned sticky upstream identity for the whole source crawl without changing global VDI behavior or other sources. Source-supplied control parameters are bounded by an operator allowlist, so a source cannot exfiltrate an engine secret. Chrome/Chromium rotate through a disposable VDI-local browser and fall back to the engine-direct client only for eligible CDP failures; Firefox uses the direct client. See [Sticky sessions and per-source proxies](sticky-sessions.md).
+
 ## (Features Group 3) Information Seed Discovery
 
 - **Concept-to-Source Discovery**: Converts a topic, organization, product, threat, location, or other human-readable seed into candidate URLs and accepted CROWler Sources.
@@ -445,7 +448,7 @@ See [API documentation](api.md) and [WebSocket API endpoints](api/websockets.md)
 - **Current-State or Historical Collection Policies**: `refresh_content` can replace current page data, while disabled refresh preserves repeated collections for history and change analysis.
   - *Benefits*: Supports both snapshot-style indexes and longitudinal datasets.
 
-- **Primary and Portable Database Backends**: PostgreSQL is the primary production backend and SQLite is supported. MySQL/MariaDB setup and migration SQL is retained for reference and schema-contract work, but the 2.3.0 runtime does not enable the MySQL backend (`NewHandler` rejects `database.type: mysql`).
+- **Primary and Portable Database Backends**: PostgreSQL is the primary production backend and SQLite is supported. MySQL/MariaDB setup and migration SQL is retained for reference and schema-contract work, but the 2.3.x runtime does not enable the MySQL backend (`NewHandler` rejects `database.type: mysql`).
   - *Benefits*: Provides a scalable default and lighter-weight options for development, testing, or constrained deployments.
 
 ## (Features Group 18) Time-Series Analytics

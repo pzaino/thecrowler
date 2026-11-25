@@ -1,0 +1,43 @@
+# Example global VDI fragment for microproxy sticky sessions.
+#
+# Merge this list under the top-level `vdi:` key of config.yaml. It is not a
+# complete config.yaml on its own.
+#
+# The browser uses sticky_session.proxy_url (the sticky listener).
+# Chrome/Chromium first rotate through a disposable browser using vdi_api_url
+# (browser network namespace) and fall back to the engine-direct api_url only
+# for eligible CDP failures. Firefox uses api_url directly. Both URLs must
+# address the same live microproxy data-plane process. The bearer token is read
+# from the ENGINE environment variable named by token_env; it is never stored
+# here.
+#
+# Global behavior:
+# - If proxy_url selects the sticky listener below, ordinary browser-backed
+#   sources rotate automatically.
+# - If proxy_url is a different ordinary listener, this is a standby profile:
+#   sources must opt in with crawling_config.sticky_session:true or select the
+#   listener explicitly.
+# - A source may replace the profile with a complete custom.vdi[].sticky_session
+#   only when it exactly matches sticky_session or approved_sticky_profiles.
+vdi:
+  - name: vdi-1
+    type: chrome
+    host: selenium-vdi1
+    port: 4444
+    headless: false
+    # Normal, non-sticky sources inherit this rotating listener.
+    proxy_url: "http://microproxy-vdi1:8080"
+    sticky_session:
+      proxy_url: "http://microproxy-vdi1:8081"
+      api_url: "http://microproxy-vdi1:8094"
+      # Reachable from Chrome inside this VDI, not necessarily from the engine.
+      vdi_api_url: "http://127.0.0.1:8094"
+      token_env: "MICROPROXY_VDI1_SESSION_API_KEY"
+      provider: "residential-sticky"
+    # Optional operator-approved profiles for source-specific selection.
+    approved_sticky_profiles:
+      - proxy_url: "http://microproxy-vdi1:8091"
+        api_url: "http://microproxy-vdi1:8095"
+        vdi_api_url: "http://127.0.0.1:8095"
+        token_env: "MICROPROXY_VDI1_ALT_SESSION_API_KEY"
+        provider: "residential-sticky-alt"
